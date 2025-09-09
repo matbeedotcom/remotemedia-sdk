@@ -1,0 +1,115 @@
+syntax = "proto3";
+
+package remotemedia.execution;
+
+// Execution status enumeration
+enum ExecutionStatus {
+  EXECUTION_STATUS_UNSPECIFIED = 0;
+  EXECUTION_STATUS_SUCCESS = 1;
+  EXECUTION_STATUS_ERROR = 2;
+  EXECUTION_STATUS_TIMEOUT = 3;
+  EXECUTION_STATUS_CANCELLED = 4;
+  EXECUTION_STATUS_RESOURCE_LIMIT = 5;
+  EXECUTION_STATUS_SECURITY_VIOLATION = 6;
+}
+
+// Service status enumeration
+enum ServiceStatus {
+  SERVICE_STATUS_UNSPECIFIED = 0;
+  SERVICE_STATUS_HEALTHY = 1;
+  SERVICE_STATUS_DEGRADED = 2;
+  SERVICE_STATUS_UNHEALTHY = 3;
+  SERVICE_STATUS_STARTING = 4;
+  SERVICE_STATUS_STOPPING = 5;
+}
+
+// Execution options for controlling task execution
+message ExecutionOptions {
+  int32 timeout_seconds = 1;      // Maximum execution time (default: 30)
+  int32 memory_limit_mb = 2;      // Memory limit in MB (default: 512)
+  int32 cpu_limit_percent = 3;    // CPU limit as percentage (default: 100)
+  bool enable_networking = 4;     // Allow network access (default: false)
+  bool enable_filesystem = 5;     // Allow filesystem access (default: false)
+  string working_directory = 6;   // Working directory for execution
+  map<string, string> environment = 7; // Environment variables
+  int32 max_output_size_mb = 8;   // Maximum output size in MB (default: 100)
+}
+
+// Execution performance metrics
+message ExecutionMetrics {
+  int64 start_timestamp = 1;      // Execution start time (Unix timestamp)
+  int64 end_timestamp = 2;        // Execution end time (Unix timestamp)
+  int64 duration_ms = 3;          // Total execution duration in milliseconds
+  int64 cpu_time_ms = 4;          // CPU time used in milliseconds
+  int64 memory_peak_mb = 5;       // Peak memory usage in MB
+  int64 memory_average_mb = 6;    // Average memory usage in MB
+  int64 input_size_bytes = 7;     // Input data size in bytes
+  int64 output_size_bytes = 8;    // Output data size in bytes
+  int32 exit_code = 9;            // Process exit code
+  string sandbox_id = 10;         // Sandbox identifier used
+}
+
+// Service-level performance metrics
+message ServiceMetrics {
+  int64 total_requests = 1;       // Total number of requests processed
+  int64 successful_requests = 2;  // Number of successful requests
+  int64 failed_requests = 3;      // Number of failed requests
+  int64 average_duration_ms = 4;  // Average request duration
+  int64 peak_memory_mb = 5;       // Peak service memory usage
+  int32 active_sessions = 6;      // Number of active streaming sessions
+  int32 available_workers = 7;    // Number of available worker processes
+  int32 busy_workers = 8;         // Number of busy worker processes
+  double cpu_usage_percent = 9;   // Current CPU usage percentage
+  double memory_usage_percent = 10; // Current memory usage percentage
+}
+
+// Resource limits for execution
+message ResourceLimits {
+  int32 max_memory_mb = 1;        // Maximum memory allocation
+  int32 max_cpu_percent = 2;      // Maximum CPU usage percentage
+  int32 max_execution_time = 3;   // Maximum execution time in seconds
+  int32 max_file_size_mb = 4;     // Maximum file size for I/O operations
+  int32 max_network_bandwidth = 5; // Maximum network bandwidth (if enabled)
+  int32 max_processes = 6;        // Maximum number of processes
+  int32 max_threads = 7;          // Maximum number of threads
+}
+
+// Security policy for execution
+message SecurityPolicy {
+  bool allow_network_access = 1;  // Allow network operations
+  bool allow_file_system = 2;     // Allow file system access
+  bool allow_subprocess = 3;      // Allow subprocess creation
+  bool allow_import_system = 4;   // Allow system module imports
+  repeated string blocked_modules = 5; // List of blocked Python modules
+  repeated string allowed_domains = 6; // Allowed network domains (if networking enabled)
+  string sandbox_type = 7;        // Type of sandbox to use (process, container, vm)
+}
+
+// Error details for failed executions
+message ErrorDetails {
+  string error_type = 1;          // Type of error (e.g., "ImportError", "RuntimeError")
+  string error_message = 2;       // Human-readable error message
+  string error_traceback = 3;     // Full Python traceback
+  string file_name = 4;           // File where error occurred
+  int32 line_number = 5;          // Line number where error occurred
+  map<string, string> context = 6; // Additional error context
+}
+
+// Health check information
+message HealthInfo {
+  ServiceStatus status = 1;       // Current service status
+  string status_message = 2;      // Human-readable status message
+  repeated string warnings = 3;   // Any warnings or issues
+  int64 last_check_timestamp = 4; // Last health check timestamp
+  map<string, string> details = 5; // Additional health details
+}
+
+// Version information
+message VersionInfo {
+  string service_version = 1;     // Remote service version
+  string sdk_version = 2;         // Compatible SDK version
+  string protocol_version = 3;    // gRPC protocol version
+  string python_version = 4;      // Python runtime version
+  string build_timestamp = 5;     // Service build timestamp
+  string git_commit = 6;          // Git commit hash
+} 

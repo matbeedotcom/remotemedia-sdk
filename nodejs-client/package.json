@@ -1,0 +1,76 @@
+{
+  "name": "@remotemedia/nodejs-client",
+  "version": "0.1.0",
+  "description": "Node.js/TypeScript client for RemoteMedia Processing SDK",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prebuild": "npm run clean",
+    "prepare": "npm run build",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src/**/*.ts",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "generate-types": "node generate-typescript-types.js",
+    "generate-types:watch": "nodemon generate-typescript-types.js",
+    "example": "ts-node examples/basic-usage.ts",
+    "example:sentiment": "ts-node examples/sentiment-analysis.ts",
+    "example:pipeline": "ts-node examples/pipeline-processing.ts",
+    "test:audio-stream": "node test-audio-stream.js",
+    "test:transcription-stream": "node test-transcription-stream.js",
+    "test:webrtc-stream": "node test-webrtc-pipeline-stream.js",
+    "test:working-stream": "node test-working-stream.js",
+    "test:core-stream": "node test-core-audio-stream.js",
+    "test:direct-stream": "node test-direct-audio-stream.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/remotemedia/nodejs-client.git"
+  },
+  "keywords": [
+    "remotemedia",
+    "grpc",
+    "client",
+    "distributed",
+    "processing",
+    "audio",
+    "video",
+    "ml",
+    "transformers"
+  ],
+  "author": "RemoteMedia Team",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@grpc/grpc-js": "^1.9.0",
+    "@grpc/proto-loader": "^0.7.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "eslint-config-prettier": "^9.0.0",
+    "jest": "^29.5.0",
+    "nodemon": "^3.0.0",
+    "prettier": "^3.0.0",
+    "ts-jest": "^29.1.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

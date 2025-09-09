@@ -1,0 +1,578 @@
+syntax = "proto3";
+
+package remotemedia.execution;
+
+import "types.proto";
+
+// Remote Execution Service
+// Provides secure, sandboxed execution of processing nodes
+service RemoteExecutionService {
+  // Execute a predefined SDK node
+  rpc ExecuteNode(ExecuteNodeRequest) returns (ExecuteNodeResponse);
+  
+  // Execute user-defined code (Phase 3)
+  rpc ExecuteCustomTask(ExecuteCustomTaskRequest) returns (ExecuteCustomTaskResponse);
+  
+  // Bidirectional streaming for real-time processing
+  rpc StreamNode(stream StreamData) returns (stream StreamData);
+  
+  // Bidirectional streaming for serialized objects
+  rpc StreamObject(stream StreamObjectRequest) returns (stream StreamObjectResponse);
+  
+  // Execute a method on a serialized object
+  rpc ExecuteObjectMethod(ExecuteObjectMethodRequest) returns (ExecuteObjectMethodResponse);
+  
+  // Get service status and health information
+  rpc GetStatus(StatusRequest) returns (StatusResponse);
+  
+  // List available SDK nodes
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  
+  // Generator streaming support
+  rpc InitGenerator(InitGeneratorRequest) returns (InitGeneratorResponse);
+  rpc GetNextBatch(GetNextBatchRequest) returns (GetNextBatchResponse);
+  rpc CloseGenerator(CloseGeneratorRequest) returns (CloseGeneratorResponse);
+  
+  // Export TypeScript interface definitions
+  rpc ExportTypeScriptDefinitions(ExportTypeScriptRequest) returns (ExportTypeScriptResponse);
+  
+  // Pipeline management services
+  rpc RegisterPipeline(RegisterPipelineRequest) returns (RegisterPipelineResponse);
+  rpc UnregisterPipeline(UnregisterPipelineRequest) returns (UnregisterPipelineResponse);
+  rpc ListPipelines(ListPipelinesRequest) returns (ListPipelinesResponse);
+  rpc GetPipelineInfo(GetPipelineInfoRequest) returns (GetPipelineInfoResponse);
+  rpc ExecutePipeline(ExecutePipelineRequest) returns (ExecutePipelineResponse);
+  rpc StreamPipeline(stream StreamPipelineRequest) returns (stream StreamPipelineResponse);
+  
+  // Persistence operations
+  rpc SavePipeline(SavePipelineRequest) returns (SavePipelineResponse);
+  rpc LoadPipeline(LoadPipelineRequest) returns (LoadPipelineResponse);
+  rpc ListStoredPipelines(ListStoredPipelinesRequest) returns (ListStoredPipelinesResponse);
+  rpc ClonePipeline(ClonePipelineRequest) returns (ClonePipelineResponse);
+  
+  // Node persistence operations
+  rpc SaveNode(SaveNodeRequest) returns (SaveNodeResponse);
+  rpc LoadNode(LoadNodeRequest) returns (LoadNodeResponse);
+  rpc ListStoredNodes(ListStoredNodesRequest) returns (ListStoredNodesResponse);
+}
+
+// Execute SDK Node Request
+message ExecuteNodeRequest {
+  string node_type = 1;           // Type of SDK node (e.g., "AudioTransform")
+  map<string, string> config = 2; // Node configuration parameters
+  bytes input_data = 3;           // Serialized input data
+  string serialization_format = 4; // Format used for serialization (json, pickle)
+  ExecutionOptions options = 5;    // Execution options
+}
+
+// Execute SDK Node Response
+message ExecuteNodeResponse {
+  ExecutionStatus status = 1;     // Execution status
+  bytes output_data = 2;          // Serialized output data
+  string error_message = 3;       // Error message if execution failed
+  string error_traceback = 4;     // Full error traceback for debugging
+  ExecutionMetrics metrics = 5;   // Execution performance metrics
+}
+
+// Execute Custom Task Request (Phase 3)
+message ExecuteCustomTaskRequest {
+  bytes code_package = 1;         // Packaged user code (zip archive)
+  string entry_point = 2;         // Entry point function/method
+  bytes input_data = 3;           // Serialized input data
+  string serialization_format = 4; // Format used for serialization
+  repeated string dependencies = 5; // Required Python packages
+  ExecutionOptions options = 6;    // Execution options
+}
+
+// Execute Custom Task Response (Phase 3)
+message ExecuteCustomTaskResponse {
+  ExecutionStatus status = 1;     // Execution status
+  bytes output_data = 2;          // Serialized output data
+  string error_message = 3;       // Error message if execution failed
+  string error_traceback = 4;     // Full error traceback for debugging
+  ExecutionMetrics metrics = 5;   // Execution performance metrics
+  repeated string installed_deps = 6; // Successfully installed dependencies
+}
+
+// Data packet for bidirectional streaming
+message StreamData {
+  // The first message from the client MUST set the init field.
+  // Subsequent messages should only set the data field.
+  oneof payload {
+    StreamInit init = 1;
+    bytes data = 2;
+  }
+  
+  // This can be used by the server to send back errors.
+  string error_message = 10;
+}
+
+// Message to initialize a streaming session
+message StreamInit {
+  string node_type = 1;             // The type of node to execute (e.g., "AudioTransform")
+  map<string, string> config = 2;   // The configuration for the node
+  string serialization_format = 3;   // The serialization format to use
+}
+
+// Request for streaming a serialized object
+message StreamObjectRequest {
+  oneof payload {
+    StreamObjectInit init = 1;
+    bytes data = 2;
+  }
+}
+
+// Response for streaming a serialized object
+message StreamObjectResponse {
+  oneof payload {
+    bytes data = 1;
+    string error = 2;
+  }
+}
+
+// Message to initialize a serialized object streaming session
+message StreamObjectInit {
+  oneof object_specifier {
+    bytes code_package = 1;           // Packaged user code (zip archive)
+    string session_id = 2;            // Session ID for existing objects
+  }
+  map<string, string> config = 3;     // The configuration for the node
+  string serialization_format = 4;    // The serialization format for data payloads
+  repeated string dependencies = 5;   // Required Python packages
+}
+
+// Request to execute a method on a serialized object
+message ExecuteObjectMethodRequest {
+    oneof object_specifier {
+        bytes code_package = 1; // Used for the first call to initialize the session
+        string session_id = 2;   // Used for subsequent calls
+    }
+    map<string, string> config = 3;
+    string serialization_format = 4;
+    string method_name = 5;
+    bytes method_args_data = 6; // Serialized arguments
+    bytes method_kwargs_data = 7; // Serialized keyword arguments
+    repeated string dependencies = 8; // Required Python packages
+}
+
+// Response from executing a method on a serialized object
+message ExecuteObjectMethodResponse {
+    ExecutionStatus status = 1;
+    bytes result_data = 2; // Serialized result
+    string error_message = 3;
+    string error_traceback = 4;
+    string session_id = 5; // Returned on the first call, confirms the session
+}
+
+// Streaming session close response
+message StreamCloseResponse {
+  string session_id = 1;          // Session identifier
+  ExecutionMetrics total_metrics = 2; // Total session metrics
+}
+
+// Service status request
+message StatusRequest {
+  bool include_metrics = 1;       // Include performance metrics
+  bool include_sessions = 2;      // Include active session info
+}
+
+// Service status response
+message StatusResponse {
+  ServiceStatus status = 1;       // Overall service status
+  ServiceMetrics metrics = 2;     // Service performance metrics
+  repeated SessionInfo active_sessions = 3; // Active streaming sessions
+  string version = 4;             // Service version
+  int64 uptime_seconds = 5;       // Service uptime in seconds
+}
+
+// List available nodes request
+message ListNodesRequest {
+  string category = 1;            // Filter by category (audio, video, transform)
+}
+
+// List available nodes response
+message ListNodesResponse {
+  repeated NodeInfo available_nodes = 1; // Available SDK nodes
+}
+
+// Information about an available node
+message NodeInfo {
+  string node_type = 1;           // Node type identifier
+  string category = 2;            // Node category
+  string description = 3;         // Node description
+  repeated ParameterInfo parameters = 4; // Configuration parameters
+}
+
+// Parameter information for a node
+message ParameterInfo {
+  string name = 1;                // Parameter name
+  string type = 2;                // Parameter type
+  string description = 3;         // Parameter description
+  bool required = 4;              // Whether parameter is required
+  string default_value = 5;       // Default value (if any)
+  string source_class = 6;        // Class that defined this parameter
+}
+
+// Information about an active session
+message SessionInfo {
+  string session_id = 1;          // Session identifier
+  string node_type = 2;           // Node type being executed
+  int64 created_timestamp = 3;    // Session creation time
+  int64 last_activity = 4;        // Last activity timestamp
+  int32 processed_items = 5;      // Number of items processed
+}
+
+// Generator streaming messages
+message InitGeneratorRequest {
+  string session_id = 1;           // Object session ID
+  string method_name = 2;          // Generator method name
+  bytes method_args_data = 3;      // Serialized arguments
+  string serialization_format = 4;
+  bytes method_kwargs_data = 5;    // Serialized keyword arguments
+}
+
+message InitGeneratorResponse {
+  ExecutionStatus status = 1;
+  string generator_id = 2;         // Unique generator session ID
+  string error_message = 3;
+}
+
+message GetNextBatchRequest {
+  string generator_id = 1;         // Generator session ID
+  int32 batch_size = 2;           // Number of items to fetch
+  string serialization_format = 3;
+}
+
+message GetNextBatchResponse {
+  ExecutionStatus status = 1;
+  repeated bytes items = 2;        // Serialized items
+  bool has_more = 3;              // More items available
+  string error_message = 4;
+}
+
+message CloseGeneratorRequest {
+  string generator_id = 1;
+}
+
+message CloseGeneratorResponse {
+  ExecutionStatus status = 1;
+}
+
+// TypeScript definitions export request
+message ExportTypeScriptRequest {
+  bool include_node_configs = 1;   // Include specific node configuration interfaces
+  bool include_examples = 2;       // Include usage examples
+}
+
+// TypeScript definitions export response
+message ExportTypeScriptResponse {
+  ExecutionStatus status = 1;
+  string typescript_definitions = 2; // Generated TypeScript interface definitions
+  string error_message = 3;
+  string version = 4;               // Service version used for generation
+}
+
+// Pipeline management messages
+
+// Pipeline definition structure
+message PipelineDefinition {
+  string name = 1;
+  repeated NodeDefinition nodes = 2;
+  repeated PipelineConnection connections = 3;
+  map<string, string> config = 4;
+  map<string, string> metadata = 5;
+}
+
+// Node definition within a pipeline
+message NodeDefinition {
+  string node_id = 1;
+  string node_type = 2;
+  map<string, string> config = 3;
+  bool is_remote = 4;
+  string remote_endpoint = 5;
+  bool is_streaming = 6;
+  bool is_source = 7;
+  bool is_sink = 8;
+}
+
+// Connection between nodes
+message PipelineConnection {
+  string from_node = 1;
+  string to_node = 2;
+  string output_port = 3;
+  string input_port = 4;
+}
+
+// Register a pipeline
+message RegisterPipelineRequest {
+  string pipeline_name = 1;
+  PipelineDefinition definition = 2;
+  map<string, string> metadata = 3;
+  string owner_id = 4;
+  string access_level = 5;  // "private", "public", "readonly", "team"
+  bool persist = 6;
+  repeated string dependencies = 7;
+  bool auto_export = 8;  // Automatically export to TypeScript
+}
+
+message RegisterPipelineResponse {
+  ExecutionStatus status = 1;
+  string pipeline_id = 2;
+  string error_message = 3;
+  int64 registered_timestamp = 4;
+}
+
+// Unregister a pipeline
+message UnregisterPipelineRequest {
+  string pipeline_id = 1;
+}
+
+message UnregisterPipelineResponse {
+  ExecutionStatus status = 1;
+  string error_message = 2;
+}
+
+// List registered pipelines
+message ListPipelinesRequest {
+  string category = 1;  // Filter by category
+  bool include_definitions = 2;
+}
+
+message ListPipelinesResponse {
+  repeated PipelineInfo pipelines = 1;
+}
+
+message PipelineInfo {
+  string pipeline_id = 1;
+  string name = 2;
+  string category = 3;
+  string description = 4;
+  int64 registered_timestamp = 5;
+  int32 usage_count = 6;
+  PipelineDefinition definition = 7;  // Only included if requested
+  map<string, string> metadata = 8;
+}
+
+// Get detailed pipeline information
+message GetPipelineInfoRequest {
+  string pipeline_id = 1;
+  bool include_definition = 2;
+  bool include_metrics = 3;
+}
+
+message GetPipelineInfoResponse {
+  ExecutionStatus status = 1;
+  PipelineInfo pipeline_info = 2;
+  PipelineMetrics metrics = 3;
+  string error_message = 4;
+}
+
+message PipelineMetrics {
+  int64 total_executions = 1;
+  int64 total_errors = 2;
+  double average_execution_time_ms = 3;
+  int64 last_execution_timestamp = 4;
+}
+
+// Execute a pipeline
+message ExecutePipelineRequest {
+  string pipeline_id = 1;
+  bytes input_data = 2;
+  string serialization_format = 3;
+  ExecutionOptions options = 4;
+  map<string, string> runtime_config = 5;  // Override node configs at runtime
+}
+
+message ExecutePipelineResponse {
+  ExecutionStatus status = 1;
+  bytes output_data = 2;
+  string error_message = 3;
+  string error_traceback = 4;
+  ExecutionMetrics metrics = 5;
+  string execution_id = 6;
+}
+
+// Stream data through a pipeline
+message StreamPipelineRequest {
+  oneof payload {
+    StreamPipelineInit init = 1;
+    bytes data = 2;
+    StreamControl control = 3;
+  }
+}
+
+message StreamPipelineResponse {
+  oneof payload {
+    StreamPipelineAck ack = 1;
+    bytes data = 2;
+    string error = 3;
+    StreamPipelineStatus status = 4;
+  }
+}
+
+message StreamPipelineInit {
+  string pipeline_id = 1;
+  string serialization_format = 2;
+  map<string, string> runtime_config = 3;
+  bool bidirectional = 4;  // Support bidirectional streaming
+}
+
+message StreamPipelineAck {
+  string session_id = 1;
+  bool ready = 2;
+}
+
+message StreamControl {
+  enum ControlType {
+    PAUSE = 0;
+    RESUME = 1;
+    FLUSH = 2;
+    CLOSE = 3;
+  }
+  ControlType type = 1;
+}
+
+message StreamPipelineStatus {
+  string session_id = 1;
+  int64 items_processed = 2;
+  int64 bytes_processed = 3;
+  bool is_active = 4;
+}
+
+// Persistence-related messages
+
+// Save a pipeline to persistent storage
+message SavePipelineRequest {
+  string pipeline_id = 1;
+  string owner_id = 2;
+  string access_level = 3;
+  bool persist_nodes = 4;
+}
+
+message SavePipelineResponse {
+  ExecutionStatus status = 1;
+  string stored_id = 2;
+  string error_message = 3;
+}
+
+// Load a pipeline from persistent storage
+message LoadPipelineRequest {
+  string stored_id = 1;
+  string user_id = 2;
+}
+
+message LoadPipelineResponse {
+  ExecutionStatus status = 1;
+  string pipeline_id = 2;
+  PipelineDefinition definition = 3;
+  map<string, string> metadata = 4;
+  string error_message = 5;
+}
+
+// List stored pipelines
+message ListStoredPipelinesRequest {
+  string user_id = 1;
+  string owner_id = 2;
+  string access_level = 3;
+  repeated string tags = 4;
+  bool templates_only = 5;
+  int32 limit = 6;
+  int32 offset = 7;
+}
+
+message ListStoredPipelinesResponse {
+  repeated StoredPipelineInfo pipelines = 1;
+  int32 total_count = 2;
+}
+
+message StoredPipelineInfo {
+  string id = 1;
+  string name = 2;
+  string owner_id = 3;
+  string access_level = 4;
+  string description = 5;
+  repeated string tags = 6;
+  string created_at = 7;
+  string updated_at = 8;
+  int32 version = 9;
+  bool is_template = 10;
+}
+
+// Clone a pipeline
+message ClonePipelineRequest {
+  string pipeline_id = 1;
+  string user_id = 2;
+  string new_name = 3;
+  bool clone_nodes = 4;
+}
+
+message ClonePipelineResponse {
+  ExecutionStatus status = 1;
+  string new_pipeline_id = 2;
+  string error_message = 3;
+}
+
+// Node persistence operations
+
+// Save a node to persistent storage
+message SaveNodeRequest {
+  string name = 1;
+  string node_type = 2;
+  map<string, string> config = 3;
+  string owner_id = 4;
+  string access_level = 5;
+  string description = 6;
+  repeated string tags = 7;
+  bool is_template = 8;
+}
+
+message SaveNodeResponse {
+  ExecutionStatus status = 1;
+  string node_id = 2;
+  string error_message = 3;
+}
+
+// Load a node from persistent storage
+message LoadNodeRequest {
+  string node_id = 1;
+  string user_id = 2;
+}
+
+message LoadNodeResponse {
+  ExecutionStatus status = 1;
+  string node_type = 2;
+  map<string, string> config = 3;
+  map<string, string> metadata = 4;
+  string error_message = 5;
+}
+
+// List stored nodes
+message ListStoredNodesRequest {
+  string user_id = 1;
+  string owner_id = 2;
+  string node_type = 3;
+  string access_level = 4;
+  repeated string tags = 5;
+  bool templates_only = 6;
+  int32 limit = 7;
+  int32 offset = 8;
+}
+
+message ListStoredNodesResponse {
+  repeated StoredNodeInfo nodes = 1;
+  int32 total_count = 2;
+}
+
+message StoredNodeInfo {
+  string id = 1;
+  string name = 2;
+  string node_type = 3;
+  string owner_id = 4;
+  string access_level = 5;
+  string description = 6;
+  repeated string tags = 7;
+  string created_at = 8;
+  string updated_at = 9;
+  int32 version = 10;
+  bool is_template = 11;
+} 

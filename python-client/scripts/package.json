@@ -1,0 +1,25 @@
+{
+  "name": "remotemedia-typescript-generator",
+  "version": "1.0.0",
+  "description": "TypeScript type generator for RemoteMedia Processing SDK",
+  "main": "generate-typescript-types.js",
+  "scripts": {
+    "generate": "node generate-typescript-types.js",
+    "generate:watch": "nodemon generate-typescript-types.js"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.9.0",
+    "@grpc/proto-loader": "^0.7.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  },
+  "bin": {
+    "generate-remotemedia-types": "./generate-typescript-types.js"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "author": "RemoteMedia SDK",
+  "license": "MIT"
+}

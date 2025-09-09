@@ -1,0 +1,133 @@
+services:
+  # Remote Execution Service
+  remote-service:
+    build:
+      context: ..
+      dockerfile: remote_service/Dockerfile
+      args:
+        USER_UID: ${USER_UID:-1000}
+        USER_GID: ${USER_GID:-1000}
+    container_name: remotemedia-service
+    ports:
+      - "${GRPC_PORT:-50051}:${GRPC_PORT:-50051}"  # gRPC port
+      - "${METRICS_PORT:-8080}:${METRICS_PORT:-8080}"    # Metrics/health port
+    environment:
+      - GRPC_PORT=50051
+      - LOG_LEVEL=DEBUG
+      - SANDBOX_ENABLED=true
+      - MAX_WORKERS=4
+      - SANDBOX_TYPE=bubblewrap
+      - METRICS_PORT=8080
+      # ML model cache configuration
+      - HF_HOME=/home/remotemedia/.cache/huggingface
+      - TRANSFORMERS_CACHE=/home/remotemedia/.cache/huggingface
+      - TORCH_HOME=/home/remotemedia/.cache/torch
+      - TORCH_CACHE=/home/remotemedia/.cache/torch
+      - REMOTEMEDIA_CACHE_DIR=/app/cache/models
+      # Hugging Face token for model downloads
+      - HF_TOKEN=${HF_TOKEN}
+      - HUGGINGFACEHUB_API_TOKEN=${HF_TOKEN}
+    volumes:
+      # Mount logs for debugging
+      - ./remote_service/logs:/app/logs
+      # Mount config for development
+      - ./remote_service/config:/app/config:ro
+      # Mount source for development (comment out for production)
+      # - ./remote_service/src:/app/src:ro
+      # Model cache directories - choose one option:
+      # Option 1: Docker volumes (recommended for production)
+      - ml_model_cache:/app/cache/models
+      - huggingface_cache:/home/remotemedia/.cache/huggingface
+      - torch_cache:/home/remotemedia/.cache/torch
+      # Option 2: Host directories (uncomment to use local directories)
+      # - ./cache/models:/app/cache/models
+      # - ./cache/huggingface:/home/remotemedia/.cache/huggingface
+      # - ./cache/torch:/home/remotemedia/.cache/torch
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "/app/src/health_check.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    # Security settings
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_PTRACE  # Required for some sandboxing operations
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 8G
+        reservations:
+          cpus: '1.0'
+          memory: 4G
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Prometheus for metrics collection (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: remotemedia-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./remote_service/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  # Grafana for metrics visualization (optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: remotemedia-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./remote_service/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./remote_service/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  # Redis for session management (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: remotemedia-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    profiles:
+      - session-store
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  redis_data:
+  # ML model cache volumes
+  ml_model_cache:
+  huggingface_cache:
+  torch_cache:
+
+networks:
+  default:
+    name: remotemedia-network 
