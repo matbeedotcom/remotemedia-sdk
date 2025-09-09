@@ -27,15 +27,15 @@ def read_requirements(filename):
 setup(
     name="remotemedia",
     version="0.1.0",
-    author="RemoteMedia Team",
-    author_email="team@remotemedia.dev",
+    author="Mathieu Gosbee",
+    author_email="mail@matbee.com",
     description=(
         "A Python SDK for distributed audio/video/data processing "
         "with remote offloading"
     ),
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/remotemedia/remotemedia-sdk",
+    url="https://github.com/matbeeDOTcom/remotemedia-sdk",
     packages=find_packages(include=['remotemedia*', 'remote_service*']),
     classifiers=[
         "Development Status :: 3 - Alpha",

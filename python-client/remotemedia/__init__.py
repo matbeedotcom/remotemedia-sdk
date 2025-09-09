@@ -6,8 +6,8 @@ with transparent remote offloading capabilities.
 """
 
 __version__ = "0.1.0"
-__author__ = "RemoteMedia Team"
-__email__ = "team@remotemedia.dev"
+__author__ = "Mathieu Gosbee"
+__email__ = "mail@matbee.com"
 
 # Core imports
 from .core.pipeline import Pipeline

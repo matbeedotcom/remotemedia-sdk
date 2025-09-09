@@ -526,5 +526,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 - 📚 [Documentation](https://docs.remotemedia.io)
 - 💬 [Discord Community](https://discord.gg/remotemedia)
-- 🐛 [Issue Tracker](https://github.com/remotemedia/nodejs-client/issues)
+- 🐛 [Issue Tracker](https://github.com/matbeeDOTcom/remotemedia-sdk.git)
 - 📧 [Email Support](mailto:support@remotemedia.io)
