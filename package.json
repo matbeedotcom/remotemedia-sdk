@@ -1,0 +1,20 @@
+{
+  "name": "remotemedia-monorepo",
+  "version": "0.1.0",
+  "description": "RemoteMedia Processing SDK monorepo",
+  "private": true,
+  "workspaces": [
+    "nodejs-client"
+  ],
+  "scripts": {
+    "install:nodejs": "npm install ./nodejs-client",
+    "build:nodejs": "cd nodejs-client && npm run build",
+    "test:nodejs": "cd nodejs-client && npm test"
+  },
+  "devDependencies": {
+    "npm": "^10.0.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
