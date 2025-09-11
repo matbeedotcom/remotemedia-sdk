@@ -28,10 +28,8 @@ import grpc
 from grpc_health.v1 import health_pb2_grpc
 from grpc_health.v1.health_pb2 import HealthCheckResponse
 
-# Import generated gRPC code
-import execution_pb2
-import execution_pb2_grpc
-import types_pb2
+# Import generated gRPC code from remotemedia.protos
+from remotemedia.protos import execution_pb2, execution_pb2_grpc, types_pb2
 import zipfile
 import io
 import tempfile

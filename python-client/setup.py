@@ -25,7 +25,7 @@ def read_requirements(filename):
 
 
 setup(
-    name="remotemedia",
+    name="remotemedia-client",
     version="0.1.0",
     author="Mathieu Gosbee",
     author_email="mail@matbee.com",
@@ -36,7 +36,8 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/matbeeDOTcom/remotemedia-sdk",
-    packages=find_packages(include=['remotemedia*', 'remote_service*']),
+    packages=["remotemedia.client"] + ["remotemedia.client." + p for p in find_packages(where="remotemedia")],
+    package_dir={"remotemedia.client": "remotemedia"},
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
@@ -65,7 +66,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "remotemedia=remotemedia.cli:main",
+            "remotemedia-cli=remotemedia.client.cli:main",
         ],
     },
     include_package_data=True,

@@ -16,19 +16,9 @@ from ..core.node import RemoteExecutorConfig
 from ..serialization import JSONSerializer, PickleSerializer
 from ..packaging.code_packager import CodePackager
 
-# These will be generated from the proto files
+# Import proto files from remotemedia.protos
 try:
-    import sys
-    from pathlib import Path
-    
-    # Add the remote_service/src directory to the path to find the generated gRPC files
-    remote_service_src = Path(__file__).parent.parent.parent / "remote_service" / "src"
-    if remote_service_src.exists():
-        sys.path.insert(0, str(remote_service_src))
-    
-    import execution_pb2
-    import execution_pb2_grpc
-    import types_pb2
+    from remotemedia.protos import execution_pb2, execution_pb2_grpc, types_pb2
 except ImportError:
     # Fallback for development when proto files aren't generated yet
     execution_pb2 = None

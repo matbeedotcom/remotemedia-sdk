@@ -42,7 +42,8 @@ from .server import RemoteExecutionServicer, HealthServicer
 from .config import ServiceConfig
 from remotemedia.core.node import Node
 from remotemedia.core.pipeline import Pipeline
-import execution_pb2_grpc
+# Import from remotemedia.protos
+from remotemedia.protos import execution_pb2_grpc
 
 
 class CustomComponentRegistry:

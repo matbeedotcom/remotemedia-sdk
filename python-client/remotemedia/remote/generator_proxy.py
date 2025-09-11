@@ -9,14 +9,8 @@ import logging
 from remotemedia.remote.client import RemoteExecutionClient
 from remotemedia.serialization import PickleSerializer, JSONSerializer
 
-# Import from the remote service src directory where proto files are generated
-import sys
-import os
-proto_path = os.path.join(os.path.dirname(__file__), '../../remote_service/src')
-if proto_path not in sys.path:
-    sys.path.insert(0, proto_path)
-import execution_pb2
-import types_pb2
+# Import proto files from remotemedia.protos
+from remotemedia.protos import execution_pb2, types_pb2
 
 logger = logging.getLogger(__name__)
 
