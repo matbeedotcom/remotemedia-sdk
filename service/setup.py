@@ -69,7 +69,6 @@ setup(
         "structlog>=22.0.0",
         "asyncio-mqtt>=0.11.0",
         "aiohttp-cors>=0.7.0",
-        "prometheus-client>=0.15.0",
         "librosa>=0.11.0",
     ],
     extras_require={

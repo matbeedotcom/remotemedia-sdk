@@ -24,9 +24,6 @@ structlog>=22.0.0
 asyncio-mqtt>=0.11.0
 aiohttp-cors>=0.7.0
 
-# Monitoring and metrics
-prometheus-client>=0.15.0
-
 # SDK dependencies are now installed via the remotemedia package
 # which is installed directly from source in the Dockerfile
 
