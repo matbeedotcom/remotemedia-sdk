@@ -5,15 +5,13 @@ Pipeline class for managing sequences of processing nodes.
 from typing import Any, List, Optional, Dict, Iterator, AsyncGenerator
 import logging
 import time
-from contextlib import contextmanager
 from contextlib import asynccontextmanager
 import asyncio
-from inspect import isasyncgen
 import inspect
 from concurrent.futures import ThreadPoolExecutor
 
 from .node import Node
-from .exceptions import PipelineError, NodeError
+from .exceptions import PipelineError
 from .types import _SENTINEL
 
 logger = logging.getLogger(__name__)
@@ -65,9 +63,6 @@ class Pipeline:
         """
         if self._is_initialized:
             raise PipelineError("Cannot add nodes to an initialized pipeline")
-        
-        if not isinstance(node, Node):
-            raise PipelineError(f"Expected Node instance, got {type(node)}")
         
         self.nodes.append(node)
         self.logger.info(f"Added node '{node.name}' to pipeline '{self.name}'")
