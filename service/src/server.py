@@ -2017,7 +2017,7 @@ async def serve(custom_node_registry: Dict[str, type] = None, custom_executor: T
     # Set up graceful shutdown
     def signal_handler(signum, frame):
         logger.info(f"Received signal {signum}, shutting down...")
-        asyncio.create_task(server.stop(grace=10))
+        asyncio.create_task(server.stop(grace=2))
     
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)

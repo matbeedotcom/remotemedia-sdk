@@ -1,13 +1,13 @@
 services:
   # Remote Execution Service
-  remote-service:
+  remotemedia:
     build:
       context: ..
-      dockerfile: remote_service/Dockerfile
+      dockerfile: service/Dockerfile
       args:
         USER_UID: ${USER_UID:-1000}
         USER_GID: ${USER_GID:-1000}
-    container_name: remotemedia-service
+    container_name: execution-service
     ports:
       - "${GRPC_PORT:-50051}:${GRPC_PORT:-50051}" # gRPC port
       - "${METRICS_PORT:-8080}:${METRICS_PORT:-8080}" # Metrics/health port
@@ -29,11 +29,11 @@ services:
       - HUGGINGFACEHUB_API_TOKEN=${HF_TOKEN}
     volumes:
       # Mount logs for debugging
-      - ./remote_service/logs:/app/logs
+      - ./service/logs:/app/logs
       # Mount config for development
-      - ./remote_service/config:/app/config:ro
+      - ./service/config:/app/config:ro
       # Mount source for development (comment out for production)
-      # - ./remote_service/src:/app/src:ro
+      # - ./service/src:/app/src:ro
       # Model cache directories - choose one option:
       # Option 1: Docker volumes (recommended for production)
       - ml_model_cache:/app/cache/models

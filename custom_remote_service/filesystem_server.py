@@ -25,9 +25,9 @@ import logging
 import asyncio
 from pathlib import Path
 
-# Add the remote_service src directory to path
-# In a real deployment, this would be: from remote_media_processing.remote_service import serve
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "remote_media_processing" / "remote_service" / "src"))
+# Add the service src directory to path
+# In a real deployment, this would be: from remote_media_processing.service import serve
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "remote_media_processing" / "service" / "src"))
 
 from server import serve
 from discovery import create_discovery_server, list_discovered_components

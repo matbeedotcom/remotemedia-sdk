@@ -13,7 +13,7 @@ import sys
 import os
 
 # Add the remote service src directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "remote_service", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "service", "src"))
 
 import execution_pb2
 import execution_pb2_grpc

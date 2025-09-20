@@ -89,8 +89,8 @@ export class PipelineClient extends EventEmitter {
   async connect(): Promise<void> {
     // Use import.meta.url to get current file path in ES modules
     const currentDir = path.dirname(new URL(import.meta.url).pathname);
-    const protoPath = path.join(currentDir, '../../../remote_service/protos/execution.proto');
-    
+    const protoPath = path.join(currentDir, '../../../service/protos/execution.proto');
+
     const packageDefinition = protoLoader.loadSync(protoPath, {
       keepCase: true,
       longs: String,
@@ -100,7 +100,7 @@ export class PipelineClient extends EventEmitter {
     });
 
     const proto = grpc.loadPackageDefinition(packageDefinition) as any;
-    
+
     this.client = new proto.remotemedia.execution.RemoteExecutionService(
       `${this.host}:${this.port}`,
       this.credentials || grpc.credentials.createInsecure()
@@ -498,13 +498,13 @@ export class PipelineBuilder {
    */
   addNode(node: NodeDefinition): PipelineBuilder {
     this.definition.nodes.push(node);
-    
+
     // Auto-connect to previous node if linear pipeline
     if (this.definition.nodes.length > 1) {
       const prevNode = this.definition.nodes[this.definition.nodes.length - 2];
       this.connect(prevNode.nodeId, node.nodeId);
     }
-    
+
     return this;
   }
 

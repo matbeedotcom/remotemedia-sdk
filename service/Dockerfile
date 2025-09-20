@@ -11,6 +11,8 @@ FROM ubuntu:22.04 as builder
 # Build arguments
 ARG USER_UID=996
 ARG USER_GID=996
+ARG TARGETPLATFORM
+ARG TARGETARCH
 
 # Set non-interactive mode to prevent prompts
 ENV DEBIAN_FRONTEND=noninteractive
@@ -33,25 +35,39 @@ USER builduser
 WORKDIR /home/builduser
 
 # Copy requirements and install Python dependencies
-COPY --chown=builduser:builduser remote_service/requirements.txt .
+COPY --chown=builduser:builduser service/requirements.txt .
 RUN pip3 install --no-cache-dir --user -r requirements.txt
 
 # Copy remotemedia package source for installation with proper ownership
 COPY --chown=builduser:builduser remotemedia /home/builduser/remotemedia
-COPY --chown=builduser:builduser setup.py /home/builduser/setup.py
+COPY --chown=builduser:builduser remotemedia/setup.py /home/builduser/setup.py
 COPY --chown=builduser:builduser pyproject.toml /home/builduser/pyproject.toml
-COPY --chown=builduser:builduser README.md /home/builduser/README.md
-COPY --chown=builduser:builduser requirements-ml.txt /home/builduser/requirements-ml.txt
+COPY --chown=builduser:builduser remotemedia/README.md /home/builduser/README.md
+COPY --chown=builduser:builduser remotemedia/requirements-ml.txt /home/builduser/requirements-ml.txt
 
-# Install remotemedia package with ML extras (non-editable for proper deployment)
-RUN cd /home/builduser && pip3 install --no-cache-dir --user ".[ml]"
+# Install remotemedia package with ML extras only on amd64
+# On ARM64, install without ML extras to avoid CUDA dependencies
+ARG TARGETARCH
+RUN cd /home/builduser && \
+    echo "Building for architecture: ${TARGETARCH}" && \
+    if [ "${TARGETARCH}" = "amd64" ]; then \
+        echo "Installing with ML extras for amd64/x86_64" && \
+        pip3 install --no-cache-dir --user ".[ml]"; \
+    else \
+        echo "Installing without ML extras for ${TARGETARCH}" && \
+        pip3 install --no-cache-dir --user "."; \
+    fi
 
 # Copy proto files and generate gRPC code
-COPY --chown=builduser:builduser remote_service/protos/ ./protos/
+COPY --chown=builduser:builduser service/protos/ ./protos/
+# Create the remotemedia package structure for protos
+RUN mkdir -p remotemedia/protos && \
+    touch remotemedia/__init__.py && \
+    touch remotemedia/protos/__init__.py
 RUN python3 -m grpc_tools.protoc \
     --proto_path=protos \
-    --python_out=. \
-    --grpc_python_out=. \
+    --python_out=remotemedia/protos \
+    --grpc_python_out=remotemedia/protos \
     protos/*.proto
 
 # Runtime stage - minimal runtime environment
@@ -95,11 +111,11 @@ WORKDIR /app
 COPY --from=builder --chown=remotemedia:remotemedia /home/builduser/.local /home/remotemedia/.local
 
 # Copy generated gRPC code with proper ownership
-COPY --from=builder --chown=remotemedia:remotemedia /home/builduser/*.py /app/src/
+COPY --from=builder --chown=remotemedia:remotemedia /home/builduser/remotemedia /app/src/remotemedia
 
 # Copy application source code with proper ownership
-COPY --chown=remotemedia:remotemedia remote_service/src/ /app/src/
-COPY --chown=remotemedia:remotemedia remote_service/config/ /app/config/
+COPY --chown=remotemedia:remotemedia service/src/ /app/src/
+COPY --chown=remotemedia:remotemedia service/config/ /app/config/
 
 # Set up Python path
 ENV PYTHONPATH=/app/src:/home/remotemedia/.local/lib/python3.10/site-packages

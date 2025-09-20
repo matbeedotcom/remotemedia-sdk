@@ -296,7 +296,7 @@ async def main():
     
     print("\n⚠️  Prerequisites:")
     print("1. Ensure the remote execution server is running:")
-    print("   cd ../../remote_service")
+    print("   cd ../../service")
     print("   python src/server.py")
     
     # input("\nPress Enter to start the demonstrations...")

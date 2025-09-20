@@ -18,7 +18,7 @@ const GRPC_PORT = process.env.GRPC_PORT || 50052;
 const OUTPUT_DIR = process.env.OUTPUT_DIR || './generated-types';
 
 // Proto file paths - adjust these to your actual proto file locations
-const PROTO_PATH = path.join(__dirname, '../remote_service/protos/execution.proto');
+const PROTO_PATH = path.join(__dirname, '../service/protos/execution.proto');
 
 class TypeScriptGenerator {
   constructor() {

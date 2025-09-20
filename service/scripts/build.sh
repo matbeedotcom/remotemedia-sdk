@@ -51,7 +51,7 @@ echo -e "${YELLOW}Building Docker image...${NC}"
 cd ..
 docker build \
     -t "${IMAGE_NAME}:${IMAGE_TAG}" \
-    -f "remote_service/$DOCKERFILE" \
+    -f "service/$DOCKERFILE" \
     .
 
 if [ $? -eq 0 ]; then

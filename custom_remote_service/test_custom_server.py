@@ -17,8 +17,8 @@ import sys
 import json
 from pathlib import Path
 
-# Add the remote_service src directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "remote_media_processing" / "remote_service" / "src"))
+# Add the service src directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "remote_media_processing" / "service" / "src"))
 
 # For this test, we'll import the client components directly
 # In a real deployment, this would be: from remote_media_processing.remote import ...

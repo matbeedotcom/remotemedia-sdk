@@ -19,7 +19,7 @@ This creates a natural conversational flow with streaming audio output.
     $ sudo apt-get install espeak-ng
 
 3.  **Start the server:**
-    $ PYTHONPATH=. python remote_service/src/server.py
+    $ PYTHONPATH=. python service/src/server.py
 
 4.  **Run this script:**
     $ python examples/vad_ultravox_kokoro_streaming.py

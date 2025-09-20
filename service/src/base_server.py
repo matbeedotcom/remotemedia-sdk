@@ -7,7 +7,7 @@ by developers to create their own custom remote execution services.
 
 Usage:
 ```python
-from remote_media_processing.remote_service import BaseRemoteServer
+from remote_media_processing.service import BaseRemoteServer
 from my_custom_nodes import MyCustomNode
 from my_custom_pipelines import create_my_pipeline
 

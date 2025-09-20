@@ -25,11 +25,11 @@ if ! nc -z localhost 50052 2>/dev/null; then
     echo "❌ Remote server not running on localhost:50052"
     echo ""
     echo "Please start the server in another terminal:"
-    echo "  cd ../../remote_service"
+    echo "  cd ../../service"
     echo "  python src/server.py"
     echo ""
     echo "Or using Docker:"
-    echo "  cd ../../remote_service"
+    echo "  cd ../../service"
     echo "  docker-compose up"
     exit 1
 fi

@@ -48,7 +48,7 @@ echo -e "${YELLOW}🔍 Checking gRPC service connection...${NC}"
 if ! nc -z "$GRPC_HOST" "$GRPC_PORT" 2>/dev/null; then
     echo -e "${RED}❌ Cannot connect to gRPC service at $GRPC_HOST:$GRPC_PORT${NC}"
     echo -e "${YELLOW}💡 Make sure the RemoteMedia service is running:${NC}"
-    echo "   cd remote_service && docker-compose up"
+    echo "   cd service && docker-compose up"
     exit 1
 fi
 

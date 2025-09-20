@@ -24,7 +24,7 @@ audio and video streams through RemoteMedia pipelines in real-time.
     $ pip install -r requirements-ml.txt
 
 3.  **Start the remote service (if using remote nodes):**
-    $ PYTHONPATH=. python remote_service/src/server.py
+    $ PYTHONPATH=. python service/src/server.py
 
 4.  **Run the WebRTC server:**
     $ python examples/webrtc_pipeline_server.py

@@ -128,17 +128,17 @@ async def demo_streaming_service():
     async with RemoteProxyClient(config) as client:
         # Create a remote streaming service
         service = StreamingService(chunk_size=2048)
-        remote_service = await client.create_proxy(service)
+        service = await client.create_proxy(service)
         
         # Note: Current implementation materializes generators to lists
         print("\n1. Data Stream Generation (currently materialized):")
-        stream_data = await remote_service.generate_data_stream(5)
+        stream_data = await service.generate_data_stream(5)
         print(f"   Received {len(stream_data)} chunks")
         for chunk in stream_data[:2]:  # Show first 2 chunks
             print(f"   Chunk {chunk['chunk_id']}: {chunk['data']}")
         
         print("\n2. Async Stream Generation:")
-        async_stream = await remote_service.async_generate_stream(5)
+        async_stream = await service.async_generate_stream(5)
         print(f"   Received {len(async_stream)} async chunks")
         for chunk in async_stream[:2]:  # Show first 2 chunks
             print(f"   Chunk {chunk['chunk_id']}: value={chunk['value']:.4f}")
@@ -146,7 +146,7 @@ async def demo_streaming_service():
         # Process a stream
         print("\n3. Stream Processing:")
         input_data = ["Item A", "Item B", "Item C"]
-        processed = await remote_service.process_stream(input_data)
+        processed = await service.process_stream(input_data)
         print(f"   Processed {len(processed)} items")
         for item in processed:
             print(f"   {item['result']}")
@@ -163,45 +163,45 @@ async def demo_stateful_service():
     async with RemoteProxyClient(config) as client:
         # Create a remote stateful service
         service = StatefulService(service_id="demo-service-001")
-        remote_service = await client.create_proxy(service)
+        service = await client.create_proxy(service)
         
         # Set and get state
         print("\n1. State Management:")
-        await remote_service.set_state("user", "Alice")
-        await remote_service.set_state("session_id", "xyz123")
-        await remote_service.set_state("preferences", {"theme": "dark", "language": "en"})
+        await service.set_state("user", "Alice")
+        await service.set_state("session_id", "xyz123")
+        await service.set_state("preferences", {"theme": "dark", "language": "en"})
         
-        user = await remote_service.get_state("user")
-        prefs = await remote_service.get_state("preferences")
+        user = await service.get_state("user")
+        prefs = await service.get_state("preferences")
         print(f"   User: {user}")
         print(f"   Preferences: {prefs}")
         
         # Use counters
         print("\n2. Counter Operations:")
         for i in range(3):
-            count = await remote_service.increment_counter("api_calls")
+            count = await service.increment_counter("api_calls")
             print(f"   API calls: {count}")
         
         for i in range(2):
-            count = await remote_service.increment_counter("errors")
+            count = await service.increment_counter("errors")
             print(f"   Errors: {count}")
         
         # Lock/unlock operations
         print("\n3. Lock/Unlock Operations:")
-        locked = await remote_service.lock()
+        locked = await service.lock()
         print(f"   Lock acquired: {locked}")
         
         try:
-            await remote_service.set_state("locked_update", "should fail")
+            await service.set_state("locked_update", "should fail")
         except Exception as e:
             print(f"   Expected error when locked: {type(e).__name__}")
         
-        unlocked = await remote_service.unlock()
+        unlocked = await service.unlock()
         print(f"   Unlocked: {unlocked}")
         
         # Get service info
         print("\n4. Service Information:")
-        info = await remote_service.get_service_info()
+        info = await service.get_service_info()
         for key, value in info.items():
             print(f"   {key}: {value}")
 
@@ -270,7 +270,7 @@ async def main():
     
     print("\n⚠️  Prerequisites:")
     print("1. Ensure the remote execution server is running:")
-    print("   cd ../../remote_service")
+    print("   cd ../../service")
     print("   python src/server.py")
     print("\n2. Or use Docker:")
     print("   docker-compose up")

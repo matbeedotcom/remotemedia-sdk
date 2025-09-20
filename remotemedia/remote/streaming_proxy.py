@@ -9,10 +9,8 @@ import uuid
 from typing import Any, AsyncGenerator, Generator, Optional, Dict, List
 from functools import wraps
 
-from .client import RemoteExecutionClient
 from .proxy_client import RemoteProxyClient, RemoteProxy
 from ..core.node import RemoteExecutorConfig
-from ..core.exceptions import RemoteExecutionError
 
 logger = logging.getLogger(__name__)
 

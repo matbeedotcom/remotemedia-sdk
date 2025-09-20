@@ -20,9 +20,9 @@ import asyncio
 from pathlib import Path
 from typing import Dict, Any, List
 
-# Add the remote_service src directory to path so we can import the core components
+# Add the service src directory to path so we can import the core components
 # In a real deployment, this would be imported from the installed package
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "remote_media_processing" / "remote_service" / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "remote_media_processing" / "service" / "src"))
 
 from server import serve
 from executor import TaskExecutor

@@ -5,7 +5,7 @@ import warnings
 
 import execution_pb2 as execution__pb2
 
-GRPC_GENERATED_VERSION = '1.74.0'
+GRPC_GENERATED_VERSION = '1.73.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -120,6 +120,41 @@ class RemoteExecutionServiceStub(object):
                 '/remotemedia.execution.RemoteExecutionService/StreamPipeline',
                 request_serializer=execution__pb2.StreamPipelineRequest.SerializeToString,
                 response_deserializer=execution__pb2.StreamPipelineResponse.FromString,
+                _registered_method=True)
+        self.SavePipeline = channel.unary_unary(
+                '/remotemedia.execution.RemoteExecutionService/SavePipeline',
+                request_serializer=execution__pb2.SavePipelineRequest.SerializeToString,
+                response_deserializer=execution__pb2.SavePipelineResponse.FromString,
+                _registered_method=True)
+        self.LoadPipeline = channel.unary_unary(
+                '/remotemedia.execution.RemoteExecutionService/LoadPipeline',
+                request_serializer=execution__pb2.LoadPipelineRequest.SerializeToString,
+                response_deserializer=execution__pb2.LoadPipelineResponse.FromString,
+                _registered_method=True)
+        self.ListStoredPipelines = channel.unary_unary(
+                '/remotemedia.execution.RemoteExecutionService/ListStoredPipelines',
+                request_serializer=execution__pb2.ListStoredPipelinesRequest.SerializeToString,
+                response_deserializer=execution__pb2.ListStoredPipelinesResponse.FromString,
+                _registered_method=True)
+        self.ClonePipeline = channel.unary_unary(
+                '/remotemedia.execution.RemoteExecutionService/ClonePipeline',
+                request_serializer=execution__pb2.ClonePipelineRequest.SerializeToString,
+                response_deserializer=execution__pb2.ClonePipelineResponse.FromString,
+                _registered_method=True)
+        self.SaveNode = channel.unary_unary(
+                '/remotemedia.execution.RemoteExecutionService/SaveNode',
+                request_serializer=execution__pb2.SaveNodeRequest.SerializeToString,
+                response_deserializer=execution__pb2.SaveNodeResponse.FromString,
+                _registered_method=True)
+        self.LoadNode = channel.unary_unary(
+                '/remotemedia.execution.RemoteExecutionService/LoadNode',
+                request_serializer=execution__pb2.LoadNodeRequest.SerializeToString,
+                response_deserializer=execution__pb2.LoadNodeResponse.FromString,
+                _registered_method=True)
+        self.ListStoredNodes = channel.unary_unary(
+                '/remotemedia.execution.RemoteExecutionService/ListStoredNodes',
+                request_serializer=execution__pb2.ListStoredNodesRequest.SerializeToString,
+                response_deserializer=execution__pb2.ListStoredNodesResponse.FromString,
                 _registered_method=True)
 
 
@@ -240,6 +275,50 @@ class RemoteExecutionServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SavePipeline(self, request, context):
+        """Persistence operations
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def LoadPipeline(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListStoredPipelines(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ClonePipeline(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SaveNode(self, request, context):
+        """Node persistence operations
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def LoadNode(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListStoredNodes(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_RemoteExecutionServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -327,6 +406,41 @@ def add_RemoteExecutionServiceServicer_to_server(servicer, server):
                     servicer.StreamPipeline,
                     request_deserializer=execution__pb2.StreamPipelineRequest.FromString,
                     response_serializer=execution__pb2.StreamPipelineResponse.SerializeToString,
+            ),
+            'SavePipeline': grpc.unary_unary_rpc_method_handler(
+                    servicer.SavePipeline,
+                    request_deserializer=execution__pb2.SavePipelineRequest.FromString,
+                    response_serializer=execution__pb2.SavePipelineResponse.SerializeToString,
+            ),
+            'LoadPipeline': grpc.unary_unary_rpc_method_handler(
+                    servicer.LoadPipeline,
+                    request_deserializer=execution__pb2.LoadPipelineRequest.FromString,
+                    response_serializer=execution__pb2.LoadPipelineResponse.SerializeToString,
+            ),
+            'ListStoredPipelines': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListStoredPipelines,
+                    request_deserializer=execution__pb2.ListStoredPipelinesRequest.FromString,
+                    response_serializer=execution__pb2.ListStoredPipelinesResponse.SerializeToString,
+            ),
+            'ClonePipeline': grpc.unary_unary_rpc_method_handler(
+                    servicer.ClonePipeline,
+                    request_deserializer=execution__pb2.ClonePipelineRequest.FromString,
+                    response_serializer=execution__pb2.ClonePipelineResponse.SerializeToString,
+            ),
+            'SaveNode': grpc.unary_unary_rpc_method_handler(
+                    servicer.SaveNode,
+                    request_deserializer=execution__pb2.SaveNodeRequest.FromString,
+                    response_serializer=execution__pb2.SaveNodeResponse.SerializeToString,
+            ),
+            'LoadNode': grpc.unary_unary_rpc_method_handler(
+                    servicer.LoadNode,
+                    request_deserializer=execution__pb2.LoadNodeRequest.FromString,
+                    response_serializer=execution__pb2.LoadNodeResponse.SerializeToString,
+            ),
+            'ListStoredNodes': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListStoredNodes,
+                    request_deserializer=execution__pb2.ListStoredNodesRequest.FromString,
+                    response_serializer=execution__pb2.ListStoredNodesResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -790,6 +904,195 @@ class RemoteExecutionService(object):
             '/remotemedia.execution.RemoteExecutionService/StreamPipeline',
             execution__pb2.StreamPipelineRequest.SerializeToString,
             execution__pb2.StreamPipelineResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SavePipeline(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/remotemedia.execution.RemoteExecutionService/SavePipeline',
+            execution__pb2.SavePipelineRequest.SerializeToString,
+            execution__pb2.SavePipelineResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def LoadPipeline(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/remotemedia.execution.RemoteExecutionService/LoadPipeline',
+            execution__pb2.LoadPipelineRequest.SerializeToString,
+            execution__pb2.LoadPipelineResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListStoredPipelines(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/remotemedia.execution.RemoteExecutionService/ListStoredPipelines',
+            execution__pb2.ListStoredPipelinesRequest.SerializeToString,
+            execution__pb2.ListStoredPipelinesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ClonePipeline(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/remotemedia.execution.RemoteExecutionService/ClonePipeline',
+            execution__pb2.ClonePipelineRequest.SerializeToString,
+            execution__pb2.ClonePipelineResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SaveNode(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/remotemedia.execution.RemoteExecutionService/SaveNode',
+            execution__pb2.SaveNodeRequest.SerializeToString,
+            execution__pb2.SaveNodeResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def LoadNode(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/remotemedia.execution.RemoteExecutionService/LoadNode',
+            execution__pb2.LoadNodeRequest.SerializeToString,
+            execution__pb2.LoadNodeResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListStoredNodes(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/remotemedia.execution.RemoteExecutionService/ListStoredNodes',
+            execution__pb2.ListStoredNodesRequest.SerializeToString,
+            execution__pb2.ListStoredNodesResponse.FromString,
             options,
             channel_credentials,
             insecure,

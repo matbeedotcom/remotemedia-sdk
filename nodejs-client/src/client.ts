@@ -80,9 +80,9 @@ export class RemoteProxyClient {
       // Production: proto file bundled with the package
       path.join(__dirname, '../protos/execution.proto'),
       // Development: relative to the project root
-      path.join(__dirname, '../../remote_service/protos/execution.proto'),
+      path.join(__dirname, '../../service/protos/execution.proto'),
       // Alternative development path
-      path.join(__dirname, '../../../remote_service/protos/execution.proto')
+      path.join(__dirname, '../../../service/protos/execution.proto')
     ];
 
     // Find the first existing path

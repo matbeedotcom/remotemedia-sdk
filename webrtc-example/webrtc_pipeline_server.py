@@ -21,7 +21,7 @@ audio and video streams through RemoteMedia pipelines in real-time.
     $ pip install -r requirements-ml.txt
 
 3.  **Start the remote service (if using remote nodes):**
-    $ PYTHONPATH=. python remote_service/src/server.py
+    $ PYTHONPATH=. python service/src/server.py
 
 4.  **Run the WebRTC server:**
     $ python examples/webrtc_pipeline_server.py
@@ -153,20 +153,16 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from remotemedia.core.pipeline import Pipeline
-from remotemedia.core.node import RemoteExecutorConfig, Node
+from remotemedia.core.node import RemoteExecutorConfig
 from remotemedia.nodes.audio import AudioTransform, VoiceActivityDetector
 from remotemedia.nodes.ml import UltravoxNode
-from kokoro_tts import KokoroTTSNode
-from remotemedia.nodes.transform import TextTransformNode
+from examples.audio_examples.kokoro_tts import KokoroTTSNode
 from remotemedia.nodes.remote import RemoteObjectExecutionNode
-from remotemedia.nodes import PassThroughNode
 from remotemedia.webrtc import WebRTCServer, WebRTCConfig
-from vad_ultravox_nodes import (
-    VADTriggeredBuffer, UltravoxMinDurationWrapper, AudioOutputNode, 
-    TextLoggingNode, VADLoggingNode, UltravoxImmediateProcessor, MessageLoggingNode
+from webrtc_examples.vad_ultravox_nodes import (
+    VADTriggeredBuffer, 
+    TextLoggingNode, VADLoggingNode, MessageLoggingNode
 )
-import numpy as np
-from typing import AsyncGenerator, Any, Optional, Tuple
 
 # Configure logging
 logging.basicConfig(
