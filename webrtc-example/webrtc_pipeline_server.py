@@ -151,6 +151,8 @@ from pathlib import Path
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add examples directory to path for KokoroTTSNode
+sys.path.insert(0, str(Path(__file__).parent.parent / "examples" / "audio_examples"))
 
 from remotemedia.core.pipeline import Pipeline
 from remotemedia.core.node import RemoteExecutorConfig, Node
@@ -161,7 +163,7 @@ from remotemedia.nodes.transform import TextTransformNode
 from remotemedia.nodes.remote import RemoteObjectExecutionNode
 from remotemedia.nodes import PassThroughNode
 from remotemedia.webrtc import WebRTCServer, WebRTCConfig
-from vad_ultravox_nodes import (
+from webrtc_examples.vad_ultravox_nodes import (
     VADTriggeredBuffer, UltravoxMinDurationWrapper, AudioOutputNode, 
     TextLoggingNode, VADLoggingNode, UltravoxImmediateProcessor, MessageLoggingNode
 )

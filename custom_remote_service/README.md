@@ -206,3 +206,99 @@ services:
 The RemoteMedia Processing library now provides a **clean, production-ready extension mechanism** for custom remote services. No monkey patching, no core modifications - just clean, maintainable code that preserves all existing functionality while enabling powerful customization.
 
 Choose the approach that best fits your needs and start building! 🚀
+
+---
+
+## 🆕 Integrated Custom Server with Example Nodes
+
+The `custom_server.py` provides an enhanced server that automatically includes nodes from all example directories, making it perfect for running WebRTC examples and demos that depend on nodes like `KokoroTTSNode`.
+
+### Features
+
+- **Auto-discovery**: Automatically finds and loads nodes from configured paths
+- **YAML Configuration**: Easy configuration via `custom_nodes.yaml`
+- **Example Integration**: Includes nodes from `examples/audio_examples` and `webrtc-example`
+- **Production Ready**: Built on the base service with full gRPC support
+
+### Quick Start
+
+```bash
+# 1. Install dependencies including ML packages
+pip install -e "./python-client[ml]"
+pip install pyyaml
+
+# 2. Run the custom server
+python custom_remote_service/custom_server.py
+
+# 3. Server will automatically discover and register:
+#    - KokoroTTSNode (from examples/audio_examples)
+#    - WebRTC pipeline nodes (from webrtc-example/webrtc_examples)
+#    - Custom nodes (from custom_remote_service/nodes)
+```
+
+### Configuration (custom_nodes.yaml)
+
+```yaml
+enabled: true
+
+search_paths:
+  - "examples/audio_examples"         # KokoroTTSNode, etc.
+  - "custom_remote_service/nodes"     # Custom nodes
+  - "webrtc-example/webrtc_examples"  # WebRTC nodes
+
+# Optional: Only load specific nodes
+include_nodes: []
+
+# Optional: Exclude specific nodes
+exclude_nodes: []
+```
+
+### Using with WebRTC Examples
+
+The custom server makes WebRTC examples work seamlessly:
+
+```bash
+# Terminal 1: Start custom server with all nodes
+python custom_remote_service/custom_server.py
+
+# Terminal 2: Run WebRTC example (now finds KokoroTTSNode)
+python webrtc-example/webrtc_pipeline_server.py
+```
+
+### Adding Your Own Nodes
+
+1. Create your node in one of the search paths:
+
+```python
+# custom_remote_service/nodes/my_node.py
+from remotemedia.core.node import Node
+
+class MyAudioProcessor(Node):
+    async def process(self, data):
+        # Your processing logic
+        return processed_data
+```
+
+2. Restart the server - it will automatically discover and register `MyAudioProcessor`
+
+3. Use it from any client:
+
+```python
+result = await client.execute_node(
+    node_type="MyAudioProcessor",
+    input_data=audio_data
+)
+```
+
+### Command Line Options
+
+```bash
+python custom_remote_service/custom_server.py --help
+
+Options:
+  --host HOST      Host to bind to (default: 0.0.0.0)
+  --port PORT      Port to listen on (default: 50052)
+  --config PATH    Path to custom_nodes.yaml
+```
+
+This approach keeps the base `service/` clean and generic while providing a flexible way for end-users to extend functionality!

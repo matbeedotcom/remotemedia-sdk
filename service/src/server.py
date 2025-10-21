@@ -78,7 +78,13 @@ class ErrorHandler:
                 "model loading failed",
                 "checkpoint loading",
                 "HuggingFace",
-                "transformers.models"
+                "transformers.models",
+                "gated repo",
+                "401 Client Error",
+                "Access to model",
+                "is restricted",
+                "must have access",
+                "be authenticated"
             ],
             ErrorCategory.MEMORY_ERROR: [
                 "out of memory",
@@ -807,7 +813,13 @@ class RemoteExecutionServicer(execution_pb2_grpc.RemoteExecutionServiceServicer)
 
                 # Initialize object if it has an initialize method
                 if hasattr(obj, 'initialize') and callable(getattr(obj, 'initialize')):
-                    await obj.initialize()
+                    try:
+                        await obj.initialize()
+                    except Exception as init_error:
+                        # Log initialization error but don't crash
+                        self.logger.error(f"Failed to initialize object: {init_error}")
+                        # Re-raise to be caught by outer exception handler
+                        raise RuntimeError(f"Failed to initialize {obj.__class__.__name__}: {str(init_error)}") from init_error
 
             # Deserialize arguments
             serializer = PickleSerializer() if request.serialization_format == 'pickle' else JSONSerializer()

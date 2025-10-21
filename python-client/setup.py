@@ -36,8 +36,8 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/matbeeDOTcom/remotemedia-sdk",
-    packages=["remotemedia.client"] + ["remotemedia.client." + p for p in find_packages(where="remotemedia")],
-    package_dir={"remotemedia.client": "remotemedia"},
+    packages=find_packages(where=".", exclude=["tests", "tests.*"]),
+    package_dir={},
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
@@ -53,12 +53,13 @@ setup(
     ],
     python_requires=">=3.9",
     install_requires=[
-        "grpcio",
-        "grpcio-tools",
-        "protobuf",
-        "numpy",
-        "av",
-        "cloudpickle"
+        "remotemedia",
+        "grpcio>=1.50.0",
+        "grpcio-tools>=1.50.0",
+        "protobuf>=4.21.0",
+        "numpy>=1.21.0,<2.0",
+        "av>=14.0.0",
+        "cloudpickle>=2.2.0"
     ],
     extras_require={
         "dev": read_requirements("requirements-dev.txt"),

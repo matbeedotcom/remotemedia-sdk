@@ -1,0 +1,38 @@
+# Custom Node Configuration for RemoteMedia Service
+#
+# This file configures automatic discovery and loading of custom nodes.
+# Nodes from these paths will be automatically registered with the service.
+
+# Enable/disable custom node discovery
+enabled: true
+
+# List of directories to search for custom nodes
+# Paths can be absolute or relative to the project root
+search_paths:
+  # Example audio processing nodes (Kokoro TTS, etc.)
+  - "examples/audio_examples"
+
+  # Custom service nodes
+  - "custom_remote_service/nodes"
+
+  # WebRTC example nodes (VAD + Ultravox pipeline)
+  - "webrtc-example/webrtc_examples"
+
+  # Add your own custom node directories here
+  # - "/path/to/your/custom/nodes"
+
+# Optional: Specific nodes to load (if empty, loads all discovered nodes)
+# If specified, only these nodes will be loaded from the search paths
+include_nodes: []
+  # - "KokoroTTSNode"
+  # - "CustomAudioNode"
+
+# Optional: Nodes to exclude from loading
+exclude_nodes: []
+  # - "ExperimentalNode"
+  # - "DeprecatedNode"
+
+# Logging configuration for node discovery
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_discovery_details: true
