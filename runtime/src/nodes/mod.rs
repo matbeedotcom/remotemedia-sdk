@@ -126,6 +126,10 @@ impl Default for NodeRegistry {
         registry.register("Echo", || Box::new(EchoNode::new()));
         registry.register("CalculatorNode", || Box::new(CalculatorNode::new()));
 
+        // Register simple math nodes (Rust-native implementations)
+        registry.register("MultiplyNode", || Box::new(MultiplyNode::new()));
+        registry.register("AddNode", || Box::new(AddNode::new()));
+
         registry
     }
 }
@@ -292,6 +296,182 @@ impl NodeExecutor for CalculatorNode {
                 "Performs {} operation with operand {}",
                 self.operation, self.operand
             )),
+        }
+    }
+}
+
+// ============================================================================
+// Simple Math Nodes (optimized Rust implementations)
+// ============================================================================
+
+/// Multiply node - multiplies input by a factor
+#[derive(Debug)]
+pub struct MultiplyNode {
+    factor: f64,
+}
+
+impl MultiplyNode {
+    pub fn new() -> Self {
+        Self { factor: 2.0 }
+    }
+}
+
+#[async_trait]
+impl NodeExecutor for MultiplyNode {
+    async fn initialize(&mut self, context: &NodeContext) -> Result<()> {
+        // Extract factor from parameters
+        if let Some(factor) = context.params.get("factor") {
+            if let Some(f) = factor.as_f64() {
+                self.factor = f;
+            } else if let Some(i) = factor.as_i64() {
+                self.factor = i as f64;
+            }
+        }
+
+        tracing::debug!("MultiplyNode initialized with factor={}", self.factor);
+        Ok(())
+    }
+
+    async fn process(&mut self, input: Value) -> Result<Option<Value>> {
+        let output = match input {
+            // Handle single number
+            Value::Number(n) => {
+                let num = n.as_f64().unwrap_or(0.0);
+                let result = num * self.factor;
+
+                if result.fract() == 0.0 && result.abs() < (i64::MAX as f64) {
+                    Value::Number(serde_json::Number::from(result as i64))
+                } else {
+                    serde_json::Number::from_f64(result)
+                        .map(Value::Number)
+                        .unwrap_or(Value::Null)
+                }
+            }
+            // Handle array of numbers
+            Value::Array(arr) => {
+                let results: Vec<Value> = arr
+                    .into_iter()
+                    .map(|v| {
+                        if let Value::Number(n) = v {
+                            let num = n.as_f64().unwrap_or(0.0);
+                            let result = num * self.factor;
+
+                            if result.fract() == 0.0 && result.abs() < (i64::MAX as f64) {
+                                Value::Number(serde_json::Number::from(result as i64))
+                            } else {
+                                serde_json::Number::from_f64(result)
+                                    .map(Value::Number)
+                                    .unwrap_or(Value::Null)
+                            }
+                        } else {
+                            v // Pass through non-numeric values
+                        }
+                    })
+                    .collect();
+                Value::Array(results)
+            }
+            // Pass through other types unchanged
+            other => other,
+        };
+
+        Ok(Some(output))
+    }
+
+    async fn cleanup(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn info(&self) -> NodeInfo {
+        NodeInfo {
+            name: "MultiplyNode".to_string(),
+            version: "0.1.0".to_string(),
+            description: Some(format!("Multiplies input by {}", self.factor)),
+        }
+    }
+}
+
+/// Add node - adds a constant to input
+#[derive(Debug)]
+pub struct AddNode {
+    addend: f64,
+}
+
+impl AddNode {
+    pub fn new() -> Self {
+        Self { addend: 0.0 }
+    }
+}
+
+#[async_trait]
+impl NodeExecutor for AddNode {
+    async fn initialize(&mut self, context: &NodeContext) -> Result<()> {
+        // Extract addend from parameters
+        if let Some(addend) = context.params.get("addend") {
+            if let Some(a) = addend.as_f64() {
+                self.addend = a;
+            } else if let Some(i) = addend.as_i64() {
+                self.addend = i as f64;
+            }
+        }
+
+        tracing::debug!("AddNode initialized with addend={}", self.addend);
+        Ok(())
+    }
+
+    async fn process(&mut self, input: Value) -> Result<Option<Value>> {
+        let output = match input {
+            // Handle single number
+            Value::Number(n) => {
+                let num = n.as_f64().unwrap_or(0.0);
+                let result = num + self.addend;
+
+                if result.fract() == 0.0 && result.abs() < (i64::MAX as f64) {
+                    Value::Number(serde_json::Number::from(result as i64))
+                } else {
+                    serde_json::Number::from_f64(result)
+                        .map(Value::Number)
+                        .unwrap_or(Value::Null)
+                }
+            }
+            // Handle array of numbers
+            Value::Array(arr) => {
+                let results: Vec<Value> = arr
+                    .into_iter()
+                    .map(|v| {
+                        if let Value::Number(n) = v {
+                            let num = n.as_f64().unwrap_or(0.0);
+                            let result = num + self.addend;
+
+                            if result.fract() == 0.0 && result.abs() < (i64::MAX as f64) {
+                                Value::Number(serde_json::Number::from(result as i64))
+                            } else {
+                                serde_json::Number::from_f64(result)
+                                    .map(Value::Number)
+                                    .unwrap_or(Value::Null)
+                            }
+                        } else {
+                            v // Pass through non-numeric values
+                        }
+                    })
+                    .collect();
+                Value::Array(results)
+            }
+            // Pass through other types unchanged
+            other => other,
+        };
+
+        Ok(Some(output))
+    }
+
+    async fn cleanup(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn info(&self) -> NodeInfo {
+        NodeInfo {
+            name: "AddNode".to_string(),
+            version: "0.1.0".to_string(),
+            description: Some(format!("Adds {} to input", self.addend)),
         }
     }
 }

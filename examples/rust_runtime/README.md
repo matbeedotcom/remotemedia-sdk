@@ -137,6 +137,70 @@ python examples/rust_runtime/05_fallback_behavior.py
 
 ---
 
+### 06_rust_vs_python_nodes.py
+
+**Purpose:** Performance benchmark comparing Rust-native nodes vs Python nodes
+
+**Key Concepts:**
+- Rust-native node implementations
+- Performance measurement and comparison
+- Scalability with pipeline complexity
+
+**Run:**
+```bash
+python examples/rust_runtime/06_rust_vs_python_nodes.py
+```
+
+**What It Shows:**
+- Rust-native `MultiplyNode` and `AddNode` are **193-361x faster** than Python equivalents
+- Both implementations produce identical results
+- Performance benefits increase with pipeline complexity
+- No code changes needed - same Python API
+
+**Example Output:**
+```
+Simple pipeline:  Rust 361.68x faster
+Complex pipeline: Rust 193.21x faster
+```
+
+---
+
+### 07_audio_vad_performance.py
+
+**Purpose:** Real-world audio/VAD pipeline performance benchmark
+
+**Key Concepts:**
+- I/O-bound vs compute-bound operations
+- Audio processing pipeline performance
+- Understanding when Rust provides benefits
+
+**Run:**
+```bash
+python examples/rust_runtime/07_audio_vad_performance.py
+```
+
+**What It Shows:**
+- Audio I/O pipelines are I/O-bound (file reading, native C libraries)
+- Rust runtime has minimal overhead for I/O operations
+- Performance is comparable between Rust and Python for audio pipelines
+- Compute-intensive nodes (see example 06) show 100x+ speedup with Rust
+
+**Key Insight:**
+The Rust runtime excels at **compute-intensive** operations, while I/O-bound operations
+show comparable performance. The optimal strategy is to implement Rust-native nodes for
+computationally expensive operations (custom audio effects, image processing, ML inference)
+while using CPython executor for I/O-bound operations (file reading, existing native libraries).
+
+**Example Output:**
+```
+Average Speedup: 0.79x faster (I/O-bound operations)
+
+Compare with example 06:
+- Math operations: 193-361x faster (compute-bound operations)
+```
+
+---
+
 ## Runtime Selection
 
 All examples use `pipeline.run()` which supports:

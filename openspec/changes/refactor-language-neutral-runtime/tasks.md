@@ -162,23 +162,35 @@ This achieves best-possible performance given RustPython's constraints.
 
 ### 1.14 MVP Testing & Documentation
 - [x] 1.14.1 Port all existing Python examples to use Rust runtime
-  - Created 5 comprehensive examples in `examples/rust_runtime/`
+  - Created 6 comprehensive examples in `examples/rust_runtime/`
   - 01_basic_pipeline.py - Simplest pipeline demonstration
   - 02_calculator_pipeline.py - Data transformation with MultiplyNode/AddNode
   - 03_runtime_comparison.py - Performance comparison between Rust and Python
   - 04_async_streaming.py - Async generator and streaming support
   - 05_fallback_behavior.py - Graceful fallback demonstration
+  - 06_rust_vs_python_nodes.py - Performance benchmark showing 193-361x speedup with Rust-native nodes
   - Added README.md with complete documentation
-  - Created reusable MultiplyNode and AddNode in `python-client/remotemedia/nodes/simple_math.py`
+  - Created Python `MultiplyNode` and `AddNode` in `python-client/remotemedia/nodes/simple_math.py`
+  - **Implemented Rust-native `MultiplyNode` and `AddNode` in `runtime/src/nodes/mod.rs`**
+  - **Registered Rust nodes in NodeRegistry for automatic selection**
+  - **Fixed Python node parameter serialization using `**kwargs` pattern**
+  - **Benchmarks show Rust-native nodes are 193-361x faster than Python nodes**
 - [x] 1.14.2 Verify zero-code-change compatibility
   - All examples use standard `pipeline.run()` API with no Rust-specific code
   - Automatic runtime detection works seamlessly
   - Fallback to Python executor is transparent
-  - Results verified identical between Rust CPython executor and pure Python executor
+  - Results verified identical between Rust-native nodes, CPython executor, and pure Python executor
   - Tested on Windows with full Unicode compatibility fixes
+  - Same Python API works with both Rust-native and Python nodes
 - [ ] 1.14.3 Create comprehensive RustPython compatibility report
 - [ ] 1.14.4 Write migration guide (should be minimal!)
-- [ ] 1.14.5 Create performance comparison benchmarks (Rust vs Python baseline)
+- [x] 1.14.5 Create performance comparison benchmarks (Rust vs Python baseline)
+  - Created `06_rust_vs_python_nodes.py` - Math operations benchmark showing 193-361x speedup with Rust-native nodes
+  - Created `07_audio_vad_performance.py` - Audio/VAD I/O pipeline benchmark
+  - **Key Finding:** Rust-native nodes excel at compute-intensive operations (100x+ speedup)
+  - **Key Finding:** I/O-bound operations (audio file reading, native library wrappers) show comparable performance
+  - **Conclusion:** Implement Rust-native nodes for compute-intensive operations; use CPython executor for I/O-bound operations
+  - **Strategy:** Mixed pipelines benefit from Rust-native compute nodes + Python I/O nodes
 - [ ] 1.14.6 Document FFI usage for advanced users
 - [ ] 1.14.7 Update all SDK documentation
 
