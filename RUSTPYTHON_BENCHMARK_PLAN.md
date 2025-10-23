@@ -1,7 +1,9 @@
 # RustPython Benchmark Plan
 
-**Status:** Planned (Blocked by Task 1.5)
-**Dependencies:** RustPython VM integration complete
+**Status:** In Progress - Benchmarks Ready, Awaiting Phase 1.5
+**Updated:** 2025-10-23
+**Dependencies:** RustPython VM integration (Task 1.5)
+**Current:** Rust FFI integration complete (Task 1.4), benchmarks implemented
 
 ## Overview
 
@@ -232,8 +234,14 @@ Optimal mix:           55 µs
 
 ## Benchmark Acceptance Criteria
 
-### Phase 1 (Task 1.5)
+### Phase 1.4 (Complete ✅)
 - [x] CPython baseline established ✅
+- [x] Rust FFI integration complete ✅
+- [x] Pipeline.run() integration complete ✅
+- [x] Three-way comparison benchmarks implemented ✅
+- [x] Automatic runtime selection working ✅
+
+### Phase 1.5 (In Progress)
 - [ ] RustPython VM integrated
 - [ ] Basic node execution working
 - [ ] Benchmark shows <3x slowdown vs CPython
@@ -253,21 +261,36 @@ Optimal mix:           55 µs
 
 ## Benchmark Commands
 
-### Current (Python Baseline)
+### Current (Python + Rust FFI)
 ```bash
 cd python-client
+
+# Three-way comparison (CPython, Rust FFI, RustPython placeholder)
+python benchmarks/compare_all_runtimes.py
+
+# Detailed simple benchmark with direct execution comparison
 python benchmarks/benchmark_simple.py
+
+# Legacy pipeline benchmarks
+python benchmarks/benchmark_runtimes.py
 ```
 
-### Future (RustPython)
+**Current Output:**
+- ✅ CPython baseline established
+- ✅ Rust FFI benchmarks working
+- ⏳ RustPython shows "NOT AVAILABLE" (Phase 1.5 pending)
+
+### After Phase 1.5 (RustPython VM)
 ```bash
-# After Task 1.5 complete
+# Rust-native benchmarks
 cd runtime
 cargo bench --bench rustpython_execution
 
-# Comparison report
+# Full three-way comparison (all runtimes available)
 cd python-client
 python benchmarks/compare_all_runtimes.py
+
+# Expected: RustPython results will now appear
 ```
 
 ---

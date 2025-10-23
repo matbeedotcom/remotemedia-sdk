@@ -122,7 +122,9 @@ impl Default for NodeRegistry {
 
         // Register built-in nodes
         registry.register("PassThrough", || Box::new(PassThroughNode));
+        registry.register("PassThroughNode", || Box::new(PassThroughNode)); // Python compatibility
         registry.register("Echo", || Box::new(EchoNode::new()));
+        registry.register("CalculatorNode", || Box::new(CalculatorNode::new()));
 
         registry
     }
@@ -169,6 +171,21 @@ impl EchoNode {
     }
 }
 
+/// Calculator node for basic arithmetic operations
+pub struct CalculatorNode {
+    operation: String,
+    operand: f64,
+}
+
+impl CalculatorNode {
+    pub fn new() -> Self {
+        Self {
+            operation: "add".to_string(),
+            operand: 0.0,
+        }
+    }
+}
+
 #[async_trait]
 impl NodeExecutor for EchoNode {
     async fn initialize(&mut self, _context: &NodeContext) -> Result<()> {
@@ -196,6 +213,85 @@ impl NodeExecutor for EchoNode {
             name: "Echo".to_string(),
             version: "0.1.0".to_string(),
             description: Some("Echoes input with metadata".to_string()),
+        }
+    }
+}
+
+#[async_trait]
+impl NodeExecutor for CalculatorNode {
+    async fn initialize(&mut self, context: &NodeContext) -> Result<()> {
+        // Extract parameters from context
+        if let Some(operation) = context.params.get("operation") {
+            if let Some(op_str) = operation.as_str() {
+                self.operation = op_str.to_string();
+            }
+        }
+
+        if let Some(operand) = context.params.get("operand") {
+            if let Some(op_num) = operand.as_f64() {
+                self.operand = op_num;
+            } else if let Some(op_int) = operand.as_i64() {
+                self.operand = op_int as f64;
+            }
+        }
+
+        tracing::debug!(
+            "CalculatorNode initialized: operation={}, operand={}",
+            self.operation,
+            self.operand
+        );
+        Ok(())
+    }
+
+    async fn process(&mut self, input: Value) -> Result<Option<Value>> {
+        // Convert input to number
+        let num = match input {
+            Value::Number(n) => n.as_f64().unwrap_or(0.0),
+            Value::String(s) => s.parse::<f64>().unwrap_or(0.0),
+            _ => return Ok(Some(input)), // Pass through non-numeric values
+        };
+
+        // Perform operation
+        let result = match self.operation.as_str() {
+            "add" => num + self.operand,
+            "subtract" => num - self.operand,
+            "multiply" => num * self.operand,
+            "divide" => {
+                if self.operand != 0.0 {
+                    num / self.operand
+                } else {
+                    return Err(Error::Execution("Division by zero".to_string()));
+                }
+            }
+            _ => num, // Unknown operation, pass through
+        };
+
+        // Convert result back to JSON value
+        let output = if result.fract() == 0.0 && result.abs() < (i64::MAX as f64) {
+            // Return as integer if it's a whole number
+            Value::Number(serde_json::Number::from(result as i64))
+        } else {
+            // Return as float
+            serde_json::Number::from_f64(result)
+                .map(Value::Number)
+                .unwrap_or(Value::Null)
+        };
+
+        Ok(Some(output))
+    }
+
+    async fn cleanup(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn info(&self) -> NodeInfo {
+        NodeInfo {
+            name: "CalculatorNode".to_string(),
+            version: "0.1.0".to_string(),
+            description: Some(format!(
+                "Performs {} operation with operand {}",
+                self.operation, self.operand
+            )),
         }
     }
 }

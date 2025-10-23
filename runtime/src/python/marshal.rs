@@ -224,8 +224,10 @@ mod tests {
             let py_obj = json_to_python(py, &json_obj).unwrap();
             let py_dict = py_obj.downcast::<PyDict>(py).unwrap();
 
-            assert_eq!(py_dict.get_item("x").unwrap().extract::<i64>().unwrap(), 10);
-            assert_eq!(py_dict.get_item("y").unwrap().extract::<i64>().unwrap(), 20);
+            let x_value = py_dict.get_item("x").unwrap().unwrap();
+            let y_value = py_dict.get_item("y").unwrap().unwrap();
+            assert_eq!(x_value.extract::<i64>().unwrap(), 10);
+            assert_eq!(y_value.extract::<i64>().unwrap(), 20);
         });
     }
 

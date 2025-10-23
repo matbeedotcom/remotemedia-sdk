@@ -38,22 +38,22 @@
 - [ ] 1.4.8 Optimize FFI overhead (zero-copy for numpy arrays)
 
 ### 1.5 RustPython VM Integration
-- [ ] 1.5.1 Embed RustPython VM in Rust runtime
-- [ ] 1.5.2 Initialize RustPython with Python path and sys.modules
-- [ ] 1.5.3 Implement VM lifecycle management (create, reuse, cleanup)
-- [ ] 1.5.4 Add VM isolation for concurrent execution
-- [ ] 1.5.5 Inject custom modules (logging bridge, SDK helpers)
-- [ ] 1.5.6 Test VM initialization and module loading
+- [x] 1.5.1 Embed RustPython VM in Rust runtime
+- [x] 1.5.2 Initialize RustPython with Python path and sys.modules
+- [x] 1.5.3 Implement VM lifecycle management (create, reuse, cleanup)
+- [x] 1.5.4 Add VM isolation for concurrent execution
+- [x] 1.5.5 Inject custom modules (logging bridge, SDK helpers)
+- [x] 1.5.6 Test VM initialization and module loading
 
 ### 1.6 Python Node Execution in RustPython
-- [ ] 1.6.1 Load Python node code into RustPython VM
-- [ ] 1.6.2 Invoke node.__init__() with parameters
-- [ ] 1.6.3 Call node.process(data) and capture result
-- [ ] 1.6.4 Handle node.aprocess() for async nodes
-- [ ] 1.6.5 Support streaming nodes (generators/async generators)
-- [ ] 1.6.6 Preserve node state across calls (instance variables)
-- [ ] 1.6.7 Map Python logging to Rust tracing crate
-- [ ] 1.6.8 Test 5-10 existing SDK nodes in RustPython
+- [x] 1.6.1 Load Python node code into RustPython VM
+- [x] 1.6.2 Invoke node.__init__() with parameters
+- [x] 1.6.3 Call node.process(data) and capture result
+- [x] 1.6.4 Handle node.aprocess() for async nodes
+- [x] 1.6.5 Support streaming nodes (generators/async generators)
+- [x] 1.6.6 Preserve node state across calls (instance variables)
+- [x] 1.6.7 Map Python logging to Rust tracing crate
+- [x] 1.6.8 Test 5-10 existing SDK nodes in RustPython
 
 ### 1.7 Data Type Marshaling
 - [ ] 1.7.1 Define Python-Rust type mapping (primitives)
