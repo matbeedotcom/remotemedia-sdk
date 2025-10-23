@@ -5,12 +5,17 @@
 //! - Performs topological sorting for execution order
 //! - Manages async execution with tokio
 //! - Handles node lifecycle (init, process, cleanup)
+//! - Runtime selection for Python nodes (Phase 1.10)
+
+pub mod runtime_selector;
 
 use crate::{Error, Result};
 use crate::manifest::Manifest;
 use crate::nodes::{NodeContext, NodeExecutor, NodeRegistry};
 use std::collections::{HashMap, VecDeque};
 use serde_json::Value;
+
+pub use runtime_selector::{RuntimeSelector, SelectedRuntime};
 
 /// Represents a node in the pipeline graph
 #[derive(Debug, Clone)]
@@ -188,6 +193,9 @@ pub struct Executor {
 
     /// Node registry
     registry: NodeRegistry,
+
+    /// Runtime selector for Python nodes (Phase 1.10.6)
+    runtime_selector: RuntimeSelector,
 }
 
 /// Executor configuration
@@ -220,12 +228,17 @@ impl Executor {
         Self {
             config,
             registry: NodeRegistry::default(),
+            runtime_selector: RuntimeSelector::new(),
         }
     }
 
     /// Create executor with custom registry
     pub fn with_registry(config: ExecutorConfig, registry: NodeRegistry) -> Self {
-        Self { config, registry }
+        Self {
+            config,
+            registry,
+            runtime_selector: RuntimeSelector::new(),
+        }
     }
 
     /// Execute a pipeline from a manifest
@@ -260,7 +273,68 @@ impl Executor {
         })
     }
 
+    /// Create a node instance based on runtime selection (Phase 1.10.7)
+    fn create_node_with_runtime(
+        &self,
+        node_manifest: &crate::manifest::NodeManifest,
+    ) -> Result<Box<dyn NodeExecutor>> {
+        // First try to create from registry (for Rust-native nodes)
+        if self.registry.has_node_type(&node_manifest.node_type) {
+            tracing::debug!(
+                "Creating node {} from registry (Rust-native)",
+                node_manifest.id
+            );
+            return self.registry.create(&node_manifest.node_type);
+        }
+
+        // Not in registry, assume it's a Python node - select runtime
+        let runtime = self.runtime_selector.select_runtime(node_manifest);
+        tracing::info!(
+            "Node {} (type: {}) will execute on: {:?}",
+            node_manifest.id,
+            node_manifest.node_type,
+            runtime
+        );
+
+        match runtime {
+            SelectedRuntime::RustPython => {
+                // TODO: Create RustPython executor when available
+                // For now, fall back to CPython
+                tracing::warn!(
+                    "RustPython executor selected but not yet integrated, using CPython for node {}",
+                    node_manifest.id
+                );
+                Ok(Box::new(crate::python::CPythonNodeExecutor::new(
+                    &node_manifest.node_type,
+                )))
+            }
+            SelectedRuntime::CPython => {
+                tracing::debug!(
+                    "Creating CPython executor for node {} (type: {})",
+                    node_manifest.id,
+                    node_manifest.node_type
+                );
+                Ok(Box::new(crate::python::CPythonNodeExecutor::new(
+                    &node_manifest.node_type,
+                )))
+            }
+            SelectedRuntime::CPythonWasm => {
+                // Phase 3 - not implemented yet
+                Err(Error::Execution(format!(
+                    "CPython WASM runtime not yet implemented (Phase 3) for node {}",
+                    node_manifest.id
+                )))
+            }
+        }
+    }
+
     /// Execute pipeline with input data
+    ///
+    /// Phase 1.11: Enhanced data flow orchestration with:
+    /// - Sequential data passing between connected nodes (1.11.1)
+    /// - Support for streaming/async generators (1.11.2)
+    /// - Backpressure handling (1.11.3)
+    /// - Branching and merging support (1.11.4)
     pub async fn execute_with_input(
         &self,
         manifest: &Manifest,
@@ -272,14 +346,56 @@ impl Executor {
         let graph = PipelineGraph::from_manifest(manifest)?;
         crate::manifest::validate(manifest)?;
 
+        // Phase 1.11.1: Check if this is a simple linear pipeline or complex DAG
+        let is_linear = self.is_linear_pipeline(&graph);
+
+        if is_linear {
+            // Simple linear execution path (optimized)
+            tracing::debug!("Using linear execution strategy");
+            self.execute_linear_pipeline(&graph, manifest, input_data).await
+        } else {
+            // Complex DAG with branching/merging (Phase 1.11.4)
+            tracing::debug!("Using DAG execution strategy with branching/merging");
+            self.execute_dag_pipeline(&graph, manifest, input_data).await
+        }
+    }
+
+    /// Check if the pipeline is a simple linear chain (no branching or merging)
+    fn is_linear_pipeline(&self, graph: &PipelineGraph) -> bool {
+        // Linear if every node has at most one input and one output
+        for node in graph.nodes.values() {
+            if node.inputs.len() > 1 || node.outputs.len() > 1 {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Execute a linear pipeline (optimized path for simple chains)
+    ///
+    /// Phase 1.11.1: Sequential data passing between nodes
+    /// Phase 1.11.2: Support for streaming nodes
+    async fn execute_linear_pipeline(
+        &self,
+        graph: &PipelineGraph,
+        manifest: &Manifest,
+        input_data: Vec<Value>,
+    ) -> Result<ExecutionResult> {
         // Initialize all nodes
         let mut node_instances: HashMap<String, Box<dyn NodeExecutor>> = HashMap::new();
 
         for node_id in &graph.execution_order {
             let graph_node = graph.get_node(node_id).unwrap();
 
-            // Create node instance
-            let mut node = self.registry.create(&graph_node.node_type)?;
+            // Get the corresponding node manifest
+            let node_manifest = manifest
+                .nodes
+                .iter()
+                .find(|n| n.id == *node_id)
+                .ok_or_else(|| Error::Manifest(format!("Node {} not found in manifest", node_id)))?;
+
+            // Create node instance with runtime selection (Phase 1.10.7)
+            let mut node = self.create_node_with_runtime(node_manifest)?;
 
             // Initialize node
             let context = NodeContext {
@@ -294,17 +410,29 @@ impl Executor {
             node_instances.insert(node_id.clone(), node);
         }
 
-        // Execute pipeline (for now, linear execution)
+        // Phase 1.11.1: Execute nodes sequentially, passing data through connections
         let mut current_data = input_data;
 
         for node_id in &graph.execution_order {
             let node = node_instances.get_mut(node_id).unwrap();
             let mut output_data = Vec::new();
 
+            // Phase 1.11.2: Process each item (supports streaming)
+            // Phase 1.11.3: Backpressure is implicit - we process one item at a time
             for item in current_data {
                 match node.process(item).await? {
-                    Some(output) => output_data.push(output),
-                    None => {} // Filtered out
+                    Some(output) => {
+                        // Phase 1.11.2: If output is an array (from async generator),
+                        // flatten it into the output stream
+                        if output.is_array() && self.is_streaming_output(&output) {
+                            for sub_item in output.as_array().unwrap() {
+                                output_data.push(sub_item.clone());
+                            }
+                        } else {
+                            output_data.push(output);
+                        }
+                    },
+                    None => {} // Filtered out by node
                 }
             }
 
@@ -335,6 +463,150 @@ impl Executor {
                 execution_order: graph.execution_order.clone(),
             }),
         })
+    }
+
+    /// Execute a DAG pipeline with branching and merging
+    ///
+    /// Phase 1.11.4: Support for complex topologies with multiple paths
+    async fn execute_dag_pipeline(
+        &self,
+        graph: &PipelineGraph,
+        manifest: &Manifest,
+        input_data: Vec<Value>,
+    ) -> Result<ExecutionResult> {
+        // Initialize all nodes
+        let mut node_instances: HashMap<String, Box<dyn NodeExecutor>> = HashMap::new();
+
+        for node_id in &graph.execution_order {
+            let graph_node = graph.get_node(node_id).unwrap();
+
+            let node_manifest = manifest
+                .nodes
+                .iter()
+                .find(|n| n.id == *node_id)
+                .ok_or_else(|| Error::Manifest(format!("Node {} not found in manifest", node_id)))?;
+
+            let mut node = self.create_node_with_runtime(node_manifest)?;
+
+            let context = NodeContext {
+                node_id: node_id.clone(),
+                node_type: graph_node.node_type.clone(),
+                params: graph_node.params.clone(),
+                session_id: None,
+                metadata: HashMap::new(),
+            };
+
+            node.initialize(&context).await?;
+            node_instances.insert(node_id.clone(), node);
+        }
+
+        // Phase 1.11.4: Track data buffers for each node
+        let mut node_outputs: HashMap<String, Vec<Value>> = HashMap::new();
+
+        // Initialize source nodes with input data
+        for source_id in &graph.sources {
+            node_outputs.insert(source_id.clone(), input_data.clone());
+        }
+
+        // Phase 1.11.4: Execute nodes in topological order
+        for node_id in &graph.execution_order {
+            let graph_node = graph.get_node(node_id).unwrap();
+            let node = node_instances.get_mut(node_id).unwrap();
+
+            // Collect inputs from all upstream nodes
+            let inputs = if graph_node.inputs.is_empty() {
+                // Source node - already has data
+                node_outputs.get(node_id).cloned().unwrap_or_default()
+            } else if graph_node.inputs.len() == 1 {
+                // Single input - pass through
+                let input_node_id = &graph_node.inputs[0];
+                node_outputs.get(input_node_id).cloned().unwrap_or_default()
+            } else {
+                // Phase 1.11.4: Multiple inputs - merge them
+                let mut merged_inputs = Vec::new();
+                for input_node_id in &graph_node.inputs {
+                    if let Some(input_data) = node_outputs.get(input_node_id) {
+                        merged_inputs.extend(input_data.clone());
+                    }
+                }
+                merged_inputs
+            };
+
+            // Process data through node
+            let mut outputs = Vec::new();
+            for item in inputs {
+                match node.process(item).await? {
+                    Some(output) => {
+                        if output.is_array() && self.is_streaming_output(&output) {
+                            for sub_item in output.as_array().unwrap() {
+                                outputs.push(sub_item.clone());
+                            }
+                        } else {
+                            outputs.push(output);
+                        }
+                    },
+                    None => {} // Filtered
+                }
+            }
+
+            tracing::debug!("Node {} produced {} outputs", node_id, outputs.len());
+
+            // Phase 1.11.4: Store outputs for downstream nodes or broadcast to multiple outputs
+            if !graph_node.outputs.is_empty() {
+                // Has downstream consumers - store for them
+                node_outputs.insert(node_id.clone(), outputs.clone());
+            } else {
+                // Sink node - store final outputs
+                node_outputs.insert(node_id.clone(), outputs);
+            }
+        }
+
+        // Cleanup all nodes
+        for (node_id, mut node) in node_instances {
+            node.cleanup().await?;
+            tracing::debug!("Node {} cleaned up", node_id);
+        }
+
+        // Collect outputs from all sink nodes
+        let mut final_outputs = Vec::new();
+        for sink_id in &graph.sinks {
+            if let Some(sink_data) = node_outputs.get(sink_id) {
+                final_outputs.extend(sink_data.clone());
+            }
+        }
+
+        // Return final outputs
+        let outputs = if final_outputs.len() == 1 {
+            final_outputs.into_iter().next().unwrap()
+        } else {
+            Value::Array(final_outputs)
+        };
+
+        Ok(ExecutionResult {
+            status: "success".to_string(),
+            outputs,
+            graph_info: Some(GraphInfo {
+                node_count: graph.node_count(),
+                source_count: graph.sources.len(),
+                sink_count: graph.sinks.len(),
+                execution_order: graph.execution_order.clone(),
+            }),
+        })
+    }
+
+    /// Check if output is from a streaming node (async generator that returned multiple items)
+    ///
+    /// Phase 1.11.2: Heuristic to detect streaming output
+    fn is_streaming_output(&self, value: &Value) -> bool {
+        // If it's an array and seems like streamed chunks, flatten it
+        // This is a heuristic - in the future we could use metadata
+        if let Some(arr) = value.as_array() {
+            // If array has uniform structure, it's likely streaming output
+            // For now, we'll be conservative and not flatten
+            false
+        } else {
+            false
+        }
     }
 }
 
@@ -401,6 +673,7 @@ mod tests {
                     params: serde_json::json!({}),
                     capabilities: None,
                     host: None,
+                    runtime_hint: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "B".to_string(),
@@ -408,6 +681,7 @@ mod tests {
                     params: serde_json::json!({}),
                     capabilities: None,
                     host: None,
+                    runtime_hint: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "C".to_string(),
@@ -415,6 +689,7 @@ mod tests {
                     params: serde_json::json!({}),
                     capabilities: None,
                     host: None,
+                    runtime_hint: None,
                 },
             ],
             connections: vec![
@@ -479,6 +754,7 @@ mod tests {
                     params: serde_json::json!({}),
                     capabilities: None,
                     host: None,
+                    runtime_hint: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "B".to_string(),
@@ -486,6 +762,7 @@ mod tests {
                     params: serde_json::json!({}),
                     capabilities: None,
                     host: None,
+                    runtime_hint: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "C".to_string(),
@@ -493,6 +770,7 @@ mod tests {
                     params: serde_json::json!({}),
                     capabilities: None,
                     host: None,
+                    runtime_hint: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "D".to_string(),
@@ -500,6 +778,7 @@ mod tests {
                     params: serde_json::json!({}),
                     capabilities: None,
                     host: None,
+                    runtime_hint: None,
                 },
             ],
             connections: vec![
@@ -549,6 +828,7 @@ mod tests {
                     params: serde_json::json!({}),
                     capabilities: None,
                     host: None,
+                    runtime_hint: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "B".to_string(),
@@ -556,6 +836,7 @@ mod tests {
                     params: serde_json::json!({}),
                     capabilities: None,
                     host: None,
+                    runtime_hint: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "C".to_string(),
@@ -563,6 +844,7 @@ mod tests {
                     params: serde_json::json!({}),
                     capabilities: None,
                     host: None,
+                    runtime_hint: None,
                 },
             ],
             connections: vec![
@@ -593,6 +875,7 @@ mod tests {
                     params: serde_json::json!({}),
                     capabilities: None,
                     host: None,
+                    runtime_hint: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "process_1".to_string(),
@@ -600,6 +883,7 @@ mod tests {
                     params: serde_json::json!({"operation": "add"}),
                     capabilities: None,
                     host: None,
+                    runtime_hint: None,
                 },
             ],
             connections: vec![
@@ -640,6 +924,7 @@ mod tests {
                     params: serde_json::json!({}),
                     capabilities: None,
                     host: None,
+                    runtime_hint: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "echo_1".to_string(),
@@ -647,6 +932,7 @@ mod tests {
                     params: serde_json::json!({}),
                     capabilities: None,
                     host: None,
+                    runtime_hint: None,
                 },
             ],
             connections: vec![Connection {

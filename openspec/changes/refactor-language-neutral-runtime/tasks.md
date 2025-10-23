@@ -103,14 +103,14 @@ This achieves best-possible performance given RustPython's constraints.
 
 **What's Needed:** Add CPython execution path alongside RustPython in the runtime.
 
-- [ ] 1.10.1 Create CPythonNodeExecutor struct (implements NodeExecutor trait)
-- [ ] 1.10.2 Implement node class loading: `py.import("remotemedia.nodes").getattr(node_type)`
-- [ ] 1.10.3 Implement node instantiation: `class(**params)` via PyO3
-- [ ] 1.10.4 Implement process() method (reuse marshal.rs + numpy_marshal.rs)
-- [ ] 1.10.5 Add RuntimeHint enum to manifest schema (RustPython, CPython, Auto)
-- [ ] 1.10.6 Create RuntimeSelector with auto-detection logic
-- [ ] 1.10.7 Integrate CPythonNodeExecutor into Executor::execute_with_input()
-- [ ] 1.10.8 Add REMOTEMEDIA_PYTHON_RUNTIME environment variable
+- [x] 1.10.1 Create CPythonNodeExecutor struct (implements NodeExecutor trait)
+- [x] 1.10.2 Implement node class loading: `py.import("remotemedia.nodes").getattr(node_type)`
+- [x] 1.10.3 Implement node instantiation: `class(**params)` via PyO3
+- [x] 1.10.4 Implement process() method (reuse marshal.rs + numpy_marshal.rs)
+- [x] 1.10.5 Add RuntimeHint enum to manifest schema (RustPython, CPython, Auto)
+- [x] 1.10.6 Create RuntimeSelector with auto-detection logic
+- [x] 1.10.7 Integrate CPythonNodeExecutor into Executor::execute_with_input()
+- [x] 1.10.8 Add REMOTEMEDIA_PYTHON_RUNTIME environment variable
 - [ ] 1.10.9 Implement fallback: RustPython error → retry with CPython
 - [ ] 1.10.10 Test mixed pipelines (some nodes RustPython, some CPython)
 - [ ] 1.10.11 Test full Python stdlib access (pandas, torch, transformers)
