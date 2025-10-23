@@ -1,0 +1,114 @@
+   Compiling wasmtime-cranelift-shared v15.0.1
+   Compiling wasmtime-runtime v15.0.1
+   Compiling cap-std v2.0.2
+   Compiling h2 v0.3.27
+   Compiling stun v0.5.1
+   Compiling rtp v0.9.0
+   Compiling rtcp v0.10.1
+   Compiling cap-time-ext v2.0.2
+   Compiling webrtc-sctp v0.9.1
+   Compiling tower v0.4.13
+   Compiling libsqlite3-sys v0.28.0
+   Compiling rustpython-vm v0.4.0
+   Compiling rustpython-stdlib v0.4.0
+   Compiling webrtc-mdns v0.6.1
+   Compiling rtp v0.10.0
+   Compiling tokio-io-timeout v1.2.1
+   Compiling webrtc-dtls v0.8.0
+   Compiling pyo3-asyncio v0.20.0
+   Compiling tokio-test v0.4.4
+   Compiling cap-fs-ext v2.0.2
+   Compiling cap-net-ext v2.0.2
+   Compiling wasmtime-cranelift v15.0.1
+   Compiling system-interface v0.26.1
+   Compiling turn v0.7.1
+   Compiling webrtc-media v0.7.1
+   Compiling webrtc-srtp v0.11.0
+   Compiling interceptor v0.10.0
+   Compiling wasmtime-jit v15.0.1
+   Compiling webrtc-data v0.8.1
+   Compiling wasmtime v15.0.1
+   Compiling webrtc-ice v0.10.1
+   Compiling hyper v0.14.32
+   Compiling webrtc v0.9.0
+   Compiling axum v0.6.20
+   Compiling hyper-timeout v0.4.1
+   Compiling wiggle v15.0.1
+   Compiling wasi-common v15.0.1
+   Compiling tonic v0.10.2
+   Compiling wasi-cap-std-sync v15.0.1
+   Compiling wasmtime-wasi v15.0.1
+   Compiling rustpython v0.4.0
+   Compiling remotemedia-runtime v0.1.0 (C:\Users\mail\dev\personal\remotemedia-sdk\runtime)
+warning: unused import: `pyo3::types::PyList`
+   --> src\python\ffi.rs:124:5
+    |
+124 | use pyo3::types::PyList;
+    |     ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` on by default
+
+warning: field `config` is never read
+   --> src\executor\mod.rs:187:5
+    |
+185 | pub struct Executor {
+    |            -------- field in this struct
+186 |     /// Execution configuration
+187 |     config: ExecutorConfig,
+    |     ^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: field `params` is never read
+  --> src\python\node_executor.rs:31:5
+   |
+17 | pub struct PythonNodeInstance {
+   |            ------------------ field in this struct
+...
+31 |     params: Value,
+   |     ^^^^^^
+
+warning: missing documentation for a struct field
+  --> src\nodes\mod.rs:71:5
+   |
+71 |     pub name: String,
+   |     ^^^^^^^^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> src\lib.rs:11:9
+   |
+11 | #![warn(missing_docs)]
+   |         ^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src\nodes\mod.rs:72:5
+   |
+72 |     pub version: String,
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src\nodes\mod.rs:73:5
+   |
+73 |     pub description: Option<String>,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+   --> src\nodes\mod.rs:169:5
+    |
+169 |     pub fn new() -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+   --> src\nodes\mod.rs:181:5
+    |
+181 |     pub fn new() -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: `remotemedia-runtime` (lib) generated 8 warnings (run `cargo fix --lib -p remotemedia-runtime` to apply 1 suggestion)
+    Finished `bench` profile [optimized] target(s) in 1m 48s
+     Running benches\rustpython_nodes.rs (target\release\deps\rustpython_nodes-f06cfe8ec46c8f29.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

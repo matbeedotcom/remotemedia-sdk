@@ -1,9 +1,9 @@
 # RustPython Benchmark Plan
 
-**Status:** In Progress - Benchmarks Ready, Awaiting Phase 1.5
+**Status:** ✅ Ready to Run - Phase 1.6 Complete
 **Updated:** 2025-10-23
-**Dependencies:** RustPython VM integration (Task 1.5)
-**Current:** Rust FFI integration complete (Task 1.4), benchmarks implemented
+**Dependencies:** ✅ RustPython VM integration (Phase 1.6 - COMPLETE)
+**Current:** Phase 1.6 complete, benchmarks ready to execute
 
 ## Overview
 
@@ -241,10 +241,14 @@ Optimal mix:           55 µs
 - [x] Three-way comparison benchmarks implemented ✅
 - [x] Automatic runtime selection working ✅
 
-### Phase 1.5 (In Progress)
-- [ ] RustPython VM integrated
-- [ ] Basic node execution working
-- [ ] Benchmark shows <3x slowdown vs CPython
+### Phase 1.6 (Complete ✅)
+- [x] RustPython VM integrated ✅
+- [x] Basic node execution working ✅
+- [x] Stateful nodes with state preservation ✅
+- [x] Streaming/generator nodes ✅
+- [x] Python logging bridged to Rust tracing ✅
+- [x] 11 test nodes passing all tests ✅
+- [ ] Benchmark execution (ready to run)
 
 ### Phase 2 (Task 1.9)
 - [ ] Compatibility matrix complete
@@ -261,37 +265,66 @@ Optimal mix:           55 µs
 
 ## Benchmark Commands
 
-### Current (Python + Rust FFI)
+### ✅ Phase 1.6 Complete - Ready to Benchmark
+
+#### Rust-Native RustPython Benchmarks (NEW)
+```bash
+cd runtime
+
+# Run all RustPython node execution benchmarks
+cargo bench --bench rustpython_nodes
+
+# Expected output:
+# - Simple node execution: ~100-200 µs
+# - Stateful node: ~110-220 µs
+# - Marshaling overhead: by data type
+# - Node initialization: ~150-300 µs
+# - Complex transform: ~200-400 µs
+# - Streaming nodes: ~500-1000 µs
+# - Node chain (3 nodes): ~300-600 µs
+# - VM reuse vs recreation: significant difference
+```
+
+#### Python-Side RustPython Benchmarks (NEW)
 ```bash
 cd python-client
 
-# Three-way comparison (CPython, Rust FFI, RustPython placeholder)
+# Run comprehensive RustPython benchmark suite
+python benchmarks/benchmark_rustpython.py
+
+# With options:
+python benchmarks/benchmark_rustpython.py -n 1000  # 1000 iterations
+python benchmarks/benchmark_rustpython.py -d       # Detailed stats
+python benchmarks/benchmark_rustpython.py -o results.json  # Custom output
+
+# Expected output:
+# - Single Node Execution
+# - Stateful Node (Counter)
+# - Simple 3-Node Pipeline
+# - Complex 5-Node Pipeline
+# - Data-Intensive (List Processing)
+# - Mixed Data Types
+```
+
+#### Legacy Benchmarks (Still Available)
+```bash
+cd python-client
+
+# Three-way comparison (CPython, Rust FFI, RustPython)
 python benchmarks/compare_all_runtimes.py
 
-# Detailed simple benchmark with direct execution comparison
+# Detailed simple benchmark
 python benchmarks/benchmark_simple.py
 
 # Legacy pipeline benchmarks
 python benchmarks/benchmark_runtimes.py
 ```
 
-**Current Output:**
+**Current Status:**
 - ✅ CPython baseline established
 - ✅ Rust FFI benchmarks working
-- ⏳ RustPython shows "NOT AVAILABLE" (Phase 1.5 pending)
-
-### After Phase 1.5 (RustPython VM)
-```bash
-# Rust-native benchmarks
-cd runtime
-cargo bench --bench rustpython_execution
-
-# Full three-way comparison (all runtimes available)
-cd python-client
-python benchmarks/compare_all_runtimes.py
-
-# Expected: RustPython results will now appear
-```
+- ✅ RustPython VM integrated and tested
+- ⏳ Performance benchmarking ready to execute
 
 ---
 

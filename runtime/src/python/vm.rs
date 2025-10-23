@@ -563,7 +563,7 @@ assert '{}' in dir(), "Class {} was not defined"
     }
 
     /// Convert a JSON value to Python value representation
-    fn json_to_python_value(&self, value: &serde_json::Value) -> String {
+    pub fn json_to_python_value(&self, value: &serde_json::Value) -> String {
         match value {
             serde_json::Value::Null => "None".to_string(),
             serde_json::Value::Bool(b) => if *b { "True" } else { "False" }.to_string(),

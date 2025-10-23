@@ -5,7 +5,7 @@
 //! - Rust serde_json::Value → Python objects
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyDict, PyList, PyTuple};
 use serde_json::Value;
 
 /// Convert a Python object to a JSON Value
@@ -17,6 +17,7 @@ use serde_json::Value;
 /// - float → Number
 /// - str → String
 /// - list → Array
+/// - tuple → Array (JSON doesn't distinguish tuples from lists)
 /// - dict → Object
 pub fn python_to_json(py: Python, obj: &PyObject) -> PyResult<Value> {
     // None
@@ -52,6 +53,15 @@ pub fn python_to_json(py: Python, obj: &PyObject) -> PyResult<Value> {
     if let Ok(list) = obj.downcast::<PyList>(py) {
         let mut vec = Vec::new();
         for item in list.iter() {
+            vec.push(python_to_json(py, &item.into())?);
+        }
+        return Ok(Value::Array(vec));
+    }
+
+    // Tuple (convert to array, as JSON doesn't have tuples)
+    if let Ok(tuple) = obj.downcast::<PyTuple>(py) {
+        let mut vec = Vec::new();
+        for item in tuple.iter() {
             vec.push(python_to_json(py, &item.into())?);
         }
         return Ok(Value::Array(vec));
@@ -128,6 +138,7 @@ mod tests {
 
     #[test]
     fn test_python_to_json_primitives() {
+        pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
             // None
             let py_none = py.None();
@@ -154,6 +165,7 @@ mod tests {
 
     #[test]
     fn test_python_to_json_list() {
+        pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
             let py_list = vec![1, 2, 3].into_py(py);
             let result = python_to_json(py, &py_list).unwrap();
@@ -167,6 +179,7 @@ mod tests {
 
     #[test]
     fn test_python_to_json_dict() {
+        pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
             let py_dict = [("name", "Alice"), ("city", "NYC")]
                 .into_iter()
@@ -184,6 +197,7 @@ mod tests {
 
     #[test]
     fn test_json_to_python_primitives() {
+        pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
             // Null
             let json_null = Value::Null;
@@ -209,6 +223,7 @@ mod tests {
 
     #[test]
     fn test_json_to_python_collections() {
+        pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
             // Array
             let json_array = Value::Array(vec![Value::from(1), Value::from(2), Value::from(3)]);
@@ -233,6 +248,7 @@ mod tests {
 
     #[test]
     fn test_round_trip() {
+        pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
             // Create complex Python structure
             let original = vec![
@@ -251,6 +267,32 @@ mod tests {
             // Verify it's a list with correct length
             let result_list = result.downcast::<PyList>(py).unwrap();
             assert_eq!(result_list.len(), 3);
+        });
+    }
+
+    #[test]
+    fn test_tuple_conversion() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            use pyo3::types::PyTuple;
+
+            // Simple tuple
+            let tuple = PyTuple::new(py, &[1, 2, 3]);
+            let json_val = python_to_json(py, &tuple.into()).unwrap();
+            assert_eq!(json_val, Value::Array(vec![Value::from(1), Value::from(2), Value::from(3)]));
+
+            // Nested tuple
+            let inner1 = PyTuple::new(py, &[1, 2]);
+            let inner2 = PyTuple::new(py, &[3, 4]);
+            let outer = PyTuple::new(py, &[inner1, inner2]);
+            let json_val = python_to_json(py, &outer.into()).unwrap();
+            assert!(json_val.is_array());
+            assert_eq!(json_val.as_array().unwrap().len(), 2);
+
+            // Empty tuple
+            let empty_tuple = PyTuple::empty(py);
+            let json_val = python_to_json(py, &empty_tuple.into()).unwrap();
+            assert_eq!(json_val, Value::Array(vec![]));
         });
     }
 }

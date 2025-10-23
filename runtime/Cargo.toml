@@ -76,6 +76,10 @@ harness = false
 name = "data_marshaling"
 harness = false
 
+[[bench]]
+name = "rustpython_nodes"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true
