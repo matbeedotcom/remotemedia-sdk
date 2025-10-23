@@ -133,11 +133,16 @@ This achieves best-possible performance given RustPython's constraints.
 **Estimated Effort:** ~500 lines of new code (marshaling already complete)
 
 ### 1.11 Data Flow & Orchestration
-- [ ] 1.11.1 Implement sequential data passing between nodes
-- [ ] 1.11.2 Add support for streaming/async generators
-- [ ] 1.11.3 Implement backpressure handling
-- [ ] 1.11.4 Add branching and merging support
-- [ ] 1.11.5 Test complex pipeline topologies
+- [x] 1.11.1 Implement sequential data passing between nodes
+- [x] 1.11.2 Add support for streaming/async generators
+- [x] 1.11.3 Implement backpressure handling
+- [x] 1.11.4 Add branching and merging support
+- [x] 1.11.5 Test complex pipeline topologies
+
+**Phase 1.11 Status:** ✅ **COMPLETE**
+**Tests:** 7 integration tests (100% pass rate)
+**Key Achievement:** Full DAG execution with branching/merging + async streaming support
+**Documentation:** `phase_1.11_progress.md` - comprehensive progress report
 
 ### 1.12 Pipeline Error Handling
 - [ ] 1.12.1 Define structured error types in Rust
