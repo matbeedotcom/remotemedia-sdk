@@ -1,0 +1,84 @@
+[package]
+name = "remotemedia-runtime"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+authors = ["RemoteMedia SDK Contributors"]
+description = "Language-neutral runtime for distributed AI pipelines"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/matbeeDOTcom/remotemedia-sdk"
+
+[lib]
+name = "remotemedia_runtime"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+futures = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# RustPython VM for backward compatibility
+rustpython-vm = "0.3"
+rustpython-compiler = "0.3"
+rustpython-parser = "0.3"
+
+# WASM runtime (Wasmtime chosen per design decisions)
+wasmtime = "15.0"
+wasmtime-wasi = "15.0"
+
+# WebRTC (for Phase 2)
+webrtc = { version = "0.9", optional = true }
+
+# gRPC (existing transport)
+tonic = "0.10"
+prost = "0.12"
+
+# Python FFI (using PyO3 per recommendation)
+pyo3 = { version = "0.20", features = ["extension-module", "abi3-py39"] }
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Utilities
+uuid = { version = "1.6", features = ["v4", "serde"] }
+sha2 = "0.10"
+hex = "0.4"
+
+[dev-dependencies]
+tokio-test = "0.4"
+criterion = "0.5"
+tempfile = "3.8"
+
+[build-dependencies]
+prost-build = "0.12"
+tonic-build = "0.10"
+
+[features]
+default = ["webrtc-transport"]
+webrtc-transport = ["webrtc"]
+
+[[bench]]
+name = "pipeline_execution"
+harness = false
+
+[[bench]]
+name = "data_marshaling"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0
+debug = true
