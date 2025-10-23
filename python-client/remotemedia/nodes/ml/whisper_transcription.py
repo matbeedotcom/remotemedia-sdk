@@ -406,5 +406,40 @@ class WhisperTranscriptionNode(Node):
         self.torch_dtype = None
         logger.info("WhisperNode cleaned up successfully.")
 
+    def get_capabilities(self) -> Optional[Dict[str, Any]]:
+        """
+        Return capability requirements for Whisper transcription.
+
+        Whisper models benefit significantly from GPU acceleration but can
+        run on CPU. Memory requirements vary by model size.
+
+        Returns:
+            Capability descriptor with GPU preferences and memory requirements
+        """
+        # Determine if GPU is required based on device setting
+        gpu_required = self._requested_device == "cuda"
+
+        # Estimate memory requirements based on model size
+        memory_gb = 4.0  # Base requirement
+        if "large" in self.model_id.lower():
+            memory_gb = 8.0
+        elif "medium" in self.model_id.lower():
+            memory_gb = 6.0
+        elif "small" in self.model_id.lower():
+            memory_gb = 4.0
+
+        capabilities = {"memory_gb": memory_gb}
+
+        # Add GPU requirements if applicable
+        if self._requested_device in ["cuda", None]:  # None means GPU optional
+            gpu_memory_gb = memory_gb * 0.75  # GPU needs ~75% of total memory
+            capabilities["gpu"] = {
+                "type": "cuda",
+                "min_memory_gb": gpu_memory_gb,
+                "required": gpu_required
+            }
+
+        return capabilities
+
 
 __all__ = ["WhisperTranscriptionNode", "WordTiming", "TranscriptionDelta", "WordUpdate"] 

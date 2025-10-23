@@ -11,8 +11,6 @@
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 
-use pyo3::prelude::*;
-
 pub mod executor;
 pub mod manifest;
 pub mod nodes;
@@ -40,40 +38,8 @@ pub fn init() -> Result<()> {
     Ok(())
 }
 
-/// Python FFI entry point
-///
-/// This module exposes the Rust runtime to Python via PyO3.
-#[pymodule]
-fn remotemedia_runtime(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(execute_manifest_py, m)?)?;
-    Ok(())
-}
-
-/// Execute a pipeline from a JSON manifest (Python FFI)
-///
-/// # Arguments
-/// * `manifest_json` - JSON string containing the pipeline manifest
-///
-/// # Returns
-/// JSON string containing the execution results
-#[pyfunction]
-fn execute_manifest_py(manifest_json: String) -> PyResult<String> {
-    // This will be implemented in Phase 1.3
-    tracing::info!("Executing manifest from Python FFI");
-
-    // Parse manifest
-    let manifest = manifest::parse(&manifest_json)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid manifest: {}", e)))?;
-
-    // Execute pipeline (placeholder for now)
-    tracing::info!("Manifest parsed: {} nodes", manifest.nodes.len());
-
-    // Return placeholder result
-    Ok(serde_json::json!({
-        "status": "success",
-        "message": "Rust runtime executing (Phase 1 WIP)"
-    }).to_string())
-}
+// Python FFI entry point is now in src/python/ffi.rs
+// The _remotemedia_runtime module is defined there
 
 #[cfg(test)]
 mod tests {

@@ -6,33 +6,33 @@
 - [x] 1.1.1 Create Rust workspace in `runtime/` directory
 - [x] 1.1.2 Add dependencies: tokio, serde, RustPython, wasmtime
 - [x] 1.1.3 Set up CI/CD for Rust builds (GitHub Actions)
-- [ ] 1.1.4 Create FFI bindings for Python SDK integration
+- [x] 1.1.4 Create FFI bindings for Python SDK integration
 
 ### 1.2 Manifest Schema & Serialization
 - [x] 1.2.1 Define JSON manifest schema in `schemas/manifest.v1.json`
 - [x] 1.2.2 Add capability descriptor schema (resource requirements)
-- [ ] 1.2.3 Implement Python `Pipeline.serialize()` method
-- [ ] 1.2.4 Implement Python `Node.to_manifest()` for all node types
-- [ ] 1.2.5 Include optional capability descriptors in node manifest
+- [x] 1.2.3 Implement Python `Pipeline.serialize()` method
+- [x] 1.2.4 Implement Python `Node.to_manifest()` for all node types
+- [x] 1.2.5 Include optional capability descriptors in node manifest
 - [x] 1.2.6 Add schema validation in Rust runtime
-- [ ] 1.2.7 Write serialization tests for complex pipelines
+- [x] 1.2.7 Write serialization tests for complex pipelines
 
 ### 1.3 Rust Runtime Core
 - [x] 1.3.1 Implement manifest parser in Rust
-- [ ] 1.3.2 Build pipeline graph data structure
-- [ ] 1.3.3 Implement topological sort for execution order
+- [x] 1.3.2 Build pipeline graph data structure
+- [x] 1.3.3 Implement topological sort for execution order
 - [x] 1.3.4 Create async executor using tokio
-- [ ] 1.3.5 Implement node lifecycle management (init, process, cleanup)
+- [x] 1.3.5 Implement node lifecycle management (init, process, cleanup)
 - [ ] 1.3.6 Add basic capability-aware execution placement
 - [ ] 1.3.7 Implement local-first execution (default if no host specified)
 - [ ] 1.3.8 Add fallback logic (local → remote if capabilities not met)
 
 ### 1.4 Python-Rust FFI Layer
 - [x] 1.4.1 Choose FFI approach (PyO3, CFFI, or custom bindings)
-- [ ] 1.4.2 Implement `Pipeline.run()` FFI wrapper in Python
+- [x] 1.4.2 Implement `Pipeline.run()` FFI wrapper in Python
 - [x] 1.4.3 Create Rust extern "C" functions for FFI entry points
-- [ ] 1.4.4 Implement data marshaling (Python → Rust)
-- [ ] 1.4.5 Implement result marshaling (Rust → Python)
+- [x] 1.4.4 Implement data marshaling (Python → Rust)
+- [x] 1.4.5 Implement result marshaling (Rust → Python)
 - [ ] 1.4.6 Add error handling across FFI boundary
 - [ ] 1.4.7 Test FFI with simple pipeline (2-3 nodes)
 - [ ] 1.4.8 Optimize FFI overhead (zero-copy for numpy arrays)

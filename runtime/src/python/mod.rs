@@ -1,9 +1,18 @@
-//! RustPython VM integration
+//! Python integration module
 //!
-//! This module manages RustPython VMs for executing Python nodes,
-//! providing backward compatibility with existing Python SDK nodes.
+//! This module provides:
+//! 1. FFI functions for Python to call Rust runtime
+//! 2. Data marshaling between Python and Rust types
+//! 3. RustPython VM integration (Phase 1.5)
 
-use crate::{Error, Result};
+pub mod ffi;
+pub mod marshal;
+
+// Re-export FFI module for Python extension
+pub use ffi::*;
+
+// RustPython VM (Phase 1.5 - placeholder for now)
+use crate::Result;
 
 /// RustPython VM manager
 pub struct PythonVm {

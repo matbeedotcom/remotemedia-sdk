@@ -496,7 +496,102 @@ class Node(ABC):
             "class": self.__class__.__name__,
             "config": self.config,
         }
-    
+
+    def to_manifest(self, include_capabilities: bool = True) -> Dict[str, Any]:
+        """
+        Convert node to manifest representation for Rust runtime.
+
+        This method serializes the node into a format compatible with the
+        language-neutral manifest schema (manifest.v1.json).
+
+        Args:
+            include_capabilities: Whether to include capability requirements
+
+        Returns:
+            Node manifest dict with keys:
+            - id: Node identifier (will be overridden by Pipeline with index)
+            - node_type: Class name of the node
+            - params: Configuration parameters for the node
+            - capabilities (optional): Resource requirements
+            - host (optional): Remote execution endpoint
+
+        Example:
+            >>> node = AudioTransform(name="normalize", effect="normalize")
+            >>> manifest = node.to_manifest()
+            >>> print(manifest)
+            {
+                "id": "normalize",
+                "node_type": "AudioTransform",
+                "params": {"effect": "normalize"},
+                "capabilities": {"cpu": {"cores": 2}, "memory_gb": 1.0}
+            }
+        """
+        manifest = {
+            "id": self.name,
+            "node_type": self.__class__.__name__,
+            "params": self._extract_params()
+        }
+
+        # Add optional capability requirements
+        if include_capabilities:
+            caps = self.get_capabilities()
+            if caps:
+                manifest["capabilities"] = caps
+
+        # Add remote execution host if applicable
+        if getattr(self, 'is_remote', False):
+            remote_config = getattr(self, 'remote_config', None)
+            if remote_config and hasattr(remote_config, 'host'):
+                # Format as "host:port"
+                manifest["host"] = f"{remote_config.host}:{remote_config.port}"
+
+        return manifest
+
+    def _extract_params(self) -> Dict[str, Any]:
+        """
+        Extract node parameters for manifest serialization.
+
+        Default implementation returns the node's config dict.
+        Override this method in subclasses that need custom parameter extraction.
+
+        Returns:
+            Dictionary of serializable parameters
+        """
+        return self.config.copy() if self.config else {}
+
+    def get_capabilities(self) -> Optional[Dict[str, Any]]:
+        """
+        Return capability requirements for this node.
+
+        Override this method in subclasses that have specific resource requirements
+        (GPU, memory, CPU cores, etc.). The default implementation returns None,
+        indicating no special requirements.
+
+        Returns:
+            Capability descriptor dict or None. Format:
+            {
+                "gpu": {
+                    "type": "cuda" | "rocm" | "metal" | "vulkan" | "any",
+                    "min_memory_gb": float (optional),
+                    "required": bool (default: true)
+                },
+                "cpu": {
+                    "cores": int (optional),
+                    "arch": "x86_64" | "aarch64" | "arm" | "any" (optional)
+                },
+                "memory_gb": float (optional)
+            }
+
+        Example:
+            >>> class GPUNode(Node):
+            ...     def get_capabilities(self):
+            ...         return {
+            ...             "gpu": {"type": "cuda", "min_memory_gb": 4.0},
+            ...             "memory_gb": 8.0
+            ...         }
+        """
+        return None
+
     def __repr__(self) -> str:
         """String representation of the node."""
         return f"{self.__class__.__name__}(name='{self.name}')" 

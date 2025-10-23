@@ -5,6 +5,8 @@ Pipeline class for managing sequences of processing nodes.
 from typing import Any, List, Optional, Dict, Iterator, AsyncGenerator
 import logging
 import time
+import json
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from contextlib import asynccontextmanager
 import asyncio
@@ -365,11 +367,118 @@ class Pipeline:
         self._is_initialized = False
         self.logger.info(f"Pipeline '{self.name}' cleanup completed")
     
+    async def run(self, input_data: Optional[Any] = None, use_rust: bool = True) -> Any:
+        """
+        Execute the pipeline with optional input data.
+
+        This is a convenience method that automatically uses the Rust runtime
+        for improved performance when available, with automatic fallback to
+        the Python executor.
+
+        Args:
+            input_data: Optional input data to feed into the pipeline
+            use_rust: Whether to try using the Rust runtime (default: True)
+
+        Returns:
+            The final output from the pipeline
+
+        Example:
+            >>> pipeline = Pipeline("test")
+            >>> pipeline.add_node(PassThroughNode(name="pass1"))
+            >>> pipeline.add_node(CalculatorNode(name="calc", operation="add", operand=5))
+            >>> result = await pipeline.run([1, 2, 3])
+            >>> print(result)  # [6, 7, 8]
+        """
+        # Try Rust runtime first if enabled
+        if use_rust:
+            try:
+                return await self._run_rust(input_data)
+            except ImportError:
+                self.logger.debug("Rust runtime not available, falling back to Python executor")
+            except Exception as e:
+                self.logger.warning(f"Rust runtime execution failed: {e}, falling back to Python executor")
+
+        # Fall back to Python execution
+        return await self._run_python(input_data)
+
+    async def _run_rust(self, input_data: Optional[Any] = None) -> Any:
+        """
+        Execute pipeline using the Rust runtime.
+
+        Args:
+            input_data: Optional input data
+
+        Returns:
+            Pipeline execution results
+
+        Raises:
+            ImportError: If remotemedia_runtime module is not available
+        """
+        import remotemedia_runtime
+
+        # Serialize pipeline to manifest
+        manifest_json = self.serialize()
+
+        self.logger.info(f"Executing pipeline '{self.name}' with Rust runtime")
+
+        # Execute with or without input data
+        if input_data is not None:
+            # Convert input_data to list if it isn't already
+            if not isinstance(input_data, list):
+                input_data = [input_data]
+            result = await remotemedia_runtime.execute_pipeline_with_input(manifest_json, input_data)
+        else:
+            result = await remotemedia_runtime.execute_pipeline(manifest_json)
+
+        self.logger.info(f"Rust runtime execution completed for pipeline '{self.name}'")
+        return result
+
+    async def _run_python(self, input_data: Optional[Any] = None) -> Any:
+        """
+        Execute pipeline using the Python executor.
+
+        Args:
+            input_data: Optional input data
+
+        Returns:
+            Pipeline execution results
+        """
+        self.logger.info(f"Executing pipeline '{self.name}' with Python executor")
+
+        # Initialize pipeline
+        await self.initialize()
+
+        try:
+            # Create input stream if we have input data
+            if input_data is not None:
+                async def input_stream():
+                    if isinstance(input_data, list):
+                        for item in input_data:
+                            yield item
+                    else:
+                        yield input_data
+
+                # Collect all results
+                results = []
+                async for result in self.process(input_stream()):
+                    results.append(result)
+
+                return results if len(results) > 1 else (results[0] if results else None)
+            else:
+                # No input data - assume first node is a source
+                results = []
+                async for result in self.process():
+                    results.append(result)
+
+                return results if len(results) > 1 else (results[0] if results else None)
+        finally:
+            await self.cleanup()
+
     @asynccontextmanager
     async def managed_execution(self):
         """
         Context manager for automatic pipeline initialization and cleanup.
-        
+
         Usage:
             async with pipeline.managed_execution():
                 async for result in pipeline.process(data_stream):
@@ -506,7 +615,116 @@ class Pipeline:
                 dependencies.add("aiohttp")
         
         return sorted(list(dependencies))
-    
+
+    def serialize(self, include_capabilities: bool = True, description: Optional[str] = None) -> str:
+        """
+        Serialize pipeline to Rust-compatible JSON manifest.
+
+        This method converts the pipeline into a JSON manifest conforming to
+        the manifest.v1.json schema for execution in the Rust runtime.
+
+        Args:
+            include_capabilities: Whether to include node capability descriptors
+            description: Optional pipeline description for metadata
+
+        Returns:
+            JSON string conforming to manifest.v1.json schema
+
+        Example:
+            >>> pipeline = Pipeline("audio-pipeline")
+            >>> pipeline.add_node(AudioSource(name="input"))
+            >>> pipeline.add_node(AudioTransform(name="normalize"))
+            >>> manifest_json = pipeline.serialize(description="Audio normalization")
+            >>> print(manifest_json)
+
+        Note:
+            This is the preferred method for serializing pipelines for the
+            language-neutral Rust runtime. For Python-only use cases, consider
+            using export_definition() instead.
+        """
+        manifest_dict = self._build_manifest_dict(include_capabilities, description)
+        return json.dumps(manifest_dict, indent=2)
+
+    def _build_manifest_dict(self, include_capabilities: bool, description: Optional[str]) -> Dict[str, Any]:
+        """
+        Build the manifest dictionary structure.
+
+        Args:
+            include_capabilities: Whether to include capability descriptors
+            description: Optional pipeline description
+
+        Returns:
+            Manifest dictionary conforming to schema
+        """
+        return {
+            "version": "v1",
+            "metadata": self._build_manifest_metadata(description),
+            "nodes": self._build_manifest_nodes(include_capabilities),
+            "connections": self._build_manifest_connections()
+        }
+
+    def _build_manifest_metadata(self, description: Optional[str]) -> Dict[str, Any]:
+        """
+        Build manifest metadata section.
+
+        Args:
+            description: Optional pipeline description
+
+        Returns:
+            Metadata dict with name, description, and timestamp
+        """
+        metadata = {
+            "name": self.name,
+            "created_at": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        }
+
+        if description:
+            metadata["description"] = description
+
+        return metadata
+
+    def _build_manifest_nodes(self, include_capabilities: bool) -> List[Dict[str, Any]]:
+        """
+        Build manifest nodes section.
+
+        Args:
+            include_capabilities: Whether to include capability requirements
+
+        Returns:
+            List of node manifest dictionaries
+        """
+        manifest_nodes = []
+
+        for i, node in enumerate(self.nodes):
+            # Get node manifest from the node itself
+            node_manifest = node.to_manifest(include_capabilities)
+
+            # Override the ID to include the index for uniqueness
+            node_manifest["id"] = f"{node.name}_{i}"
+
+            manifest_nodes.append(node_manifest)
+
+        return manifest_nodes
+
+    def _build_manifest_connections(self) -> List[Dict[str, str]]:
+        """
+        Build manifest connections section.
+
+        For linear pipelines, each node connects to the next node in sequence.
+
+        Returns:
+            List of connection dictionaries with 'from' and 'to' fields
+        """
+        connections = []
+
+        for i in range(len(self.nodes) - 1):
+            connections.append({
+                "from": f"{self.nodes[i].name}_{i}",
+                "to": f"{self.nodes[i + 1].name}_{i + 1}"
+            })
+
+        return connections
+
     @classmethod
     async def from_definition(cls, definition: Dict[str, Any]) -> 'Pipeline':
         """
