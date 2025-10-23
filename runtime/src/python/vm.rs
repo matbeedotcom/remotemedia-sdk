@@ -391,7 +391,7 @@ import os
             match vm.compile(code, Mode::Eval, "<string>".to_owned()) {
                 Ok(code_obj) => {
                     // It's an expression, execute and return the value
-                    match vm.run_code_obj(code_obj, scope) {
+                    match vm.run_code_obj(code_obj, scope.clone()) {
                         Ok(result) => {
                             let result_str = result.str(vm)
                                 .map(|s| s.to_string())
@@ -402,11 +402,68 @@ import os
                     }
                 }
                 Err(_) => {
-                    // Not an expression, compile as exec mode
+                    // Not an expression, try to extract last line as expression
+                    // This mimics Python REPL behavior
+                    let lines: Vec<&str> = code.lines().collect();
+                    let last_line = lines.last().map(|s| s.trim()).unwrap_or("");
+
+                    // Check if the last line looks like an expression (not a statement)
+                    let is_likely_expression = !last_line.is_empty()
+                        && !last_line.starts_with("if ")
+                        && !last_line.starts_with("for ")
+                        && !last_line.starts_with("while ")
+                        && !last_line.starts_with("def ")
+                        && !last_line.starts_with("class ")
+                        && !last_line.starts_with("import ")
+                        && !last_line.starts_with("from ")
+                        && !last_line.starts_with("with ")
+                        && !last_line.starts_with("try:")
+                        && !last_line.starts_with("except ")
+                        && !last_line.starts_with("finally:")
+                        && !last_line.ends_with(":")
+                        && !last_line.contains("=");  // Assignment is also a statement
+
+                    if is_likely_expression && lines.len() > 1 {
+                        // Try executing all but the last line, then eval the last line
+                        let exec_code = lines[..lines.len()-1].join("\n");
+
+                        // First execute all statements
+                        if !exec_code.trim().is_empty() {
+                            match vm.compile(&exec_code, Mode::Exec, "<string>".to_owned()) {
+                                Ok(code_obj) => {
+                                    if let Err(e) = vm.run_code_obj(code_obj, scope.clone()) {
+                                        return Err(Error::PythonVm(format!("Execution error: {:?}", e)));
+                                    }
+                                }
+                                Err(e) => return Err(Error::PythonVm(format!("Compilation error: {:?}", e))),
+                            }
+                        }
+
+                        // Then try to eval the last line as an expression
+                        match vm.compile(last_line, Mode::Eval, "<string>".to_owned()) {
+                            Ok(code_obj) => {
+                                match vm.run_code_obj(code_obj, scope.clone()) {
+                                    Ok(result) => {
+                                        let result_str = result.str(vm)
+                                            .map(|s| s.to_string())
+                                            .unwrap_or_else(|_| "None".to_string());
+                                        return Ok(result_str);
+                                    }
+                                    Err(_) => {
+                                        // Fall through to exec mode for everything
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                // Fall through to exec mode for everything
+                            }
+                        }
+                    }
+
+                    // Fallback: compile entire code as exec mode
                     match vm.compile(code, Mode::Exec, "<string>".to_owned()) {
                         Ok(code_obj) => {
-                            // Use the same scope for exec to persist state
-                            match vm.run_code_obj(code_obj, scope) {
+                            match vm.run_code_obj(code_obj, scope.clone()) {
                                 Ok(_) => Ok("None".to_string()),
                                 Err(e) => Err(Error::PythonVm(format!("Execution error: {:?}", e))),
                             }
