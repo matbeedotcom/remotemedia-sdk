@@ -12,8 +12,6 @@ use serde_json::{json, Value};
 /// Test round-trip for primitive types
 #[test]
 fn test_roundtrip_primitives() {
-    pyo3::prepare_freethreaded_python();
-
     let test_cases = vec![
         ("null", Value::Null),
         ("bool_true", Value::Bool(true)),
@@ -49,8 +47,6 @@ fn test_roundtrip_primitives() {
 /// Test round-trip for collection types
 #[test]
 fn test_roundtrip_collections() {
-    pyo3::prepare_freethreaded_python();
-
     let test_cases = vec![
         ("list_empty", json!([])),
         ("list_ints", json!([1, 2, 3, 4, 5])),
@@ -79,8 +75,6 @@ fn test_roundtrip_collections() {
 /// Test round-trip for deeply nested structures
 #[test]
 fn test_roundtrip_nested() {
-    pyo3::prepare_freethreaded_python();
-
     let deep_structure = json!({
         "pipeline": {
             "nodes": [
@@ -150,8 +144,6 @@ test_data
 /// Test edge cases and special values
 #[test]
 fn test_roundtrip_edge_cases() {
-    pyo3::prepare_freethreaded_python();
-
     pyo3::Python::with_gil(|py| {
         // Empty string
         let empty_str = json!("");
@@ -176,19 +168,17 @@ fn test_roundtrip_edge_cases() {
 /// Test special float values (NaN, Inf)
 #[test]
 fn test_special_floats() {
-    pyo3::prepare_freethreaded_python();
-
     pyo3::Python::with_gil(|py| {
-        use pyo3::prelude::*;
+        use pyo3::types::PyFloat;
 
         // NaN converts to null
-        let py_nan = f64::NAN.into_py(py);
-        let result = marshal::python_to_json(py, &py_nan).unwrap();
+        let py_nan = PyFloat::new(py, f64::NAN);
+        let result = marshal::python_to_json(py, &py_nan.into_any()).unwrap();
         assert_eq!(result, Value::Null);
 
         // Infinity converts to null
-        let py_inf = f64::INFINITY.into_py(py);
-        let result = marshal::python_to_json(py, &py_inf).unwrap();
+        let py_inf = PyFloat::new(py, f64::INFINITY);
+        let result = marshal::python_to_json(py, &py_inf.into_any()).unwrap();
         assert_eq!(result, Value::Null);
     });
 }
@@ -196,8 +186,6 @@ fn test_special_floats() {
 /// Test type preservation through round-trip
 #[test]
 fn test_type_preservation() {
-    pyo3::prepare_freethreaded_python();
-
     pyo3::Python::with_gil(|py| {
         // Ensure int stays int, not converted to float
         let int_val = json!(42);
@@ -216,15 +204,12 @@ fn test_type_preservation() {
 /// Test error handling for unsupported types
 #[test]
 fn test_unsupported_types() {
-    pyo3::prepare_freethreaded_python();
-
     pyo3::Python::with_gil(|py| {
-        use pyo3::prelude::*;
         use pyo3::types::PyBytes;
 
         // Bytes should fail with unsupported type error
         let py_bytes = PyBytes::new(py, b"binary data");
-        let result = marshal::python_to_json(py, &py_bytes.into());
+        let result = marshal::python_to_json(py, &py_bytes.into_any());
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -271,8 +256,6 @@ class DataProcessorNode:
 /// Test marshaling performance with large datasets
 #[test]
 fn test_large_data_roundtrip() {
-    pyo3::prepare_freethreaded_python();
-
     // Create a large dataset
     let large_array: Vec<i64> = (0..1000).collect();
     let large_data = json!({
@@ -307,27 +290,28 @@ fn test_large_data_roundtrip() {
 /// Test for tuple support (converts to array)
 #[test]
 fn test_tuple_support() {
-    pyo3::prepare_freethreaded_python();
-
+    use std::ffi::CString;
     pyo3::Python::with_gil(|py| {
         use pyo3::types::PyTuple;
 
         // Create a Python tuple
-        let py_tuple = PyTuple::new(py, &[1, 2, 3]);
+        let py_tuple = PyTuple::new(py, &[1, 2, 3]).unwrap();
 
         // Tuples should convert to JSON arrays
-        let result = marshal::python_to_json(py, &py_tuple.into()).unwrap();
+        let result = marshal::python_to_json(py, &py_tuple.into_any()).unwrap();
 
         assert_eq!(result, json!([1, 2, 3]));
 
         // Nested tuples
-        let nested = py.eval("((1, 2), (3, 4))", None, None).unwrap();
-        let result = marshal::python_to_json(py, &nested.into()).unwrap();
+        let code = CString::new("((1, 2), (3, 4))").unwrap();
+        let nested = py.eval(&code, None, None).unwrap();
+        let result = marshal::python_to_json(py, &nested).unwrap();
         assert_eq!(result, json!([[1, 2], [3, 4]]));
 
         // Mixed tuple
-        let mixed = py.eval("(1, 'two', 3.0, True, None)", None, None).unwrap();
-        let result = marshal::python_to_json(py, &mixed.into()).unwrap();
+        let code = CString::new("(1, 'two', 3.0, True, None)").unwrap();
+        let mixed = py.eval(&code, None, None).unwrap();
+        let result = marshal::python_to_json(py, &mixed).unwrap();
         assert_eq!(result, json!([1, "two", 3.0, true, null]));
     });
 }

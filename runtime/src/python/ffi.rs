@@ -4,7 +4,7 @@
 //! Python code to execute pipelines using the Rust runtime.
 
 use pyo3::prelude::*;
-use pyo3_asyncio::tokio::future_into_py;
+use pyo3_async_runtimes::tokio::future_into_py;
 use crate::executor::Executor;
 use crate::manifest::parse;
 use super::marshal::{python_to_json, json_to_python};
@@ -30,10 +30,7 @@ use super::marshal::{python_to_json, json_to_python};
 /// asyncio.run(main())
 /// ```
 #[pyfunction]
-pub fn execute_pipeline<'py>(
-    py: Python<'py>,
-    manifest_json: String,
-) -> PyResult<&'py PyAny> {
+pub fn execute_pipeline(py: Python<'_>, manifest_json: String) -> PyResult<Bound<'_, PyAny>> {
     future_into_py(py, async move {
         // Parse manifest
         let manifest = parse(&manifest_json)
@@ -49,12 +46,11 @@ pub fn execute_pipeline<'py>(
             ))?;
 
         // Convert outputs to Python
-        Python::with_gil(|py| {
+        // With auto-initialize, Python::with_gil is available in async contexts
+        Ok(Python::with_gil(|py| {
             json_to_python(py, &result.outputs)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Failed to convert result to Python: {}", e)
-                ))
-        })
+                .map(|bound| bound.unbind())
+        })?)
     })
 }
 
@@ -76,21 +72,19 @@ pub fn execute_pipeline<'py>(
 pub fn execute_pipeline_with_input<'py>(
     py: Python<'py>,
     manifest_json: String,
-    input_data: Vec<PyObject>,
-) -> PyResult<&'py PyAny> {
+    input_data: Vec<Bound<'py, PyAny>>,
+) -> PyResult<Bound<'py, PyAny>> {
+    // Convert input_data to JSON immediately before the async block
+    let rust_input: Vec<serde_json::Value> = input_data.iter()
+        .map(|obj| python_to_json(py, obj))
+        .collect::<PyResult<Vec<_>>>()?;
+
     future_into_py(py, async move {
         // Parse manifest
         let manifest = parse(&manifest_json)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 format!("Failed to parse manifest: {}", e)
             ))?;
-
-        // Convert Python input to Rust Values
-        let rust_input: Vec<serde_json::Value> = Python::with_gil(|py| {
-            input_data.iter()
-                .map(|obj| python_to_json(py, obj))
-                .collect::<PyResult<Vec<_>>>()
-        })?;
 
         // Execute
         let executor = Executor::new();
@@ -100,12 +94,11 @@ pub fn execute_pipeline_with_input<'py>(
             ))?;
 
         // Convert outputs back to Python
-        Python::with_gil(|py| {
+        // With auto-initialize, Python::with_gil is available in async contexts
+        Ok(Python::with_gil(|py| {
             json_to_python(py, &result.outputs)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Failed to convert result to Python: {}", e)
-                ))
-        })
+                .map(|bound| bound.unbind())
+        })?)
     })
 }
 
@@ -121,11 +114,9 @@ pub fn is_available() -> bool {
     true
 }
 
-use pyo3::types::PyList;
-
 /// Python module initialization
 #[pymodule]
-fn remotemedia_runtime(_py: Python, m: &PyModule) -> PyResult<()> {
+fn remotemedia_runtime(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(execute_pipeline, m)?)?;
     m.add_function(wrap_pyfunction!(execute_pipeline_with_input, m)?)?;
     m.add_function(wrap_pyfunction!(get_runtime_version, m)?)?;

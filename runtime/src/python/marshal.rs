@@ -6,6 +6,7 @@
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::IntoPyObjectExt;
 use serde_json::Value;
 
 /// Convert a Python object to a JSON Value
@@ -19,24 +20,24 @@ use serde_json::Value;
 /// - list → Array
 /// - tuple → Array (JSON doesn't distinguish tuples from lists)
 /// - dict → Object
-pub fn python_to_json(py: Python, obj: &PyObject) -> PyResult<Value> {
+pub fn python_to_json(py: Python, obj: &Bound<'_, PyAny>) -> PyResult<Value> {
     // None
-    if obj.is_none(py) {
+    if obj.is_none() {
         return Ok(Value::Null);
     }
 
     // Boolean (check before int, as bool is subclass of int in Python)
-    if let Ok(val) = obj.extract::<bool>(py) {
+    if let Ok(val) = obj.extract::<bool>() {
         return Ok(Value::Bool(val));
     }
 
     // Integer
-    if let Ok(val) = obj.extract::<i64>(py) {
+    if let Ok(val) = obj.extract::<i64>() {
         return Ok(Value::Number(val.into()));
     }
 
     // Float
-    if let Ok(val) = obj.extract::<f64>(py) {
+    if let Ok(val) = obj.extract::<f64>() {
         if let Some(num) = serde_json::Number::from_f64(val) {
             return Ok(Value::Number(num));
         }
@@ -45,34 +46,34 @@ pub fn python_to_json(py: Python, obj: &PyObject) -> PyResult<Value> {
     }
 
     // String
-    if let Ok(val) = obj.extract::<String>(py) {
+    if let Ok(val) = obj.extract::<String>() {
         return Ok(Value::String(val));
     }
 
     // List
-    if let Ok(list) = obj.downcast::<PyList>(py) {
+    if let Ok(list) = obj.downcast::<PyList>() {
         let mut vec = Vec::new();
         for item in list.iter() {
-            vec.push(python_to_json(py, &item.into())?);
+            vec.push(python_to_json(py, &item)?);
         }
         return Ok(Value::Array(vec));
     }
 
     // Tuple (convert to array, as JSON doesn't have tuples)
-    if let Ok(tuple) = obj.downcast::<PyTuple>(py) {
+    if let Ok(tuple) = obj.downcast::<PyTuple>() {
         let mut vec = Vec::new();
         for item in tuple.iter() {
-            vec.push(python_to_json(py, &item.into())?);
+            vec.push(python_to_json(py, &item)?);
         }
         return Ok(Value::Array(vec));
     }
 
     // Dict
-    if let Ok(dict) = obj.downcast::<PyDict>(py) {
+    if let Ok(dict) = obj.downcast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (key, value) in dict.iter() {
             let key_str = key.extract::<String>()?;
-            map.insert(key_str, python_to_json(py, &value.into())?);
+            map.insert(key_str, python_to_json(py, &value)?);
         }
         return Ok(Value::Object(map));
     }
@@ -81,7 +82,7 @@ pub fn python_to_json(py: Python, obj: &PyObject) -> PyResult<Value> {
     Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
         format!(
             "Cannot convert Python type '{}' to JSON",
-            obj.as_ref(py).get_type().name()?
+            obj.get_type().name()?
         )
     ))
 }
@@ -95,31 +96,32 @@ pub fn python_to_json(py: Python, obj: &PyObject) -> PyResult<Value> {
 /// - String → str
 /// - Array → list
 /// - Object → dict
-pub fn json_to_python(py: Python, value: &Value) -> PyResult<PyObject> {
+pub fn json_to_python<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
     match value {
-        Value::Null => Ok(py.None()),
+        Value::Null => Ok(py.None().into_bound(py)),
 
-        Value::Bool(b) => Ok(b.into_py(py)),
+        Value::Bool(b) => Ok(b.into_bound_py_any(py)?),
 
         Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Ok(i.into_py(py))
+                Ok(i.into_bound_py_any(py)?)
             } else if let Some(f) = n.as_f64() {
-                Ok(f.into_py(py))
+                Ok(f.into_bound_py_any(py)?)
             } else {
                 // Fallback for u64 or other edge cases
-                Ok(py.None())
+                Ok(py.None().into_bound(py))
             }
         }
 
-        Value::String(s) => Ok(s.into_py(py)),
+        Value::String(s) => Ok(s.into_bound_py_any(py)?),
 
         Value::Array(arr) => {
             let py_list = PyList::empty(py);
             for item in arr {
-                py_list.append(json_to_python(py, item)?)?;
+                let py_item = json_to_python(py, item)?;
+                py_list.append(py_item)?;
             }
-            Ok(py_list.into())
+            Ok(py_list.into_any())
         }
 
         Value::Object(obj) => {
@@ -127,7 +129,7 @@ pub fn json_to_python(py: Python, value: &Value) -> PyResult<PyObject> {
             for (key, value) in obj {
                 py_dict.set_item(key, json_to_python(py, value)?)?;
             }
-            Ok(py_dict.into())
+            Ok(py_dict.into_any())
         }
     }
 }
@@ -141,24 +143,24 @@ mod tests {
         pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
             // None
-            let py_none = py.None();
+            let py_none = py.None().into_bound(py);
             assert_eq!(python_to_json(py, &py_none).unwrap(), Value::Null);
 
             // Boolean
-            let py_bool = true.into_py(py);
+            let py_bool = true.into_bound_py_any(py).unwrap();
             assert_eq!(python_to_json(py, &py_bool).unwrap(), Value::Bool(true));
 
             // Integer
-            let py_int = 42.into_py(py);
+            let py_int = 42.into_bound_py_any(py).unwrap();
             assert_eq!(python_to_json(py, &py_int).unwrap(), Value::from(42));
 
             // Float
-            let py_float = 3.14.into_py(py);
+            let py_float = 3.14.into_bound_py_any(py).unwrap();
             let result = python_to_json(py, &py_float).unwrap();
             assert!(result.is_number());
 
             // String
-            let py_str = "hello".into_py(py);
+            let py_str = "hello".into_bound_py_any(py).unwrap();
             assert_eq!(python_to_json(py, &py_str).unwrap(), Value::from("hello"));
         });
     }
@@ -167,7 +169,7 @@ mod tests {
     fn test_python_to_json_list() {
         pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
-            let py_list = vec![1, 2, 3].into_py(py);
+            let py_list = vec![1, 2, 3].into_bound_py_any(py).unwrap();
             let result = python_to_json(py, &py_list).unwrap();
 
             assert_eq!(
@@ -184,7 +186,7 @@ mod tests {
             let py_dict = [("name", "Alice"), ("city", "NYC")]
                 .into_iter()
                 .collect::<std::collections::HashMap<_, _>>()
-                .into_py(py);
+                .into_bound_py_any(py).unwrap();
 
             let result = python_to_json(py, &py_dict).unwrap();
             assert!(result.is_object());
@@ -202,22 +204,22 @@ mod tests {
             // Null
             let json_null = Value::Null;
             let py_obj = json_to_python(py, &json_null).unwrap();
-            assert!(py_obj.is_none(py));
+            assert!(py_obj.is_none());
 
             // Boolean
             let json_bool = Value::Bool(true);
             let py_obj = json_to_python(py, &json_bool).unwrap();
-            assert_eq!(py_obj.extract::<bool>(py).unwrap(), true);
+            assert_eq!(py_obj.extract::<bool>().unwrap(), true);
 
             // Integer
             let json_int = Value::from(42);
             let py_obj = json_to_python(py, &json_int).unwrap();
-            assert_eq!(py_obj.extract::<i64>(py).unwrap(), 42);
+            assert_eq!(py_obj.extract::<i64>().unwrap(), 42);
 
             // String
             let json_str = Value::from("hello");
             let py_obj = json_to_python(py, &json_str).unwrap();
-            assert_eq!(py_obj.extract::<String>(py).unwrap(), "hello");
+            assert_eq!(py_obj.extract::<String>().unwrap(), "hello");
         });
     }
 
@@ -228,7 +230,7 @@ mod tests {
             // Array
             let json_array = Value::Array(vec![Value::from(1), Value::from(2), Value::from(3)]);
             let py_obj = json_to_python(py, &json_array).unwrap();
-            assert_eq!(py_obj.extract::<Vec<i64>>(py).unwrap(), vec![1, 2, 3]);
+            assert_eq!(py_obj.extract::<Vec<i64>>().unwrap(), vec![1, 2, 3]);
 
             // Object
             let mut map = serde_json::Map::new();
@@ -237,7 +239,7 @@ mod tests {
             let json_obj = Value::Object(map);
 
             let py_obj = json_to_python(py, &json_obj).unwrap();
-            let py_dict = py_obj.downcast::<PyDict>(py).unwrap();
+            let py_dict = py_obj.downcast::<PyDict>().unwrap();
 
             let x_value = py_dict.get_item("x").unwrap().unwrap();
             let y_value = py_dict.get_item("y").unwrap().unwrap();
@@ -251,21 +253,19 @@ mod tests {
         pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
             // Create complex Python structure
-            let original = vec![
-                1.into_py(py),
-                "test".into_py(py),
-                vec![2, 3, 4].into_py(py),
-            ]
-            .into_py(py);
+            let py_list = PyList::empty(py);
+            py_list.append(1.into_bound_py_any(py).unwrap()).unwrap();
+            py_list.append("test".into_bound_py_any(py).unwrap()).unwrap();
+            py_list.append(vec![2, 3, 4].into_bound_py_any(py).unwrap()).unwrap();
 
             // Python → JSON
-            let json_val = python_to_json(py, &original).unwrap();
+            let json_val = python_to_json(py, py_list.as_any()).unwrap();
 
             // JSON → Python
             let result = json_to_python(py, &json_val).unwrap();
 
             // Verify it's a list with correct length
-            let result_list = result.downcast::<PyList>(py).unwrap();
+            let result_list = result.downcast::<PyList>().unwrap();
             assert_eq!(result_list.len(), 3);
         });
     }
@@ -277,21 +277,21 @@ mod tests {
             use pyo3::types::PyTuple;
 
             // Simple tuple
-            let tuple = PyTuple::new(py, &[1, 2, 3]);
-            let json_val = python_to_json(py, &tuple.into()).unwrap();
+            let tuple = PyTuple::new(py, &[1, 2, 3]).unwrap();
+            let json_val = python_to_json(py, tuple.as_any()).unwrap();
             assert_eq!(json_val, Value::Array(vec![Value::from(1), Value::from(2), Value::from(3)]));
 
             // Nested tuple
-            let inner1 = PyTuple::new(py, &[1, 2]);
-            let inner2 = PyTuple::new(py, &[3, 4]);
-            let outer = PyTuple::new(py, &[inner1, inner2]);
-            let json_val = python_to_json(py, &outer.into()).unwrap();
+            let inner1 = PyTuple::new(py, &[1, 2]).unwrap();
+            let inner2 = PyTuple::new(py, &[3, 4]).unwrap();
+            let outer = PyTuple::new(py, &[&inner1, &inner2]).unwrap();
+            let json_val = python_to_json(py, outer.as_any()).unwrap();
             assert!(json_val.is_array());
             assert_eq!(json_val.as_array().unwrap().len(), 2);
 
             // Empty tuple
             let empty_tuple = PyTuple::empty(py);
-            let json_val = python_to_json(py, &empty_tuple.into()).unwrap();
+            let json_val = python_to_json(py, empty_tuple.as_any()).unwrap();
             assert_eq!(json_val, Value::Array(vec![]));
         });
     }

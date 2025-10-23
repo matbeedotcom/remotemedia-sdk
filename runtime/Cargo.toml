@@ -39,8 +39,9 @@ tonic = "0.10"
 prost = "0.12"
 
 # Python FFI (using PyO3 per recommendation)
-pyo3 = { version = "0.20", features = ["extension-module", "abi3-py39"] }
-pyo3-asyncio = { version = "0.20", features = ["tokio-runtime"] }
+pyo3 = { version = "0.26", features = ["extension-module", "abi3-py39", "auto-initialize"] }
+pyo3-async-runtimes = { version = "0.26", features = ["tokio-runtime"] }
+numpy = "0.26"  # rust-numpy for zero-copy numpy array support
 
 # Logging and tracing
 tracing = "0.1"
@@ -54,6 +55,7 @@ thiserror = "1.0"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 sha2 = "0.10"
 hex = "0.4"
+base64 = "0.21"
 
 [dev-dependencies]
 tokio-test = "0.4"

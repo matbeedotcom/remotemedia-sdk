@@ -16,6 +16,7 @@ RemoteMedia SDK is a distributed audio/video/data processing framework that enab
 
 ### Primary Languages
 - **Python 3.9+**: Core SDK, service backend, examples (primary language)
+- **Rust**: Language-neutral runtime, performance-critical execution engine
 - **TypeScript/JavaScript**: Node.js client library
 - **Protocol Buffers (proto3)**: gRPC service definitions and data serialization
 
@@ -26,6 +27,15 @@ RemoteMedia SDK is a distributed audio/video/data processing framework that enab
 - **aiohttp**: Async HTTP server framework
 - **CloudPickle**: Serialization of complex Python objects (classes, functions, closures)
 - **asyncio**: Asynchronous programming throughout the codebase
+
+### Rust Runtime Stack
+- **Tokio**: Async runtime for concurrent execution
+- **PyO3 0.26**: Python FFI bindings with Bound API and freethreaded support
+- **RustPython**: Embedded Python interpreter for node execution
+- **rust-numpy**: Zero-copy numpy array marshaling
+- **Wasmtime**: WASM runtime for sandboxed execution (Phase 3)
+- **webrtc-rs**: WebRTC implementation for peer-to-peer transport (Phase 2)
+- **serde**: Serialization framework for manifest parsing
 
 ### Audio/Video Processing
 - **PyAV (av)**: Python bindings for FFmpeg
@@ -71,6 +81,25 @@ RemoteMedia SDK is a distributed audio/video/data processing framework that enab
 - Use TypeScript 5.0+ features
 - Export types alongside implementations
 - Prefer `async/await` over callbacks
+
+**Rust:**
+- Edition: 2021, Rust version 1.70+
+- Formatting: rustfmt (automatic via cargo fmt)
+- Linting: clippy (cargo clippy)
+- Naming conventions:
+  - Types/Traits: `PascalCase` (e.g., `Executor`, `PythonVm`)
+  - Functions/methods: `snake_case` (e.g., `execute_pipeline`, `json_to_python`)
+  - Constants: `UPPER_SNAKE_CASE` (e.g., `MAX_RETRIES`)
+  - Modules: `snake_case` (e.g., `python/marshal.rs`)
+- Use `Result<T>` and `?` operator for error propagation
+- Document public APIs with `///` doc comments
+- Use `tracing` crate for structured logging
+- Prefer `&str` over `String` for function parameters
+- Use `async fn` with tokio for async operations
+- PyO3 0.26 Bound API patterns:
+  - Use `Bound<'py, PyAny>` for Python object references
+  - Use `.into_bound_py_any()` for Rust → Python conversions
+  - Use `Python::with_gil()` for GIL access (auto-initialize feature enabled)
 
 **General:**
 - Use logging extensively with appropriate levels (DEBUG, INFO, WARNING, ERROR)
@@ -128,6 +157,8 @@ RemoteMedia SDK is a distributed audio/video/data processing framework that enab
 - pytest for test execution
 - pytest-asyncio for async test support
 - pytest-grpc for gRPC service testing
+- cargo test for Rust unit and integration tests
+- criterion for Rust performance benchmarks
 
 **Testing Requirements:**
 - All new nodes should have unit tests
@@ -135,6 +166,8 @@ RemoteMedia SDK is a distributed audio/video/data processing framework that enab
 - Test async and sync execution paths
 - Integration tests for gRPC services
 - Test remote execution with mock servers
+- Rust: Test all public APIs, include doctests for examples
+- Rust: Marshaling tests must verify round-trip data integrity
 
 ### Git Workflow
 
@@ -152,9 +185,10 @@ RemoteMedia SDK is a distributed audio/video/data processing framework that enab
   - "Restructure mono-repo with shared protobuf definitions"
 
 **Repository Structure:**
-- Monorepo with multiple packages: `python-client/`, `service/`, `nodejs-client/`
+- Monorepo with multiple packages: `python-client/`, `service/`, `nodejs-client/`, `runtime/`
 - Shared protobuf definitions in `remotemedia/protos/`
 - Examples in `examples/` and `webrtc-example/`
+- Rust runtime workspace in `runtime/` with cdylib for Python FFI
 
 ## Domain Context
 
@@ -166,6 +200,22 @@ RemoteMedia SDK is a distributed audio/video/data processing framework that enab
 - **Custom Nodes**: User-defined nodes loaded dynamically by the service
 - **Streaming**: Real-time processing of audio/video/data streams
 - **Sentinel Values**: Special objects like `_SENTINEL` and `_EMPTY` for flow control
+
+**Rust Runtime Architecture:**
+- **Manifest-Driven Execution**: Pipelines serialize to JSON manifests for language-neutral execution
+- **Dual Python Runtimes**: RustPython (embedded) for node execution, PyO3 (FFI) for SDK integration
+- **Data Marshaling**: Bidirectional conversion between Python and Rust with zero-copy numpy support
+- **Async Execution**: Tokio-based async runtime for concurrent pipeline execution
+- **VM Pooling**: Reusable RustPython VM instances for efficient node execution
+- **FFI Functions**: `execute_pipeline()` and `execute_pipeline_with_input()` exposed to Python
+- **Module Organization**:
+  - `executor/`: Pipeline orchestration and execution engine
+  - `manifest/`: JSON manifest parsing and validation
+  - `python/ffi`: PyO3 FFI functions for Python SDK
+  - `python/marshal`: Data type conversion (Python ↔ Rust)
+  - `python/numpy_marshal`: Zero-copy numpy array handling
+  - `python/vm`: RustPython VM lifecycle management
+  - `python/node_executor`: High-level Python node execution
 
 **Processing Modes:**
 - **Local Execution**: Nodes run in the client process

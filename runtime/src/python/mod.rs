@@ -10,6 +10,7 @@ pub mod ffi;
 pub mod marshal;
 pub mod vm;
 pub mod node_executor;
+pub mod numpy_marshal;
 
 // Re-export FFI module for Python extension
 pub use ffi::*;

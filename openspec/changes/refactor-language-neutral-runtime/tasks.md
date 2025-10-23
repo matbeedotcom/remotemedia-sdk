@@ -56,13 +56,19 @@
 - [x] 1.6.8 Test 5-10 existing SDK nodes in RustPython
 
 ### 1.7 Data Type Marshaling
-- [ ] 1.7.1 Define Python-Rust type mapping (primitives)
-- [ ] 1.7.2 Implement collection type conversions (list, dict, tuple)
-- [ ] 1.7.3 Handle numpy arrays (zero-copy via shared memory)
+- [x] 1.7.1 Define Python-Rust type mapping (primitives)
+- [x] 1.7.2 Implement collection type conversions (list, dict, tuple)
+- [x] 1.7.3 Handle numpy arrays (zero-copy FFI via rust-numpy, base64 for RustPython VM)
 - [ ] 1.7.4 Serialize complex objects via CloudPickle
-- [ ] 1.7.5 Handle None/null and Option types
-- [ ] 1.7.6 Test round-trip marshaling (Python → Rust → Python)
+- [x] 1.7.5 Handle None/null and Option types
+- [x] 1.7.6 Test round-trip marshaling (Python → Rust → Python)
 - [ ] 1.7.7 Add performance benchmarks for marshaling
+
+**Note on 1.7.3:** Implemented dual-path numpy marshaling:
+- **PyO3 FFI boundary** (Python SDK ↔ Rust): Zero-copy via rust-numpy ✅
+- **RustPython VM** (inside Rust runtime): Base64 serialization (RustPython limitation)
+- **CPython WASM** (Phase 3): Static-linked numpy with rust-numpy support
+This achieves best-possible performance given RustPython's constraints.
 
 ### 1.8 Python Exception Handling
 - [ ] 1.8.1 Catch Python exceptions in RustPython
@@ -83,13 +89,43 @@
 - [ ] 1.9.8 Compare results: RustPython vs CPython (numerical tolerance)
 - [ ] 1.9.9 Document known limitations and workarounds
 
-### 1.10 CPython Fallback Mechanism
-- [ ] 1.10.1 Implement CPython subprocess execution path
-- [ ] 1.10.2 Add environment variable: REMOTEMEDIA_PYTHON_RUNTIME
-- [ ] 1.10.3 Auto-detect RustPython failures and retry with CPython
-- [ ] 1.10.4 Support mixed pipelines (RustPython + CPython nodes)
-- [ ] 1.10.5 Test fallback scenarios
-- [ ] 1.10.6 Document when to use CPython vs RustPython
+### 1.10 CPython Fallback Mechanism (PyO3 In-Process)
+
+**Prerequisites Complete:**
+- ✅ PyO3 0.26 FFI infrastructure (Phase 1.4)
+- ✅ Data marshaling: marshal.rs + numpy_marshal.rs (Phase 1.7)
+- ✅ FFI entry points: execute_pipeline(), execute_pipeline_with_input() (ffi.rs)
+
+**What's Needed:** Add CPython execution path alongside RustPython in the runtime.
+
+- [ ] 1.10.1 Create CPythonNodeExecutor struct (implements NodeExecutor trait)
+- [ ] 1.10.2 Implement node class loading: `py.import("remotemedia.nodes").getattr(node_type)`
+- [ ] 1.10.3 Implement node instantiation: `class(**params)` via PyO3
+- [ ] 1.10.4 Implement process() method (reuse marshal.rs + numpy_marshal.rs)
+- [ ] 1.10.5 Add RuntimeHint enum to manifest schema (RustPython, CPython, Auto)
+- [ ] 1.10.6 Create RuntimeSelector with auto-detection logic
+- [ ] 1.10.7 Integrate CPythonNodeExecutor into Executor::execute_with_input()
+- [ ] 1.10.8 Add REMOTEMEDIA_PYTHON_RUNTIME environment variable
+- [ ] 1.10.9 Implement fallback: RustPython error → retry with CPython
+- [ ] 1.10.10 Test mixed pipelines (some nodes RustPython, some CPython)
+- [ ] 1.10.11 Test full Python stdlib access (pandas, torch, transformers)
+- [ ] 1.10.12 Benchmark: RustPython vs CPython PyO3 performance
+- [ ] 1.10.13 Document when to use each runtime (decision matrix)
+
+**Architecture:** Reuses existing PyO3 FFI infrastructure to execute Python SDK nodes in-process:
+- Zero-copy numpy arrays via rust-numpy (already in numpy_marshal.rs)
+- Microsecond FFI call latency (Python::with_gil())
+- Full Python stdlib and PyPI ecosystem access
+- GIL-managed thread safety
+- No subprocess overhead or IPC serialization
+
+**Key Files:**
+- NEW: `runtime/src/python/cpython_executor.rs` (~300 lines)
+- NEW: `runtime/src/executor/runtime_selector.rs` (~150 lines)
+- MODIFY: `runtime/src/manifest/mod.rs` (add RuntimeHint enum)
+- MODIFY: `runtime/src/executor/mod.rs` (integrate runtime selection)
+
+**Estimated Effort:** ~500 lines of new code (marshaling already complete)
 
 ### 1.11 Data Flow & Orchestration
 - [ ] 1.11.1 Implement sequential data passing between nodes
@@ -222,7 +258,14 @@
 - [ ] 2.12.4 Create pipeline identity and addressing
 - [ ] 2.12.5 Document server deployment and configuration
 
-## Phase 3: WASM Sandbox
+## Phase 3: WASM Sandbox & CPython WASM
+
+**Three-Tier Runtime Strategy:**
+1. **RustPython** (Phase 1) - Embedded, pure Rust, small binary
+2. **CPython PyO3** (Phase 1.10) - Native speed, zero-copy numpy, full ecosystem
+3. **CPython WASM** (Phase 3) - Sandboxed, portable, browser-compatible
+
+This phase adds WASM sandboxing for untrusted code AND enables full CPython in WASM.
 
 ### 3.1 WASM Runtime Setup
 - [ ] 3.1.1 Integrate Wasmtime or Wasmer
@@ -230,48 +273,83 @@
 - [ ] 3.1.3 Create WASM node instantiation
 - [ ] 3.1.4 Add WASM function invocation
 - [ ] 3.1.5 Test basic WASM node execution
+- [ ] 3.1.6 Add CPython WASM support via webassembly-language-runtimes
+- [ ] 3.1.7 Build PyO3 with wasm32-wasi target
+- [ ] 3.1.8 Static link libpython3.12.a for WASM
 
-### 3.2 Resource Limits
-- [ ] 3.2.1 Implement memory limits
-- [ ] 3.2.2 Add execution time limits
-- [ ] 3.2.3 Create fuel-based metering
-- [ ] 3.2.4 Implement resource exhaustion handling
-- [ ] 3.2.5 Test limit enforcement
+### 3.2 PyO3 WASM Integration (CPython in WASM)
+- [ ] 3.2.1 Add wlr-libpy dependency for pre-built CPython WASM
+- [ ] 3.2.2 Configure Cargo.toml for wasm32-wasi target
+- [ ] 3.2.3 Set up linker flags for static libpython
+- [ ] 3.2.4 Implement CPythonWasmExecutor (NodeExecutor trait)
+- [ ] 3.2.5 Test PyO3 bindings in WASM runtime (Wasmtime)
+- [ ] 3.2.6 Test numpy support in WASM (static-linked)
+- [ ] 3.2.7 Benchmark CPython WASM vs Native vs RustPython
+- [ ] 3.2.8 Test Python stdlib compatibility in WASM
+- [ ] 3.2.9 Implement WASM-specific error handling
+- [ ] 3.2.10 Document CPython WASM limitations and workarounds
 
-### 3.3 WASI Support
-- [ ] 3.3.1 Enable WASI stdio redirection
-- [ ] 3.3.2 Implement preopen directory mechanism
-- [ ] 3.3.3 Add capability-based filesystem access
-- [ ] 3.3.4 Deny network syscalls by default
-- [ ] 3.3.5 Create capability configuration schema
+**Reference:** VMware Labs webassembly-language-runtimes project demonstrates
+PyO3 + CPython compilation to wasm32-wasi. This enables full Python stdlib
+in a WASM sandbox with PyO3 FFI bindings.
 
-### 3.4 Security Isolation
-- [ ] 3.4.1 Ensure memory isolation between instances
-- [ ] 3.4.2 Whitelist allowed host function imports
-- [ ] 3.4.3 Add signature verification for WASM modules
-- [ ] 3.4.4 Implement sandbox escape detection
-- [ ] 3.4.5 Conduct security audit
+### 3.3 Resource Limits (WASM Sandbox)
+- [ ] 3.3.1 Implement memory limits for WASM instances
+- [ ] 3.3.2 Add execution time limits (fuel-based metering)
+- [ ] 3.3.3 Create fuel-based metering for CPU usage
+- [ ] 3.3.4 Implement resource exhaustion handling
+- [ ] 3.3.5 Test limit enforcement across all WASM nodes
 
-### 3.5 Data Serialization
-- [ ] 3.5.1 Implement structured data passing to WASM
-- [ ] 3.5.2 Add JSON/msgpack serialization
-- [ ] 3.5.3 Create binary data handling (audio/video frames)
-- [ ] 3.5.4 Implement streaming data protocol
-- [ ] 3.5.5 Test serialization performance
+### 3.4 WASI Support
+- [ ] 3.4.1 Enable WASI stdio redirection
+- [ ] 3.4.2 Implement preopen directory mechanism
+- [ ] 3.4.3 Add capability-based filesystem access
+- [ ] 3.4.4 Deny network syscalls by default
+- [ ] 3.4.5 Create capability configuration schema
 
-### 3.6 WASM Compilation Tools
-- [ ] 3.6.1 Create `remotemedia compile` CLI command
-- [ ] 3.6.2 Implement Python-to-WASM via RustPython
-- [ ] 3.6.3 Add Rust-to-WASM compilation support
-- [ ] 3.6.4 Integrate wasm-opt for optimization
-- [ ] 3.6.5 Document compilation workflow
+### 3.5 Security Isolation
+- [ ] 3.5.1 Ensure memory isolation between WASM instances
+- [ ] 3.5.2 Whitelist allowed host function imports
+- [ ] 3.5.3 Add signature verification for WASM modules
+- [ ] 3.5.4 Implement sandbox escape detection
+- [ ] 3.5.5 Test security: RustPython vs CPython WASM isolation
+- [ ] 3.5.6 Conduct security audit of WASM sandbox
 
-### 3.7 Performance & Caching
-- [ ] 3.7.1 Implement module caching
-- [ ] 3.7.2 Add AOT compilation support (if available)
-- [ ] 3.7.3 Create performance profiling
-- [ ] 3.7.4 Optimize cold-start time
-- [ ] 3.7.5 Benchmark WASM vs native vs Python
+### 3.6 Data Serialization (WASM)
+- [ ] 3.6.1 Implement structured data passing to WASM
+- [ ] 3.6.2 Add JSON/msgpack serialization for WASM boundary
+- [ ] 3.6.3 Create binary data handling (audio/video frames)
+- [ ] 3.6.4 Implement streaming data protocol
+- [ ] 3.6.5 Test serialization performance across runtimes
+- [ ] 3.6.6 Reuse numpy_marshal.rs for CPython WASM nodes
+
+### 3.7 WASM Compilation Tools
+- [ ] 3.7.1 Create `remotemedia compile` CLI command
+- [ ] 3.7.2 Add Rust-to-WASM compilation support
+- [ ] 3.7.3 Integrate wasm-opt for optimization
+- [ ] 3.7.4 Document compilation workflow for custom nodes
+- [ ] 3.7.5 Create CI/CD pipeline for WASM builds
+
+**Note:** Python-to-WASM via RustPython removed. Use CPython WASM (3.2) instead.
+
+### 3.8 Runtime Selection & Integration
+- [ ] 3.8.1 Extend RuntimeHint enum (add CPythonWasm option)
+- [ ] 3.8.2 Update RuntimeSelector for three-tier strategy
+- [ ] 3.8.3 Implement automatic runtime selection based on requirements
+- [ ] 3.8.4 Add sandbox_required flag to manifest capabilities
+- [ ] 3.8.5 Test runtime selection: simple → RustPython, complex → CPython, untrusted → WASM
+- [ ] 3.8.6 Create decision matrix documentation
+- [ ] 3.8.7 Add runtime override via environment variables
+- [ ] 3.8.8 Test mixed pipelines with all three runtimes
+
+### 3.9 Performance & Caching
+- [ ] 3.9.1 Implement WASM module caching
+- [ ] 3.9.2 Add AOT compilation support for WASM (if available)
+- [ ] 3.9.3 Create performance profiling across all runtimes
+- [ ] 3.9.4 Optimize cold-start time (especially CPython WASM)
+- [ ] 3.9.5 Comprehensive benchmark: RustPython vs CPython Native vs CPython WASM
+- [ ] 3.9.6 Document performance characteristics and tradeoffs
+- [ ] 3.9.7 Create runtime selection performance guide
 
 ## Phase 4: OCI Packaging & Distribution
 
