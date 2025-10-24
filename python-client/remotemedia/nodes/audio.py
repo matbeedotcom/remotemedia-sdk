@@ -86,7 +86,7 @@ class AudioTransform(Node):
             output_sample_rate (int): The target sample rate for the audio.
             output_channels (int): The target number of channels for the audio.
         """
-        super().__init__(**kwargs)
+        super().__init__(output_sample_rate=output_sample_rate, output_channels=output_channels, **kwargs)
         self.output_sample_rate = output_sample_rate
         self.output_channels = output_channels
 
@@ -105,11 +105,12 @@ class AudioTransform(Node):
         """
         # Use base class helper to extract metadata
         data_without_metadata, metadata = self.split_data_metadata(data)
-        
-        if not isinstance(data_without_metadata, tuple) or len(data_without_metadata) < 2:
+
+        # Accept both tuple and list (for Rust runtime compatibility where JSON arrays become lists)
+        if not isinstance(data_without_metadata, (tuple, list)) or len(data_without_metadata) < 2:
             logger.warning(
                 f"AudioTransform '{self.name}': received data in "
-                "unexpected format. Expected (audio_data, sample_rate)."
+                "unexpected format. Expected (audio_data, sample_rate) tuple or list."
             )
             return data
 
@@ -118,6 +119,8 @@ class AudioTransform(Node):
         if not isinstance(audio_data, np.ndarray):
             logger.warning(f"AudioTransform '{self.name}': audio data is not a numpy array.")
             return data
+
+        logger.debug(f"AudioTransform '{self.name}': input shape={audio_data.shape}, sr={input_sample_rate} -> target sr={self.output_sample_rate}, channels={self.output_channels}")
 
         # Resample if necessary
         if input_sample_rate != self.output_sample_rate:
@@ -151,10 +154,10 @@ class AudioTransform(Node):
                 audio_data = audio_data[: self.output_channels, :]
         
         logger.debug(
-            f"AudioTransform '{self.name}': processed audio to "
-            f"{self.output_sample_rate}Hz and {self.output_channels} channels."
+            f"AudioTransform '{self.name}': output shape={audio_data.shape}, "
+            f"sr={self.output_sample_rate}, channels={self.output_channels}"
         )
-        
+
         # Use base class helper to preserve metadata
         result = (audio_data, self.output_sample_rate)
         return self.merge_data_metadata(result, metadata)
@@ -172,7 +175,7 @@ class AudioBuffer(Node):
         Args:
             buffer_size_samples (int): The number of samples to buffer before outputting.
         """
-        super().__init__(**kwargs)
+        super().__init__(buffer_size_samples=buffer_size_samples, **kwargs)
         self.buffer_size_samples = buffer_size_samples
         self._buffer = None
         self._sample_rate = None
@@ -196,11 +199,14 @@ class AudioBuffer(Node):
         Yields:
             A tuple `(buffered_audio_data, sample_rate)` when the buffer is full.
         """
+        logger.info(f"AudioBuffer '{self.name}': process() started, beginning to consume data_stream")
         async for data in data_stream:
-            if not isinstance(data, tuple) or len(data) != 2:
+            logger.info(f"AudioBuffer '{self.name}': received data from stream")
+            # Accept both tuple and list (for Rust runtime compatibility)
+            if not isinstance(data, (tuple, list)) or len(data) != 2:
                 logger.warning(
                     f"AudioBuffer '{self.name}': received data in unexpected format. "
-                    "Expected (audio_data, sample_rate)."
+                    "Expected (audio_data, sample_rate) tuple or list."
                 )
                 continue
 
@@ -209,6 +215,8 @@ class AudioBuffer(Node):
             if not isinstance(audio_chunk, np.ndarray):
                 logger.warning(f"AudioBuffer '{self.name}': audio data is not a numpy array.")
                 continue
+
+            logger.debug(f"AudioBuffer '{self.name}': received chunk shape={audio_chunk.shape}, sr={sample_rate}")
 
             # Ensure audio_chunk is 2D (channels, samples)
             if audio_chunk.ndim == 1:
@@ -247,9 +255,13 @@ class AudioBuffer(Node):
                 yield (output_chunk, self._sample_rate)
 
         # Flush any remaining data
+        logger.info(f"AudioBuffer '{self.name}': stream ended, checking for remaining data")
+        logger.info(f"AudioBuffer '{self.name}': buffer state - is None: {self._buffer is None}, shape: {self._buffer.shape if self._buffer is not None else 'N/A'}")
         if self._buffer is not None and self._buffer.shape[1] > 0:
-            logger.debug(f"AudioBuffer '{self.name}': flushing {self._buffer.shape[1]} samples.")
+            logger.info(f"AudioBuffer '{self.name}': flushing final chunk shape={self._buffer.shape}")
             yield (self._buffer, self._sample_rate)
+        else:
+            logger.info(f"AudioBuffer '{self.name}': no data to flush")
 
 
 class AudioResampler(Node):

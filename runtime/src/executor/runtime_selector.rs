@@ -79,11 +79,11 @@ impl RuntimeSelector {
         if let Some(hint) = node.runtime_hint {
             match hint {
                 RuntimeHint::RustPython => {
-                    tracing::debug!("Node {} explicitly requests RustPython", node.id);
+                    tracing::info!("Node {} explicitly requests RustPython", node.id);
                     return SelectedRuntime::RustPython;
                 }
                 RuntimeHint::Cpython => {
-                    tracing::debug!("Node {} explicitly requests CPython", node.id);
+                    tracing::info!("Node {} explicitly requests CPython", node.id);
                     return SelectedRuntime::CPython;
                 }
                 RuntimeHint::CpythonWasm => {
@@ -103,11 +103,11 @@ impl RuntimeSelector {
         if let Some(hint) = self.env_override {
             match hint {
                 RuntimeHint::RustPython => {
-                    tracing::debug!("Using RustPython (env override) for node {}", node.id);
+                    tracing::info!("Using RustPython (env override) for node {}", node.id);
                     return SelectedRuntime::RustPython;
                 }
                 RuntimeHint::Cpython => {
-                    tracing::debug!("Using CPython (env override) for node {}", node.id);
+                    tracing::info!("Using CPython (env override) for node {}", node.id);
                     return SelectedRuntime::CPython;
                 }
                 RuntimeHint::CpythonWasm => {
@@ -138,7 +138,7 @@ impl RuntimeSelector {
         // Check for GPU requirements
         if let Some(caps) = &node.capabilities {
             if caps.gpu.is_some() {
-                tracing::debug!(
+                tracing::info!(
                     "Node {} requires GPU, selecting CPython (likely ML workload)",
                     node.id
                 );
@@ -148,7 +148,7 @@ impl RuntimeSelector {
             // Check for high memory requirements (>4GB suggests ML)
             if let Some(mem_gb) = caps.memory_gb {
                 if mem_gb > 4.0 {
-                    tracing::debug!(
+                    tracing::info!(
                         "Node {} requires {}GB memory, selecting CPython (likely ML workload)",
                         node.id,
                         mem_gb
@@ -178,7 +178,7 @@ impl RuntimeSelector {
 
         for keyword in &cpython_keywords {
             if node_type_lower.contains(keyword) {
-                tracing::debug!(
+                tracing::info!(
                     "Node {} type contains '{}', selecting CPython (C-extension dependency)",
                     node.id,
                     keyword
@@ -188,7 +188,7 @@ impl RuntimeSelector {
         }
 
         // Default to RustPython for simple nodes
-        tracing::debug!(
+        tracing::info!(
             "Node {} has no special requirements, selecting RustPython (default)",
             node.id
         );

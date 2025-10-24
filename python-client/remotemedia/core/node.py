@@ -532,6 +532,10 @@ class Node(ABC):
             "params": self._extract_params()
         }
 
+        # Add streaming flag if the node is a streaming node
+        if getattr(self, 'is_streaming', False):
+            manifest["is_streaming"] = True
+
         # Add optional capability requirements
         if include_capabilities:
             caps = self.get_capabilities()

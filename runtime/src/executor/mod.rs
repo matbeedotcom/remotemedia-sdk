@@ -13,9 +13,63 @@ use crate::{Error, Result};
 use crate::manifest::Manifest;
 use crate::nodes::{NodeContext, NodeExecutor, NodeRegistry};
 use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
 use serde_json::Value;
+use pyo3::prelude::*;
+use pyo3::types::PyAny;
 
 pub use runtime_selector::{RuntimeSelector, SelectedRuntime};
+
+/// Cache for Python objects to avoid unnecessary serialization
+/// when passing data between Python nodes
+#[derive(Clone)]
+pub struct PyObjectCache {
+    objects: Arc<Mutex<HashMap<String, Py<PyAny>>>>,
+    next_id: Arc<Mutex<u64>>,
+}
+
+impl PyObjectCache {
+    pub fn new() -> Self {
+        Self {
+            objects: Arc::new(Mutex::new(HashMap::new())),
+            next_id: Arc::new(Mutex::new(0)),
+        }
+    }
+
+    /// Store a Python object and return its cache ID
+    pub fn store(&self, obj: Py<PyAny>) -> String {
+        let mut next_id = self.next_id.lock().unwrap();
+        let id = format!("pyobj_{}", *next_id);
+        *next_id += 1;
+
+        let mut objects = self.objects.lock().unwrap();
+        objects.insert(id.clone(), obj);
+
+        tracing::info!("Stored Python object in cache with ID: {}", id);
+        id
+    }
+
+    /// Retrieve a Python object by ID
+    pub fn get(&self, id: &str) -> Option<Py<PyAny>> {
+        let objects = self.objects.lock().unwrap();
+        Python::with_gil(|py| {
+            objects.get(id).map(|obj| obj.clone_ref(py))
+        })
+    }
+
+    /// Check if an ID exists in the cache
+    pub fn contains(&self, id: &str) -> bool {
+        let objects = self.objects.lock().unwrap();
+        objects.contains_key(id)
+    }
+
+    /// Clear all cached objects
+    pub fn clear(&self) {
+        let mut objects = self.objects.lock().unwrap();
+        objects.clear();
+        tracing::info!("Cleared Python object cache");
+    }
+}
 
 /// Represents a node in the pipeline graph
 #[derive(Debug, Clone)]
@@ -28,6 +82,9 @@ pub struct GraphNode {
 
     /// Node parameters
     pub params: Value,
+
+    /// Whether this is a streaming node (async generator)
+    pub is_streaming: bool,
 
     /// Optional capability requirements
     pub capabilities: Option<crate::manifest::CapabilityRequirements>,
@@ -69,6 +126,7 @@ impl PipelineGraph {
                 id: node_manifest.id.clone(),
                 node_type: node_manifest.node_type.clone(),
                 params: node_manifest.params.clone(),
+                is_streaming: node_manifest.is_streaming,
                 capabilities: node_manifest.capabilities.clone(),
                 host: node_manifest.host.clone(),
                 inputs: Vec::new(),
@@ -196,6 +254,9 @@ pub struct Executor {
 
     /// Runtime selector for Python nodes (Phase 1.10.6)
     runtime_selector: RuntimeSelector,
+
+    /// Cache for Python objects to avoid serialization between Python nodes
+    py_cache: PyObjectCache,
 }
 
 /// Executor configuration
@@ -229,6 +290,7 @@ impl Executor {
             config,
             registry: NodeRegistry::default(),
             runtime_selector: RuntimeSelector::new(),
+            py_cache: PyObjectCache::new(),
         }
     }
 
@@ -238,7 +300,13 @@ impl Executor {
             config,
             registry,
             runtime_selector: RuntimeSelector::new(),
+            py_cache: PyObjectCache::new(),
         }
+    }
+
+    /// Get a reference to the Python object cache
+    pub fn py_cache(&self) -> &PyObjectCache {
+        &self.py_cache
     }
 
     /// Execute a pipeline from a manifest
@@ -247,7 +315,7 @@ impl Executor {
 
         // Step 1: Build pipeline graph
         let graph = PipelineGraph::from_manifest(manifest)?;
-        tracing::debug!(
+        tracing::info!(
             "Built pipeline graph with {} nodes, execution order: {:?}",
             graph.node_count(),
             graph.execution_order
@@ -258,12 +326,67 @@ impl Executor {
 
         // Step 3: Execute nodes in topological order
         tracing::info!("Pipeline graph built successfully");
-        tracing::debug!("Sources: {:?}", graph.sources);
-        tracing::debug!("Sinks: {:?}", graph.sinks);
+        tracing::info!("Sources: {:?}", graph.sources);
+        tracing::info!("Sinks: {:?}", graph.sinks);
+
+        // Create node instances
+        let mut node_instances: HashMap<String, Box<dyn NodeExecutor>> = HashMap::new();
+        for node_manifest in &manifest.nodes {
+            let node = self.create_node_with_runtime(node_manifest)?;
+            node_instances.insert(node_manifest.id.clone(), node);
+        }
+
+        // Initialize all nodes
+        for node_manifest in &manifest.nodes {
+            let context = NodeContext {
+                node_id: node_manifest.id.clone(),
+                node_type: node_manifest.node_type.clone(),
+                params: node_manifest.params.clone(),
+                session_id: None,
+                metadata: HashMap::new(),
+            };
+
+            if let Some(node) = node_instances.get_mut(&node_manifest.id) {
+                tracing::info!("Initializing node: {}", node_manifest.id);
+                node.initialize(&context).await?;
+            }
+        }
+
+        // Execute pipeline: For source-based pipelines, start with Null input to source nodes
+        tracing::info!("Nodes initialized successfully");
+
+        // Check if this is a linear pipeline
+        let is_linear = self.is_linear_pipeline(&graph);
+
+        // Check if pipeline has streaming nodes - if so, use concurrent execution
+        let has_streaming_nodes = node_instances.values().any(|n| n.is_streaming());
+
+        let outputs = if has_streaming_nodes {
+            tracing::info!("Pipeline has streaming nodes, using concurrent channel-based execution");
+            // Concurrent executor takes ownership and handles cleanup internally
+            return self.execute_concurrent_pipeline(&graph, node_instances).await;
+        } else if is_linear {
+            // Use linear execution (simpler, optimized)
+            // Start with source nodes by giving them Null input
+            tracing::info!("Using linear execution for source-based pipeline");
+            self.execute_linear_source_pipeline(&graph, &mut node_instances).await?
+        } else {
+            // Use DAG execution for complex topologies
+            tracing::info!("Using DAG execution for source-based pipeline");
+            self.execute_dag_source_pipeline(&graph, &mut node_instances).await?
+        };
+
+        tracing::info!("Pipeline execution completed");
+
+        // Cleanup all nodes (only for non-concurrent execution)
+        for (id, node) in node_instances.iter_mut() {
+            tracing::info!("Cleaning up node: {}", id);
+            node.cleanup().await?;
+        }
 
         Ok(ExecutionResult {
             status: "success".to_string(),
-            outputs: serde_json::Value::Null,
+            outputs,
             graph_info: Some(GraphInfo {
                 node_count: graph.node_count(),
                 source_count: graph.sources.len(),
@@ -280,7 +403,7 @@ impl Executor {
     ) -> Result<Box<dyn NodeExecutor>> {
         // First try to create from registry (for Rust-native nodes)
         if self.registry.has_node_type(&node_manifest.node_type) {
-            tracing::debug!(
+            tracing::info!(
                 "Creating node {} from registry (Rust-native)",
                 node_manifest.id
             );
@@ -304,19 +427,25 @@ impl Executor {
                     "RustPython executor selected but not yet integrated, using CPython for node {}",
                     node_manifest.id
                 );
-                Ok(Box::new(crate::python::CPythonNodeExecutor::new(
+                let mut executor = crate::python::CPythonNodeExecutor::new_with_cache(
                     &node_manifest.node_type,
-                )))
+                    self.py_cache.clone(),
+                );
+                executor.set_is_streaming_node(node_manifest.is_streaming);
+                Ok(Box::new(executor))
             }
             SelectedRuntime::CPython => {
-                tracing::debug!(
+                tracing::info!(
                     "Creating CPython executor for node {} (type: {})",
                     node_manifest.id,
                     node_manifest.node_type
                 );
-                Ok(Box::new(crate::python::CPythonNodeExecutor::new(
+                let mut executor = crate::python::CPythonNodeExecutor::new_with_cache(
                     &node_manifest.node_type,
-                )))
+                    self.py_cache.clone(),
+                );
+                executor.set_is_streaming_node(node_manifest.is_streaming);
+                Ok(Box::new(executor))
             }
             SelectedRuntime::CPythonWasm => {
                 // Phase 3 - not implemented yet
@@ -351,13 +480,298 @@ impl Executor {
 
         if is_linear {
             // Simple linear execution path (optimized)
-            tracing::debug!("Using linear execution strategy");
+            tracing::info!("Using linear execution strategy");
             self.execute_linear_pipeline(&graph, manifest, input_data).await
         } else {
             // Complex DAG with branching/merging (Phase 1.11.4)
-            tracing::debug!("Using DAG execution strategy with branching/merging");
+            tracing::info!("Using DAG execution strategy with branching/merging");
             self.execute_dag_pipeline(&graph, manifest, input_data).await
         }
+    }
+
+    /// Execute a linear source-based pipeline (source nodes generate data)
+    /// TRUE STREAMING: Pulls items one at a time from source and flows through pipeline
+    async fn execute_linear_source_pipeline(
+        &self,
+        graph: &PipelineGraph,
+        node_instances: &mut HashMap<String, Box<dyn NodeExecutor>>,
+    ) -> Result<Value> {
+        if graph.execution_order.is_empty() {
+            return Ok(Value::Null);
+        }
+
+        let mut final_results = Vec::new();
+
+        // Initialize the source node (first node)
+        let first_node_id = &graph.execution_order[0];
+
+        loop {
+            // Get ONE item from the source node
+            let first_node = node_instances.get_mut(first_node_id).unwrap();
+            let source_items = first_node.process(Value::Null).await?;
+
+            if source_items.is_empty() {
+                // Source exhausted
+                tracing::info!("Source node {} exhausted", first_node_id);
+                break;
+            }
+
+            // Flow this ONE item through all remaining nodes
+            let mut current_items = source_items;
+
+            for node_id in &graph.execution_order[1..] {
+                let node = node_instances.get_mut(node_id).unwrap();
+                let mut next_items = Vec::new();
+
+                // Check if this is a streaming node
+                if node.is_streaming() {
+                    // For streaming nodes: just feed the inputs, collect any outputs that are ready
+                    // DON'T call finish_streaming() - that happens after the source exhausts
+                    for item in current_items {
+                        let results = node.process(item).await?;
+                        next_items.extend(results);
+                    }
+                } else {
+                    // For non-streaming nodes: process items one at a time
+                    for item in current_items {
+                        let results = node.process(item).await?;
+                        next_items.extend(results);
+                    }
+                }
+
+                current_items = next_items;
+            }
+
+            // Add final results from this pipeline iteration
+            final_results.extend(current_items);
+        }
+
+        // After source is exhausted, flush any streaming nodes
+        for node_id in &graph.execution_order[1..] {
+            let node = node_instances.get_mut(node_id).unwrap();
+            if node.is_streaming() {
+                tracing::info!("Flushing streaming node {}", node_id);
+                let flushed_items = node.finish_streaming().await?;
+
+                // Flow flushed items through remaining nodes in the pipeline
+                let mut current_items = flushed_items;
+
+                for next_node_id in &graph.execution_order[(graph.execution_order.iter().position(|id| id == node_id).unwrap() + 1)..] {
+                    let next_node = node_instances.get_mut(next_node_id).unwrap();
+                    let mut next_items = Vec::new();
+
+                    for item in current_items {
+                        let results = next_node.process(item).await?;
+                        next_items.extend(results);
+                    }
+
+                    current_items = next_items;
+                }
+
+                final_results.extend(current_items);
+            }
+        }
+
+        tracing::info!("Pipeline produced {} total results", final_results.len());
+
+        // Return final results
+        if final_results.len() == 1 {
+            Ok(final_results.into_iter().next().unwrap())
+        } else {
+            Ok(Value::Array(final_results))
+        }
+    }
+
+    /// Execute a DAG source-based pipeline
+    async fn execute_dag_source_pipeline(
+        &self,
+        graph: &PipelineGraph,
+        node_instances: &mut HashMap<String, Box<dyn NodeExecutor>>,
+    ) -> Result<Value> {
+        // For now, just use linear execution
+        // TODO: Implement proper DAG execution for source pipelines
+        self.execute_linear_source_pipeline(graph, node_instances).await
+    }
+
+    /// Execute pipeline using concurrent channels (for streaming nodes)
+    /// Each node runs in its own async task with input/output channels
+    async fn execute_concurrent_pipeline(
+        &self,
+        graph: &PipelineGraph,
+        mut node_instances: HashMap<String, Box<dyn NodeExecutor>>,
+    ) -> Result<ExecutionResult> {
+        use tokio::sync::mpsc;
+        use tokio::task::JoinHandle;
+
+        // Create channels for each node FIRST
+        let mut input_channels: HashMap<String, mpsc::UnboundedSender<Value>> = HashMap::new();
+        let mut output_receivers: HashMap<String, mpsc::UnboundedReceiver<Value>> = HashMap::new();
+
+        // Create all channels upfront
+        for node_id in &graph.execution_order {
+            let (tx, rx) = mpsc::unbounded_channel::<Value>();
+            input_channels.insert(node_id.clone(), tx);
+            output_receivers.insert(node_id.clone(), rx);
+        }
+
+        let mut tasks: Vec<JoinHandle<Result<()>>> = Vec::new();
+
+        // Create output channel for final results
+        let (final_tx, mut final_rx) = mpsc::unbounded_channel::<Value>();
+
+        // Spawn a task for each node
+        for node_id in &graph.execution_order {
+            let mut node = node_instances.remove(node_id).unwrap();
+            let graph_node = graph.get_node(node_id).unwrap();
+
+            // Get this node's input receiver
+            let mut rx = output_receivers.remove(node_id).unwrap();
+
+            // Get output channels for this node's outputs
+            let output_channels: Vec<mpsc::UnboundedSender<Value>> = graph_node.outputs.iter()
+                .filter_map(|out_id| input_channels.get(out_id).cloned())
+                .collect();
+
+            // If this is a sink node (no outputs), send to final channel
+            let is_sink = output_channels.is_empty();
+            let final_sender = if is_sink { Some(final_tx.clone()) } else { None };
+
+            let node_id_clone = node_id.clone();
+            let is_source = graph_node.inputs.is_empty();
+
+            tracing::info!("Spawning task for node: {} (source: {}, sink: {}, streaming: {}, outputs: {:?})",
+                node_id, is_source, is_sink, node.is_streaming(), graph_node.outputs);
+
+            // Spawn async task for this node
+            let task = tokio::spawn(async move {
+                if is_source {
+                    // Source node - call process() once, which returns all generated items
+                    // For async generator source nodes, the CPythonExecutor will iterate them completely
+                    tracing::info!("Source node {} starting", node_id_clone);
+                    let results = node.process(Value::Null).await?;
+
+                    tracing::info!("Source node {} produced {} items", node_id_clone, results.len());
+
+                    tracing::info!("Source node {} sending {} items to {} output channels", node_id_clone, results.len(), output_channels.len());
+                    for (idx, result) in results.iter().enumerate() {
+                        for out_ch in &output_channels {
+                            if out_ch.send(result.clone()).is_err() {
+                                tracing::warn!("Output channel closed for node {} at item {}", node_id_clone, idx + 1);
+                                return Ok(());
+                            }
+                        }
+                    }
+                    tracing::info!("Source node {} finished sending all items", node_id_clone);
+
+                    tracing::info!("Source node {} finished", node_id_clone);
+                } else {
+                    // Non-source node - process inputs
+                    tracing::info!("Processing node {} waiting for inputs", node_id_clone);
+
+                    let mut input_count = 0;
+                    let is_streaming_node = node.is_streaming();
+
+                    while let Some(input) = rx.recv().await {
+                        input_count += 1;
+                        if input_count == 1 || input_count % 50 == 0 {
+                            tracing::info!("Node {} received input #{}", node_id_clone, input_count);
+                        }
+                        let results = node.process(input).await?;
+                        if input_count == 1 || input_count % 50 == 0 {
+                            tracing::info!("Node {} produced {} results from input #{}", node_id_clone, results.len(), input_count);
+                        }
+
+                        for result in results {
+                            if is_sink {
+                                if let Some(ref final_ch) = final_sender {
+                                    if final_ch.send(result.clone()).is_err() {
+                                        tracing::warn!("Final output channel closed");
+                                        return Ok(());
+                                    }
+                                }
+                            } else {
+                                for out_ch in &output_channels {
+                                    if out_ch.send(result.clone()).is_err() {
+                                        tracing::warn!("Output channel closed for node {}", node_id_clone);
+                                        return Ok(());
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Input channel closed - flush streaming node if applicable
+                    tracing::info!("Input channel closed for node {}, received {} total inputs", node_id_clone, input_count);
+                    if is_streaming_node {
+                        tracing::info!("Flushing streaming node {}", node_id_clone);
+                        let flushed = node.finish_streaming().await?;
+
+                        for result in flushed {
+                            if is_sink {
+                                if let Some(ref final_ch) = final_sender {
+                                    if final_ch.send(result.clone()).is_err() {
+                                        tracing::warn!("Final output channel closed");
+                                        return Ok(());
+                                    }
+                                }
+                            } else {
+                                for out_ch in &output_channels {
+                                    if out_ch.send(result.clone()).is_err() {
+                                        tracing::warn!("Output channel closed for node {}", node_id_clone);
+                                        return Ok(());
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    tracing::info!("Node {} completed", node_id_clone);
+                }
+
+                node.cleanup().await?;
+                Ok(())
+            });
+
+            tasks.push(task);
+        }
+
+        // IMPORTANT: Drop input_channels to close all unused input senders
+        // This allows downstream nodes to detect when their input channel closes
+        drop(input_channels);
+
+        // Drop the final_tx so final_rx will close when all tasks complete
+        drop(final_tx);
+
+        // Collect all final results
+        let mut final_results = Vec::new();
+        while let Some(result) = final_rx.recv().await {
+            final_results.push(result);
+        }
+
+        // Wait for all tasks to complete
+        for task in tasks {
+            task.await.map_err(|e| Error::Execution(format!("Task join error: {}", e)))??;
+        }
+
+        tracing::info!("Concurrent pipeline produced {} results", final_results.len());
+
+        // Return final results
+        let outputs = if final_results.len() == 1 {
+            final_results.into_iter().next().unwrap()
+        } else {
+            Value::Array(final_results)
+        };
+
+        Ok(ExecutionResult {
+            status: "success".to_string(),
+            outputs,
+            graph_info: Some(GraphInfo {
+                node_count: graph.node_count(),
+                source_count: graph.sources.len(),
+                sink_count: graph.sinks.len(),
+                execution_order: graph.execution_order.clone(),
+            }),
+        })
     }
 
     /// Check if the pipeline is a simple linear chain (no branching or merging)
@@ -417,33 +831,37 @@ impl Executor {
             let node = node_instances.get_mut(node_id).unwrap();
             let mut output_data = Vec::new();
 
-            // Phase 1.11.2: Process each item (supports streaming)
-            // Phase 1.11.3: Backpressure is implicit - we process one item at a time
-            for item in current_data {
-                match node.process(item).await? {
-                    Some(output) => {
-                        // Phase 1.11.2: If output is an array (from async generator),
-                        // flatten it into the output stream
-                        if output.is_array() && self.is_streaming_output(&output) {
-                            for sub_item in output.as_array().unwrap() {
-                                output_data.push(sub_item.clone());
-                            }
-                        } else {
-                            output_data.push(output);
-                        }
-                    },
-                    None => {} // Filtered out by node
+            // Check if this is a streaming node
+            if node.is_streaming() {
+                // For streaming nodes: feed all inputs first, then collect all outputs
+                tracing::info!("Streaming node {} - feeding {} inputs", node_id, current_data.len());
+
+                // Feed all inputs
+                for item in current_data {
+                    let _ = node.process(item).await?; // Returns empty vec
                 }
+
+                // Signal completion and collect all outputs
+                output_data = node.finish_streaming().await?;
+                tracing::info!("Streaming node {} produced {} outputs", node_id, output_data.len());
+            } else {
+                // For non-streaming nodes: process items one at a time
+                // Phase 1.11.2: Process each item (supports streaming)
+                // Phase 1.11.3: Backpressure is implicit - we process one item at a time
+                for item in current_data {
+                    let results = node.process(item).await?;
+                    output_data.extend(results);
+                }
+                tracing::info!("Node {} processed, {} items remaining", node_id, output_data.len());
             }
 
             current_data = output_data;
-            tracing::debug!("Node {} processed, {} items remaining", node_id, current_data.len());
         }
 
         // Cleanup all nodes
         for (node_id, mut node) in node_instances {
             node.cleanup().await?;
-            tracing::debug!("Node {} cleaned up", node_id);
+            tracing::info!("Node {} cleaned up", node_id);
         }
 
         // Return final outputs
@@ -535,21 +953,11 @@ impl Executor {
             // Process data through node
             let mut outputs = Vec::new();
             for item in inputs {
-                match node.process(item).await? {
-                    Some(output) => {
-                        if output.is_array() && self.is_streaming_output(&output) {
-                            for sub_item in output.as_array().unwrap() {
-                                outputs.push(sub_item.clone());
-                            }
-                        } else {
-                            outputs.push(output);
-                        }
-                    },
-                    None => {} // Filtered
-                }
+                let results = node.process(item).await?;
+                outputs.extend(results);
             }
 
-            tracing::debug!("Node {} produced {} outputs", node_id, outputs.len());
+            tracing::info!("Node {} produced {} outputs", node_id, outputs.len());
 
             // Phase 1.11.4: Store outputs for downstream nodes or broadcast to multiple outputs
             if !graph_node.outputs.is_empty() {
@@ -564,7 +972,7 @@ impl Executor {
         // Cleanup all nodes
         for (node_id, mut node) in node_instances {
             node.cleanup().await?;
-            tracing::debug!("Node {} cleaned up", node_id);
+            tracing::info!("Node {} cleaned up", node_id);
         }
 
         // Collect outputs from all sink nodes

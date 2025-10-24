@@ -187,10 +187,20 @@ This achieves best-possible performance given RustPython's constraints.
 - [x] 1.14.5 Create performance comparison benchmarks (Rust vs Python baseline)
   - Created `06_rust_vs_python_nodes.py` - Math operations benchmark showing 193-361x speedup with Rust-native nodes
   - Created `07_audio_vad_performance.py` - Audio/VAD I/O pipeline benchmark
-  - **Key Finding:** Rust-native nodes excel at compute-intensive operations (100x+ speedup)
-  - **Key Finding:** I/O-bound operations (audio file reading, native library wrappers) show comparable performance
-  - **Conclusion:** Implement Rust-native nodes for compute-intensive operations; use CPython executor for I/O-bound operations
-  - **Strategy:** Mixed pipelines benefit from Rust-native compute nodes + Python I/O nodes
+  - Created `08_realistic_media_benchmark.py` - Concurrent media processing with GIL bottleneck simulation
+  - Created `09_realtime_transcription_benchmark.py` - Realistic real-time transcription pipeline (Audio -> Resample -> VAD -> Buffer -> Whisper)
+  - **Benchmark 06 (Compute):** Rust-native nodes show **193-361x speedup** for pure math operations
+  - **Benchmark 07 (I/O):** Audio/VAD pipelines show comparable performance (~0.79-1.03x) - I/O-bound operations using native C libraries that release GIL
+  - **Benchmark 09 (Mixed):** Real-time transcription with 1-8 concurrent streams
+    - Single stream: Both runtimes handle real-time processing (RTF < 1.0)
+    - Multiple streams: Both maintain high efficiency due to asyncio+ThreadPoolExecutor design
+    - Python's ThreadPoolExecutor provides good concurrency for mixed I/O+compute workloads
+    - GIL impact is minimal when work is distributed across executor threads
+  - **Key Finding:** Rust-native nodes excel at pure compute-intensive operations (100x+ speedup)
+  - **Key Finding:** I/O-bound operations show comparable performance (native libraries release GIL)
+  - **Key Finding:** Mixed workloads with asyncio+ThreadPoolExecutor show good Python concurrency
+  - **Conclusion:** Implement Rust-native nodes for compute-intensive operations; Python executor works well for I/O and mixed workloads
+  - **Strategy:** Prioritize Rust implementation for CPU-heavy nodes (custom filters, effects, transformations)
 - [ ] 1.14.6 Document FFI usage for advanced users
 - [ ] 1.14.7 Update all SDK documentation
 

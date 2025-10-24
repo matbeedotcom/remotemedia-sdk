@@ -101,7 +101,7 @@ impl PythonVm {
             return Ok(());
         }
 
-        tracing::debug!("Initializing Python VM with sys.path and custom modules");
+        tracing::info!("Initializing Python VM with sys.path and custom modules");
 
         // Create persistent globals dictionary
         self.globals = Some(Arc::new(self.interpreter.enter(|vm| {
@@ -133,7 +133,7 @@ impl PythonVm {
 
     /// Initialize sys.path with configured directories
     fn init_sys_path(&mut self) -> Result<()> {
-        tracing::debug!("Adding {} paths to sys.path", self.config.python_path.len());
+        tracing::info!("Adding {} paths to sys.path", self.config.python_path.len());
 
         let code = format!(
             r#"
@@ -160,7 +160,7 @@ for path in paths:
     /// This creates a Python logging configuration that bridges Python logging to Rust tracing.
     /// Python logging calls will be captured and emitted as Rust tracing events.
     fn inject_logging_bridge(&mut self) -> Result<()> {
-        tracing::debug!("Injecting logging bridge module");
+        tracing::info!("Injecting logging bridge module");
 
         let bridge_code = r#"
 import sys
@@ -261,7 +261,7 @@ except:
                     // Note: We use the "python" target for all logs since tracing requires constant targets
                     let formatted_msg = format!("[{}] {}", module, message);
                     match level {
-                        "DEBUG" => tracing::debug!(target: "python", "{}", formatted_msg),
+                        "DEBUG" => tracing::info!(target: "python", "{}", formatted_msg),
                         "INFO" => tracing::info!(target: "python", "{}", formatted_msg),
                         "WARNING" => tracing::warn!(target: "python", "{}", formatted_msg),
                         "ERROR" => tracing::error!(target: "python", "{}", formatted_msg),
@@ -279,7 +279,7 @@ except:
     ///
     /// This creates Python modules that provide helpers for the RemoteMedia SDK
     fn inject_sdk_helpers(&mut self) -> Result<()> {
-        tracing::debug!("Injecting SDK helper modules");
+        tracing::info!("Injecting SDK helper modules");
 
         let helpers_code = r#"
 """RemoteMedia SDK helpers for RustPython runtime"""
@@ -329,7 +329,7 @@ __all__ = ['NodeBase', 'SDKHelpers']
 
     /// Set environment variables in the VM
     fn set_environment_vars(&mut self) -> Result<()> {
-        tracing::debug!(
+        tracing::info!(
             "Setting {} environment variables",
             self.config.env_vars.len()
         );
@@ -369,7 +369,7 @@ import os
             self.initialize()?;
         }
 
-        tracing::debug!("Executing Python code in VM");
+        tracing::info!("Executing Python code in VM");
 
         let globals_ref = self.globals.as_ref()
             .ok_or_else(|| Error::PythonVm("Globals not initialized".to_string()))?
@@ -491,7 +491,7 @@ import os
             self.initialize()?;
         }
 
-        tracing::debug!(
+        tracing::info!(
             "Calling Python function: {}.{}",
             module_name,
             function_name
@@ -540,7 +540,7 @@ result
             self.initialize()?;
         }
 
-        tracing::debug!("Loading Python class: {}", class_name);
+        tracing::info!("Loading Python class: {}", class_name);
 
         // Execute the source code in the main module to make it globally available
         let code = format!(
@@ -577,7 +577,7 @@ assert '{}' in dir(), "Class {} was not defined"
             self.initialize()?;
         }
 
-        tracing::debug!("Creating instance of Python class: {} with params: {:?}", class_name, params);
+        tracing::info!("Creating instance of Python class: {} with params: {:?}", class_name, params);
 
         let instance_id = format!("_instance_{}", class_name.to_lowercase());
 
@@ -668,7 +668,7 @@ assert '{}' in dir(), "Class {} was not defined"
             self.initialize()?;
         }
 
-        tracing::debug!("Calling method {}.{} with args: {:?}", instance_id, method_name, args);
+        tracing::info!("Calling method {}.{} with args: {:?}", instance_id, method_name, args);
 
         // Build code to call the method
         let code = if args.is_null() {
@@ -724,7 +724,7 @@ impl VmPool {
 
         // Pre-create VMs
         for i in 0..size {
-            tracing::debug!("Creating VM instance {}/{}", i + 1, size);
+            tracing::info!("Creating VM instance {}/{}", i + 1, size);
             let mut vm = PythonVm::with_config(config.clone())?;
             vm.initialize()?;
             vms.push(vm);
@@ -740,7 +740,7 @@ impl VmPool {
     /// Get a VM from the pool
     pub fn acquire(&mut self) -> Result<PythonVm> {
         if let Some(vm) = self.vms.pop() {
-            tracing::debug!("Acquired VM from pool, {} remaining", self.vms.len());
+            tracing::info!("Acquired VM from pool, {} remaining", self.vms.len());
             Ok(vm)
         } else {
             tracing::warn!("Pool exhausted, creating new VM instance");
@@ -753,10 +753,10 @@ impl VmPool {
     /// Return a VM to the pool
     pub fn release(&mut self, vm: PythonVm) {
         if self.vms.len() < self.max_size {
-            tracing::debug!("Returning VM to pool, {} total", self.vms.len() + 1);
+            tracing::info!("Returning VM to pool, {} total", self.vms.len() + 1);
             self.vms.push(vm);
         } else {
-            tracing::debug!("Pool full, dropping VM instance");
+            tracing::info!("Pool full, dropping VM instance");
             // VM will be dropped
         }
     }

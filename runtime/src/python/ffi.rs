@@ -117,6 +117,15 @@ pub fn is_available() -> bool {
 /// Python module initialization
 #[pymodule]
 fn remotemedia_runtime(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Initialize tracing on module load
+    // Use try_init to avoid panic if already initialized
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        )
+        .try_init();
+
     m.add_function(wrap_pyfunction!(execute_pipeline, m)?)?;
     m.add_function(wrap_pyfunction!(execute_pipeline_with_input, m)?)?;
     m.add_function(wrap_pyfunction!(get_runtime_version, m)?)?;

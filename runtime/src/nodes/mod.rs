@@ -7,6 +7,12 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
 
+// Sub-modules
+#[cfg(feature = "whisper")]
+mod whisper;
+#[cfg(feature = "whisper")]
+pub use whisper::RustWhisperNode;
+
 /// Node execution context containing runtime state
 #[derive(Debug, Clone)]
 pub struct NodeContext {
@@ -44,7 +50,10 @@ pub trait NodeExecutor: Send + Sync {
     ///
     /// Called for each item flowing through the pipeline.
     /// Return None to filter out the item.
-    async fn process(&mut self, input: Value) -> Result<Option<Value>>;
+    ///
+    /// For streaming nodes (async generators), this returns a Vec with multiple items.
+    /// For non-streaming nodes, this returns a single-item Vec or empty Vec.
+    async fn process(&mut self, input: Value) -> Result<Vec<Value>>;
 
     /// Cleanup resources
     ///
@@ -54,6 +63,23 @@ pub trait NodeExecutor: Send + Sync {
     /// - Save state
     /// - Close connections
     async fn cleanup(&mut self) -> Result<()>;
+
+    /// Check if this is a streaming node
+    ///
+    /// Streaming nodes accumulate inputs and yield multiple outputs.
+    /// The executor will feed all inputs first, then collect all outputs.
+    fn is_streaming(&self) -> bool {
+        false
+    }
+
+    /// Finish streaming and collect remaining outputs
+    ///
+    /// For streaming nodes, signals that no more inputs will be provided
+    /// and collects any buffered outputs. For non-streaming nodes, this
+    /// returns an empty vector.
+    async fn finish_streaming(&mut self) -> Result<Vec<Value>> {
+        Ok(vec![])
+    }
 
     /// Get node information
     fn info(&self) -> NodeInfo {
@@ -130,6 +156,10 @@ impl Default for NodeRegistry {
         registry.register("MultiplyNode", || Box::new(MultiplyNode::new()));
         registry.register("AddNode", || Box::new(AddNode::new()));
 
+        // Register Whisper transcription node (if feature enabled)
+        #[cfg(feature = "whisper")]
+        registry.register("RustWhisperTranscriber", || Box::new(RustWhisperNode::new()));
+
         registry
     }
 }
@@ -147,8 +177,8 @@ impl NodeExecutor for PassThroughNode {
         Ok(())
     }
 
-    async fn process(&mut self, input: Value) -> Result<Option<Value>> {
-        Ok(Some(input))
+    async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
+        Ok(vec![input])
     }
 
     async fn cleanup(&mut self) -> Result<()> {
@@ -194,21 +224,21 @@ impl CalculatorNode {
 impl NodeExecutor for EchoNode {
     async fn initialize(&mut self, _context: &NodeContext) -> Result<()> {
         self.counter = 0;
-        tracing::debug!("EchoNode initialized");
+        tracing::info!("EchoNode initialized");
         Ok(())
     }
 
-    async fn process(&mut self, input: Value) -> Result<Option<Value>> {
+    async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
         self.counter += 1;
-        Ok(Some(serde_json::json!({
+        return Ok(vec![serde_json::json!({
             "input": input,
             "counter": self.counter,
             "node": "Echo"
-        })))
+        })]);
     }
 
     async fn cleanup(&mut self) -> Result<()> {
-        tracing::debug!("EchoNode processed {} items", self.counter);
+        tracing::info!("EchoNode processed {} items", self.counter);
         Ok(())
     }
 
@@ -239,7 +269,7 @@ impl NodeExecutor for CalculatorNode {
             }
         }
 
-        tracing::debug!(
+        tracing::info!(
             "CalculatorNode initialized: operation={}, operand={}",
             self.operation,
             self.operand
@@ -247,12 +277,12 @@ impl NodeExecutor for CalculatorNode {
         Ok(())
     }
 
-    async fn process(&mut self, input: Value) -> Result<Option<Value>> {
+    async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
         // Convert input to number
         let num = match input {
             Value::Number(n) => n.as_f64().unwrap_or(0.0),
             Value::String(s) => s.parse::<f64>().unwrap_or(0.0),
-            _ => return Ok(Some(input)), // Pass through non-numeric values
+            _ => return Ok(vec![input]), // Pass through non-numeric values
         };
 
         // Perform operation
@@ -281,7 +311,7 @@ impl NodeExecutor for CalculatorNode {
                 .unwrap_or(Value::Null)
         };
 
-        Ok(Some(output))
+        Ok(vec![output])
     }
 
     async fn cleanup(&mut self) -> Result<()> {
@@ -328,11 +358,11 @@ impl NodeExecutor for MultiplyNode {
             }
         }
 
-        tracing::debug!("MultiplyNode initialized with factor={}", self.factor);
+        tracing::info!("MultiplyNode initialized with factor={}", self.factor);
         Ok(())
     }
 
-    async fn process(&mut self, input: Value) -> Result<Option<Value>> {
+    async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
         let output = match input {
             // Handle single number
             Value::Number(n) => {
@@ -374,7 +404,7 @@ impl NodeExecutor for MultiplyNode {
             other => other,
         };
 
-        Ok(Some(output))
+        Ok(vec![output])
     }
 
     async fn cleanup(&mut self) -> Result<()> {
@@ -414,11 +444,11 @@ impl NodeExecutor for AddNode {
             }
         }
 
-        tracing::debug!("AddNode initialized with addend={}", self.addend);
+        tracing::info!("AddNode initialized with addend={}", self.addend);
         Ok(())
     }
 
-    async fn process(&mut self, input: Value) -> Result<Option<Value>> {
+    async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
         let output = match input {
             // Handle single number
             Value::Number(n) => {
@@ -460,7 +490,7 @@ impl NodeExecutor for AddNode {
             other => other,
         };
 
-        Ok(Some(output))
+        Ok(vec![output])
     }
 
     async fn cleanup(&mut self) -> Result<()> {

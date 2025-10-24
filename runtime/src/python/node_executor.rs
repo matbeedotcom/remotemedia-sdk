@@ -70,7 +70,7 @@ impl PythonNodeInstance {
             return Ok(());
         }
 
-        tracing::debug!("Initializing Python node: {}", self.instance_id);
+        tracing::info!("Initializing Python node: {}", self.instance_id);
 
         // Check if the node has an initialize method
         let check_code = format!(
@@ -101,7 +101,7 @@ impl PythonNodeInstance {
             self.initialize()?;
         }
 
-        tracing::debug!("Processing data through node: {}", self.instance_id);
+        tracing::info!("Processing data through node: {}", self.instance_id);
 
         // Execute the process method and serialize to JSON in one go
         // Use exec to run the code, then eval to get the variable value
@@ -169,7 +169,7 @@ else:
             self.initialize()?;
         }
 
-        tracing::debug!("Async processing data through node: {}", self.instance_id);
+        tracing::info!("Async processing data through node: {}", self.instance_id);
 
         // Try to call aprocess first
         if self.has_aprocess()? {
@@ -240,7 +240,7 @@ _is_gen or _is_async_gen
             self.initialize()?;
         }
 
-        tracing::debug!("Streaming processing data through node: {}", self.instance_id);
+        tracing::info!("Streaming processing data through node: {}", self.instance_id);
 
         // Call process(data) and collect generator results
         let exec_code = format!(
@@ -286,7 +286,7 @@ _stream_json = json.dumps(_stream_results)
     ///
     /// Calls node.cleanup() if the method exists.
     pub fn cleanup(&mut self) -> Result<()> {
-        tracing::debug!("Cleaning up Python node: {}", self.instance_id);
+        tracing::info!("Cleaning up Python node: {}", self.instance_id);
 
         // Check if the node has a cleanup method
         let check_code = format!(
