@@ -10,6 +10,9 @@ use pyo3::IntoPyObjectExt;
 use serde_json::Value;
 
 use crate::executor::PyObjectCache;
+
+// Numpy marshaling is only available with native-numpy feature
+#[cfg(feature = "native-numpy")]
 use crate::python::numpy_marshal::{is_numpy_array, is_numpy_json, json_to_numpy, numpy_to_json};
 
 /// Convert a Python object to a JSON Value
@@ -93,10 +96,13 @@ fn python_to_json_impl(py: Python, obj: &Bound<'_, PyAny>, cache: Option<&PyObje
         return Ok(Value::Object(map));
     }
 
-    // Numpy array - serialize with metadata for cross-language support
-    if is_numpy_array(py, obj) {
-        tracing::info!("Converting numpy array to JSON with metadata");
-        return numpy_to_json(py, obj);
+    // Numpy array - serialize with metadata for cross-language support (only with native-numpy feature)
+    #[cfg(feature = "native-numpy")]
+    {
+        if is_numpy_array(py, obj) {
+            tracing::info!("Converting numpy array to JSON with metadata");
+            return numpy_to_json(py, obj);
+        }
     }
 
     // Unsupported type - try to cache it if cache is available, otherwise pickle
@@ -196,10 +202,13 @@ pub fn json_to_python_with_cache<'py>(py: Python<'py>, value: &Value, cache: Opt
         }
 
         Value::Object(obj) => {
-            // Check if this is a numpy array (Phase 1.7.3)
-            if is_numpy_json(value) {
-                tracing::info!("Converting JSON back to numpy array");
-                return json_to_numpy(py, value);
+            // Check if this is a numpy array (Phase 1.7.3) - only with native-numpy feature
+            #[cfg(feature = "native-numpy")]
+            {
+                if is_numpy_json(value) {
+                    tracing::info!("Converting JSON back to numpy array");
+                    return json_to_numpy(py, value);
+                }
             }
 
             // Check if this is a PyObject cache reference (Phase 1.10)

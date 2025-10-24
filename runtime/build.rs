@@ -1,8 +1,24 @@
 // Build script for remotemedia-runtime
-// Used for generating protobuf code and other build-time tasks
+// Handles protobuf generation and WASM-specific static library configuration
 
 fn main() {
-    // Phase 1: No protobuf generation yet
-    // Will be added in Phase 1.4 for FFI layer
+    // WASM-specific: Configure static Python libraries for wasm32-wasi target
+    #[cfg(target_family = "wasm")]
+    configure_wasm_libs();
+
+    // Standard build tasks
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Configure static libraries for WASM build (wasm32-wasi target)
+#[cfg(target_family = "wasm")]
+fn configure_wasm_libs() {
+    use wlr_libpy::bld_cfg::configure_static_libs;
+
+    // Download and configure libpython3.12.a + wasi-sysroot + clang builtins
+    configure_static_libs()
+        .expect("Failed to configure static libraries for WASM")
+        .emit_link_flags();
+
+    println!("cargo:warning=Configured WASM static libraries (libpython3.12.a + wasi-sysroot)");
 }
