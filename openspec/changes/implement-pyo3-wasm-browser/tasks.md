@@ -132,21 +132,23 @@
 - [x] 2.5.14 Create comprehensive documentation (PYODIDE_IMPLEMENTATION.md)
 - [x] 2.5.15 Update browser-demo README with hybrid architecture details
 
-### 2.6 Package Format (.rmpkg) 🔜
-- [ ] 2.6.1 Define .rmpkg structure (ZIP with manifest + WASM + deps)
-- [ ] 2.6.2 Add `runtime_target: "wasm32-wasi"` metadata to manifest
-- [ ] 2.6.3 Create packaging script (Node.js or Rust)
-- [ ] 2.6.4 Include wasi-deps/usr directory in .rmpkg
-- [ ] 2.6.5 Add .rmpkg upload support to demo
-- [ ] 2.6.6 Test package extraction and validation
+### 2.6 Package Format (.rmpkg) ✅ **COMPLETE**
+- [x] 2.6.1 Define .rmpkg structure (ZIP with manifest + WASM + deps)
+- [x] 2.6.2 Add `runtime_target: "wasm32-wasi"` metadata to manifest
+- [x] 2.6.3 Create packaging script (Node.js `create-package.js`)
+- [x] 2.6.4 Create validation script (Node.js `test-package.js`)
+- [x] 2.6.5 Add .rmpkg upload support to demo (PackageLoader class + UI)
+- [x] 2.6.6 Test package extraction and validation (wasmtime + validator)
+- [x] 2.6.7 Create example packages (calculator.rmpkg, text-processor.rmpkg)
 
-### 2.7 Deployment 🔜
-- [ ] 2.7.1 Configure build for production (wasm-opt optimization)
-- [ ] 2.7.2 Optimize bundle splitting for faster initial load
-- [ ] 2.7.3 Add service worker for WASM caching
-- [ ] 2.7.4 Deploy demo to GitHub Pages or Vercel
-- [ ] 2.7.5 Create demo video/GIF for documentation
-- [ ] 2.7.6 Update main README with browser demo link
+### 2.7 Deployment 🚀 **IN PROGRESS**
+- [x] 2.7.1 Configure build for production (Vite bundle splitting)
+- [x] 2.7.2 Optimize bundle splitting for faster initial load (pyodide, wasi-shim, jszip chunks)
+- [x] 2.7.3 Add GitHub Actions workflow for automated deployment
+- [x] 2.7.4 Create main README with browser demo information
+- [ ] 2.7.5 Deploy demo to GitHub Pages (enable in repo settings)
+- [ ] 2.7.6 Add service worker for WASM caching (optional)
+- [ ] 2.7.7 Create demo video/GIF for documentation (optional)
 
 ## Phase 3: Whisper WASM (Optional)
 

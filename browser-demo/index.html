@@ -14,24 +14,55 @@
       </header>
 
       <main>
-        <!-- WASM Module Loading -->
+        <!-- Package Loading (.rmpkg) -->
         <section class="card">
-          <h2>1. Load WASM Runtime</h2>
-          <div class="input-group">
-            <input
-              type="file"
-              id="wasm-file"
-              accept=".wasm"
-              class="file-input"
-            />
-            <label for="wasm-file" class="file-label">
-              <span id="wasm-file-name">Choose WASM file...</span>
-            </label>
-            <button id="load-wasm-btn" class="btn btn-primary" disabled>
-              Load Runtime
-            </button>
+          <h2>1. Load Package</h2>
+          <div class="tabs" style="margin-bottom: 1rem;">
+            <button class="tab-btn active" data-tab="package">📦 Load .rmpkg</button>
+            <button class="tab-btn" data-tab="manual">🔧 Manual WASM</button>
           </div>
-          <div id="wasm-status" class="status"></div>
+
+          <div id="package-tab" class="tab-content active">
+            <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem;">
+              Upload a .rmpkg package file (contains manifest + WASM runtime)
+            </p>
+            <div class="input-group">
+              <input
+                type="file"
+                id="pkg-file"
+                accept=".rmpkg"
+                class="file-input"
+              />
+              <label for="pkg-file" class="file-label">
+                <span id="pkg-file-name">Choose .rmpkg file...</span>
+              </label>
+              <button id="load-pkg-btn" class="btn btn-primary" disabled>
+                Load Package
+              </button>
+            </div>
+            <div id="pkg-status" class="status"></div>
+          </div>
+
+          <div id="manual-tab" class="tab-content">
+            <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem;">
+              Load WASM runtime manually (for testing or custom builds)
+            </p>
+            <div class="input-group">
+              <input
+                type="file"
+                id="wasm-file"
+                accept=".wasm"
+                class="file-input"
+              />
+              <label for="wasm-file" class="file-label">
+                <span id="wasm-file-name">Choose WASM file...</span>
+              </label>
+              <button id="load-wasm-btn" class="btn btn-primary" disabled>
+                Load Runtime
+              </button>
+            </div>
+            <div id="wasm-status" class="status"></div>
+          </div>
 
           <div class="input-group" style="margin-top: 1rem;">
             <button id="load-pyodide-btn" class="btn btn-secondary">
@@ -88,7 +119,10 @@
           </div>
 
           <div class="input-data-section">
-            <h3>Input Data (optional)</h3>
+            <h3>Input Data <span style="color: var(--error-color); font-size: 0.9rem;">(required)</span></h3>
+            <p style="color: var(--text-secondary); margin-bottom: 0.5rem; font-size: 0.9rem;">
+              Provide input data as a JSON array. Example: <code>[5, 7, 3]</code> or <code>[{"text": "Hello"}]</code>
+            </p>
             <textarea
               id="input-data-editor"
               class="input-editor"

@@ -1,4 +1,5 @@
 import { PipelineRunner, type PipelineManifest } from './pipeline-runner';
+import { PackageLoader, type RemoteMediaPackage } from './package-loader';
 import './style.css';
 
 // Example manifests
@@ -55,6 +56,7 @@ const EXAMPLES = {
 class App {
   private runner: PipelineRunner;
   private wasmFile: File | null = null;
+  private currentPackage: RemoteMediaPackage | null = null;
 
   constructor() {
     this.runner = new PipelineRunner();
@@ -80,6 +82,23 @@ class App {
     });
 
     loadWasmBtn?.addEventListener('click', () => this.loadWasm());
+
+    // Package file input (.rmpkg)
+    const pkgFileInput = document.getElementById('pkg-file') as HTMLInputElement;
+    const loadPkgBtn = document.getElementById('load-pkg-btn') as HTMLButtonElement;
+
+    pkgFileInput?.addEventListener('change', (e) => {
+      const files = (e.target as HTMLInputElement).files;
+      if (files && files[0]) {
+        const fileName = document.getElementById('pkg-file-name');
+        if (fileName) {
+          fileName.textContent = files[0].name;
+        }
+        loadPkgBtn.disabled = false;
+      }
+    });
+
+    loadPkgBtn?.addEventListener('click', () => this.loadPackage());
 
     // Python stdlib button (for PyO3 WASM - deprecated in browser)
     const loadPythonBtn = document.getElementById('load-python-btn');
@@ -140,6 +159,69 @@ class App {
 
     // Switch to custom tab to show the loaded manifest
     this.switchTab('custom');
+  }
+
+  private async loadPackage() {
+    const pkgFileInput = document.getElementById('pkg-file') as HTMLInputElement;
+    const files = pkgFileInput.files;
+    if (!files || !files[0]) return;
+
+    const loadPkgBtn = document.getElementById('load-pkg-btn') as HTMLButtonElement;
+
+    try {
+      loadPkgBtn.disabled = true;
+      this.showLoading('pkg-status', 'Loading .rmpkg package...');
+
+      // Extract package
+      this.currentPackage = await PackageLoader.loadFromFile(files[0]);
+
+      // Display package info
+      const packageInfo = PackageLoader.getPackageInfo(this.currentPackage);
+      console.log('Package loaded:\n' + packageInfo);
+
+      // Load WASM runtime from package
+      await this.runner.loadWasm(this.currentPackage.wasmBinary);
+
+      // Load manifest into editor
+      const manifestEditor = document.getElementById('manifest-editor') as HTMLTextAreaElement;
+      if (manifestEditor) {
+        manifestEditor.value = JSON.stringify(this.currentPackage.manifest, null, 2);
+      }
+
+      // Load default input data based on node types
+      const inputDataEditor = document.getElementById('input-data-editor') as HTMLTextAreaElement;
+      if (inputDataEditor && this.currentPackage.metadata?.runtime_info) {
+        const hasPython = this.currentPackage.metadata.runtime_info.has_python_nodes;
+        const hasRust = this.currentPackage.metadata.runtime_info.has_rust_nodes;
+
+        if (hasPython && !hasRust) {
+          // Python-only: text processing default
+          inputDataEditor.value = JSON.stringify([
+            { text: 'Hello WASM', operations: ['uppercase', 'word_count'] }
+          ], null, 2);
+        } else {
+          // Rust or mixed: numeric default
+          inputDataEditor.value = JSON.stringify([5, 7, 3], null, 2);
+        }
+      }
+
+      // Switch to custom tab
+      this.switchTab('custom');
+
+      const pkgName = this.currentPackage.metadata?.package_name || this.currentPackage.manifest.metadata?.name || 'Unnamed';
+      const nodeCount = this.currentPackage.manifest.nodes.length;
+
+      this.showSuccess('pkg-status', `Package "${pkgName}" loaded! (${nodeCount} nodes, WASM runtime ready)`);
+
+      // Enable execute button
+      const executeBtn = document.getElementById('execute-btn') as HTMLButtonElement;
+      executeBtn.disabled = false;
+
+    } catch (error) {
+      console.error('Failed to load package:', error);
+      this.showError('pkg-status', `Failed to load package: ${error}`);
+      loadPkgBtn.disabled = false;
+    }
   }
 
   private async loadWasm() {
@@ -226,6 +308,18 @@ class App {
       const inputText = inputDataEditor.value.trim();
       if (inputText) {
         inputData = JSON.parse(inputText);
+      } else {
+        // Provide default input data if empty
+        this.showError('execution-status', 'No input data provided. Please add input data or the pipeline will hang.');
+        executeBtn.disabled = false;
+        return;
+      }
+
+      // Validate input data is an array
+      if (!Array.isArray(inputData)) {
+        this.showError('execution-status', 'Input data must be a JSON array. Example: [5, 7, 3]');
+        executeBtn.disabled = false;
+        return;
       }
 
       // Execute
