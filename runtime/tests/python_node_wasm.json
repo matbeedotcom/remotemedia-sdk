@@ -1,0 +1,17 @@
+{
+  "manifest": {
+    "version": "v1",
+    "metadata": {
+      "name": "python-node-test"
+    },
+    "nodes": [
+      {
+        "id": "passthrough",
+        "node_type": "PassThroughNode",
+        "params": {}
+      }
+    ],
+    "connections": []
+  },
+  "input_data": [{"value": 42}, {"value": 100}]
+}

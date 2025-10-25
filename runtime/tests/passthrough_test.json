@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "passthrough-test"
+  },
+  "nodes": [
+    {
+      "id": "pass1",
+      "node_type": "PassThroughNode",
+      "params": {}
+    }
+  ],
+  "connections": []
+}

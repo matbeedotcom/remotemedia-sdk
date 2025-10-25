@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RemoteMedia WASM Browser Demo</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>🚀 RemoteMedia WASM Runtime</h1>
+        <p class="subtitle">Execute AI/ML pipelines directly in your browser</p>
+      </header>
+
+      <main>
+        <!-- WASM Module Loading -->
+        <section class="card">
+          <h2>1. Load WASM Runtime</h2>
+          <div class="input-group">
+            <input
+              type="file"
+              id="wasm-file"
+              accept=".wasm"
+              class="file-input"
+            />
+            <label for="wasm-file" class="file-label">
+              <span id="wasm-file-name">Choose WASM file...</span>
+            </label>
+            <button id="load-wasm-btn" class="btn btn-primary" disabled>
+              Load Runtime
+            </button>
+          </div>
+          <div id="wasm-status" class="status"></div>
+
+          <div class="input-group" style="margin-top: 1rem;">
+            <button id="load-pyodide-btn" class="btn btn-secondary">
+              Load Pyodide Runtime (~30-40MB)
+            </button>
+            <span style="margin-left: 0.5rem; color: var(--text-secondary); font-size: 0.9rem;">
+              Recommended for Python nodes in browser
+            </span>
+          </div>
+          <div id="pyodide-status" class="status"></div>
+
+          <div class="input-group" style="margin-top: 0.5rem;">
+            <button id="load-python-btn" class="btn btn-secondary" style="opacity: 0.6;">
+              Load Python Stdlib (16MB) - Native Only
+            </button>
+            <span style="margin-left: 0.5rem; color: var(--text-secondary); font-size: 0.9rem;">
+              For PyO3 WASM (wasmtime only, not browser)
+            </span>
+          </div>
+          <div id="python-status" class="status"></div>
+        </section>
+
+        <!-- Manifest Editor -->
+        <section class="card">
+          <h2>2. Configure Pipeline</h2>
+          <div class="tabs">
+            <button class="tab-btn active" data-tab="examples">Examples</button>
+            <button class="tab-btn" data-tab="custom">Custom Manifest</button>
+          </div>
+
+          <div id="examples-tab" class="tab-content active">
+            <div class="example-grid">
+              <button class="example-card" data-example="calculator">
+                <h3>🧮 Calculator</h3>
+                <p>Rust-native math operations</p>
+              </button>
+              <button class="example-card" data-example="text-processor">
+                <h3>📝 Text Processor</h3>
+                <p>Python text operations</p>
+              </button>
+              <button class="example-card" data-example="mixed">
+                <h3>🔀 Mixed Pipeline</h3>
+                <p>Rust + Python nodes</p>
+              </button>
+            </div>
+          </div>
+
+          <div id="custom-tab" class="tab-content">
+            <textarea
+              id="manifest-editor"
+              class="manifest-editor"
+              placeholder="Paste your pipeline manifest here..."
+            ></textarea>
+          </div>
+
+          <div class="input-data-section">
+            <h3>Input Data (optional)</h3>
+            <textarea
+              id="input-data-editor"
+              class="input-editor"
+              placeholder='[5, 7, 3] or [{"text": "Hello"}]'
+            ></textarea>
+          </div>
+        </section>
+
+        <!-- Execution -->
+        <section class="card">
+          <h2>3. Execute Pipeline</h2>
+          <button id="execute-btn" class="btn btn-success" disabled>
+            ▶️ Run Pipeline
+          </button>
+          <div id="execution-status" class="status"></div>
+        </section>
+
+        <!-- Results -->
+        <section class="card">
+          <h2>4. Results</h2>
+          <div id="results-container">
+            <div class="placeholder">
+              Execute a pipeline to see results here
+            </div>
+          </div>
+
+          <div id="metrics-container" class="metrics" style="display: none;">
+            <h3>Performance Metrics</h3>
+            <div class="metrics-grid">
+              <div class="metric">
+                <span class="metric-label">Execution Time</span>
+                <span class="metric-value" id="metric-exec-time">-</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">WASM Load Time</span>
+                <span class="metric-value" id="metric-load-time">-</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">Total Time</span>
+                <span class="metric-value" id="metric-total-time">-</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <p>
+          Built with
+          <a href="https://wasmer.io" target="_blank">Wasmer</a> •
+          <a href="https://github.com/anthropics/remotemedia-sdk" target="_blank">GitHub</a>
+        </p>
+      </footer>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

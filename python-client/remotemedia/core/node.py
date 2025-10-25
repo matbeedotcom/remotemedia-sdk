@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Union, TypeVar, Generic, List
 from dataclasses import dataclass, field
 import logging
 import asyncio
+import threading
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -55,14 +56,14 @@ class SessionState:
 class StateManager:
     """
     Manages session states for a node.
-    
+
     This class provides:
     - Per-session state isolation
     - Automatic session expiration
     - Thread-safe state access
     - State persistence hooks (for future implementation)
     """
-    
+
     def __init__(
         self,
         default_ttl: Optional[timedelta] = None,
@@ -71,22 +72,23 @@ class StateManager:
     ):
         """
         Initialize the state manager.
-        
+
         Args:
             default_ttl: Default time-to-live for sessions (None = no expiration)
             max_sessions: Maximum number of concurrent sessions (None = unlimited)
             enable_persistence: Whether to enable state persistence (future feature)
         """
         self._states: Dict[str, SessionState] = {}
-        self._lock = asyncio.Lock()
+        self._lock = threading.Lock()
         self.default_ttl = default_ttl or timedelta(hours=24)
         self.max_sessions = max_sessions
         self.enable_persistence = enable_persistence
-        self._cleanup_task: Optional[asyncio.Task] = None
-        
-    async def get_or_create_session(self, session_id: str) -> SessionState:
+        self._cleanup_task: Optional[threading.Thread] = None
+        self._cleanup_running = False
+
+    def get_or_create_session(self, session_id: str) -> SessionState:
         """Get an existing session or create a new one."""
-        async with self._lock:
+        with self._lock:
             if session_id not in self._states:
                 # Check session limit
                 if self.max_sessions and len(self._states) >= self.max_sessions:
@@ -97,83 +99,82 @@ class StateManager:
                     )
                     del self._states[oldest_id]
                     logger.info(f"StateManager: Evicted oldest session {oldest_id} due to limit")
-                
+
                 # Create new session
                 self._states[session_id] = SessionState(session_id=session_id)
                 logger.debug(f"StateManager: Created new session {session_id}")
-            
+
             return self._states[session_id]
-    
-    async def get_session(self, session_id: str) -> Optional[SessionState]:
+
+    def get_session(self, session_id: str) -> Optional[SessionState]:
         """Get an existing session, returns None if not found."""
-        async with self._lock:
+        with self._lock:
             return self._states.get(session_id)
-    
-    async def delete_session(self, session_id: str) -> bool:
+
+    def delete_session(self, session_id: str) -> bool:
         """Delete a session. Returns True if deleted, False if not found."""
-        async with self._lock:
+        with self._lock:
             if session_id in self._states:
                 del self._states[session_id]
                 logger.debug(f"StateManager: Deleted session {session_id}")
                 return True
             return False
-    
-    async def get_all_sessions(self) -> Dict[str, SessionState]:
+
+    def get_all_sessions(self) -> Dict[str, SessionState]:
         """Get all active sessions."""
-        async with self._lock:
+        with self._lock:
             return self._states.copy()
-    
-    async def clear_all_sessions(self) -> None:
+
+    def clear_all_sessions(self) -> None:
         """Clear all sessions."""
-        async with self._lock:
+        with self._lock:
             self._states.clear()
             logger.info("StateManager: Cleared all sessions")
-    
-    async def cleanup_expired_sessions(self) -> int:
+
+    def cleanup_expired_sessions(self) -> int:
         """Remove expired sessions. Returns number of sessions removed."""
-        async with self._lock:
+        with self._lock:
             now = datetime.now()
             expired = []
-            
+
             for session_id, state in self._states.items():
                 if now - state.last_accessed > self.default_ttl:
                     expired.append(session_id)
-            
+
             for session_id in expired:
                 del self._states[session_id]
-            
+
             if expired:
                 logger.info(f"StateManager: Cleaned up {len(expired)} expired sessions")
-            
+
             return len(expired)
-    
-    async def start_cleanup_task(self, interval: timedelta = None) -> None:
+
+    def start_cleanup_task(self, interval: timedelta = None) -> None:
         """Start periodic cleanup of expired sessions."""
-        if self._cleanup_task and not self._cleanup_task.done():
+        if self._cleanup_task and self._cleanup_task.is_alive():
             return
-        
+
         interval = interval or timedelta(minutes=5)
-        
-        async def cleanup_loop():
-            while True:
+
+        def cleanup_loop():
+            import time
+            self._cleanup_running = True
+            while self._cleanup_running:
                 try:
-                    await asyncio.sleep(interval.total_seconds())
-                    await self.cleanup_expired_sessions()
-                except asyncio.CancelledError:
-                    break
+                    time.sleep(interval.total_seconds())
+                    if self._cleanup_running:
+                        self.cleanup_expired_sessions()
                 except Exception as e:
                     logger.error(f"StateManager cleanup error: {e}")
-        
-        self._cleanup_task = asyncio.create_task(cleanup_loop())
-    
-    async def stop_cleanup_task(self) -> None:
+
+        self._cleanup_task = threading.Thread(target=cleanup_loop, daemon=True)
+        self._cleanup_task.start()
+
+    def stop_cleanup_task(self) -> None:
         """Stop the periodic cleanup task."""
-        if self._cleanup_task and not self._cleanup_task.done():
-            self._cleanup_task.cancel()
-            try:
-                await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
+        self._cleanup_running = False
+        if self._cleanup_task and self._cleanup_task.is_alive():
+            self._cleanup_task.join(timeout=1.0)
 
 
 @dataclass
@@ -330,39 +331,48 @@ class Node(ABC):
         """
         pass
     
-    async def initialize(self) -> None:
+    def initialize(self) -> None:
         """
         Initialize the node before processing.
-        
+
         This method is called once before the first process() call.
         Override this method to perform any setup required by the node.
         For remote nodes, this method runs on the remote server.
         """
         if self._is_initialized:
             return
-            
+
         self.logger.debug(f"Initializing node: {self.name}")
-        
+
         # Start state cleanup task if state is enabled
+        # Note: In WASM environments, background threads are not supported,
+        # so we skip starting the cleanup task
         if self.state:
-            await self.state.start_cleanup_task()
-        
+            try:
+                self.state.start_cleanup_task()
+            except RuntimeError as e:
+                # WASM or other environments may not support threading
+                if "can't start new thread" in str(e) or "thread" in str(e).lower():
+                    self.logger.debug(f"Background cleanup disabled (threading not supported): {e}")
+                else:
+                    raise
+
         self._is_initialized = True
-    
-    async def cleanup(self) -> None:
+
+    def cleanup(self) -> None:
         """
         Clean up resources used by the node.
-        
+
         This method is called when the node is no longer needed.
         Override this method to perform any cleanup required by the node.
         """
         self.logger.debug(f"Cleaning up node: {self.name}")
-        
+
         # Stop state cleanup task and clear states
         if self.state:
-            await self.state.stop_cleanup_task()
-            await self.state.clear_all_sessions()
-        
+            self.state.stop_cleanup_task()
+            self.state.clear_all_sessions()
+
         self._is_initialized = False
     
     def set_session_id(self, session_id: str) -> None:
@@ -379,24 +389,24 @@ class Node(ABC):
         """Get the current session ID."""
         return self._current_session_id
     
-    async def get_session_state(self, session_id: Optional[str] = None) -> Optional[SessionState]:
+    def get_session_state(self, session_id: Optional[str] = None) -> Optional[SessionState]:
         """
         Get the session state for the given session ID.
-        
+
         Args:
             session_id: Session ID to get state for. If None, uses current session ID.
-            
+
         Returns:
             SessionState object or None if state management is disabled or session not found.
         """
         if not self.state:
             return None
-        
+
         session_id = session_id or self._current_session_id
         if not session_id:
             return None
-        
-        return await self.state.get_or_create_session(session_id)
+
+        return self.state.get_or_create_session(session_id)
     
     def extract_session_id(self, data: Any) -> Optional[str]:
         """

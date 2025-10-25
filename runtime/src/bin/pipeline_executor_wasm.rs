@@ -9,23 +9,39 @@
 
 use pyo3::prelude::*;
 use std::io::{self, Read};
+use remotemedia_runtime::executor::{Executor, ExecutorConfig};
+use remotemedia_runtime::manifest::Manifest;
 
-fn main() -> PyResult<()> {
-    // Initialize PyO3 for WASM environment
-    pyo3::prepare_freethreaded_python();
+fn main() {
+    // Initialize tracing for logging
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
 
-    println!("RemoteMedia WASM Runtime");
-    println!("Python version: {}", get_python_version()?);
+    tracing::info!("RemoteMedia WASM Runtime starting");
 
     // Read manifest from stdin
-    let manifest_json = read_stdin()?;
+    let manifest_json = match read_stdin() {
+        Ok(json) => json,
+        Err(e) => {
+            eprintln!("Failed to read stdin: {}", e);
+            std::process::exit(1);
+        }
+    };
 
-    println!("Received manifest ({} bytes)", manifest_json.len());
+    tracing::info!("Received manifest ({} bytes)", manifest_json.len());
 
-    // Execute pipeline (will be implemented in next phase)
-    Python::with_gil(|py| {
-        execute_pipeline_wasm(py, &manifest_json)
-    })
+    // Execute pipeline
+    match execute_pipeline_wasm(&manifest_json) {
+        Ok(()) => {
+            tracing::info!("Pipeline execution completed successfully");
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("Pipeline execution failed: {}", e);
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Get Python version from embedded CPython
@@ -37,32 +53,79 @@ fn get_python_version() -> PyResult<String> {
     })
 }
 
-/// Execute pipeline from manifest JSON (stub for now)
-fn execute_pipeline_wasm(py: Python<'_>, manifest_json: &str) -> PyResult<()> {
-    // Parse manifest (stub)
-    println!("Parsing manifest...");
+/// Execute pipeline from manifest JSON
+fn execute_pipeline_wasm(manifest_json: &str) -> Result<(), String> {
+    // Parse input JSON - can be either just manifest or manifest + input_data
+    tracing::info!("Parsing input...");
+    let input: serde_json::Value = serde_json::from_str(manifest_json)
+        .map_err(|e| format!("Failed to parse input: {}", e))?;
 
-    // For now, just echo back a success message
-    let result = serde_json::json!({
-        "status": "success",
-        "message": "WASM runtime initialized successfully",
-        "manifest_size": manifest_json.len(),
-        "python_initialized": true
+    // Extract manifest and optional input_data
+    let (manifest, input_data) = if input.get("manifest").is_some() {
+        // Format: { "manifest": {...}, "input_data": [...] }
+        let manifest: Manifest = serde_json::from_value(input["manifest"].clone())
+            .map_err(|e| format!("Failed to parse manifest: {}", e))?;
+        let input_data = input.get("input_data")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.clone())
+            .unwrap_or_default();
+        (manifest, input_data)
+    } else {
+        // Format: Just the manifest { "version": "v1", ... }
+        let manifest: Manifest = serde_json::from_value(input)
+            .map_err(|e| format!("Failed to parse manifest: {}", e))?;
+        (manifest, vec![])
+    };
+
+    tracing::info!("Manifest parsed: {} (version {})", manifest.metadata.name, manifest.version);
+    tracing::info!("Pipeline has {} nodes and {} connections",
+        manifest.nodes.len(),
+        manifest.connections.len()
+    );
+    tracing::info!("Input data items: {}", input_data.len());
+
+    // Create executor
+    let executor = Executor::with_config(ExecutorConfig {
+        max_concurrency: 4, // Limit concurrency in WASM
+        debug: true,
     });
 
+    // Execute pipeline synchronously (WASM-compatible)
+    tracing::info!("Executing pipeline...");
+    let result = if !input_data.is_empty() {
+        // Execute with provided input data
+        executor.execute_with_input_sync(&manifest, input_data)
+            .map_err(|e| format!("Pipeline execution failed: {}", e))?
+    } else {
+        // Execute without input (source-based)
+        executor.execute_sync(&manifest)
+            .map_err(|e| format!("Pipeline execution failed: {}", e))?
+    };
+
+    // Serialize and output results
+    let output_json = serde_json::to_string_pretty(&serde_json::json!({
+        "status": result.status,
+        "outputs": result.outputs,
+        "graph_info": result.graph_info.as_ref().map(|info| serde_json::json!({
+            "node_count": info.node_count,
+            "source_count": info.source_count,
+            "sink_count": info.sink_count,
+            "execution_order": info.execution_order,
+        }))
+    })).map_err(|e| format!("Failed to serialize results: {}", e))?;
+
     // Write results to stdout
-    println!("\n{}", serde_json::to_string_pretty(&result).unwrap());
+    println!("\n=== PIPELINE RESULTS ===");
+    println!("{}", output_json);
 
     Ok(())
 }
 
 /// Read input from stdin
-fn read_stdin() -> PyResult<String> {
+fn read_stdin() -> Result<String, String> {
     let mut buffer = String::new();
     io::stdin()
         .read_to_string(&mut buffer)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(
-            format!("Failed to read stdin: {}", e)
-        ))?;
+        .map_err(|e| format!("Failed to read stdin: {}", e))?;
     Ok(buffer)
 }

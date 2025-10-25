@@ -1,0 +1,20 @@
+{
+  "manifest": {
+    "version": "v1",
+    "metadata": {
+      "name": "python-text-test"
+    },
+    "nodes": [
+      {
+        "id": "text1",
+        "node_type": "TextProcessorNode",
+        "params": {}
+      }
+    ],
+    "connections": []
+  },
+  "input_data": [
+    {"text": "Hello WASM", "operations": ["uppercase", "word_count"]},
+    {"text": "Python in Browser", "operations": ["lowercase", "char_count"]}
+  ]
+}

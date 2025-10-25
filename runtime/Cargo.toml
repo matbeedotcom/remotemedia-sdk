@@ -41,7 +41,9 @@ tonic = { version = "0.10", optional = true }
 prost = { version = "0.12", optional = true }
 
 # Python FFI (using PyO3 per recommendation)
-pyo3 = { version = "0.26", features = ["extension-module", "abi3-py312", "auto-initialize"] }
+# For native builds: use extension-module for Python extensions
+# For WASM builds: use abi3 only (no extension-module, no auto-initialize)
+pyo3 = { version = "0.26", features = ["abi3-py312"], default-features = false }
 pyo3-async-runtimes = { version = "0.26", features = ["tokio-runtime"], optional = true }
 numpy = { version = "0.26", optional = true }  # rust-numpy for zero-copy numpy array support (not available in WASM)
 
@@ -69,6 +71,9 @@ wlr-libpy = { git = "https://github.com/vmware-labs/webassembly-language-runtime
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 
+# Override tokio for WASM with minimal features
+tokio = { version = "1.35", default-features = false, features = ["sync", "macros", "io-util", "rt", "time"] }
+
 [dev-dependencies]
 tokio-test = "0.4"
 criterion = "0.5"
@@ -77,9 +82,8 @@ tempfile = "3.8"
 [build-dependencies]
 prost-build = { version = "0.12", optional = true }
 tonic-build = { version = "0.10", optional = true }
-
-# WASM-specific build dependencies (only for wasm32-wasi target)
-[target.'cfg(target_family = "wasm")'.build-dependencies]
+# wlr-libpy needs to be a regular build-dependency since build.rs runs on host
+# It will only be used when building for WASM target (checked in build.rs)
 wlr-libpy = { git = "https://github.com/vmware-labs/webassembly-language-runtimes.git", default-features = false, features = ["build", "py312"] }
 
 [features]

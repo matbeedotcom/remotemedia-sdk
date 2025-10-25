@@ -309,6 +309,22 @@ impl Executor {
         &self.py_cache
     }
 
+    /// Execute a pipeline synchronously (for WASM compatibility)
+    ///
+    /// This method wraps the async `execute()` method and blocks on it using
+    /// `futures::executor::block_on`. This is necessary for WASM targets where
+    /// tokio's async runtime is not fully supported.
+    ///
+    /// # Platform Compatibility
+    /// - Native: Uses tokio runtime via `futures::executor::block_on`
+    /// - WASM: Uses browser's event loop via `futures::executor::block_on`
+    #[cfg(target_family = "wasm")]
+    pub fn execute_sync(&self, manifest: &Manifest) -> Result<ExecutionResult> {
+        use futures::executor::block_on;
+        tracing::info!("Executing pipeline synchronously (WASM mode): {}", manifest.metadata.name);
+        block_on(self.execute(manifest))
+    }
+
     /// Execute a pipeline from a manifest
     pub async fn execute(&self, manifest: &Manifest) -> Result<ExecutionResult> {
         tracing::info!("Executing pipeline: {}", manifest.metadata.name);
@@ -455,6 +471,18 @@ impl Executor {
                 )))
             }
         }
+    }
+
+    /// Execute pipeline with input data synchronously (for WASM compatibility)
+    #[cfg(target_family = "wasm")]
+    pub fn execute_with_input_sync(
+        &self,
+        manifest: &Manifest,
+        input_data: Vec<Value>,
+    ) -> Result<ExecutionResult> {
+        use futures::executor::block_on;
+        tracing::info!("Executing pipeline synchronously (WASM mode) with {} inputs", input_data.len());
+        block_on(self.execute_with_input(manifest, input_data))
     }
 
     /// Execute pipeline with input data

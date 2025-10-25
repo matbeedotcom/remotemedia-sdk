@@ -148,13 +148,10 @@ impl CPythonNodeExecutor {
         // Check if the node has an initialize method
         if instance.hasattr("initialize")? {
             tracing::info!("Calling initialize() on CPython node: {}", self.node_type);
-            let result = instance.call_method0("initialize")?;
 
-            // Check if it's a coroutine (async method) and await it
-            if self.is_coroutine(py, &result)? {
-                tracing::info!("initialize() is async, awaiting it");
-                self.await_coroutine(py, &result)?;
-            }
+            // As of Phase 1 WASM compatibility update, initialize() is now synchronous
+            // This eliminates asyncio dependency which is not fully supported in WASM
+            instance.call_method0("initialize")?;
 
             tracing::info!("CPython node {} initialized", self.node_type);
         } else {
@@ -168,13 +165,10 @@ impl CPythonNodeExecutor {
         // Check if the node has a cleanup method
         if instance.hasattr("cleanup")? {
             tracing::info!("Calling cleanup() on CPython node: {}", self.node_type);
-            let result = instance.call_method0("cleanup")?;
 
-            // Check if it's a coroutine (async method) and await it
-            if self.is_coroutine(py, &result)? {
-                tracing::info!("cleanup() is async, awaiting it");
-                self.await_coroutine(py, &result)?;
-            }
+            // As of Phase 1 WASM compatibility update, cleanup() is now synchronous
+            // This eliminates asyncio dependency which is not fully supported in WASM
+            instance.call_method0("cleanup")?;
 
             tracing::info!("CPython node {} cleaned up", self.node_type);
         } else {
@@ -564,6 +558,25 @@ impl NodeExecutor for CPythonNodeExecutor {
             self.node_type,
             context.node_id
         );
+
+        // Initialize Python runtime lazily (WASM-compatible)
+        #[cfg(target_family = "wasm")]
+        {
+            use std::sync::Once;
+            static PYTHON_INIT: Once = Once::new();
+            PYTHON_INIT.call_once(|| {
+                tracing::info!("Initializing Python runtime for WASM");
+                pyo3::prepare_freethreaded_python();
+
+                // Increase recursion limit for WASM (browser has limited call stack)
+                Python::with_gil(|py| {
+                    let sys = py.import("sys").expect("Failed to import sys");
+                    // Reduce from default 1000 to 100 to avoid browser stack overflow
+                    sys.setattr("recursionlimit", 100).expect("Failed to set recursion limit");
+                    tracing::info!("Set Python recursion limit to 100 for WASM");
+                });
+            });
+        }
 
         // Acquire GIL and create node instance
         let instance = Python::with_gil(|py| -> PyResult<Py<PyAny>> {

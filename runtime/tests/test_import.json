@@ -1,0 +1,7 @@
+{
+  "manifest": {
+    "version": "v1",
+    "metadata": {"name": "import-test"},
+    "nodes": []
+  }
+}
