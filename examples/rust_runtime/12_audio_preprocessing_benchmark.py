@@ -91,14 +91,22 @@ def benchmark_preprocessing(use_rust: bool, runs: int = 5):
     try:
         # Run the full pipeline multiple times
         times = []
+        resample_times = []
+        vad_times = []
+        format_times = []
+        
         for i in range(runs):
-            start = time.perf_counter()
+            start_total = time.perf_counter()
             
             # Stage 1: Resample to 16kHz
+            start_resample = time.perf_counter()
             resampled_data, resampled_sr = resample_node.process((audio_data, sample_rate))
+            resample_times.append((time.perf_counter() - start_resample) * 1000)
             
             # Stage 2: VAD
+            start_vad = time.perf_counter()
             vad_result = vad_node.process((resampled_data, resampled_sr))
+            vad_times.append((time.perf_counter() - start_vad) * 1000)
             
             # Stage 3: Format conversion to i16
             # VAD returns (audio, sr, segments), so extract audio
@@ -106,10 +114,12 @@ def benchmark_preprocessing(use_rust: bool, runs: int = 5):
                 vad_audio, vad_sr = vad_result[0], vad_result[1]
             else:
                 vad_audio, vad_sr = vad_result, resampled_sr
-                
-            converted_data, converted_sr = format_node.process((vad_audio, vad_sr))
             
-            elapsed = time.perf_counter() - start
+            start_format = time.perf_counter()
+            converted_data, converted_sr = format_node.process((vad_audio, vad_sr))
+            format_times.append((time.perf_counter() - start_format) * 1000)
+            
+            elapsed = time.perf_counter() - start_total
             times.append(elapsed * 1000)  # Convert to ms
             
             if i == 0:
@@ -126,12 +136,16 @@ def benchmark_preprocessing(use_rust: bool, runs: int = 5):
         min_time = np.min(times)
         max_time = np.max(times)
         std_time = np.std(times)
+        
+        avg_resample = np.mean(resample_times)
+        avg_vad = np.mean(vad_times)
+        avg_format = np.mean(format_times)
 
         print(f"\nPerformance over {runs} runs:")
-        print(f"  Average time: {avg_time:.2f}ms")
-        print(f"  Min time: {min_time:.2f}ms")
-        print(f"  Max time: {max_time:.2f}ms")
-        print(f"  Std dev: {std_time:.2f}ms")
+        print(f"  Total time: {avg_time:.2f}ms (min: {min_time:.2f}ms, max: {max_time:.2f}ms)")
+        print(f"  Resample:   {avg_resample:.2f}ms")
+        print(f"  VAD:        {avg_vad:.2f}ms")
+        print(f"  Format:     {avg_format:.2f}ms")
         print(f"  Memory used: {mem_used:.1f} MB")
 
         return {
@@ -139,6 +153,9 @@ def benchmark_preprocessing(use_rust: bool, runs: int = 5):
             "avg_time_ms": avg_time,
             "min_time_ms": min_time,
             "max_time_ms": max_time,
+            "avg_resample_ms": avg_resample,
+            "avg_vad_ms": avg_vad,
+            "avg_format_ms": avg_format,
             "memory_mb": mem_used,
             "success": True
         }
@@ -196,21 +213,29 @@ def main():
         py_time = python_result['avg_time_ms']
         rust_time = rust_result['avg_time_ms']
         speedup = py_time / rust_time
+        
+        # Calculate per-node speedups
+        resample_speedup = python_result['avg_resample_ms'] / rust_result['avg_resample_ms']
+        vad_speedup = python_result['avg_vad_ms'] / rust_result['avg_vad_ms']
+        format_speedup = python_result['avg_format_ms'] / rust_result['avg_format_ms']
+        memory_improvement = python_result['memory_mb'] / rust_result['memory_mb']
 
-        print(f"{'Metric':<25} {'Python':<20} {'Rust':<20}")
-        print(f"{'-'*70}")
-        print(f"{'Average Time':<25} {py_time:.2f}ms{'':<14} {rust_time:.2f}ms")
-        print(f"{'Min Time':<25} {python_result['min_time_ms']:.2f}ms{'':<14} {rust_result['min_time_ms']:.2f}ms")
-        print(f"{'Memory Used':<25} {python_result['memory_mb']:.1f} MB{'':<13} {rust_result['memory_mb']:.1f} MB")
-        print(f"\n{'Speedup:':<25} Rust is {speedup:.2f}x faster")
-        print(f"{'Improvement:':<25} {(speedup-1)*100:.1f}% faster")
+        print(f"{'Metric':<25} {'Python':<20} {'Rust':<20} {'Speedup':<15}")
+        print(f"{'-'*80}")
+        print(f"{'Total Time':<25} {py_time:.2f}ms{'':<14} {rust_time:.2f}ms{'':<14} {speedup:.2f}x")
+        print(f"{'  - Resample':<25} {python_result['avg_resample_ms']:.2f}ms{'':<14} {rust_result['avg_resample_ms']:.2f}ms{'':<14} {resample_speedup:.2f}x")
+        print(f"{'  - VAD':<25} {python_result['avg_vad_ms']:.2f}ms{'':<14} {rust_result['avg_vad_ms']:.2f}ms{'':<14} {vad_speedup:.2f}x")
+        print(f"{'  - Format Convert':<25} {python_result['avg_format_ms']:.2f}ms{'':<14} {rust_result['avg_format_ms']:.2f}ms{'':<14} {format_speedup:.2f}x")
+        print(f"{'Memory Used':<25} {python_result['memory_mb']:.1f} MB{'':<13} {rust_result['memory_mb']:.1f} MB{'':<13} {memory_improvement:.2f}x less")
 
         print(f"\n{'='*70}")
         print("Phase 5-8 Achievements (v0.2.0):")
         print(f"{'='*70}")
-        print("✅ Audio Resample: 1.25x faster than librosa")
-        print("✅ VAD: 2.79x faster than numpy")
+        print(f"✅ Audio Resample: {resample_speedup:.2f}x faster (Rust vs Python)")
+        print(f"✅ VAD: {vad_speedup:.2f}x faster (Rust vs Python)")
+        print(f"✅ Format Conversion: {format_speedup:.2f}x faster (Rust vs Python)")
         print(f"✅ Full pipeline: {speedup:.2f}x speedup (this benchmark)")
+        print(f"✅ Memory efficiency: {memory_improvement:.1f}x less memory used")
         print("✅ Zero breaking changes - automatic runtime selection")
         print("✅ Fast path optimization - zero-copy audio buffers")
         print(f"\n{'='*70}")
