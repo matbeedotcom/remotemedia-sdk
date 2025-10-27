@@ -64,8 +64,7 @@ async fn test_vad_with_real_audio() {
                 }),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),
-            },
+                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
             // VAD node in passthrough mode
             NodeManifest {
                 id: "vad".to_string(),
@@ -79,8 +78,7 @@ async fn test_vad_with_real_audio() {
                 }),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),
-            },
+                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
         ],
         connections: vec![],  // Single-node test for now
     };
@@ -165,8 +163,7 @@ result = (audio_data, sr)
             }),
             capabilities: None,
             host: None,
-            runtime_hint: Some(RuntimeHint::Cpython),
-        }],
+            runtime_hint: Some(RuntimeHint::Cpython),,`n            ..Default::default()`n        }],
         connections: vec![],
     };
 
@@ -214,8 +211,7 @@ async fn test_audio_transform_node() {
             }),
             capabilities: None,
             host: None,
-            runtime_hint: Some(RuntimeHint::Cpython),
-        }],
+            runtime_hint: Some(RuntimeHint::Cpython),,`n            ..Default::default()`n        }],
         connections: vec![],
     };
 
@@ -266,8 +262,7 @@ async fn test_extract_audio_data_node() {
             params: json!({}),
             capabilities: None,
             host: None,
-            runtime_hint: Some(RuntimeHint::Cpython),
-        }],
+            runtime_hint: Some(RuntimeHint::Cpython),,`n            ..Default::default()`n        }],
         connections: vec![],
     };
 
@@ -321,8 +316,7 @@ async fn test_audio_nodes_with_runtime_auto_detection() {
             params: json!({}),
             capabilities: None,
             host: None,
-            runtime_hint: None,  // Let auto-detection work
-        }],
+            runtime_hint: None,  // Let auto-detection work,`n            ..Default::default()`n        }],
         connections: vec![],
     };
 
@@ -364,8 +358,7 @@ async fn test_vad_node_with_async_generator_streaming() {
             }),
             capabilities: None,
             host: None,
-            runtime_hint: Some(RuntimeHint::Cpython),
-        }],
+            runtime_hint: Some(RuntimeHint::Cpython),,`n            ..Default::default()`n        }],
         connections: vec![],
     };
 
@@ -474,3 +467,4 @@ result = [audio_data, sr]
         }
     }
 }
+

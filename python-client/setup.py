@@ -26,12 +26,12 @@ def read_requirements(filename):
 
 setup(
     name="remotemedia-client",
-    version="0.1.0",
+    version="0.2.0",
     author="Mathieu Gosbee",
     author_email="mail@matbee.com",
     description=(
         "A Python SDK for distributed audio/video/data processing "
-        "with remote offloading"
+        "with native Rust acceleration (2-16x speedup)"
     ),
     long_description=long_description,
     long_description_content_type="text/markdown",

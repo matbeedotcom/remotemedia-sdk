@@ -691,3 +691,4 @@ pipeline.add_node(MockNode(lambda x: x * 2))
     }
     // Async runtime may require CPython
 }
+

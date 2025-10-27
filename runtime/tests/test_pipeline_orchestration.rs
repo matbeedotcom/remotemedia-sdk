@@ -179,3 +179,4 @@ fn test_cycle_detection() {
 
     println!("✓ T045: Cycle detection test passed");
 }
+

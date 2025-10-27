@@ -387,3 +387,4 @@ mod integration_tests {
         assert_eq!(deserialized.node_type, "test_type");
     }
 }
+

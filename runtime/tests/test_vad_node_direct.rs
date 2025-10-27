@@ -164,8 +164,7 @@ async fn test_vad_node_with_cpython_executor_single_chunk() {
             }),
             capabilities: None,
             host: None,
-            runtime_hint: Some(RuntimeHint::Cpython),
-        }],
+            runtime_hint: Some(RuntimeHint::Cpython),,`n            ..Default::default()`n        }],
         connections: vec![],
     };
 
@@ -259,3 +258,4 @@ sys.modules['remotemedia.nodes'].VADAnalyzerSync = VADAnalyzerSync
 
     println!("\n✓ VAD Analyzer (CPython executor) test passed!");
 }
+

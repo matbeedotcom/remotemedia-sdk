@@ -58,6 +58,7 @@ async fn test_passthrough_node_from_sdk() {
             capabilities: None,
             host: None,
             runtime_hint: Some(RuntimeHint::Cpython),
+            ..Default::default()
         }],
         connections: vec![],
     };
@@ -117,6 +118,7 @@ async fn test_calculator_node_from_sdk() {
             capabilities: None,
             host: None,
             runtime_hint: Some(RuntimeHint::Cpython),
+            ..Default::default()
         }],
         connections: vec![],
     };
@@ -143,3 +145,4 @@ async fn test_calculator_node_from_sdk() {
 
     println!("✓ CalculatorNode test passed!");
 }
+

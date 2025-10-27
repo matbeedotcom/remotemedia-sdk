@@ -198,3 +198,4 @@ fn test_reject_invalid_connection() {
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("unknown"));
 }
+

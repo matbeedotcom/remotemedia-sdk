@@ -521,3 +521,4 @@ class FormatNode:
     node2.cleanup().expect("Failed to cleanup node2");
     node3.cleanup().expect("Failed to cleanup node3");
 }
+

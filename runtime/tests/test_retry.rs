@@ -247,3 +247,4 @@ async fn test_default_retry_policy() {
     assert_eq!(policy.delay_for_attempt(1), Some(Duration::from_millis(200)));
     assert_eq!(policy.delay_for_attempt(2), Some(Duration::from_millis(400)));
 }
+

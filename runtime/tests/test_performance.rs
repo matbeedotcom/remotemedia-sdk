@@ -205,3 +205,4 @@ async fn test_metrics_empty_pipeline() {
     
     println!("Empty pipeline metrics:\n{}", serde_json::to_string_pretty(&json).unwrap());
 }
+
