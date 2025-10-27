@@ -33,18 +33,21 @@ class Pipeline:
     run remotely, and managing the overall processing workflow.
     """
     
-    def __init__(self, nodes: Optional[List[Node]] = None, name: Optional[str] = None):
+    def __init__(self, nodes: Optional[List[Node]] = None, name: Optional[str] = None, enable_metrics: bool = False):
         """
         Initialize a new pipeline.
         
         Args:
             nodes: Optional list of nodes to initialize the pipeline with.
             name: Optional name for the pipeline
+            enable_metrics: Enable detailed performance metrics collection (default: False)
         """
         self.name = name or f"Pipeline_{id(self)}"
         self.nodes: List[Node] = []
         self._is_initialized = False
         self.logger = logger.getChild(self.__class__.__name__)
+        self.enable_metrics = enable_metrics
+        self._metrics: Optional[Dict[str, Any]] = None
 
         if nodes:
             for node in nodes:
@@ -99,6 +102,30 @@ class Pipeline:
                 return True
         
         return False
+    
+    def get_metrics(self) -> Optional[Dict[str, Any]]:
+        """
+        Get performance metrics from the last pipeline execution.
+        
+        Returns:
+            Dictionary containing detailed metrics if metrics were enabled,
+            None otherwise. Metrics include:
+            - pipeline_id: Pipeline identifier
+            - total_duration_us: Total execution time in microseconds
+            - peak_memory_bytes: Peak memory usage
+            - node_metrics: Per-node breakdown of execution times and success rates
+            - metrics_overhead_us: Overhead of metrics collection itself
+        
+        Example:
+            >>> pipeline = Pipeline(enable_metrics=True)
+            >>> result = await pipeline.run(data)
+            >>> metrics = pipeline.get_metrics()
+            >>> if metrics:
+            ...     print(f"Total time: {metrics['total_duration_us']}μs")
+            ...     for node in metrics['node_metrics']:
+            ...         print(f"Node {node['node_id']}: {node['avg_duration_us']}μs")
+        """
+        return self._metrics
     
     def get_node(self, node_name: str) -> Optional[Node]:
         """
@@ -389,14 +416,25 @@ class Pipeline:
             >>> result = await pipeline.run([1, 2, 3])
             >>> print(result)  # [6, 7, 8]
         """
-        # Try Rust runtime first if enabled
+        # Phase 8 (T130-T132): Check runtime availability before attempting
         if use_rust:
+            from .. import is_rust_runtime_available
+            
+            if not is_rust_runtime_available():
+                self.logger.info(
+                    f"Rust runtime not available for pipeline '{self.name}', "
+                    "using Python executor"
+                )
+                return await self._run_python(input_data)
+            
             try:
                 return await self._run_rust(input_data)
-            except ImportError:
-                self.logger.debug("Rust runtime not available, falling back to Python executor")
+            except ImportError as e:
+                self.logger.debug(f"Rust runtime import failed: {e}, falling back to Python executor")
             except Exception as e:
-                self.logger.warning(f"Rust runtime execution failed: {e}, falling back to Python executor")
+                self.logger.warning(
+                    f"Rust runtime execution failed: {e}, falling back to Python executor"
+                )
 
         # Fall back to Python execution
         return await self._run_python(input_data)
@@ -426,9 +464,18 @@ class Pipeline:
             # Convert input_data to list if it isn't already
             if not isinstance(input_data, list):
                 input_data = [input_data]
-            result = await remotemedia_runtime.execute_pipeline_with_input(manifest_json, input_data)
+            result = await remotemedia_runtime.execute_pipeline_with_input(
+                manifest_json, input_data, self.enable_metrics
+            )
         else:
-            result = await remotemedia_runtime.execute_pipeline(manifest_json)
+            result = await remotemedia_runtime.execute_pipeline(
+                manifest_json, self.enable_metrics
+            )
+
+        # If metrics are enabled, result will be a dict with 'outputs' and 'metrics'
+        if self.enable_metrics and isinstance(result, dict) and 'metrics' in result:
+            self._metrics = json.loads(result['metrics'])
+            result = result['outputs']
 
         self.logger.info(f"Rust runtime execution completed for pipeline '{self.name}'")
         return result

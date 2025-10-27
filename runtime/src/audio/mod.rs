@@ -7,8 +7,10 @@
 //! - Safe format conversions
 
 pub mod format;
+pub mod buffer;
 
 use std::sync::Arc;
+pub use buffer::{AudioBuffer as AudioBufferNew, AudioData};
 
 /// Audio sample format
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

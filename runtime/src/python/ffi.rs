@@ -30,7 +30,7 @@ use super::marshal::{python_to_json, json_to_python};
 /// asyncio.run(main())
 /// ```
 #[pyfunction]
-pub fn execute_pipeline(py: Python<'_>, manifest_json: String) -> PyResult<Bound<'_, PyAny>> {
+pub fn execute_pipeline(py: Python<'_>, manifest_json: String, enable_metrics: Option<bool>) -> PyResult<Bound<'_, PyAny>> {
     future_into_py(py, async move {
         // Parse manifest
         let manifest = parse(&manifest_json)
@@ -47,10 +47,25 @@ pub fn execute_pipeline(py: Python<'_>, manifest_json: String) -> PyResult<Bound
 
         // Convert outputs to Python
         // With auto-initialize, Python::with_gil is available in async contexts
-        Ok(Python::with_gil(|py| {
-            json_to_python(py, &result.outputs)
-                .map(|bound| bound.unbind())
-        })?)
+        Python::with_gil(|py| {
+            let outputs_py = json_to_python(py, &result.outputs)?;
+            
+            // Include metrics if requested
+            if enable_metrics.unwrap_or(false) {
+                let metrics_json = result.metrics.to_json();
+                let metrics_str = serde_json::to_string(&metrics_json)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        format!("Failed to serialize metrics: {}", e)
+                    ))?;
+                
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("outputs", &outputs_py)?;
+                dict.set_item("metrics", metrics_str)?;
+                Ok(dict.into_any().unbind())
+            } else {
+                Ok(outputs_py.unbind())
+            }
+        })
     })
 }
 
@@ -73,6 +88,7 @@ pub fn execute_pipeline_with_input<'py>(
     py: Python<'py>,
     manifest_json: String,
     input_data: Vec<Bound<'py, PyAny>>,
+    enable_metrics: Option<bool>,
 ) -> PyResult<Bound<'py, PyAny>> {
     // Convert input_data to JSON immediately before the async block
     let rust_input: Vec<serde_json::Value> = input_data.iter()
@@ -95,10 +111,25 @@ pub fn execute_pipeline_with_input<'py>(
 
         // Convert outputs back to Python
         // With auto-initialize, Python::with_gil is available in async contexts
-        Ok(Python::with_gil(|py| {
-            json_to_python(py, &result.outputs)
-                .map(|bound| bound.unbind())
-        })?)
+        Python::with_gil(|py| {
+            let outputs_py = json_to_python(py, &result.outputs)?;
+            
+            // Include metrics if requested
+            if enable_metrics.unwrap_or(false) {
+                let metrics_json = result.metrics.to_json();
+                let metrics_str = serde_json::to_string(&metrics_json)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        format!("Failed to serialize metrics: {}", e)
+                    ))?;
+                
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("outputs", &outputs_py)?;
+                dict.set_item("metrics", metrics_str)?;
+                Ok(dict.into_any().unbind())
+            } else {
+                Ok(outputs_py.unbind())
+            }
+        })
     })
 }
 
@@ -112,6 +143,40 @@ pub fn get_runtime_version() -> String {
 #[pyfunction]
 pub fn is_available() -> bool {
     true
+}
+
+/// Get execution metrics as JSON string
+///
+/// # Arguments
+/// * `metrics_json` - JSON string containing serialized PipelineMetrics
+///
+/// # Returns
+/// JSON string with detailed metrics including per-node breakdown
+///
+/// # Example (Python)
+/// ```python
+/// metrics_str = get_metrics(metrics_json)
+/// metrics = json.loads(metrics_str)
+/// print(f"Total duration: {metrics['total_duration_us']}μs")
+/// ```
+#[pyfunction]
+pub fn get_metrics(metrics_json: String) -> PyResult<String> {
+    use crate::executor::PipelineMetrics;
+    
+    // Deserialize metrics
+    let metrics: PipelineMetrics = serde_json::from_str(&metrics_json)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            format!("Failed to parse metrics: {}", e)
+        ))?;
+    
+    // Convert to JSON with enhanced formatting
+    let json = metrics.to_json();
+    
+    // Serialize back to string
+    serde_json::to_string(&json)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            format!("Failed to serialize metrics: {}", e)
+        ))
 }
 
 /// Python module initialization
@@ -130,6 +195,7 @@ fn remotemedia_runtime(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(execute_pipeline_with_input, m)?)?;
     m.add_function(wrap_pyfunction!(get_runtime_version, m)?)?;
     m.add_function(wrap_pyfunction!(is_available, m)?)?;
+    m.add_function(wrap_pyfunction!(get_metrics, m)?)?;
 
     // Add version as module constant
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

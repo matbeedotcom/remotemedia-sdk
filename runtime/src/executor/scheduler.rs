@@ -5,6 +5,7 @@
 use crate::{Error, Result};
 use crate::executor::error::ExecutionErrorExt;
 use crate::executor::metrics::PipelineMetrics;
+use crate::executor::retry::{RetryPolicy, CircuitBreaker, execute_with_retry};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -75,6 +76,12 @@ pub struct Scheduler {
 
     /// Default timeout for tasks
     default_timeout: Option<Duration>,
+
+    /// Circuit breaker for fault tolerance
+    circuit_breaker: Arc<RwLock<CircuitBreaker>>,
+
+    /// Retry policy for failed operations
+    retry_policy: RetryPolicy,
 }
 
 impl Scheduler {
@@ -85,6 +92,8 @@ impl Scheduler {
             semaphore: Arc::new(Semaphore::new(max_concurrency)),
             metrics: Arc::new(RwLock::new(PipelineMetrics::new(pipeline_id))),
             default_timeout: None,
+            circuit_breaker: Arc::new(RwLock::new(CircuitBreaker::default())),
+            retry_policy: RetryPolicy::default(),
         }
     }
 
@@ -92,6 +101,60 @@ impl Scheduler {
     pub fn with_default_timeout(mut self, timeout: Duration) -> Self {
         self.default_timeout = Some(timeout);
         self
+    }
+
+    /// Set retry policy
+    pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {
+        self.retry_policy = policy;
+        self
+    }
+
+    /// Set circuit breaker
+    pub fn with_circuit_breaker(mut self, breaker: CircuitBreaker) -> Self {
+        self.circuit_breaker = Arc::new(RwLock::new(breaker));
+        self
+    }
+
+    /// Execute node with retry and circuit breaker logic
+    pub async fn execute_node_with_retry<F, Fut>(
+        &self,
+        ctx: ExecutionContext,
+        operation: F,
+    ) -> Result<Value>
+    where
+        F: Fn(Value) -> Fut + Send + Sync,
+        Fut: std::future::Future<Output = Result<Value>> + Send,
+    {
+        let node_id = ctx.node_id.clone();
+        
+        // Check circuit breaker
+        {
+            let breaker = self.circuit_breaker.read().await;
+            if breaker.is_open() {
+                return Err(Error::execution(format!(
+                    "Circuit breaker is open for node '{}' - too many consecutive failures",
+                    node_id
+                )));
+            }
+        }
+
+        // Execute with retry
+        let result = execute_with_retry(self.retry_policy, || {
+            let input_data = ctx.input_data.clone();
+            operation(input_data)
+        })
+        .await;
+
+        // Update circuit breaker based on result
+        {
+            let mut breaker = self.circuit_breaker.write().await;
+            match &result {
+                Ok(_) => breaker.record_success(),
+                Err(_) => breaker.record_failure(),
+            }
+        }
+
+        result
     }
 
     /// Schedule a node for execution

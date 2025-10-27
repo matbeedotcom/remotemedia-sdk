@@ -30,6 +30,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
+use tokio::sync::RwLock;
 
 pub use runtime_selector::{RuntimeSelector, SelectedRuntime};
 
@@ -270,6 +271,9 @@ pub struct Executor {
 
     /// Cache for Python objects to avoid serialization between Python nodes
     py_cache: PyObjectCache,
+    
+    /// Pipeline metrics collection
+    metrics: Arc<RwLock<PipelineMetrics>>,
 }
 
 /// Executor configuration
@@ -304,6 +308,7 @@ impl Executor {
             registry: NodeRegistry::default(),
             runtime_selector: RuntimeSelector::new(),
             py_cache: PyObjectCache::new(),
+            metrics: Arc::new(RwLock::new(PipelineMetrics::new("pipeline"))),
         }
     }
 
@@ -314,6 +319,7 @@ impl Executor {
             registry,
             runtime_selector: RuntimeSelector::new(),
             py_cache: PyObjectCache::new(),
+            metrics: Arc::new(RwLock::new(PipelineMetrics::new("pipeline"))),
         }
     }
 
@@ -413,6 +419,7 @@ impl Executor {
             node.cleanup().await?;
         }
 
+        let metrics = self.metrics.read().await.clone();
         Ok(ExecutionResult {
             status: "success".to_string(),
             outputs,
@@ -422,6 +429,7 @@ impl Executor {
                 sink_count: graph.sinks.len(),
                 execution_order: graph.execution_order.clone(),
             }),
+            metrics,
         })
     }
 
@@ -803,6 +811,7 @@ impl Executor {
             Value::Array(final_results)
         };
 
+        let metrics = self.metrics.read().await.clone();
         Ok(ExecutionResult {
             status: "success".to_string(),
             outputs,
@@ -812,6 +821,7 @@ impl Executor {
                 sink_count: graph.sinks.len(),
                 execution_order: graph.execution_order.clone(),
             }),
+            metrics,
         })
     }
 
@@ -912,6 +922,7 @@ impl Executor {
             Value::Array(current_data)
         };
 
+        let metrics = self.metrics.read().await.clone();
         Ok(ExecutionResult {
             status: "success".to_string(),
             outputs,
@@ -921,6 +932,7 @@ impl Executor {
                 sink_count: graph.sinks.len(),
                 execution_order: graph.execution_order.clone(),
             }),
+            metrics,
         })
     }
 
@@ -1031,6 +1043,7 @@ impl Executor {
             Value::Array(final_outputs)
         };
 
+        let metrics = self.metrics.read().await.clone();
         Ok(ExecutionResult {
             status: "success".to_string(),
             outputs,
@@ -1040,6 +1053,7 @@ impl Executor {
                 sink_count: graph.sinks.len(),
                 execution_order: graph.execution_order.clone(),
             }),
+            metrics,
         })
     }
 
@@ -1092,6 +1106,9 @@ pub struct ExecutionResult {
 
     /// Graph information
     pub graph_info: Option<GraphInfo>,
+    
+    /// Execution metrics
+    pub metrics: PipelineMetrics,
 }
 
 #[cfg(test)]

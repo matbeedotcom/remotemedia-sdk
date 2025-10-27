@@ -369,6 +369,10 @@ class AudioResampleNode(Node):
         else:
             logger.info(f"AudioResampleNode '{self.name}': Using Python runtime (librosa)")
     
+    async def initialize(self):
+        """Initialize the node (async for pipeline compatibility)."""
+        super().initialize()
+    
     def _should_use_rust(self) -> bool:
         """Determine if Rust runtime should be used."""
         if self.runtime_hint == "python":
@@ -492,7 +496,11 @@ class VADNode(Node):
         if self._use_rust:
             logger.info(f"VADNode '{self.name}': Using Rust runtime")
         else:
-            logger.info(f"VADNode '{self.name}': Using Python runtime")
+            logger.info(f"VADNode '{self.name}': Using Python runtime (numpy-based)")
+    
+    async def initialize(self):
+        """Initialize the node (async for pipeline compatibility)."""
+        super().initialize()
     
     def _should_use_rust(self) -> bool:
         """Determine if Rust runtime should be used."""
@@ -632,9 +640,13 @@ class FormatConverterNode(Node):
             raise ValueError(f"Unsupported format: {target_format}. Must be 'f32', 'i16', or 'i32'")
         
         if self._use_rust:
-            logger.info(f"FormatConverterNode '{self.name}': Using Rust runtime (zero-copy)")
+            logger.info(f"FormatConverterNode '{self.name}': Using Rust runtime")
         else:
-            logger.info(f"FormatConverterNode '{self.name}': Using Python runtime")
+            logger.info(f"FormatConverterNode '{self.name}': Using Python runtime (numpy)")
+    
+    async def initialize(self):
+        """Initialize the node (async for pipeline compatibility)."""
+        super().initialize()
     
     def _should_use_rust(self) -> bool:
         """Determine if Rust runtime should be used."""

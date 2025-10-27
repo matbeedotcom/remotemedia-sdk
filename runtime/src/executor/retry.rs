@@ -91,8 +91,81 @@ impl RetryPolicy {
 }
 
 impl Default for RetryPolicy {
+    /// Default retry policy: 3 attempts with exponential backoff (100/200/400ms)
     fn default() -> Self {
-        RetryPolicy::None
+        RetryPolicy::Exponential {
+            base_delay: Duration::from_millis(100),
+            max_delay: Duration::from_millis(400),
+            max_attempts: 3,
+            multiplier: 2.0,
+        }
+    }
+}
+
+/// Circuit breaker to prevent cascading failures
+///
+/// Tracks consecutive failures and "trips" (opens) after a threshold,
+/// preventing further execution attempts until reset.
+#[derive(Debug, Clone)]
+pub struct CircuitBreaker {
+    /// Maximum consecutive failures before tripping
+    failure_threshold: usize,
+    /// Current count of consecutive failures
+    consecutive_failures: usize,
+    /// Whether the circuit is currently open (tripped)
+    is_open: bool,
+}
+
+impl CircuitBreaker {
+    /// Create a new circuit breaker with the given failure threshold
+    pub fn new(failure_threshold: usize) -> Self {
+        Self {
+            failure_threshold,
+            consecutive_failures: 0,
+            is_open: false,
+        }
+    }
+
+    /// Record a successful execution
+    pub fn record_success(&mut self) {
+        self.consecutive_failures = 0;
+        self.is_open = false;
+    }
+
+    /// Record a failed execution
+    pub fn record_failure(&mut self) {
+        self.consecutive_failures += 1;
+        if self.consecutive_failures >= self.failure_threshold {
+            self.is_open = true;
+            tracing::warn!(
+                "Circuit breaker tripped after {} consecutive failures",
+                self.consecutive_failures
+            );
+        }
+    }
+
+    /// Check if the circuit is open (preventing execution)
+    pub fn is_open(&self) -> bool {
+        self.is_open
+    }
+
+    /// Reset the circuit breaker to closed state
+    pub fn reset(&mut self) {
+        self.consecutive_failures = 0;
+        self.is_open = false;
+        tracing::info!("Circuit breaker reset");
+    }
+
+    /// Get the current number of consecutive failures
+    pub fn consecutive_failures(&self) -> usize {
+        self.consecutive_failures
+    }
+}
+
+impl Default for CircuitBreaker {
+    /// Default circuit breaker: trips after 5 consecutive failures
+    fn default() -> Self {
+        Self::new(5)
     }
 }
 
@@ -145,7 +218,7 @@ where
     }
 
     // All retries exhausted
-    Err(Error::Execution(format!(
+    Err(Error::execution(format!(
         "Retry exhausted after {} attempts: {}",
         attempt,
         last_error
@@ -197,7 +270,7 @@ where
         }
     }
 
-    Err(Error::Execution(format!(
+    Err(Error::execution(format!(
         "Retry exhausted after {} attempts: {}",
         attempt,
         last_error

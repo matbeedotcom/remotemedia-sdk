@@ -82,7 +82,7 @@ impl NodeMetrics {
 }
 
 /// Metrics for an entire pipeline
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineMetrics {
     /// Pipeline ID
     pub pipeline_id: String,
@@ -94,9 +94,11 @@ pub struct PipelineMetrics {
     total_executions: usize,
 
     /// Pipeline start time
+    #[serde(skip)]
     start_time: Option<Instant>,
 
     /// Pipeline end time
+    #[serde(skip)]
     end_time: Option<Instant>,
 
     /// Peak memory usage (estimated, in bytes)
@@ -181,14 +183,39 @@ impl PipelineMetrics {
         self.total_executions
     }
 
-    /// Export metrics as JSON
+    /// Export metrics as JSON with microsecond precision
     pub fn to_json(&self) -> serde_json::Value {
+        let start = Instant::now();
+        
+        let total_duration_us = self.total_duration().map(|d| d.as_micros());
+        
+        // Convert node metrics to JSON with microsecond precision
+        let node_metrics_json: Vec<serde_json::Value> = self.node_metrics
+            .values()
+            .map(|m| serde_json::json!({
+                "node_id": m.node_id,
+                "execution_count": m.execution_count,
+                "success_count": m.success_count,
+                "error_count": m.error_count,
+                "success_rate": m.success_rate(),
+                "total_duration_us": m.total_duration.as_micros(),
+                "avg_duration_us": m.avg_duration.as_micros(),
+                "min_duration_us": if m.min_duration == Duration::MAX { 0 } else { m.min_duration.as_micros() },
+                "max_duration_us": m.max_duration.as_micros(),
+            }))
+            .collect();
+        
+        let serialization_overhead_us = start.elapsed().as_micros();
+        
         serde_json::json!({
             "pipeline_id": self.pipeline_id,
             "total_executions": self.total_executions,
+            "total_duration_us": total_duration_us,
             "total_duration_ms": self.total_duration().map(|d| d.as_millis()),
+            "peak_memory_bytes": self.peak_memory_bytes,
             "peak_memory_mb": self.peak_memory_bytes as f64 / (1024.0 * 1024.0),
-            "node_metrics": self.node_metrics.values().collect::<Vec<_>>(),
+            "node_metrics": node_metrics_json,
+            "metrics_overhead_us": serialization_overhead_us,
         })
     }
 }
