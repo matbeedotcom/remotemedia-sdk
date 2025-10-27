@@ -232,10 +232,10 @@ Project structure follows plan.md:
 
 ### Examples
 
-- [ ] T092 [P] [US1] Create examples/rust_runtime/12_audio_vad_rust.py (VAD example with benchmark)
-- [ ] T093 [P] [US1] Create examples/rust_runtime/13_audio_resample_rust.py (resample example with benchmark)
-- [ ] T094 [P] [US1] Create examples/rust_runtime/14_audio_format_rust.py (format conversion example)
-- [ ] T095 [US1] Create examples/rust_runtime/15_full_audio_pipeline.py (end-to-end: VAD + resample + format)
+- [x] T092 [P] [US1] Create examples/rust_runtime/12_audio_vad_rust.py (VAD example with benchmark)
+- [x] T093 [P] [US1] Create examples/rust_runtime/13_audio_resample_rust.py (resample example with benchmark)
+- [x] T094 [P] [US1] Create examples/rust_runtime/14_audio_format_rust.py (format conversion example)
+- [x] T095 [US1] Create examples/rust_runtime/15_full_audio_pipeline.py (end-to-end: VAD + resample + format)
 
 ### Performance Validation
 
