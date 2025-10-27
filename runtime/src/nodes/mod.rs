@@ -8,10 +8,15 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 // Sub-modules
+pub mod registry;
+pub mod audio;
+
 #[cfg(feature = "whisper")]
 mod whisper;
 #[cfg(feature = "whisper")]
 pub use whisper::RustWhisperNode;
+
+pub use registry::{NodeFactory as NodeFactoryTrait, RuntimeHint};
 
 /// Node execution context containing runtime state
 #[derive(Debug, Clone)]
