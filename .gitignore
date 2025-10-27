@@ -156,3 +156,21 @@ remote_service/logs/
 generated_responses/
 node_modules/
 pipeline_registry.db
+
+# Archived WASM toolchains (large binaries, download separately if needed)
+archive/wasm-browser-runtime/wasi-sdk-*/
+archive/wasm-browser-runtime/wasmtime-*/
+archive/wasm-browser-runtime/node_modules/
+
+# Large binary dependencies (not committed to repo)
+wasi-sdk-*/
+wasmtime-v*/
+whisper.cpp/
+runtime/wasmtime-v*/
+
+# Speckit generated files (optional - can be committed if desired)
+# .specify/
+# .github/prompts/
+# .claude/commands/openspec/
+
+nul
