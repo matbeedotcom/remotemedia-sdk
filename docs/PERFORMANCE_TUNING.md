@@ -5,7 +5,17 @@
 
 ## Overview
 
-This guide provides best practices and tuning recommendations for optimizing RemoteMedia SDK performance in production environments. The v0.2.0 native Rust acceleration provides 50-100x performance improvements over v0.1.x, but proper configuration is essential to realize these gains.
+This guide provides best practices and tuning recommendations for optimizing RemoteMedia SDK performance in production environments. The v0.2.0 native Rust acceleration provides 2-16x performance improvements over pure Python, with built-in metrics (29μs overhead) for monitoring.
+
+## Performance Summary (v0.2.0)
+
+| Feature | Achievement | Target | Status |
+|---------|-------------|--------|--------|
+| Audio speedup | 2-16x (varies) | 50-100x | ⚠️ Revised |
+| FFI overhead | <1μs | <1μs | ✅ Met |
+| Metrics overhead | 29μs (avg) | <100μs | ✅ Exceeded (71% under) |
+| Fast path speedup | 16.3x | 10-15x | ✅ Exceeded |
+| Zero code changes | 100% | 100% | ✅ Met |
 
 ## Table of Contents
 
@@ -335,18 +345,57 @@ struct StereoBuffer {
 
 ## Monitoring & Profiling
 
-### Built-in Metrics
+### Built-in Metrics (Phase 7)
 
-**Enable execution metrics**:
+**Enable detailed performance metrics** with 29μs overhead (71% under 100μs target):
 
-```rust
-use remotemedia_runtime::executor::ExecutorMetrics;
+```python
+from remotemedia import Pipeline
 
-let metrics = executor.get_metrics();
-println!("Total execution time: {:?}", metrics.total_duration);
-println!("Node timings: {:?}", metrics.node_durations);
-println!("Memory peak: {} MB", metrics.peak_memory_mb);
+# Enable metrics collection (29μs overhead)
+pipeline = Pipeline.from_yaml("audio_pipeline.yaml", enable_metrics=True)
+
+# Execute pipeline
+result = await pipeline.run(input_data)
+
+# Get detailed metrics
+metrics = pipeline.get_metrics()
+
+if metrics:
+    print(f"Total duration: {metrics['total_duration_us']}μs")
+    print(f"Peak memory: {metrics['peak_memory_bytes']} bytes")
+    print(f"Metrics overhead: {metrics['metrics_overhead_us']}μs")
+    
+    # Per-node breakdown
+    for node_id, node_metrics in metrics['node_metrics'].items():
+        print(f"Node {node_id}:")
+        print(f"  Execution time: {node_metrics['execution_time_us']}μs")
+        print(f"  Success count: {node_metrics['success_count']}")
+        print(f"  Error count: {node_metrics['error_count']}")
 ```
+
+**Metrics Performance** (validated in Phase 7):
+- **Overhead**: 29μs average (target: <100μs) ✅
+- **Precision**: Microsecond-level timing
+- **Format**: JSON export via FFI
+- **Self-measuring**: Reports its own overhead
+
+**What's Measured**:
+- **Pipeline-level**: 
+  - `total_duration_us`: Full pipeline execution time
+  - `peak_memory_bytes`: Maximum memory usage
+  - `metrics_overhead_us`: Time spent collecting metrics
+  
+- **Node-level**: 
+  - `execution_time_us`: Individual node execution time
+  - `success_count`: Number of successful executions
+  - `error_count`: Number of failed executions
+
+**When to Use**:
+- ✅ Development: Identify bottlenecks (minimal overhead)
+- ✅ Staging: Validate performance before production
+- ✅ Production: Monitor critical pipelines (29μs is negligible)
+- ❌ Hot paths: Disable if every microsecond matters
 
 ### Profiling Tools
 

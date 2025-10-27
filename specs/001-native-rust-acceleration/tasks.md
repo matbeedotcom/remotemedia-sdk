@@ -368,9 +368,9 @@ Project structure follows plan.md:
 
 ### Documentation Completion
 
-- [ ] T140 [P] Complete docs/NATIVE_ACCELERATION.md with architecture diagrams and data flow
+- [x] T140 [P] Complete docs/NATIVE_ACCELERATION.md with architecture diagrams and data flow
 - [x] T141 [P] Complete docs/MIGRATION_GUIDE.md with upgrade steps from v0.1.x to v0.2.0
-- [ ] T142 [P] Complete docs/PERFORMANCE_TUNING.md with optimization strategies
+- [x] T142 [P] Complete docs/PERFORMANCE_TUNING.md with optimization strategies
 - [x] T143 [P] Update README.md with Rust acceleration features and benchmarks
 - [x] T144 Update CHANGELOG.md with all v0.2.0 changes and breaking changes
 
