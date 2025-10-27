@@ -235,47 +235,68 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_retry_success() {
-        let mut attempt = 0;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+        
+        let attempt = Arc::new(AtomicU32::new(0));
+        let attempt_clone = attempt.clone();
 
-        let result = execute_with_retry(RetryPolicy::fixed(3, Duration::from_millis(10)), || async {
-            attempt += 1;
-            if attempt < 3 {
-                Err(Error::timeout("test"))
-            } else {
-                Ok(42)
+        let result: Result<i32> = execute_with_retry(RetryPolicy::fixed(3, Duration::from_millis(10)), || {
+            let attempt = attempt_clone.clone();
+            async move {
+                let current = attempt.fetch_add(1, Ordering::SeqCst) + 1;
+                if current < 3 {
+                    Err(Error::timeout("test"))
+                } else {
+                    Ok(42)
+                }
             }
         })
         .await;
 
         assert_eq!(result.unwrap(), 42);
-        assert_eq!(attempt, 3);
+        assert_eq!(attempt.load(Ordering::SeqCst), 3);
     }
 
     #[tokio::test]
     async fn test_execute_with_retry_exhausted() {
-        let mut attempt = 0;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+        
+        let attempt = Arc::new(AtomicU32::new(0));
+        let attempt_clone = attempt.clone();
 
-        let result = execute_with_retry(RetryPolicy::fixed(2, Duration::from_millis(10)), || async {
-            attempt += 1;
-            Err(Error::timeout("test"))
+        let result: Result<()> = execute_with_retry(RetryPolicy::fixed(2, Duration::from_millis(10)), || {
+            let attempt = attempt_clone.clone();
+            async move {
+                attempt.fetch_add(1, Ordering::SeqCst);
+                Err(Error::timeout("test"))
+            }
         })
         .await;
 
         assert!(result.unwrap_err().to_string().contains("Retry exhausted"));
-        assert_eq!(attempt, 3); // Initial + 2 retries
+        assert_eq!(attempt.load(Ordering::SeqCst), 3); // Initial + 2 retries
     }
 
     #[tokio::test]
     async fn test_non_retryable_error() {
-        let mut attempt = 0;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+        
+        let attempt = Arc::new(AtomicU32::new(0));
+        let attempt_clone = attempt.clone();
 
-        let result = execute_with_retry(RetryPolicy::fixed(3, Duration::from_millis(10)), || async {
-            attempt += 1;
-            Err(Error::Manifest("test".into()))
+        let result: Result<()> = execute_with_retry(RetryPolicy::fixed(3, Duration::from_millis(10)), || {
+            let attempt = attempt_clone.clone();
+            async move {
+                attempt.fetch_add(1, Ordering::SeqCst);
+                Err(Error::Manifest("test".into()))
+            }
         })
         .await;
 
         assert!(matches!(result, Err(Error::Manifest(_))));
-        assert_eq!(attempt, 1); // Should not retry
+        assert_eq!(attempt.load(Ordering::SeqCst), 1); // Should not retry
     }
 }

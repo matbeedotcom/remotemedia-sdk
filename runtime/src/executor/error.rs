@@ -18,10 +18,12 @@ pub trait ExecutionErrorExt {
 
 impl ExecutionErrorExt for Error {
     fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            Error::Io(_) | Error::Transport(_) | Error::Wasm(_)
-        )
+        match self {
+            Error::Io(_) | Error::Transport(_) | Error::Wasm(_) => true,
+            // Timeout errors are retryable (they contain "Timeout:" prefix)
+            Error::Execution(msg) if msg.starts_with("Timeout:") => true,
+            _ => false,
+        }
     }
     
     fn execution(msg: impl Into<String>) -> Error {

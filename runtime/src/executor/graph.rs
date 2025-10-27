@@ -216,8 +216,8 @@ impl PipelineGraph {
         }
 
         for node in self.nodes.values() {
-            for dep in &node.dependencies {
-                *in_degree.get_mut(dep).unwrap() += 1;
+            for _dep in &node.dependencies {
+                *in_degree.get_mut(&node.id).unwrap() += 1;
             }
         }
 

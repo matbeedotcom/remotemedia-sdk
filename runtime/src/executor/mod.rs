@@ -20,6 +20,7 @@ pub use error::ExecutionErrorExt;
 pub use graph::{PipelineGraph as Graph, PipelineNode as Node};
 pub use metrics::{NodeMetrics, PipelineMetrics};
 pub use retry::RetryPolicy;
+pub use scheduler::{ExecutionContext, Scheduler};
 
 use crate::{Error, Result};
 use crate::manifest::Manifest;
