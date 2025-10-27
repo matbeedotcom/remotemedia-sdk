@@ -63,6 +63,7 @@ base64 = "0.21"
 
 # Whisper transcription
 rwhisper = { version = "0.4", optional = true }
+whisper-rs = { version = "0.15", optional = true }
 rodio = { version = "0.20", optional = true }
 
 # WASM-specific dependencies (only for wasm32-wasi target)
@@ -93,6 +94,7 @@ grpc-transport = ["tonic", "prost"]
 python-async = ["pyo3-async-runtimes"]
 native-numpy = ["numpy"]
 whisper = ["rwhisper", "rodio"]
+whisper-wasm = ["whisper-rs"]
 wasmtime-runtime = ["wasmtime", "wasmtime-wasi"]
 wasm = []  # Enable WASM-specific code paths (no wasmtime, no webrtc, no grpc, no async python, no numpy)
 

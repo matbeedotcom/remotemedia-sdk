@@ -23,9 +23,18 @@
 - [x] 1.3.3 Implement topological sort for execution order
 - [x] 1.3.4 Create async executor using tokio
 - [x] 1.3.5 Implement node lifecycle management (init, process, cleanup)
-- [ ] 1.3.6 Add basic capability-aware execution placement
-- [ ] 1.3.7 Implement local-first execution (default if no host specified)
-- [ ] 1.3.8 Add fallback logic (local → remote if capabilities not met)
+- [x] 1.3.6 Add basic capability-aware execution placement
+- [x] 1.3.7 Implement local-first execution (default if no host specified)
+- [x] 1.3.8 Add fallback logic (local → remote if capabilities not met)
+
+**Phase 1.3.6-1.3.8 Complete:**
+- ✅ Implemented comprehensive capability detection system (`runtime/src/capabilities/`)
+- ✅ Three detection strategies: manifest-based, parameter analysis, build trials
+- ✅ Granular execution placement: `Anywhere`, `RequiresWasi`, `RequiresNative`, `RequiresRemote`
+- ✅ Smart fallback chains: `PreferAnywhere`, `PreferWasi`, `PreferNative`, `PreferRemote`
+- ✅ 11 capability tests passing
+- ✅ CLI tools: `detect_capabilities`, `analyze_pipeline`
+- ✅ Documentation: `runtime/tests/EXECUTION_PLACEMENT.md`, `runtime/tests/CAPABILITY_DETECTION_RESULTS.md`
 
 ### 1.4 Python-Rust FFI Layer
 - [x] 1.4.1 Choose FFI approach (PyO3, CFFI, or custom bindings)

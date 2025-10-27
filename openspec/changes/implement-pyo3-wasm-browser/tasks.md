@@ -150,28 +150,36 @@
 - [ ] 2.7.6 Add service worker for WASM caching (optional)
 - [ ] 2.7.7 Create demo video/GIF for documentation (optional)
 
-## Phase 3: Whisper WASM (Optional)
+## Phase 3: Whisper WASM ⏸️ **DEFERRED**
 
-### 3.1 Whisper.cpp WASM Investigation
-- [ ] 3.1.1 Review existing whisper.wasm project (https://github.com/ggerganov/whisper.cpp/tree/master/examples/whisper.wasm)
-- [ ] 3.1.2 Test whisper.wasm in browser standalone
-- [ ] 3.1.3 Determine integration approach (wasm-bindgen interop vs native compilation)
-- [ ] 3.1.4 Document Whisper WASM limitations and capabilities
+**Status**: Investigation complete, implementation deferred pending Phase 2.7 deployment
 
-### 3.2 RustWhisperNode WASM Adaptation
-- [ ] 3.2.1 Add `#[cfg(target_family = "wasm")]` path for Whisper node
-- [ ] 3.2.2 Integrate whisper.wasm via wasm-bindgen
-- [ ] 3.2.3 Adapt audio data marshaling for Whisper WASM API
-- [ ] 3.2.4 Test transcription in browser
-- [ ] 3.2.5 Compare performance: WASM vs native
-- [ ] 3.2.6 Document Whisper WASM model loading (bundle in .rmpkg)
+**Decision Rationale**:
+- Whisper WASM adds significant complexity (75 MB tiny model, third WASM runtime via Emscripten)
+- Current demo is feature-complete with hybrid Rust + Python execution
+- Native Rust Whisper (`RustWhisperNode`) already works well for server-side
+- Risk to deployment timeline outweighs showcase value
 
-### 3.3 Full Audio Pipeline Test
-- [ ] 3.3.1 Create browser demo: file upload → audio processing → Whisper transcription
-- [ ] 3.3.2 Test with sample audio files (various formats, durations)
-- [ ] 3.3.3 Measure real-time factor (RTF) in browser
-- [ ] 3.3.4 Optimize for performance (worker threads, streaming)
-- [ ] 3.3.5 Add progress reporting for long transcriptions
+**Recommendation**: Deploy Phase 2.7 first, gather user feedback, then revisit Phase 3 based on demand
+
+**See**: `docs/WHISPER_WASM_ANALYSIS.md` for detailed analysis and alternatives
+
+### 3.1 Whisper.cpp WASM Investigation ✅ **COMPLETE**
+- [x] 3.1.1 Review existing whisper.wasm project (Emscripten-based, ~75 MB tiny model)
+- [x] 3.1.2 Analyze integration approaches (separate WASM vs embedded vs Pyodide)
+- [x] 3.1.3 Document challenges (build toolchain, model size, multi-runtime coordination)
+- [x] 3.1.4 Create recommendation document (WHISPER_WASM_ANALYSIS.md)
+
+### 3.2 Future Work (Post-Deployment)
+- [ ] 3.2.1 Build PoC with whisper.wasm standalone
+- [ ] 3.2.2 Benchmark tiny model load time and transcription RTF
+- [ ] 3.2.3 Design clean integration with PipelineRunner
+- [ ] 3.2.4 Decide: proceed with full integration or keep native-only
+
+### 3.3 Alternative Approach (Recommended for Production)
+- [ ] 3.3.1 Implement RemoteWhisperNode for server-side transcription
+- [ ] 3.3.2 Use native RustWhisperNode with GPU acceleration
+- [ ] 3.3.3 Avoid browser WASM complexity while maintaining privacy options
 
 ## Testing
 

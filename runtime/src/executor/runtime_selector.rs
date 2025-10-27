@@ -237,9 +237,11 @@ mod tests {
             id: id.to_string(),
             node_type: node_type.to_string(),
             params: Value::Null,
+            is_streaming: false,
             capabilities,
             host: None,
             runtime_hint,
+            execution: None,
         }
     }
 

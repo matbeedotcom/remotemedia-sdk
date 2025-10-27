@@ -985,10 +985,10 @@ class TestNodeLifecycle:
 
         // Process data
         let result = executor.process(serde_json::json!(5)).await.unwrap();
-        assert_eq!(result, Some(serde_json::json!(15)));
+        assert_eq!(result, vec![serde_json::json!(15)]);
 
         let result2 = executor.process(serde_json::json!(10)).await.unwrap();
-        assert_eq!(result2, Some(serde_json::json!(30)));
+        assert_eq!(result2, vec![serde_json::json!(30)]);
 
         // Cleanup
         executor.cleanup().await.unwrap();
@@ -1034,8 +1034,8 @@ class MinimalNode:
         executor.initialize(&context).await.unwrap();
 
         let result = executor.process(serde_json::json!("test")).await.unwrap();
-        assert!(result.is_some());
-        assert_eq!(result.unwrap()["result"], "test");
+        assert!(!result.is_empty());
+        assert_eq!(result[0]["result"], "test");
 
         executor.cleanup().await.unwrap();
     }
@@ -1081,20 +1081,17 @@ class StreamingNodeAsyncGen:
 
         // Process data through async generator
         let result = executor.process(serde_json::json!("test_data")).await.unwrap();
-        assert!(result.is_some());
+        assert!(!result.is_empty());
 
-        let results = result.unwrap();
-        assert!(results.is_array());
-
-        let results_array = results.as_array().unwrap();
-        assert_eq!(results_array.len(), 3);
+        // result is now Vec<Value>, check it directly
+        assert_eq!(result.len(), 3);
 
         // Verify each yielded item
-        assert_eq!(results_array[0]["index"], 0);
-        assert_eq!(results_array[0]["data"], "test_data");
-        assert_eq!(results_array[1]["index"], 1);
-        assert_eq!(results_array[2]["index"], 2);
-        assert_eq!(results_array[2]["multiplier"], 4);
+        assert_eq!(result[0]["index"], 0);
+        assert_eq!(result[0]["data"], "test_data");
+        assert_eq!(result[1]["index"], 1);
+        assert_eq!(result[2]["index"], 2);
+        assert_eq!(result[2]["multiplier"], 4);
 
         executor.cleanup().await.unwrap();
     }
@@ -1141,9 +1138,9 @@ class AsyncNode:
         executor.initialize(&context).await.unwrap();
 
         let result = executor.process(serde_json::json!(5)).await.unwrap();
-        assert!(result.is_some());
+        assert!(!result.is_empty());
 
-        let result_obj = result.unwrap();
+        let result_obj = &result[0];
         assert_eq!(result_obj["result"], 10);
         assert_eq!(result_obj["async"], true);
 

@@ -526,7 +526,7 @@ mod tests {
         let input = serde_json::json!({"test": "data"});
         let output = node.process(input.clone()).await.unwrap();
 
-        assert_eq!(output, Some(input));
+        assert_eq!(output, vec![input]);
 
         node.cleanup().await.unwrap();
     }
@@ -545,15 +545,18 @@ mod tests {
         node.initialize(&context).await.unwrap();
 
         let input = serde_json::json!("hello");
-        let output = node.process(input.clone()).await.unwrap().unwrap();
+        let output = node.process(input.clone()).await.unwrap();
+        assert!(!output.is_empty());
+        let output_obj = &output[0];
 
-        assert_eq!(output["input"], input);
-        assert_eq!(output["counter"], 1);
-        assert_eq!(output["node"], "Echo");
+        assert_eq!(output_obj["input"], input);
+        assert_eq!(output_obj["counter"], 1);
+        assert_eq!(output_obj["node"], "Echo");
 
         // Process another item
-        let output2 = node.process(serde_json::json!("world")).await.unwrap().unwrap();
-        assert_eq!(output2["counter"], 2);
+        let output2 = node.process(serde_json::json!("world")).await.unwrap();
+        assert!(!output2.is_empty());
+        assert_eq!(output2[0]["counter"], 2);
 
         node.cleanup().await.unwrap();
     }

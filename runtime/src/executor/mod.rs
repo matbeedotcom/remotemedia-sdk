@@ -1110,6 +1110,8 @@ mod tests {
                     capabilities: None,
                     host: None,
                     runtime_hint: None,
+                    is_streaming: false,
+                    execution: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "B".to_string(),
@@ -1118,6 +1120,8 @@ mod tests {
                     capabilities: None,
                     host: None,
                     runtime_hint: None,
+                    is_streaming: false,
+                    execution: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "C".to_string(),
@@ -1126,6 +1130,8 @@ mod tests {
                     capabilities: None,
                     host: None,
                     runtime_hint: None,
+                    is_streaming: false,
+                    execution: None,
                 },
             ],
             connections: vec![
@@ -1191,6 +1197,8 @@ mod tests {
                     capabilities: None,
                     host: None,
                     runtime_hint: None,
+                    is_streaming: false,
+                    execution: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "B".to_string(),
@@ -1199,6 +1207,8 @@ mod tests {
                     capabilities: None,
                     host: None,
                     runtime_hint: None,
+                    is_streaming: false,
+                    execution: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "C".to_string(),
@@ -1207,6 +1217,8 @@ mod tests {
                     capabilities: None,
                     host: None,
                     runtime_hint: None,
+                    is_streaming: false,
+                    execution: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "D".to_string(),
@@ -1215,6 +1227,8 @@ mod tests {
                     capabilities: None,
                     host: None,
                     runtime_hint: None,
+                    is_streaming: false,
+                    execution: None,
                 },
             ],
             connections: vec![
@@ -1265,6 +1279,8 @@ mod tests {
                     capabilities: None,
                     host: None,
                     runtime_hint: None,
+                    is_streaming: false,
+                    execution: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "B".to_string(),
@@ -1273,6 +1289,8 @@ mod tests {
                     capabilities: None,
                     host: None,
                     runtime_hint: None,
+                    is_streaming: false,
+                    execution: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "C".to_string(),
@@ -1281,6 +1299,8 @@ mod tests {
                     capabilities: None,
                     host: None,
                     runtime_hint: None,
+                    is_streaming: false,
+                    execution: None,
                 },
             ],
             connections: vec![
@@ -1312,6 +1332,8 @@ mod tests {
                     capabilities: None,
                     host: None,
                     runtime_hint: None,
+                    is_streaming: false,
+                    execution: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "process_1".to_string(),
@@ -1320,6 +1342,8 @@ mod tests {
                     capabilities: None,
                     host: None,
                     runtime_hint: None,
+                    is_streaming: false,
+                    execution: None,
                 },
             ],
             connections: vec![
@@ -1361,6 +1385,8 @@ mod tests {
                     capabilities: None,
                     host: None,
                     runtime_hint: None,
+                    is_streaming: false,
+                    execution: None,
                 },
                 crate::manifest::NodeManifest {
                     id: "echo_1".to_string(),
@@ -1369,6 +1395,8 @@ mod tests {
                     capabilities: None,
                     host: None,
                     runtime_hint: None,
+                    is_streaming: false,
+                    execution: None,
                 },
             ],
             connections: vec![Connection {
