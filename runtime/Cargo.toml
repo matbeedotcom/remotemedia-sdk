@@ -80,7 +80,7 @@ tokio = { version = "1.35", default-features = false, features = ["sync", "macro
 
 [dev-dependencies]
 tokio-test = "0.4"
-criterion = "0.5"
+criterion = { version = "0.5", features = ["async_tokio"] }
 tempfile = "3.8"
 
 [build-dependencies]
@@ -117,6 +117,10 @@ harness = false
 
 [[bench]]
 name = "rustpython_nodes"
+harness = false
+
+[[bench]]
+name = "audio_nodes"
 harness = false
 
 [profile.release]
