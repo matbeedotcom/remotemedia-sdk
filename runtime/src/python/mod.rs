@@ -18,7 +18,7 @@ pub mod node_executor;
 pub mod numpy_marshal;
 
 pub mod cpython_executor;
-pub mod cpython_node;
+// pub mod cpython_node;  // Archived in v0.2.1 - adapter no longer needed
 
 // Re-export FFI module for Python extension (only when python-async is enabled)
 #[cfg(feature = "python-async")]
@@ -26,5 +26,5 @@ pub use ffi::*;
 
 pub use node_executor::PythonNodeInstance;
 pub use cpython_executor::CPythonNodeExecutor;
-pub use cpython_node::{CPythonNodeFactory, inputs_to_pydict, pydict_to_outputs};
+// pub use cpython_node::{CPythonNodeFactory, inputs_to_pydict, pydict_to_outputs};  // Archived in v0.2.1
 

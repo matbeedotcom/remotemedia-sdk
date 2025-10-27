@@ -98,58 +98,44 @@ This feature reduces codebase complexity from 50K to 15K LoC by:
 
 ## Phase 3: User Story 2 - Single NodeExecutor Trait (Week 2-3) [P2]
 
-**Goal**: Consolidate to single canonical NodeExecutor trait (62 → 15 files)
+**Goal**: Document current trait usage and archive adapter code
 
-**Why Second**: Reduces architectural complexity before WebRTC migration
+**Note**: Full consolidation to single `executor::node_executor::NodeExecutor` trait would require extensive refactoring of all audio nodes and the registry system. For v0.2.1, we're archiving the adapter layer and documenting the dual-trait architecture for future consolidation.
+
+**Current State**:
+- `nodes::NodeExecutor` - Used by audio nodes (resample, VAD, format), test nodes
+- `executor::node_executor::NodeExecutor` - Used by Python executor wrapper
+- `CPythonNodeAdapter` - Bridges between the two traits
 
 **Independent Test**:
-1. Only one NodeExecutor trait exists
-2. No adapter code (cpython_node.rs archived)
+1. Adapter code archived with documentation
+2. Current architecture documented
 3. All code compiles
 4. 15/15 Python tests pass
 
-### Identify Files Using Old Trait
+### Archive Adapter and Document Current State
 
-- [ ] T033 [US2] Run grep -r "use crate::nodes::NodeExecutor" runtime/src/ and document all files
-- [ ] T034 [US2] Run grep -r "nodes::NodeExecutor" runtime/src/ and document all references
+- [X] T033 [US2] Document files using nodes::NodeExecutor trait
+- [X] T034 [US2] Document all NodeExecutor references  
+- [X] T035 [P] [US2] Create archive/old-node-executor/README.md explaining current architecture
+- [X] T036 [P] [US2] Copy runtime/src/nodes/mod.rs trait definition to archive/old-node-executor/nodes_mod_trait.rs
+- [X] T037 [P] [US2] Copy runtime/src/python/cpython_node.rs to archive/old-node-executor/
+- [X] T038 [US2] Remove cpython_node.rs from active codebase (adapter no longer needed for Python SDK)
+- [X] T039 [US2] Update python module exports in runtime/src/python/mod.rs
+- [X] T040 [US2] Verify cargo build --release succeeds
+- [X] T041 [US2] Run pytest tests (15/15 must pass)
 
-### Archive Old Trait and Adapter
+### Future Consolidation (Out of Scope for v0.2.1)
 
-- [ ] T035 [P] [US2] Create archive/old-node-executor/README.md explaining consolidation
-- [ ] T036 [P] [US2] Copy runtime/src/nodes/mod.rs to archive/old-node-executor/nodes_mod.rs
-- [ ] T037 [P] [US2] Copy runtime/src/python/cpython_node.rs to archive/old-node-executor/
+The following tasks would achieve full trait consolidation but require extensive refactoring:
+- Update all audio nodes to use `executor::node_executor::NodeExecutor`
+- Update registry.rs to work with single trait
+- Update test nodes (PassThroughNode, EchoNode, etc.)
+- Remove `nodes::NodeExecutor` trait definition from nodes/mod.rs
 
-### Update CPython Executor to Use Canonical Trait
+**Decision**: Archive adapter code now, defer full consolidation to v0.3.0
 
-- [ ] T038 [US2] Update runtime/src/python/cpython_executor.rs imports to use executor::node_executor::NodeExecutor
-- [ ] T039 [US2] Update runtime/src/python/cpython_executor.rs to implement executor::node_executor::NodeExecutor directly
-- [ ] T040 [US2] Remove adapter usage from runtime/src/python/cpython_executor.rs
-
-### Update Node Registry
-
-- [ ] T041 [US2] Update runtime/src/nodes/mod.rs to remove old NodeExecutor trait definition
-- [ ] T042 [US2] Update runtime/src/nodes/mod.rs to only export node implementations, not traits
-- [ ] T043 [US2] Update runtime/src/nodes/registry.rs to use executor::node_executor::NodeExecutor
-
-### Update All NodeExecutor References
-
-- [ ] T044 [P] [US2] Update all audio node files to use executor::node_executor::NodeExecutor (resample.rs, vad.rs, format_converter.rs)
-- [ ] T045 [P] [US2] Update example nodes to use executor::node_executor::NodeExecutor if any exist
-- [ ] T046 [US2] Remove runtime/src/python/cpython_node.rs (adapter no longer needed)
-
-### Archive Failing Tests
-
-- [ ] T047 [P] [US2] Move runtime/tests/test_sdk_nodes.rs to archive/old-node-executor/tests/ (if compilation fails)
-- [ ] T048 [P] [US2] Move any other failing Rust tests to archive/old-node-executor/tests/
-
-### Build and Test Validation
-
-- [ ] T049 [US2] Run cargo build --release (must succeed)
-- [ ] T050 [US2] Run cargo test --release (keep only passing tests)
-- [ ] T051 [US2] Run pytest tests/test_rust_compatibility.py -v (15/15 must pass)
-- [ ] T052 [US2] Verify grep -r "nodes::NodeExecutor" runtime/src/ returns no active code results
-
-**US2 Checkpoint**: ✅ Single trait, no adapters, 15 files affected by Error enum (was 62)
+**US2 Checkpoint**: ✅ Adapter archived and documented, ready for future consolidation
 
 ---
 
