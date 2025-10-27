@@ -25,8 +25,10 @@ serde_json = "1.0"
 # Async trait support
 async-trait = "0.1"
 
-# RustPython VM for backward compatibility
-rustpython = "0.4.0"
+# Audio processing libraries
+rubato = "0.15"      # High-quality audio resampling
+rustfft = "6.2"      # FFT for VAD (Voice Activity Detection)
+bytemuck = "1.14"    # Zero-copy format conversion
 
 # WASM runtime (Wasmtime chosen per design decisions)
 # Note: Only needed for native builds that run WASM nodes, not when compiling TO wasm
