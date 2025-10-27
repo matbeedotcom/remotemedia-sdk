@@ -7,7 +7,19 @@
 //! - Handles node lifecycle (init, process, cleanup)
 //! - Runtime selection for Python nodes (Phase 1.10)
 
+pub mod error;
+pub mod graph;
+pub mod metrics;
+pub mod node_executor;
+pub mod retry;
 pub mod runtime_selector;
+pub mod scheduler;
+
+// Re-export key types for convenience
+pub use error::ExecutionErrorExt;
+pub use graph::{PipelineGraph as Graph, PipelineNode as Node};
+pub use metrics::{NodeMetrics, PipelineMetrics};
+pub use retry::RetryPolicy;
 
 use crate::{Error, Result};
 use crate::manifest::Manifest;
