@@ -11,6 +11,7 @@
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 
+pub mod audio;
 pub mod capabilities;
 pub mod executor;
 pub mod manifest;
