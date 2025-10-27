@@ -219,16 +219,16 @@ Project structure follows plan.md:
 
 ### Audio Module Integration
 
-- [ ] T085 [US1] Create runtime/src/nodes/audio/mod.rs and export all audio nodes
-- [ ] T086 [US1] Update runtime/src/nodes/mod.rs to export audio module and registry
-- [ ] T087 [US1] Update runtime/src/lib.rs to export nodes module
+- [x] T085 [US1] Create runtime/src/nodes/audio/mod.rs and export all audio nodes
+- [x] T086 [US1] Update runtime/src/nodes/mod.rs to export audio module and registry
+- [x] T087 [US1] Update runtime/src/lib.rs to export nodes module
 
 ### Python SDK Wrapper Nodes
 
-- [ ] T088 [P] [US1] Update python-client/remotemedia/nodes/audio.py to add runtime_hint parameter to AudioResampleNode
-- [ ] T089 [P] [US1] Update python-client/remotemedia/nodes/audio.py to add runtime_hint parameter to VADNode
-- [ ] T090 [P] [US1] Update python-client/remotemedia/nodes/audio.py to add runtime_hint parameter to FormatConverterNode
-- [ ] T091 [US1] Add runtime selection logic (check Rust availability, fallback to Python) to python-client/remotemedia/nodes/audio.py
+- [x] T088 [P] [US1] Update python-client/remotemedia/nodes/audio.py to add runtime_hint parameter to AudioResampleNode
+- [x] T089 [P] [US1] Update python-client/remotemedia/nodes/audio.py to add runtime_hint parameter to VADNode
+- [x] T090 [P] [US1] Update python-client/remotemedia/nodes/audio.py to add runtime_hint parameter to FormatConverterNode
+- [x] T091 [US1] Add runtime selection logic (check Rust availability, fallback to Python) to python-client/remotemedia/nodes/audio.py
 
 ### Examples
 
