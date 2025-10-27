@@ -123,6 +123,10 @@ harness = false
 name = "audio_nodes"
 harness = false
 
+[[bench]]
+name = "audio_nodes_profiling"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true
