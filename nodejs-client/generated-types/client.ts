@@ -1,6 +1,6 @@
-import { ExecutionResponse, ExecutionOptions, StreamHandle, NodeInfo } from './base';
-import { NodeMap } from './config-types';
-import { NodeType } from './node-types';
+import { ExecutionResponse, ExecutionOptions, StreamHandle, NodeInfo } from './base.js';
+import { NodeMap } from './config-types.js';
+import { NodeType } from './node-types.js';
 
 /**
  * RemoteMedia Processing Client Interface

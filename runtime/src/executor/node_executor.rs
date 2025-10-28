@@ -19,6 +19,9 @@ pub struct NodeContext {
     /// Configuration parameters
     pub params: Value,
 
+    /// Session ID for stateful execution
+    pub session_id: Option<String>,
+
     /// Session metadata
     pub metadata: HashMap<String, Value>,
 }

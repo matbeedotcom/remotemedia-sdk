@@ -8,7 +8,7 @@
  * - Proper session management
  */
 
-import { RemoteMediaClient, RemoteMediaError, AudioFormat } from '../../../nodejs-client/src/grpc-client';
+import { RemoteMediaClient, RemoteMediaError, AudioFormat } from '@remotemedia/nodejs-client';
 
 async function* generateChunks() {
   const SAMPLE_RATE = 16000;

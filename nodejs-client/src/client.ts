@@ -18,11 +18,11 @@ import {
   NodeInfo,
   ServerStatus,
   RemoteExecutionError
-} from './types';
+} from './types.js';
 import {
   NodeType,
   NodeMap
-} from '../generated-types';
+} from '../generated-types/index.js';
 
 // Default configuration values
 const DEFAULT_CONFIG: Partial<RemoteExecutorConfig> = {

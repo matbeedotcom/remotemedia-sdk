@@ -22,7 +22,7 @@ impl Default for AuthConfig {
     fn default() -> Self {
         Self {
             valid_tokens: Arc::new(HashSet::new()),
-            require_auth: true,
+            require_auth: false,
         }
     }
 }

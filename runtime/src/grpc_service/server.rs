@@ -67,6 +67,7 @@ impl GrpcServer {
             self.config.limits.clone(),
             self.config.version.clone(),
             Arc::clone(&self.metrics),
+            Arc::clone(&self.executor),
         );
 
         // Phase 5: Streaming service (T058)

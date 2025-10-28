@@ -1,19 +1,19 @@
-import { NodeType } from './node-types';
-import { PassThroughNode } from './pass-through-node';
-import { BufferNode } from './buffer-node';
-import { AudioTransform } from './audio-transform';
-import { AudioBuffer } from './audio-buffer';
-import { AudioResampler } from './audio-resampler';
-import { VideoTransform } from './video-transform';
-import { VideoBuffer } from './video-buffer';
-import { VideoResizer } from './video-resizer';
-import { DataTransform } from './data-transform';
-import { FormatConverter } from './format-converter';
-import { CalculatorNode } from './calculator-node';
-import { CodeExecutorNode } from './code-executor-node';
-import { TextProcessorNode } from './text-processor-node';
-import { SerializedClassExecutorNode } from './serialized-class-executor-node';
-import { TransformersPipelineNode } from './transformers-pipeline-node';
+import { NodeType } from './node-types.js';
+import { PassThroughNode } from './pass-through-node.js';
+import { BufferNode } from './buffer-node.js';
+import { AudioTransform } from './audio-transform.js';
+import { AudioBuffer } from './audio-buffer.js';
+import { AudioResampler } from './audio-resampler.js';
+import { VideoTransform } from './video-transform.js';
+import { VideoBuffer } from './video-buffer.js';
+import { VideoResizer } from './video-resizer.js';
+import { DataTransform } from './data-transform.js';
+import { FormatConverter } from './format-converter.js';
+import { CalculatorNode } from './calculator-node.js';
+import { CodeExecutorNode } from './code-executor-node.js';
+import { TextProcessorNode } from './text-processor-node.js';
+import { SerializedClassExecutorNode } from './serialized-class-executor-node.js';
+import { TransformersPipelineNode } from './transformers-pipeline-node.js';
 
 /**
  * Union type of all node interfaces

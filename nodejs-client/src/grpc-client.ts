@@ -8,6 +8,14 @@
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import * as path from 'path';
+import * as fs from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+// ES module compatibility: resolve __dirname
+// In ES modules, we need to derive __dirname from import.meta.url
+const __filename = fileURLToPath(import.meta.url);
+const __dirname_resolved = dirname(__filename);
 
 // ============================================================================
 // Types and Interfaces
@@ -50,10 +58,8 @@ export interface PipelineManifest {
     isStreaming?: boolean;
   }>;
   connections?: Array<{
-    fromNode: string;
-    fromOutput: string;
-    toNode: string;
-    toInput: string;
+    from: string;
+    to: string;
   }>;
 }
 
@@ -125,8 +131,21 @@ export class RemoteMediaClient {
       return;
     }
 
-    // Load proto files
-    const PROTO_PATH = path.join(__dirname, '../../protos');
+    // Load proto files - try multiple possible locations
+    const possibleProtoPaths = [
+      path.join(__dirname_resolved, '../protos'),
+      path.join(__dirname_resolved, '../../protos'),
+      path.join(process.cwd(), 'nodejs-client/protos'),
+      path.join(process.cwd(), 'runtime/protos'),
+    ];
+
+    let PROTO_PATH = possibleProtoPaths[0];
+    for (const tryPath of possibleProtoPaths) {
+      if (fs.existsSync(path.join(tryPath, 'common.proto'))) {
+        PROTO_PATH = tryPath;
+        break;
+      }
+    }
     
     const packageDefinition = protoLoader.loadSync(
       [
@@ -232,10 +251,8 @@ export class RemoteMediaClient {
           is_streaming: node.isStreaming || false,
         })),
         connections: (manifest.connections || []).map(conn => ({
-          from_node: conn.fromNode,
-          from_output: conn.fromOutput,
-          to_node: conn.toNode,
-          to_input: conn.toInput,
+          from: conn.from,
+          to: conn.to,
         })),
       },
       audio_inputs: {},
@@ -345,10 +362,8 @@ export class RemoteMediaClient {
             is_streaming: node.isStreaming || false,
           })),
           connections: (manifest.connections || []).map(conn => ({
-            from_node: conn.fromNode,
-            from_output: conn.fromOutput,
-            to_node: conn.toNode,
-            to_input: conn.toInput,
+            from: conn.from,
+            to: conn.to,
           })),
         },
         client_version: 'v1',
@@ -403,9 +418,9 @@ export class RemoteMediaClient {
     (async () => {
       for await (const [nodeId, audio, sequence] of audioChunks) {
         stream.write({
-          chunk: {
+          audio_chunk: {
             node_id: nodeId,
-            audio_data: {
+            buffer: {
               samples: audio.samples,
               sample_rate: audio.sampleRate,
               channels: audio.channels,
@@ -419,10 +434,8 @@ export class RemoteMediaClient {
 
       // Send close command
       stream.write({
-        chunk: {
-          node_id: manifest.nodes[0].id,
-          sequence: 999999,
-          command: 'CHUNK_COMMAND_CLOSE',
+        control: {
+          command: 1, // COMMAND_CLOSE
         },
       });
 

@@ -60,6 +60,25 @@ pub struct NodeRegistry {
     python_factories: HashMap<String, Arc<dyn NodeFactory>>,
 }
 
+/// Multi-tier composite registry that chains multiple registries
+/// 
+/// Searches registries in order (first match wins):
+/// 1. User registry (custom nodes, highest priority)
+/// 2. Audio registry (audio processing nodes)
+/// 3. System registry (built-in nodes, lowest priority)
+/// 
+/// This allows layering and override semantics:
+/// - User can override system nodes
+/// - Audio nodes isolated from user nodes
+/// - Clean separation of concerns
+pub struct CompositeRegistry {
+    /// Ordered list of registries (searched first-to-last)
+    registries: Vec<Arc<NodeRegistry>>,
+    
+    /// Optional names for debugging
+    names: Vec<String>,
+}
+
 impl NodeRegistry {
     /// Create a new empty registry
     pub fn new() -> Self {
@@ -158,6 +177,84 @@ impl NodeRegistry {
 }
 
 impl Default for NodeRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CompositeRegistry {
+    /// Create empty composite registry
+    pub fn new() -> Self {
+        Self {
+            registries: Vec::new(),
+            names: Vec::new(),
+        }
+    }
+    
+    /// Add a registry with optional name
+    pub fn add_registry(&mut self, registry: Arc<NodeRegistry>, name: Option<&str>) {
+        self.registries.push(registry);
+        self.names.push(name.unwrap_or("unnamed").to_string());
+    }
+    
+    /// Create node from first registry that has the type
+    pub fn create_node(
+        &self,
+        node_type: &str,
+        hint: RuntimeHint,
+        params: Value,
+    ) -> Result<Box<dyn NodeExecutor>> {
+        for (idx, registry) in self.registries.iter().enumerate() {
+            // Check if this registry has the node type
+            let has_node = match hint {
+                RuntimeHint::Rust => registry.has_rust_impl(node_type),
+                RuntimeHint::Python => registry.has_python_impl(node_type),
+                RuntimeHint::Auto => {
+                    registry.has_rust_impl(node_type) || registry.has_python_impl(node_type)
+                }
+            };
+            
+            if has_node {
+                return registry.create_node(node_type, hint, params);
+            }
+        }
+        
+        Err(Error::Execution(format!(
+            "No implementation available for node type: {} (searched {} registries)",
+            node_type,
+            self.registries.len()
+        )))
+    }
+    
+    /// List all node types from all registries (deduplicated)
+    pub fn list_node_types(&self) -> Vec<String> {
+        let mut types: Vec<String> = self
+            .registries
+            .iter()
+            .flat_map(|reg| reg.list_node_types())
+            .collect();
+        types.sort();
+        types.dedup();
+        types
+    }
+    
+    /// Check if any registry has Rust implementation
+    pub fn has_rust_impl(&self, node_type: &str) -> bool {
+        self.registries.iter().any(|reg| reg.has_rust_impl(node_type))
+    }
+    
+    /// Check if any registry has Python implementation
+    pub fn has_python_impl(&self, node_type: &str) -> bool {
+        self.registries.iter().any(|reg| reg.has_python_impl(node_type))
+    }
+    
+    /// Get registry names for debugging
+    pub fn registry_names(&self) -> &[String] {
+        &self.names
+    }
+}
+
+impl Default for CompositeRegistry {
     fn default() -> Self {
         Self::new()
     }
