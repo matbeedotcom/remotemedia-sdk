@@ -12,3 +12,7 @@ mod test_execution_metrics;
 
 // Phase 5: Streaming tests
 mod test_streaming_contract;
+mod test_streaming_vad;
+mod test_streaming_latency;
+mod test_streaming_backpressure;
+mod test_streaming_lifecycle;
