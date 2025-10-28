@@ -41,7 +41,7 @@ fn configure_wasm_libs() {
 fn compile_protos() {
     tonic_build::configure()
         .build_server(true)
-        .build_client(false) // We only need server-side code
+        .build_client(true) // Enable client generation for testing
         .out_dir("src/grpc_service/generated") // Output to dedicated directory
         .compile(
             &[

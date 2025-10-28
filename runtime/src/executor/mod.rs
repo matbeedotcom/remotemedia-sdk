@@ -301,6 +301,12 @@ impl Executor {
 
     /// Create a new executor with custom configuration
     pub fn with_config(config: ExecutorConfig) -> Self {
+        // Initialize Python interpreter if not already initialized (for gRPC server usage)
+        #[cfg(feature = "grpc-transport")]
+        {
+            pyo3::prepare_freethreaded_python();
+        }
+
         Self {
             config,
             registry: NodeRegistry::default(),

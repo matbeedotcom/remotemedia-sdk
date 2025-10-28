@@ -118,6 +118,12 @@ name = "grpc_server"
 path = "bin/grpc_server.rs"
 required-features = ["grpc-transport"]
 
+# gRPC client binary
+[[bin]]
+name = "grpc_client"
+path = "bin/grpc_client.rs"
+required-features = ["grpc-transport"]
+
 [[bench]]
 name = "pipeline_execution"
 harness = false

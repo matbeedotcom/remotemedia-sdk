@@ -529,18 +529,29 @@ fn deserialize_manifest_from_proto(
     // Convert to JSON for existing Manifest parser
     let json_str = serde_json::json!({
         "version": proto.version,
+        "metadata": serde_json::json!({
+            "name": proto.metadata.as_ref().map(|m| m.name.clone()).unwrap_or_default(),
+            "description": proto.metadata.as_ref().map(|m| m.description.clone()).unwrap_or_default(),
+            "created_at": proto.metadata.as_ref().map(|m| m.created_at.clone()).unwrap_or_else(|| "2025-10-28T00:00:00Z".to_string()),
+        }),
         "nodes": proto.nodes.iter().map(|n| {
             serde_json::json!({
                 "id": n.id,
-                "type": n.node_type,
+                "node_type": n.node_type,
                 "parameters": serde_json::from_str::<serde_json::Value>(&n.params)
                     .unwrap_or(serde_json::json!({})),
                 "runtime_hint": match n.runtime_hint {
-                    0 => "native",
-                    1 => "python",
-                    2 => "wasm",
-                    _ => "native",
-                }
+                    0 => "auto",
+                    1 => "rust_python",
+                    2 => "cpython",
+                    3 => "cpython_wasm",
+                    _ => "auto",
+                },
+                "metadata": serde_json::json!({
+                    "name": n.node_type,
+                    "description": "",
+                    "created_at": "2025-10-28T00:00:00Z",
+                })
             })
         }).collect::<Vec<_>>(),
         "connections": proto.connections.iter().map(|c| {
