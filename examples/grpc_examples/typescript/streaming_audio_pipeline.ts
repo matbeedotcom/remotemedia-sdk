@@ -133,7 +133,11 @@ async function testStreamingVAD(client: RemoteMediaClient) {
   const latencies: number[] = [];
   let voiceDetectedCount = 0;
 
-  for await (const result of client.streamPipeline(manifest, generateVADChunks())) {
+  console.log('[DEBUG] About to call streamPipeline');
+  const generator = client.streamPipeline(manifest, generateVADChunks());
+  console.log('[DEBUG] Generator created, starting for await');
+  for await (const result of generator) {
+    console.log('[DEBUG] Got result:', result.sequence);
     latencies.push(result.processingTimeMs);
 
     const timeRange = `${(result.sequence * 0.1).toFixed(1)}-${((result.sequence + 1) * 0.1).toFixed(1)}s`;
