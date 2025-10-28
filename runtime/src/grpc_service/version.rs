@@ -6,7 +6,6 @@
 #![cfg(feature = "grpc-transport")]
 
 use std::collections::HashSet;
-use crate::nodes::NodeRegistry;
 
 /// Current protocol version
 pub const PROTOCOL_VERSION: &str = "v1";
@@ -29,7 +28,9 @@ pub struct VersionManager {
 
 impl Default for VersionManager {
     fn default() -> Self {
-        Self::from_registry(&NodeRegistry::default())
+        // Empty node types by default
+        // Caller should use from_node_types() with actual registry
+        Self::new(vec!["v1".to_string()], Vec::new())
     }
 }
 
@@ -42,14 +43,13 @@ impl VersionManager {
         }
     }
 
-    /// Create version manager from node registry
+    /// Create version manager from node type list
     /// 
-    /// This automatically populates supported node types from the registry,
-    /// ensuring version manager stays in sync with registered nodes.
-    pub fn from_registry(registry: &NodeRegistry) -> Self {
+    /// This populates supported node types from all registry tiers.
+    pub fn from_node_types(node_types: Vec<String>) -> Self {
         Self {
             supported_protocols: vec!["v1".to_string()].into_iter().collect(),
-            supported_node_types: registry.node_types(),
+            supported_node_types: node_types,
         }
     }
 
@@ -105,7 +105,10 @@ mod tests {
 
     #[test]
     fn test_default_version_manager() {
-        let vm = VersionManager::default();
+        let vm = VersionManager::from_node_types(vec![
+            "AudioResample".to_string(),
+            "PassThrough".to_string(),
+        ]);
         assert!(vm.is_protocol_supported("v1"));
         assert!(!vm.is_protocol_supported("v2"));
         assert!(vm.is_node_type_supported("AudioResample"));
@@ -131,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_version_info_proto() {
-        let vm = VersionManager::default();
+        let vm = VersionManager::from_node_types(vec!["AudioResample".to_string()]);
         let proto = vm.to_proto();
         
         assert_eq!(proto.protocol_version, "v1");

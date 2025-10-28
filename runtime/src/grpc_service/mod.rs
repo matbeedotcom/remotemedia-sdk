@@ -143,6 +143,12 @@ pub struct ServiceConfig {
     
     /// Enable JSON structured logging
     pub json_logging: bool,
+
+    /// Preview feature: enable GPT-5 Codex behavior (metadata opt-in)
+    ///
+    /// Controlled by env var GPT5_CODEX_PREVIEW (true/false). Defaults to true so clients opting in via
+    /// metadata "x-preview-features: gpt5-codex" are accepted. Set to false to deny preview requests.
+    pub enable_gpt5_codex_preview: bool,
 }
 
 impl Default for ServiceConfig {
@@ -153,6 +159,7 @@ impl Default for ServiceConfig {
             limits: limits::ResourceLimits::default(),
             version: version::VersionManager::default(),
             json_logging: true,
+            enable_gpt5_codex_preview: true,
         }
     }
 }
@@ -201,6 +208,13 @@ impl ServiceConfig {
         // GRPC_JSON_LOGGING="false" (default: true)
         if let Ok(json_str) = std::env::var("GRPC_JSON_LOGGING") {
             config.json_logging = json_str.to_lowercase() != "false";
+        }
+
+        // GPT5_CODEX_PREVIEW="false" (default: true)
+        // Also accept legacy/alternative name ENABLE_GPT5_CODEX_PREVIEW
+        if let Ok(flag) = std::env::var("GPT5_CODEX_PREVIEW").or_else(|_| std::env::var("ENABLE_GPT5_CODEX_PREVIEW")) {
+            let flag_lc = flag.to_lowercase();
+            config.enable_gpt5_codex_preview = !(flag_lc == "false" || flag_lc == "0" || flag_lc == "off");
         }
         
         config

@@ -234,6 +234,21 @@ impl crate::grpc_service::StreamingPipelineService for StreamingServiceImpl {
     ) -> Result<Response<Self::StreamPipelineStream>, Status> {
         info!("StreamPipeline RPC invoked");
 
+        // Preview feature header validation (from initial request metadata)
+        if let Some(hdr_val) = request.metadata().get("x-preview-features") {
+            let val = hdr_val.to_str().unwrap_or("").to_lowercase();
+            let has_gpt5 = val.split(',').any(|s| s.trim() == "gpt5-codex");
+            if has_gpt5 {
+                if !self.config.enable_gpt5_codex_preview {
+                    return Err(Status::failed_precondition(
+                        "Preview feature 'gpt5-codex' is disabled on this server",
+                    ));
+                } else {
+                    info!("Preview feature enabled: gpt5-codex");
+                }
+            }
+        }
+
         let (tx, rx) = tokio::sync::mpsc::channel(32);
         let mut stream = request.into_inner();
         let sessions = self.sessions.clone();

@@ -7,7 +7,7 @@
  * - Processing audio through multiple stages
  */
 
-import { RemoteMediaClient, RemoteMediaError, AudioFormat } from '../../../nodejs-client/src/grpc-client';
+import { RemoteMediaClient, RemoteMediaError, AudioFormat } from '@remotemedia/nodejs-client';
 
 async function main() {
   const client = new RemoteMediaClient('localhost:50051');
@@ -44,10 +44,8 @@ async function main() {
       ],
       connections: [
         {
-          fromNode: 'passthrough',
-          fromOutput: 'audio',
-          toNode: 'echo',
-          toInput: 'audio'
+          from: 'passthrough',
+          to: 'echo'
         }
       ]
     };

@@ -8,7 +8,7 @@
  * - Handling results and errors
  */
 
-import { RemoteMediaClient, RemoteMediaError } from '@remotemedia/nodejs-client';
+import { RemoteMediaClient, RemoteMediaError } from '../src/grpc-client';
 
 async function main() {
   const client = new RemoteMediaClient('localhost:50051');

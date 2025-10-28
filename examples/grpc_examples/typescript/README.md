@@ -4,41 +4,68 @@ Working TypeScript examples demonstrating the Rust gRPC service.
 
 ## Prerequisites
 
+- Node.js >= 14.0.0
+- RemoteMedia gRPC service running on `localhost:50051`
+
+## Setup
+
+Install dependencies:
+
 ```bash
-# Install Node.js client
-cd nodejs-client
 npm install
+```
 
-# Generate proto stubs
-npm run generate-protos
+This will automatically build the `@remotemedia/nodejs-client` package from the local workspace.
 
-# Build TypeScript
+## Building
+
+Compile all TypeScript examples to JavaScript:
+
+```bash
 npm run build
 ```
 
+This creates compiled `.js` files in the `dist/` directory.
+
 ## Running Examples
 
-Ensure the Rust gRPC server is running:
+### Development Mode (with tsx - no build needed)
+
+Run examples directly from TypeScript source:
 
 ```bash
-cd runtime
-cargo run --bin grpc_server --features grpc-transport
+npm run dev:simple          # Simple execution example
+npm run dev:multi-node      # Multi-node pipeline
+npm run dev:streaming       # Streaming pipeline
+npm run dev:audio           # Audio processing pipeline
 ```
 
-Then run examples (in another terminal):
+### Production Mode (compiled)
+
+Build first, then run compiled JavaScript:
 
 ```bash
-cd examples/grpc_examples/typescript
+npm run build
 
-# Compile TypeScript examples
-npx tsc simple_execution.ts
-npx tsc multi_node_pipeline.ts
-npx tsc streaming_example.ts
+npm run simple              # Simple execution example
+npm run multi-node          # Multi-node pipeline
+npm run streaming           # Streaming pipeline
+npm run audio               # Audio processing pipeline
+```
 
-# Run examples
-node simple_execution.js
-node multi_node_pipeline.js
-node streaming_example.js
+Run all examples:
+
+```bash
+npm run all
+```
+
+### Starting the gRPC Server
+
+Ensure the Rust gRPC server is running before executing examples:
+
+```bash
+cd ../../../runtime
+cargo run --bin grpc_server --features grpc-transport
 ```
 
 ## Examples

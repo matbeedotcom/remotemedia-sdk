@@ -265,7 +265,8 @@ class RemoteMediaClient:
         address: str,
         ssl: bool = False,
         credentials: Optional[grpc.ChannelCredentials] = None,
-        options: Optional[List[Tuple[str, Any]]] = None
+        options: Optional[List[Tuple[str, Any]]] = None,
+        api_key: Optional[str] = None,
     ):
         """
         Initialize client.
@@ -280,6 +281,7 @@ class RemoteMediaClient:
         self.ssl = ssl
         self.credentials = credentials
         self.options = options or []
+        self.api_key = api_key
         
         self.channel: Optional[grpc.aio.Channel] = None
         self.execution_stub: Optional[execution_pb2_grpc.PipelineExecutionServiceStub] = None
@@ -355,7 +357,7 @@ class RemoteMediaClient:
         try:
             request = ProtoVersionRequest(client_version=client_version)
             
-            response = await self.execution_stub.GetVersion(request)
+            response = await self.execution_stub.GetVersion(request, metadata=self._metadata())
             
             if not response.compatible:
                 logger.warning(
@@ -415,7 +417,7 @@ class RemoteMediaClient:
             )
             
             # Execute
-            response = await self.execution_stub.ExecutePipeline(request)
+            response = await self.execution_stub.ExecutePipeline(request, metadata=self._metadata())
             
             # Check for error
             if response.HasField("error"):
@@ -496,7 +498,8 @@ class RemoteMediaClient:
             
             # Start streaming
             response_stream = self.streaming_stub.StreamPipeline(
-                request_generator()
+                request_generator(),
+                metadata=self._metadata(),
             )
             
             # Process responses
@@ -575,6 +578,19 @@ class RemoteMediaClient:
             nodes=nodes_proto,
             connections=connections_proto
         )
+
+    def _metadata(self) -> List[Tuple[str, str]]:
+        """Build default gRPC metadata including preview feature flag and auth."""
+        md: List[Tuple[str, str]] = []
+        if self.api_key:
+            md.append(("authorization", f"Bearer {self.api_key}"))
+        # Enable GPT-5 Codex preview by default unless disabled via env
+        import os
+        disable = os.getenv("DISABLE_GPT5_CODEX_PREVIEW", "").lower()
+        if disable not in ("true", "1", "yes", "on"):
+            md.append(("x-preview-features", "gpt5-codex"))
+        md.append(("x-client", "python"))
+        return md
     
     # ========================================================================
     # Context Manager

@@ -74,8 +74,32 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Create executor for pipeline execution
-    let executor = Arc::new(Executor::new());
-    info!("Pipeline executor initialized");
+    let mut executor = Executor::new();
+    
+    // Register built-in test nodes (PassThrough, Echo, Calculator, Add, Multiply)
+    let builtin_registry = remotemedia_runtime::nodes::create_builtin_registry();
+    executor.add_system_registry(Arc::new(builtin_registry));
+    info!("Built-in test nodes registered (PassThrough, Echo, CalculatorNode, AddNode, MultiplyNode)");
+    
+    // Register audio processing nodes (resample, VAD, format converter)
+    let audio_registry = remotemedia_runtime::nodes::audio::create_audio_registry();
+    executor.add_audio_registry(Arc::new(audio_registry));
+    info!("Audio processing nodes registered (RustResampleNode, RustVADNode, RustFormatConverterNode)");
+    
+    // Get all node types from all registries for version info
+    let node_types = executor.list_all_node_types();
+    info!(
+        node_count = node_types.len(),
+        nodes = ?node_types,
+        "Available node types"
+    );
+    
+    // Update config to include node types
+    let mut config = config;
+    config.version = remotemedia_runtime::grpc_service::version::VersionManager::from_node_types(node_types);
+    
+    let executor = Arc::new(executor);
+    info!("Pipeline executor initialized with all nodes");
 
     // Create and start server
     let server = GrpcServer::new(config, executor)?;

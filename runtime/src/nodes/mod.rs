@@ -1,11 +1,17 @@
 //! Node type implementations
 //!
 //! This module contains the core node execution logic and lifecycle management.
+//! 
+//! **Note**: The NodeExecutor trait here is DEPRECATED and kept only for backward compatibility.
+//! All new code should use `executor::node_executor::NodeExecutor` instead.
+//! Built-in nodes have been migrated to the new trait. This old trait definition
+//! and NodeContext will be removed in v0.3.0.
 
 use crate::{Error, Result};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // Sub-modules
 pub mod audio;
@@ -16,7 +22,7 @@ mod whisper;
 #[cfg(feature = "whisper")]
 pub use whisper::RustWhisperNode;
 
-pub use registry::{NodeFactory as NodeFactoryTrait, RuntimeHint};
+pub use registry::{NodeFactory as NodeFactoryTrait, RuntimeHint, CompositeRegistry};
 
 /// Node execution context containing runtime state
 #[derive(Debug, Clone)]
@@ -150,26 +156,11 @@ impl NodeRegistry {
 
 impl Default for NodeRegistry {
     fn default() -> Self {
-        let mut registry = Self::new();
-
-        // Register built-in nodes
-        registry.register("PassThrough", || Box::new(PassThroughNode));
-        registry.register("PassThroughNode", || Box::new(PassThroughNode)); // Python compatibility
-        registry.register("Echo", || Box::new(EchoNode::new()));
-        registry.register("CalculatorNode", || Box::new(CalculatorNode::new()));
-
-        // Register simple math nodes (Rust-native implementations)
-        registry.register("MultiplyNode", || Box::new(MultiplyNode::new()));
-        registry.register("AddNode", || Box::new(AddNode::new()));
-
-        // Register Whisper transcription node (if feature enabled)
-        #[cfg(feature = "whisper")]
-        registry.register(
-            "RustWhisperTranscriber",
-            || Box::new(RustWhisperNode::new()),
-        );
-
-        registry
+        // DEPRECATED: This old registry is no longer used.
+        // Built-in nodes are now registered via create_builtin_registry()
+        // which uses the new trait and factory pattern.
+        // Keeping this empty to maintain API compatibility.
+        Self::new()
     }
 }
 
@@ -192,14 +183,6 @@ impl NodeExecutor for PassThroughNode {
 
     async fn cleanup(&mut self) -> Result<()> {
         Ok(())
-    }
-
-    fn info(&self) -> NodeInfo {
-        NodeInfo {
-            name: "PassThrough".to_string(),
-            version: "0.1.0".to_string(),
-            description: Some("Passes input directly to output without modification".to_string()),
-        }
     }
 }
 
@@ -249,14 +232,6 @@ impl NodeExecutor for EchoNode {
     async fn cleanup(&mut self) -> Result<()> {
         tracing::info!("EchoNode processed {} items", self.counter);
         Ok(())
-    }
-
-    fn info(&self) -> NodeInfo {
-        NodeInfo {
-            name: "Echo".to_string(),
-            version: "0.1.0".to_string(),
-            description: Some("Echoes input with metadata".to_string()),
-        }
     }
 }
 
@@ -325,17 +300,6 @@ impl NodeExecutor for CalculatorNode {
 
     async fn cleanup(&mut self) -> Result<()> {
         Ok(())
-    }
-
-    fn info(&self) -> NodeInfo {
-        NodeInfo {
-            name: "CalculatorNode".to_string(),
-            version: "0.1.0".to_string(),
-            description: Some(format!(
-                "Performs {} operation with operand {}",
-                self.operation, self.operand
-            )),
-        }
     }
 }
 
@@ -419,14 +383,6 @@ impl NodeExecutor for MultiplyNode {
     async fn cleanup(&mut self) -> Result<()> {
         Ok(())
     }
-
-    fn info(&self) -> NodeInfo {
-        NodeInfo {
-            name: "MultiplyNode".to_string(),
-            version: "0.1.0".to_string(),
-            description: Some(format!("Multiplies input by {}", self.factor)),
-        }
-    }
 }
 
 /// Add node - adds a constant to input
@@ -505,14 +461,6 @@ impl NodeExecutor for AddNode {
     async fn cleanup(&mut self) -> Result<()> {
         Ok(())
     }
-
-    fn info(&self) -> NodeInfo {
-        NodeInfo {
-            name: "AddNode".to_string(),
-            version: "0.1.0".to_string(),
-            description: Some(format!("Adds {} to input", self.addend)),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -588,5 +536,188 @@ mod tests {
         let registry = NodeRegistry::default();
         let result = registry.create("UnknownNode");
         assert!(result.is_err());
+    }
+}
+
+// ============================================================================
+// Node Factories for New Trait (executor::node_executor::NodeExecutor)
+// ============================================================================
+
+/// Create a registry with all built-in test nodes using the new trait
+///
+/// Registers: PassThroughNode, Echo, CalculatorNode, AddNode, MultiplyNode
+pub fn create_builtin_registry() -> registry::NodeRegistry {
+    let mut reg = registry::NodeRegistry::new();
+    
+    // Register simple test nodes
+    reg.register_rust(Arc::new(PassThroughNodeFactory));
+    reg.register_rust(Arc::new(EchoNodeFactory));
+    reg.register_rust(Arc::new(CalculatorNodeFactory));
+    reg.register_rust(Arc::new(AddNodeFactory));
+    reg.register_rust(Arc::new(MultiplyNodeFactory));
+    
+    reg
+}
+
+// Factory implementations for test nodes (new trait)
+struct PassThroughNodeFactory;
+struct EchoNodeFactory;
+struct CalculatorNodeFactory;
+struct AddNodeFactory;
+struct MultiplyNodeFactory;
+
+impl NodeFactoryTrait for PassThroughNodeFactory {
+    fn create(&self, _params: Value) -> Result<Box<dyn crate::executor::node_executor::NodeExecutor>> {
+        Ok(Box::new(PassThroughNodeNew))
+    }
+    fn node_type(&self) -> &str { "PassThrough" }
+}
+
+impl NodeFactoryTrait for EchoNodeFactory {
+    fn create(&self, _params: Value) -> Result<Box<dyn crate::executor::node_executor::NodeExecutor>> {
+        Ok(Box::new(EchoNodeNew::new()))
+    }
+    fn node_type(&self) -> &str { "Echo" }
+}
+
+impl NodeFactoryTrait for CalculatorNodeFactory {
+    fn create(&self, _params: Value) -> Result<Box<dyn crate::executor::node_executor::NodeExecutor>> {
+        Ok(Box::new(CalculatorNodeNew::new()))
+    }
+    fn node_type(&self) -> &str { "CalculatorNode" }
+}
+
+impl NodeFactoryTrait for AddNodeFactory {
+    fn create(&self, _params: Value) -> Result<Box<dyn crate::executor::node_executor::NodeExecutor>> {
+        Ok(Box::new(AddNodeNew::new()))
+    }
+    fn node_type(&self) -> &str { "AddNode" }
+}
+
+impl NodeFactoryTrait for MultiplyNodeFactory {
+    fn create(&self, _params: Value) -> Result<Box<dyn crate::executor::node_executor::NodeExecutor>> {
+        Ok(Box::new(MultiplyNodeNew::new()))
+    }
+    fn node_type(&self) -> &str { "MultiplyNode" }
+}
+
+// New trait implementations (wrapping old trait implementations)
+struct PassThroughNodeNew;
+struct EchoNodeNew { inner: EchoNode }
+struct CalculatorNodeNew { inner: CalculatorNode }
+struct AddNodeNew { inner: AddNode }
+struct MultiplyNodeNew { inner: MultiplyNode }
+
+impl EchoNodeNew {
+    fn new() -> Self { Self { inner: EchoNode::new() } }
+}
+impl CalculatorNodeNew {
+    fn new() -> Self { Self { inner: CalculatorNode::new() } }
+}
+impl AddNodeNew {
+    fn new() -> Self { Self { inner: AddNode::new() } }
+}
+impl MultiplyNodeNew {
+    fn new() -> Self { Self { inner: MultiplyNode::new() } }
+}
+
+// Implement new trait by delegating to old implementations
+#[async_trait]
+impl crate::executor::node_executor::NodeExecutor for PassThroughNodeNew {
+    async fn initialize(&mut self, ctx: &crate::executor::node_executor::NodeContext) -> Result<()> {
+        let old_ctx = NodeContext {
+            node_id: ctx.node_id.clone(),
+            node_type: ctx.node_type.clone(),
+            params: ctx.params.clone(),
+            session_id: None,
+            metadata: ctx.metadata.clone(),
+        };
+        PassThroughNode.initialize(&old_ctx).await
+    }
+    async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
+        PassThroughNode.process(input).await
+    }
+    async fn cleanup(&mut self) -> Result<()> {
+        PassThroughNode.cleanup().await
+    }
+}
+
+#[async_trait]
+impl crate::executor::node_executor::NodeExecutor for EchoNodeNew {
+    async fn initialize(&mut self, ctx: &crate::executor::node_executor::NodeContext) -> Result<()> {
+        let old_ctx = NodeContext {
+            node_id: ctx.node_id.clone(),
+            node_type: ctx.node_type.clone(),
+            params: ctx.params.clone(),
+            session_id: None,
+            metadata: ctx.metadata.clone(),
+        };
+        self.inner.initialize(&old_ctx).await
+    }
+    async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
+        self.inner.process(input).await
+    }
+    async fn cleanup(&mut self) -> Result<()> {
+        self.inner.cleanup().await
+    }
+}
+
+#[async_trait]
+impl crate::executor::node_executor::NodeExecutor for CalculatorNodeNew {
+    async fn initialize(&mut self, ctx: &crate::executor::node_executor::NodeContext) -> Result<()> {
+        let old_ctx = NodeContext {
+            node_id: ctx.node_id.clone(),
+            node_type: ctx.node_type.clone(),
+            params: ctx.params.clone(),
+            session_id: None,
+            metadata: ctx.metadata.clone(),
+        };
+        self.inner.initialize(&old_ctx).await
+    }
+    async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
+        self.inner.process(input).await
+    }
+    async fn cleanup(&mut self) -> Result<()> {
+        self.inner.cleanup().await
+    }
+}
+
+#[async_trait]
+impl crate::executor::node_executor::NodeExecutor for AddNodeNew {
+    async fn initialize(&mut self, ctx: &crate::executor::node_executor::NodeContext) -> Result<()> {
+        let old_ctx = NodeContext {
+            node_id: ctx.node_id.clone(),
+            node_type: ctx.node_type.clone(),
+            params: ctx.params.clone(),
+            session_id: None,
+            metadata: ctx.metadata.clone(),
+        };
+        self.inner.initialize(&old_ctx).await
+    }
+    async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
+        self.inner.process(input).await
+    }
+    async fn cleanup(&mut self) -> Result<()> {
+        self.inner.cleanup().await
+    }
+}
+
+#[async_trait]
+impl crate::executor::node_executor::NodeExecutor for MultiplyNodeNew {
+    async fn initialize(&mut self, ctx: &crate::executor::node_executor::NodeContext) -> Result<()> {
+        let old_ctx = NodeContext {
+            node_id: ctx.node_id.clone(),
+            node_type: ctx.node_type.clone(),
+            params: ctx.params.clone(),
+            session_id: None,
+            metadata: ctx.metadata.clone(),
+        };
+        self.inner.initialize(&old_ctx).await
+    }
+    async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
+        self.inner.process(input).await
+    }
+    async fn cleanup(&mut self) -> Result<()> {
+        self.inner.cleanup().await
     }
 }
