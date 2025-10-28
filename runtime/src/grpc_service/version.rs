@@ -6,6 +6,7 @@
 #![cfg(feature = "grpc-transport")]
 
 use std::collections::HashSet;
+use crate::nodes::NodeRegistry;
 
 /// Current protocol version
 pub const PROTOCOL_VERSION: &str = "v1";
@@ -28,15 +29,7 @@ pub struct VersionManager {
 
 impl Default for VersionManager {
     fn default() -> Self {
-        Self {
-            supported_protocols: vec!["v1".to_string()].into_iter().collect(),
-            supported_node_types: vec![
-                "AudioResample".to_string(),
-                "VAD".to_string(),
-                "AudioFormatConverter".to_string(),
-                "HFPipelineNode".to_string(),
-            ],
-        }
+        Self::from_registry(&NodeRegistry::default())
     }
 }
 
@@ -46,6 +39,17 @@ impl VersionManager {
         Self {
             supported_protocols: supported_protocols.into_iter().collect(),
             supported_node_types,
+        }
+    }
+
+    /// Create version manager from node registry
+    /// 
+    /// This automatically populates supported node types from the registry,
+    /// ensuring version manager stays in sync with registered nodes.
+    pub fn from_registry(registry: &NodeRegistry) -> Self {
+        Self {
+            supported_protocols: vec!["v1".to_string()].into_iter().collect(),
+            supported_node_types: registry.node_types(),
         }
     }
 

@@ -64,17 +64,24 @@ impl ExecutionServiceImpl {
         // Convert to JSON string for existing Manifest parser
         let json_str = serde_json::json!({
             "version": proto_manifest.version,
+            "metadata": {
+                "name": proto_manifest.metadata.as_ref().map(|m| m.name.clone()).unwrap_or_else(|| "test".to_string()),
+                "description": proto_manifest.metadata.as_ref().and_then(|m| Some(m.description.clone())),
+                "created_at": proto_manifest.metadata.as_ref().and_then(|m| Some(m.created_at.clone()))
+            },
             "nodes": proto_manifest.nodes.iter().map(|n| {
                 serde_json::json!({
                     "id": n.id,
-                    "type": n.node_type,
-                    "parameters": serde_json::from_str::<serde_json::Value>(&n.params)
+                    "node_type": n.node_type,
+                    "params": serde_json::from_str::<serde_json::Value>(&n.params)
                         .unwrap_or(serde_json::json!({})),
                     "runtime_hint": match n.runtime_hint {
-                        0 => "native",
-                        1 => "python",
-                        2 => "wasm",
-                        _ => "native",
+                        0 => "auto", // Unspecified -> Auto
+                        1 => "rust_python",
+                        2 => "cpython",
+                        3 => "cpython_wasm",
+                        4 => "auto",
+                        _ => "auto",
                     }
                 })
             }).collect::<Vec<_>>(),
