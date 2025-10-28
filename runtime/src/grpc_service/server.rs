@@ -6,7 +6,11 @@
 #![cfg(feature = "grpc-transport")]
 
 use crate::grpc_service::{
-    auth::AuthConfig, metrics::ServiceMetrics, ServiceConfig,
+    auth::AuthConfig,
+    execution::ExecutionServiceImpl,
+    generated::pipeline_execution_service_server::PipelineExecutionServiceServer,
+    metrics::ServiceMetrics,
+    ServiceConfig,
 };
 use std::sync::Arc;
 use tonic::transport::Server;
@@ -37,8 +41,6 @@ impl GrpcServer {
     }
 
     /// Build and run the server
-    ///
-    /// This is a placeholder - actual service implementations will be added in Phase 3+
     pub async fn serve(self) -> Result<(), Box<dyn std::error::Error>> {
         let addr: std::net::SocketAddr = self.config.bind_address.parse()?;
         
@@ -49,15 +51,17 @@ impl GrpcServer {
             "Starting gRPC server"
         );
 
-        // TODO: Add service implementations in Phase 3
-        // let execution_service = ExecutionServiceImpl::new(...);
-        // let streaming_service = StreamingServiceImpl::new(...);
+        // Create service implementations
+        let execution_service = ExecutionServiceImpl::new(
+            self.config.auth.clone(),
+            self.config.limits.clone(),
+            self.config.version.clone(),
+            Arc::clone(&self.metrics),
+        );
 
         let server = Server::builder()
             .trace_fn(|_| tracing::info_span!("grpc_request"))
-            // Services will be added here in Phase 3+
-            // .add_service(PipelineExecutionServiceServer::new(execution_service))
-            // .add_service(StreamingPipelineServiceServer::new(streaming_service))
+            .add_service(PipelineExecutionServiceServer::new(execution_service))
             ;
 
         // Graceful shutdown on Ctrl+C
@@ -73,15 +77,12 @@ impl GrpcServer {
 
         info!("gRPC server listening on {}", addr);
         
-        // This will fail until we add actual services, but structure is ready
-        warn!("No services registered yet - add in Phase 3");
-        
-        // server
-        //     .serve_with_shutdown(addr, async {
-        //         rx.await.ok();
-        //         info!("Graceful shutdown complete");
-        //     })
-        //     .await?;
+        server
+            .serve_with_shutdown(addr, async {
+                rx.await.ok();
+                info!("Graceful shutdown complete");
+            })
+            .await?;
 
         Ok(())
     }
