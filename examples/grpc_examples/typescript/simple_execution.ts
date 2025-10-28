@@ -8,90 +8,79 @@
  * - Handling results and errors
  */
 
-import { RemoteMediaClient } from '../../../nodejs-client/src/client';
-import { PipelineManifest, ManifestMetadata, NodeManifest, ExecuteRequest } from '../../../nodejs-client/generated-types/execution_pb';
+import { RemoteMediaClient, RemoteMediaError } from '../../../nodejs-client/src/grpc-client';
 
 async function main() {
-  // Create client (no auth for local development)
   const client = new RemoteMediaClient('localhost:50051');
   
   try {
-    // Connect
     console.log('Connecting to gRPC service...');
     await client.connect();
     
-    // Check version
     const version = await client.getVersion();
-    console.log(`✅ Connected to service v${version.getVersionInfo()?.getProtocolVersion()}`);
-    console.log(`   Runtime version: ${version.getVersionInfo()?.getRuntimeVersion()}`);
+    console.log(`✅ Connected to service v${version.protocolVersion}`);
+    console.log(`   Runtime version: ${version.runtimeVersion}`);
+    console.log(`   Supported nodes: ${version.supportedNodeTypes.slice(0, 5).join(', ')}...`);
     
-    const nodeTypes = version.getVersionInfo()?.getSupportedNodeTypesList() || [];
-    console.log(`   Supported nodes: ${nodeTypes.slice(0, 5).join(', ')}...`);
-    
-    // Create simple calculator pipeline
     console.log('\n=== Executing Calculator Pipeline ===');
     
-    const metadata = new ManifestMetadata();
-    metadata.setName('simple_calculator');
-    metadata.setDescription('Add 5 to input value');
-    metadata.setCreatedAt('2025-10-28T00:00:00Z');
+    const manifest = {
+      version: 'v1',
+      metadata: {
+        name: 'simple_calculator',
+        description: 'Add 5 to input value',
+        createdAt: '2025-10-28T00:00:00Z'
+      },
+      nodes: [
+        {
+          id: 'calc',
+          nodeType: 'CalculatorNode',
+          params: '{"operation": "add", "value": 5.0}',
+          isStreaming: false
+        }
+      ],
+      connections: []
+    };
     
-    const calcNode = new NodeManifest();
-    calcNode.setId('calc');
-    calcNode.setNodeType('CalculatorNode');
-    calcNode.setParams('{"operation": "add", "value": 5.0}');
-    calcNode.setIsStreaming(false);
+    const result = await client.executePipeline(
+      manifest,
+      {},
+      { calc: '{"value": 10.0}' }
+    );
     
-    const manifest = new PipelineManifest();
-    manifest.setVersion('v1');
-    manifest.setMetadata(metadata);
-    manifest.setNodesList([calcNode]);
-    manifest.setConnectionsList([]);
+    console.log('✅ Execution successful');
+    console.log('   Input: 10.0');
+    console.log('   Operation: add 5.0');
+    console.log(`   Result: ${result.dataOutputs.calc}`);
+    console.log(`   Wall time: ${result.metrics.wallTimeMs.toFixed(2)}ms`);
     
-    // Execute pipeline
-    const request = new ExecuteRequest();
-    request.setManifest(manifest);
-    request.getDataInputsMap().set('calc', '{"value": 10.0}');
-    request.setClientVersion('v1');
-    
-    const response = await client.executePipeline(request);
-    
-    if (response.hasResult()) {
-      const result = response.getResult()!;
-      console.log('✅ Execution successful');
-      console.log('   Input: 10.0');
-      console.log('   Operation: add 5.0');
-      console.log(`   Result: ${result.getDataOutputsMap().get('calc')}`);
-      console.log(`   Wall time: ${result.getMetrics()?.getWallTimeMs().toFixed(2)}ms`);
-    } else {
-      const error = response.getError()!;
-      console.error(`❌ Error: ${error.getMessage()}`);
-      process.exit(1);
-    }
-    
-    // Try multiplication
     console.log('\n=== Executing Multiply Pipeline ===');
     
-    calcNode.setParams('{"operation": "multiply", "value": 3.0}');
-    metadata.setDescription('Multiply by 3');
+    manifest.nodes[0].params = '{"operation": "multiply", "value": 3.0}';
+    manifest.metadata.description = 'Multiply by 3';
     
-    request.getDataInputsMap().set('calc', '{"value": 7.0}');
+    const result2 = await client.executePipeline(
+      manifest,
+      {},
+      { calc: '{"value": 7.0}' }
+    );
     
-    const response2 = await client.executePipeline(request);
-    
-    if (response2.hasResult()) {
-      const result = response2.getResult()!;
-      console.log('✅ Execution successful');
-      console.log('   Input: 7.0');
-      console.log('   Operation: multiply 3.0');
-      console.log(`   Result: ${result.getDataOutputsMap().get('calc')}`);
-      console.log(`   Wall time: ${result.getMetrics()?.getWallTimeMs().toFixed(2)}ms`);
-    }
+    console.log('✅ Execution successful');
+    console.log('   Input: 7.0');
+    console.log('   Operation: multiply 3.0');
+    console.log(`   Result: ${result2.dataOutputs.calc}`);
+    console.log(`   Wall time: ${result2.metrics.wallTimeMs.toFixed(2)}ms`);
     
     console.log('\n✅ All tests passed!');
     
   } catch (error) {
-    console.error(`\n❌ Error: ${error}`);
+    if (error instanceof RemoteMediaError) {
+      console.error(`\n❌ Error: ${error.message}`);
+      if (error.errorType) console.error(`   Type: ${error.errorType}`);
+      if (error.failingNodeId) console.error(`   Node: ${error.failingNodeId}`);
+    } else {
+      console.error(`\n❌ Error: ${error}`);
+    }
     process.exit(1);
   } finally {
     await client.disconnect();

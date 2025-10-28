@@ -1,6 +1,6 @@
 # TypeScript gRPC Client Examples
 
-Practical examples demonstrating the Rust gRPC service from TypeScript/Node.js.
+Working TypeScript examples demonstrating the Rust gRPC service.
 
 ## Prerequisites
 

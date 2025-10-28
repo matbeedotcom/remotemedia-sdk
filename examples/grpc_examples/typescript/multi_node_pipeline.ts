@@ -7,16 +7,7 @@
  * - Processing audio through multiple stages
  */
 
-import { RemoteMediaClient } from '../../../nodejs-client/src/client';
-import {
-  PipelineManifest,
-  ManifestMetadata,
-  NodeManifest,
-  Connection,
-  ExecuteRequest,
-  AudioBuffer,
-  AudioFormat
-} from '../../../nodejs-client/generated-types/execution_pb';
+import { RemoteMediaClient, RemoteMediaError, AudioFormat } from '../../../nodejs-client/src/grpc-client';
 
 async function main() {
   const client = new RemoteMediaClient('localhost:50051');
@@ -26,44 +17,45 @@ async function main() {
     await client.connect();
     
     const version = await client.getVersion();
-    console.log(`Connected to service v${version.getVersionInfo()?.getProtocolVersion()}\n`);
+    console.log(`Connected to service v${version.protocolVersion}\n`);
     
-    // Create multi-node pipeline: PassThrough -> Echo
     console.log('=== Multi-Node Pipeline: PassThrough -> Echo ===');
     
-    const metadata = new ManifestMetadata();
-    metadata.setName('multi_node_test');
-    metadata.setDescription('Chain PassThrough and Echo nodes');
-    metadata.setCreatedAt('2025-10-28T00:00:00Z');
+    const manifest = {
+      version: 'v1',
+      metadata: {
+        name: 'multi_node_test',
+        description: 'Chain PassThrough and Echo nodes',
+        createdAt: '2025-10-28T00:00:00Z'
+      },
+      nodes: [
+        {
+          id: 'passthrough',
+          nodeType: 'PassThrough',
+          params: '{}',
+          isStreaming: false
+        },
+        {
+          id: 'echo',
+          nodeType: 'Echo',
+          params: '{}',
+          isStreaming: false
+        }
+      ],
+      connections: [
+        {
+          fromNode: 'passthrough',
+          fromOutput: 'audio',
+          toNode: 'echo',
+          toInput: 'audio'
+        }
+      ]
+    };
     
-    const passthroughNode = new NodeManifest();
-    passthroughNode.setId('passthrough');
-    passthroughNode.setNodeType('PassThrough');
-    passthroughNode.setParams('{}');
-    passthroughNode.setIsStreaming(false);
-    
-    const echoNode = new NodeManifest();
-    echoNode.setId('echo');
-    echoNode.setNodeType('Echo');
-    echoNode.setParams('{}');
-    echoNode.setIsStreaming(false);
-    
-    const connection = new Connection();
-    connection.setFromNode('passthrough');
-    connection.setFromOutput('audio');
-    connection.setToNode('echo');
-    connection.setToInput('audio');
-    
-    const manifest = new PipelineManifest();
-    manifest.setVersion('v1');
-    manifest.setMetadata(metadata);
-    manifest.setNodesList([passthroughNode, echoNode]);
-    manifest.setConnectionsList([connection]);
-    
-    // Generate 1 second of sine wave audio
+    // Generate 1 second of sine wave
     const SAMPLE_RATE = 16000;
-    const NUM_SAMPLES = SAMPLE_RATE; // 1 second
-    const FREQUENCY = 440.0; // A4 note
+    const NUM_SAMPLES = SAMPLE_RATE;
+    const FREQUENCY = 440.0;
     
     const samples = new Float32Array(NUM_SAMPLES);
     for (let i = 0; i < NUM_SAMPLES; i++) {
@@ -71,53 +63,48 @@ async function main() {
       samples[i] = 0.5 * Math.sin(2 * Math.PI * FREQUENCY * t);
     }
     
-    // Create audio buffer
-    const audioBuffer = new AudioBuffer();
-    audioBuffer.setSamples(Buffer.from(samples.buffer));
-    audioBuffer.setSampleRate(SAMPLE_RATE);
-    audioBuffer.setChannels(1);
-    audioBuffer.setFormat(AudioFormat.AUDIO_FORMAT_F32);
-    audioBuffer.setNumSamples(NUM_SAMPLES);
+    const audioBuffer = {
+      samples: Buffer.from(samples.buffer),
+      sampleRate: SAMPLE_RATE,
+      channels: 1,
+      format: AudioFormat.F32,
+      numSamples: NUM_SAMPLES
+    };
     
     console.log(`Input audio: ${NUM_SAMPLES} samples @ ${SAMPLE_RATE}Hz`);
     console.log('Pipeline: passthrough -> echo');
     
-    // Execute pipeline
-    const request = new ExecuteRequest();
-    request.setManifest(manifest);
-    request.getAudioInputsMap().set('passthrough', audioBuffer);
-    request.setClientVersion('v1');
+    const result = await client.executePipeline(
+      manifest,
+      { passthrough: audioBuffer },
+      {}
+    );
     
-    const response = await client.executePipeline(request);
+    console.log('\n✅ Execution successful');
+    console.log(`   Wall time: ${result.metrics.wallTimeMs.toFixed(2)}ms`);
+    console.log(`   Nodes executed: ${Object.keys(result.metrics.nodeMetrics).length}`);
     
-    if (response.hasResult()) {
-      const result = response.getResult()!;
-      console.log('\n✅ Execution successful');
-      console.log(`   Wall time: ${result.getMetrics()?.getWallTimeMs().toFixed(2)}ms`);
-      console.log(`   Nodes executed: ${result.getNodeMetricsMap().getLength()}`);
-      
-      // Display per-node metrics
-      result.getNodeMetricsMap().forEach((metrics, nodeId) => {
-        console.log(`   - ${nodeId}: ${metrics.getExecutionTimeMs().toFixed(2)}ms`);
-      });
-      
-      // Check output
-      const outputAudio = result.getAudioOutputsMap().get('echo');
-      if (outputAudio) {
-        console.log(`\n   Output audio: ${outputAudio.getNumSamples()} samples @ ${outputAudio.getSampleRate()}Hz`);
-        console.log(`   Format: ${AudioFormat[outputAudio.getFormat()]}`);
-        console.log(`   Channels: ${outputAudio.getChannels()}`);
-      }
-      
-      console.log('\n✅ Multi-node pipeline completed successfully!');
-    } else {
-      const error = response.getError()!;
-      console.error(`❌ Error: ${error.getMessage()}`);
-      process.exit(1);
+    for (const [nodeId, metrics] of Object.entries(result.metrics.nodeMetrics)) {
+      console.log(`   - ${nodeId}: ${metrics.executionTimeMs.toFixed(2)}ms`);
     }
     
+    if (result.audioOutputs.echo) {
+      const output = result.audioOutputs.echo;
+      console.log(`\n   Output audio: ${output.numSamples} samples @ ${output.sampleRate}Hz`);
+      console.log(`   Format: ${output.format}`);
+      console.log(`   Channels: ${output.channels}`);
+    }
+    
+    console.log('\n✅ Multi-node pipeline completed successfully!');
+    
   } catch (error) {
-    console.error(`\n❌ Error: ${error}`);
+    if (error instanceof RemoteMediaError) {
+      console.error(`\n❌ Error: ${error.message}`);
+      if (error.errorType) console.error(`   Type: ${error.errorType}`);
+      if (error.failingNodeId) console.error(`   Node: ${error.failingNodeId}`);
+    } else {
+      console.error(`\n❌ Error: ${error}`);
+    }
     process.exit(1);
   } finally {
     await client.disconnect();
