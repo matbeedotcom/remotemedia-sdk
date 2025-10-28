@@ -111,6 +111,12 @@ name = "pipeline_executor_wasm"
 path = "src/bin/pipeline_executor_wasm.rs"
 required-features = ["wasm"]
 
+# gRPC server binary
+[[bin]]
+name = "grpc_server"
+path = "bin/grpc_server.rs"
+required-features = ["grpc-transport"]
+
 [[bench]]
 name = "pipeline_execution"
 harness = false
