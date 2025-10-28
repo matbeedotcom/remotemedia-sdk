@@ -18,16 +18,19 @@ async fn test_execution_metrics_populated() {
     // Create simple pipeline
     let manifest = PipelineManifest {
         version: "1.0".to_string(),
+        metadata: None,
         nodes: vec![
             NodeManifest {
                 id: "resample".to_string(),
                 node_type: "AudioResample".to_string(),
-                parameters: r#"{"target_sample_rate": 16000}"#.to_string(),
+                params: r#"{"target_sample_rate": 16000}"#.to_string(),
+                is_streaming: false,
+                capabilities: None,
+                host: String::new(),
                 runtime_hint: 0,
             },
         ],
         connections: vec![],
-        metadata: None,
     };
 
     let input_samples = 44100;
@@ -46,6 +49,7 @@ async fn test_execution_metrics_populated() {
         audio_inputs: vec![("resample".to_string(), audio_input)].into_iter().collect(),
         data_inputs: std::collections::HashMap::new(),
         resource_limits: None,
+        client_version: "v1".to_string(),
     };
 
     // TODO: Call ExecutePipeline service once implemented
