@@ -38,8 +38,19 @@ use remotemedia_runtime::grpc_service::{init_tracing, server::GrpcServer, Servic
 use std::sync::Arc;
 use tracing::{error, info};
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // T036: Configure multi-threaded tokio runtime for concurrent client support
+    // Use all available CPU cores for handling concurrent requests
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(num_cpus::get())
+        .thread_name("remotemedia-worker")
+        .enable_all()
+        .build()?;
+
+    runtime.block_on(async_main())
+}
+
+async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     // Load configuration from environment
     let config = ServiceConfig::from_env();
 
