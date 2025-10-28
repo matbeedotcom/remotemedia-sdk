@@ -1,9 +1,9 @@
 // Benchmark for pipeline execution performance
 // Comparing Rust runtime with Python baseline
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use remotemedia_runtime::executor::Executor;
-use remotemedia_runtime::manifest::{Manifest, ManifestMetadata, NodeManifest, Connection};
+use remotemedia_runtime::manifest::{Connection, Manifest, ManifestMetadata, NodeManifest};
 use serde_json::Value;
 use tokio::runtime::Runtime;
 
@@ -40,8 +40,14 @@ fn create_simple_pipeline() -> Manifest {
             },
         ],
         connections: vec![
-            Connection { from: "pass_0".to_string(), to: "echo_1".to_string() },
-            Connection { from: "echo_1".to_string(), to: "pass_2".to_string() },
+            Connection {
+                from: "pass_0".to_string(),
+                to: "echo_1".to_string(),
+            },
+            Connection {
+                from: "echo_1".to_string(),
+                to: "pass_2".to_string(),
+            },
         ],
     }
 }
@@ -89,16 +95,14 @@ fn bench_simple_pipeline(c: &mut Criterion) {
 
     c.bench_function("simple_pipeline_100_items", |b| {
         b.iter(|| {
-            let input_data: Vec<Value> = (0..100)
-                .map(|i| serde_json::json!(i))
-                .collect();
+            let input_data: Vec<Value> = (0..100).map(|i| serde_json::json!(i)).collect();
 
             rt.block_on(async {
                 black_box(
                     executor
                         .execute_with_input(&manifest, input_data)
                         .await
-                        .unwrap()
+                        .unwrap(),
                 )
             })
         });
@@ -112,16 +116,14 @@ fn bench_complex_pipeline(c: &mut Criterion) {
 
     c.bench_function("complex_pipeline_100_items", |b| {
         b.iter(|| {
-            let input_data: Vec<Value> = (0..100)
-                .map(|i| serde_json::json!(i))
-                .collect();
+            let input_data: Vec<Value> = (0..100).map(|i| serde_json::json!(i)).collect();
 
             rt.block_on(async {
                 black_box(
                     executor
                         .execute_with_input(&manifest, input_data)
                         .await
-                        .unwrap()
+                        .unwrap(),
                 )
             })
         });
@@ -138,16 +140,14 @@ fn bench_pipeline_sizes(c: &mut Criterion) {
     for size in [10, 100, 1000].iter() {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
             b.iter(|| {
-                let input_data: Vec<Value> = (0..size)
-                    .map(|i| serde_json::json!(i))
-                    .collect();
+                let input_data: Vec<Value> = (0..size).map(|i| serde_json::json!(i)).collect();
 
                 rt.block_on(async {
                     black_box(
                         executor
                             .execute_with_input(&manifest, input_data)
                             .await
-                            .unwrap()
+                            .unwrap(),
                     )
                 })
             });
@@ -163,8 +163,7 @@ fn bench_graph_building(c: &mut Criterion) {
     c.bench_function("graph_construction", |b| {
         b.iter(|| {
             black_box(
-                remotemedia_runtime::executor::PipelineGraph::from_manifest(&manifest)
-                    .unwrap()
+                remotemedia_runtime::executor::PipelineGraph::from_manifest(&manifest).unwrap(),
             )
         });
     });

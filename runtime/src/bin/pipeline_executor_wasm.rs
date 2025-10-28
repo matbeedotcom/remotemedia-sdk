@@ -8,9 +8,9 @@
 //! Output: Execution results via stdout
 
 use pyo3::prelude::*;
-use std::io::{self, Read};
 use remotemedia_runtime::executor::{Executor, ExecutorConfig};
 use remotemedia_runtime::manifest::Manifest;
+use std::io::{self, Read};
 
 fn main() {
     // Initialize tracing for logging
@@ -57,15 +57,16 @@ fn get_python_version() -> PyResult<String> {
 fn execute_pipeline_wasm(manifest_json: &str) -> Result<(), String> {
     // Parse input JSON - can be either just manifest or manifest + input_data
     tracing::info!("Parsing input...");
-    let input: serde_json::Value = serde_json::from_str(manifest_json)
-        .map_err(|e| format!("Failed to parse input: {}", e))?;
+    let input: serde_json::Value =
+        serde_json::from_str(manifest_json).map_err(|e| format!("Failed to parse input: {}", e))?;
 
     // Extract manifest and optional input_data
     let (manifest, input_data) = if input.get("manifest").is_some() {
         // Format: { "manifest": {...}, "input_data": [...] }
         let manifest: Manifest = serde_json::from_value(input["manifest"].clone())
             .map_err(|e| format!("Failed to parse manifest: {}", e))?;
-        let input_data = input.get("input_data")
+        let input_data = input
+            .get("input_data")
             .and_then(|v| v.as_array())
             .map(|arr| arr.clone())
             .unwrap_or_default();
@@ -77,8 +78,13 @@ fn execute_pipeline_wasm(manifest_json: &str) -> Result<(), String> {
         (manifest, vec![])
     };
 
-    tracing::info!("Manifest parsed: {} (version {})", manifest.metadata.name, manifest.version);
-    tracing::info!("Pipeline has {} nodes and {} connections",
+    tracing::info!(
+        "Manifest parsed: {} (version {})",
+        manifest.metadata.name,
+        manifest.version
+    );
+    tracing::info!(
+        "Pipeline has {} nodes and {} connections",
         manifest.nodes.len(),
         manifest.connections.len()
     );
@@ -94,11 +100,13 @@ fn execute_pipeline_wasm(manifest_json: &str) -> Result<(), String> {
     tracing::info!("Executing pipeline...");
     let result = if !input_data.is_empty() {
         // Execute with provided input data
-        executor.execute_with_input_sync(&manifest, input_data)
+        executor
+            .execute_with_input_sync(&manifest, input_data)
             .map_err(|e| format!("Pipeline execution failed: {}", e))?
     } else {
         // Execute without input (source-based)
-        executor.execute_sync(&manifest)
+        executor
+            .execute_sync(&manifest)
             .map_err(|e| format!("Pipeline execution failed: {}", e))?
     };
 
@@ -112,7 +120,8 @@ fn execute_pipeline_wasm(manifest_json: &str) -> Result<(), String> {
             "sink_count": info.sink_count,
             "execution_order": info.execution_order,
         }))
-    })).map_err(|e| format!("Failed to serialize results: {}", e))?;
+    }))
+    .map_err(|e| format!("Failed to serialize results: {}", e))?;
 
     // Write results to stdout
     println!("\n=== PIPELINE RESULTS ===");

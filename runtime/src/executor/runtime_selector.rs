@@ -253,10 +253,7 @@ mod tests {
         assert_eq!(selector.select_runtime(&node), SelectedRuntime::CPython);
 
         let node = create_test_node("test", "SimpleNode", Some(RuntimeHint::RustPython), None);
-        assert_eq!(
-            selector.select_runtime(&node),
-            SelectedRuntime::RustPython
-        );
+        assert_eq!(selector.select_runtime(&node), SelectedRuntime::RustPython);
     }
 
     #[test]
@@ -305,10 +302,7 @@ mod tests {
 
         // Simple node
         let node = create_test_node("simple_node", "PassThroughNode", None, None);
-        assert_eq!(
-            selector.select_runtime(&node),
-            SelectedRuntime::RustPython
-        );
+        assert_eq!(selector.select_runtime(&node), SelectedRuntime::RustPython);
     }
 
     #[test]

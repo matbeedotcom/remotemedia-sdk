@@ -8,7 +8,7 @@
 //!
 //! Does NOT use name-based heuristics - relies on concrete indicators only.
 
-use super::{NodeCapabilities, ExecutionPlacement};
+use super::{ExecutionPlacement, NodeCapabilities};
 use crate::manifest::NodeManifest;
 
 /// Detect node capabilities from manifest metadata
@@ -91,15 +91,26 @@ fn merge_registered_capabilities(registered: &NodeCapabilities, caps: &mut NodeC
     caps.estimated_memory_mb = caps.estimated_memory_mb.max(registered.estimated_memory_mb);
 
     // Merge placement strategies (explicit takes priority)
-    if matches!(caps.placement, ExecutionPlacement::Auto | ExecutionPlacement::PreferAnywhere | ExecutionPlacement::PreferWasi) {
-        if matches!(registered.placement, ExecutionPlacement::RequiresRemote | ExecutionPlacement::PreferRemote) {
+    if matches!(
+        caps.placement,
+        ExecutionPlacement::Auto
+            | ExecutionPlacement::PreferAnywhere
+            | ExecutionPlacement::PreferWasi
+    ) {
+        if matches!(
+            registered.placement,
+            ExecutionPlacement::RequiresRemote | ExecutionPlacement::PreferRemote
+        ) {
             caps.placement = registered.placement.clone();
         }
     }
 }
 
 /// Analyze node parameters for capability hints
-fn analyze_parameters(params: &serde_json::Map<String, serde_json::Value>, caps: &mut NodeCapabilities) {
+fn analyze_parameters(
+    params: &serde_json::Map<String, serde_json::Value>,
+    caps: &mut NodeCapabilities,
+) {
     // Check for model file references (indicates large memory)
     if let Some(model_path) = params.get("model").or_else(|| params.get("model_path")) {
         if let Some(model_str) = model_path.as_str() {
@@ -128,9 +139,11 @@ fn analyze_parameters(params: &serde_json::Map<String, serde_json::Value>, caps:
     }
 
     // Check for thread count
-    if let Some(threads) = params.get("threads")
+    if let Some(threads) = params
+        .get("threads")
         .or_else(|| params.get("num_threads"))
-        .or_else(|| params.get("n_threads")) {
+        .or_else(|| params.get("n_threads"))
+    {
         if let Some(thread_count) = threads.as_u64() {
             if thread_count > 1 {
                 caps.requires_threads = true;
@@ -231,7 +244,6 @@ fn apply_execution_metadata(
     }
 }
 
-
 /// Detect capabilities for an entire pipeline
 pub fn detect_pipeline_capabilities(nodes: &[NodeManifest]) -> super::PipelineCapabilities {
     let mut pipeline_caps = super::PipelineCapabilities::default();
@@ -240,27 +252,38 @@ pub fn detect_pipeline_capabilities(nodes: &[NodeManifest]) -> super::PipelineCa
         let node_caps = detect_node_capabilities(node);
 
         // Aggregate requirements
-        pipeline_caps.max_memory_mb = pipeline_caps.max_memory_mb.max(node_caps.estimated_memory_mb);
+        pipeline_caps.max_memory_mb = pipeline_caps
+            .max_memory_mb
+            .max(node_caps.estimated_memory_mb);
         pipeline_caps.requires_gpu |= node_caps.requires_gpu;
         pipeline_caps.requires_threads |= node_caps.requires_threads;
 
         // Check if node can't run locally
-        if !node_caps.supports_browser || matches!(node_caps.placement, ExecutionPlacement::RequiresRemote | ExecutionPlacement::PreferRemote | ExecutionPlacement::RequiresNative) {
+        if !node_caps.supports_browser
+            || matches!(
+                node_caps.placement,
+                ExecutionPlacement::RequiresRemote
+                    | ExecutionPlacement::PreferRemote
+                    | ExecutionPlacement::RequiresNative
+            )
+        {
             pipeline_caps.fully_local = false;
             pipeline_caps.requires_remote = true;
             pipeline_caps.remote_nodes.push(node.id.clone());
 
             // Add to environment requirements
             if node_caps.requires_native_libs {
-                pipeline_caps.environment_requirements.insert(
-                    node.id.clone(),
-                    "native_libs".to_string(),
-                );
+                pipeline_caps
+                    .environment_requirements
+                    .insert(node.id.clone(), "native_libs".to_string());
             }
             if node_caps.requires_gpu {
                 pipeline_caps.environment_requirements.insert(
                     node.id.clone(),
-                    format!("gpu:{:?}", node_caps.gpu_type.unwrap_or(super::GpuType::Any)),
+                    format!(
+                        "gpu:{:?}",
+                        node_caps.gpu_type.unwrap_or(super::GpuType::Any)
+                    ),
                 );
             }
         }
@@ -380,8 +403,14 @@ mod tests {
 
         let pipeline_caps = detect_pipeline_capabilities(&nodes);
 
-        assert!(!pipeline_caps.fully_local, "Remote node prevents full local execution");
-        assert!(pipeline_caps.requires_remote, "Pipeline needs remote executor");
+        assert!(
+            !pipeline_caps.fully_local,
+            "Remote node prevents full local execution"
+        );
+        assert!(
+            pipeline_caps.requires_remote,
+            "Pipeline needs remote executor"
+        );
         assert_eq!(pipeline_caps.remote_nodes, vec!["whisper"]);
     }
 

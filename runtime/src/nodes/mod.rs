@@ -8,8 +8,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 // Sub-modules
-pub mod registry;
 pub mod audio;
+pub mod registry;
 
 #[cfg(feature = "whisper")]
 mod whisper;
@@ -125,7 +125,8 @@ impl NodeRegistry {
     where
         F: Fn() -> Box<dyn NodeExecutor> + Send + Sync + 'static,
     {
-        self.factories.insert(node_type.to_string(), Box::new(factory));
+        self.factories
+            .insert(node_type.to_string(), Box::new(factory));
     }
 
     /// Create a node instance
@@ -163,7 +164,10 @@ impl Default for NodeRegistry {
 
         // Register Whisper transcription node (if feature enabled)
         #[cfg(feature = "whisper")]
-        registry.register("RustWhisperTranscriber", || Box::new(RustWhisperNode::new()));
+        registry.register(
+            "RustWhisperTranscriber",
+            || Box::new(RustWhisperNode::new()),
+        );
 
         registry
     }

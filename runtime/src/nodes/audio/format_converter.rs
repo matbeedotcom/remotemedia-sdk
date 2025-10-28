@@ -1,8 +1,8 @@
+use crate::audio::format::{f32_to_i16, f32_to_i32, i16_to_f32, i32_to_f32};
 use crate::audio::{AudioBuffer, AudioFormat};
-use crate::audio::format::{i16_to_f32, i32_to_f32, f32_to_i16, f32_to_i32};
-use crate::executor::node_executor::{NodeExecutor, NodeContext};
-use crate::nodes::registry::NodeFactory;
 use crate::error::{Error, Result};
+use crate::executor::node_executor::{NodeContext, NodeExecutor};
+use crate::nodes::registry::NodeFactory;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -22,37 +22,37 @@ impl RustFormatConverterNode {
             (AudioFormat::F32, AudioFormat::F32) => Ok(samples.to_vec()),
             (AudioFormat::I16, AudioFormat::I16) => Ok(samples.to_vec()),
             (AudioFormat::I32, AudioFormat::I32) => Ok(samples.to_vec()),
-            
+
             // I16 -> F32
             (AudioFormat::I16, AudioFormat::F32) => {
                 // Reinterpret f32 slice as i16 (zero-copy via bytemuck)
                 let i16_samples = bytemuck::cast_slice::<f32, i16>(samples);
                 Ok(i16_to_f32(i16_samples))
-            },
-            
+            }
+
             // I32 -> F32
             (AudioFormat::I32, AudioFormat::F32) => {
                 // Reinterpret f32 slice as i32 (zero-copy via bytemuck)
                 let i32_samples = bytemuck::cast_slice::<f32, i32>(samples);
                 Ok(i32_to_f32(i32_samples))
-            },
-            
+            }
+
             // F32 -> I16 (then reinterpret as f32 for storage)
             (AudioFormat::F32, AudioFormat::I16) => {
                 let i16_samples = f32_to_i16(samples);
                 // Cast i16 back to f32 storage format (this is safe with bytemuck)
                 let f32_storage = bytemuck::cast_slice::<i16, f32>(&i16_samples);
                 Ok(f32_storage.to_vec())
-            },
-            
+            }
+
             // F32 -> I32 (then reinterpret as f32 for storage)
             (AudioFormat::F32, AudioFormat::I32) => {
                 let i32_samples = f32_to_i32(samples);
                 // Cast i32 back to f32 storage format
                 let f32_storage = bytemuck::cast_slice::<i32, f32>(&i32_samples);
                 Ok(f32_storage.to_vec())
-            },
-            
+            }
+
             // I16 -> I32
             (AudioFormat::I16, AudioFormat::I32) => {
                 let i16_samples = bytemuck::cast_slice::<f32, i16>(samples);
@@ -60,8 +60,8 @@ impl RustFormatConverterNode {
                 let i32_samples = f32_to_i32(&f32_intermediate);
                 let f32_storage = bytemuck::cast_slice::<i32, f32>(&i32_samples);
                 Ok(f32_storage.to_vec())
-            },
-            
+            }
+
             // I32 -> I16
             (AudioFormat::I32, AudioFormat::I16) => {
                 let i32_samples = bytemuck::cast_slice::<f32, i32>(samples);
@@ -69,7 +69,7 @@ impl RustFormatConverterNode {
                 let i16_samples = f32_to_i16(&f32_intermediate);
                 let f32_storage = bytemuck::cast_slice::<i16, f32>(&i16_samples);
                 Ok(f32_storage.to_vec())
-            },
+            }
         }
     }
 }
@@ -83,26 +83,29 @@ impl NodeExecutor for RustFormatConverterNode {
 
     async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
         // Extract audio data from input
-        let audio_data = input.get("data")
+        let audio_data = input
+            .get("data")
             .and_then(|d| d.as_array())
             .ok_or_else(|| Error::Execution("Missing audio data array".into()))?;
 
-        let samples: Vec<f32> = audio_data.iter()
+        let samples: Vec<f32> = audio_data
+            .iter()
             .filter_map(|v| v.as_f64().map(|f| f as f32))
             .collect();
 
-        let sample_rate = input.get("sample_rate")
+        let sample_rate = input
+            .get("sample_rate")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| Error::Execution("Missing sample_rate".into()))? as u32;
+            .ok_or_else(|| Error::Execution("Missing sample_rate".into()))?
+            as u32;
 
-        let channels = input.get("channels")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u16;
+        let channels = input.get("channels").and_then(|v| v.as_u64()).unwrap_or(1) as u16;
 
-        let input_format_str = input.get("format")
+        let input_format_str = input
+            .get("format")
             .and_then(|v| v.as_str())
             .unwrap_or("F32");
-        
+
         let input_format = match input_format_str {
             "F32" => AudioFormat::F32,
             "I16" => AudioFormat::I16,
@@ -176,7 +179,7 @@ mod tests {
             params: serde_json::json!({}),
             metadata: std::collections::HashMap::new(),
         };
-        
+
         let result = node.initialize(&context).await;
         assert!(result.is_ok());
     }
@@ -185,17 +188,17 @@ mod tests {
     async fn test_format_converter_factory() {
         let factory = FormatConverterNodeFactory::new(AudioFormat::I16);
         let node = factory.create(serde_json::json!({}));
-        
+
         assert!(node.is_ok());
     }
 
     #[tokio::test]
     async fn test_no_conversion_needed() {
         let node = RustFormatConverterNode::new(AudioFormat::F32);
-        
+
         let input_samples = vec![0.1, 0.2, 0.3, 0.4];
         let result = node.convert_samples(AudioFormat::F32, &input_samples);
-        
+
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), input_samples);
     }
@@ -203,12 +206,12 @@ mod tests {
     #[tokio::test]
     async fn test_f32_to_i16_conversion() {
         let node = RustFormatConverterNode::new(AudioFormat::I16);
-        
+
         let input_samples = vec![0.0, 0.5, -0.5, 1.0];
         let result = node.convert_samples(AudioFormat::F32, &input_samples);
-        
+
         assert!(result.is_ok());
-        
+
         // Result should have same number of f32 values (but containing i16 data)
         let converted = result.unwrap();
         assert_eq!(converted.len(), 2); // 4 i16 values = 2 f32 values in storage

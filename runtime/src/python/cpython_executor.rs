@@ -14,10 +14,12 @@
 //! - Loads Python SDK nodes from remotemedia.nodes module
 //! - Manages GIL-protected node instances
 
-use crate::{Error, Result};
-use crate::nodes::{NodeContext, NodeExecutor};
-use crate::python::marshal::{json_to_python, json_to_python_with_cache, python_to_json, python_to_json_with_cache};
 use crate::executor::PyObjectCache;
+use crate::nodes::{NodeContext, NodeExecutor};
+use crate::python::marshal::{
+    json_to_python, json_to_python_with_cache, python_to_json, python_to_json_with_cache,
+};
+use crate::{Error, Result};
 use async_trait::async_trait;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -186,7 +188,11 @@ impl CPythonNodeExecutor {
     }
 
     /// Check if the node's process method is an async generator function
-    fn process_is_async_gen_function(&self, py: Python, instance: &Bound<'_, PyAny>) -> PyResult<bool> {
+    fn process_is_async_gen_function(
+        &self,
+        py: Python,
+        instance: &Bound<'_, PyAny>,
+    ) -> PyResult<bool> {
         let inspect = py.import("inspect")?;
 
         // Get the process method
@@ -198,15 +204,22 @@ impl CPythonNodeExecutor {
     }
 
     /// Wrap input data as an async generator for streaming nodes
-    fn wrap_input_as_async_generator<'py>(&self, py: Python<'py>, input: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn wrap_input_as_async_generator<'py>(
+        &self,
+        py: Python<'py>,
+        input: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         // Create an async generator that yields the input data once
-        let wrapper_code = std::ffi::CString::new(r#"
+        let wrapper_code = std::ffi::CString::new(
+            r#"
 async def _input_wrapper(data):
     """Wrap single input as async generator that yields once."""
     yield data
 
 _wrapped = _input_wrapper
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         py.run(&wrapper_code, None, None)?;
 
@@ -279,7 +292,12 @@ _StreamingQueue = StreamingQueue
     }
 
     /// Feed an item into the streaming queue
-    fn feed_streaming_queue(&self, py: Python, queue: &Bound<'_, PyAny>, item: &Bound<'_, PyAny>) -> PyResult<()> {
+    fn feed_streaming_queue(
+        &self,
+        py: Python,
+        queue: &Bound<'_, PyAny>,
+        item: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
         // Call queue.put(item) using py.run() instead of call_method1()
         // For some reason call_method1() doesn't work reliably when event loops are involved
         let code = std::ffi::CString::new("queue_ref.put(item_ref)").unwrap();
@@ -307,7 +325,10 @@ _StreamingQueue = StreamingQueue
         let event_loop = asyncio.call_method0("new_event_loop")?;
         asyncio.call_method1("set_event_loop", (&event_loop,))?;
         self.event_loop = Some(event_loop.unbind().into());
-        tracing::info!("Created new event loop for streaming node: {}", self.node_type);
+        tracing::info!(
+            "Created new event loop for streaming node: {}",
+            self.node_type
+        );
 
         // Create the streaming queue
         let queue = self.create_async_queue(py)?;
@@ -321,9 +342,10 @@ _StreamingQueue = StreamingQueue
 
         // The result should be an async generator
         if !self.is_async_generator(py, &process_result)? {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                format!("Streaming node {} process() must return async generator", self.node_type)
-            ));
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "Streaming node {} process() must return async generator",
+                self.node_type
+            )));
         }
 
         // Store both the queue and the generator
@@ -343,7 +365,11 @@ _StreamingQueue = StreamingQueue
     }
 
     /// Await a Python coroutine using asyncio
-    fn await_coroutine<'py>(&self, py: Python<'py>, coro: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn await_coroutine<'py>(
+        &self,
+        py: Python<'py>,
+        coro: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         // For streaming nodes, use the stored event loop to ensure queue and generator
         // run in the same event loop context
         if let Some(event_loop_py) = &self.event_loop {
@@ -372,11 +398,19 @@ _StreamingQueue = StreamingQueue
 
     /// Get the next item from an async generator
     /// Returns None if the generator is exhausted
-    fn get_next_from_generator(&self, py: Python, async_gen: &Bound<'_, PyAny>) -> PyResult<Option<Value>> {
-        tracing::info!("Getting next item from async generator for node: {}", self.node_type);
+    fn get_next_from_generator(
+        &self,
+        py: Python,
+        async_gen: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Value>> {
+        tracing::info!(
+            "Getting next item from async generator for node: {}",
+            self.node_type
+        );
 
         // Use __anext__() to get the next item from the async generator
-        let code = std::ffi::CString::new(r#"
+        let code = std::ffi::CString::new(
+            r#"
 async def _get_next(agen):
     """Get next item from async generator, or None if exhausted."""
     try:
@@ -384,7 +418,9 @@ async def _get_next(agen):
         return (True, item)
     except StopAsyncIteration:
         return (False, None)
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         py.run(&code, None, None)?;
 
@@ -414,17 +450,25 @@ async def _get_next(agen):
         // Convert this single item using cache-aware conversion
         let json_value = self.convert_output_to_json(py, &item)?;
 
-        tracing::info!("Got next item from async generator for node {}", self.node_type);
+        tracing::info!(
+            "Got next item from async generator for node {}",
+            self.node_type
+        );
 
         Ok(Some(json_value))
     }
 
     /// Try to get next item from async generator without blocking
     /// Returns None if no item is immediately available
-    fn try_get_next_from_generator(&self, py: Python, async_gen: &Bound<'_, PyAny>) -> PyResult<Option<Value>> {
+    fn try_get_next_from_generator(
+        &self,
+        py: Python,
+        async_gen: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Value>> {
         // Use asyncio.wait_for with a reasonable timeout to allow async code to run
         // Use 1 second timeout to ensure we catch any yields that happen during processing
-        let code = std::ffi::CString::new(r#"
+        let code = std::ffi::CString::new(
+            r#"
 import asyncio
 
 async def _try_get_next(agen):
@@ -438,7 +482,9 @@ async def _try_get_next(agen):
     except StopAsyncIteration:
         # Generator exhausted
         return (False, None)
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         py.run(&code, None, None)?;
 
@@ -470,12 +516,17 @@ async def _try_get_next(agen):
     /// Iterate async generator and convert each item to JSON individually
     /// Returns a Vec<Value> instead of collecting into a single array first
     /// THIS IS DEPRECATED - use get_next_from_generator for true streaming
-    fn iterate_async_generator(&self, py: Python, async_gen: &Bound<'_, PyAny>) -> PyResult<Vec<Value>> {
+    fn iterate_async_generator(
+        &self,
+        py: Python,
+        async_gen: &Bound<'_, PyAny>,
+    ) -> PyResult<Vec<Value>> {
         tracing::info!("Iterating async generator for node: {}", self.node_type);
 
         // We need to iterate through the async generator and convert each item
         // This requires running it in an asyncio event loop
-        let code = std::ffi::CString::new(r#"
+        let code = std::ffi::CString::new(
+            r#"
 async def _iterate_async_gen(agen, converter):
     """Iterate async generator and convert each item individually."""
     results = []
@@ -486,7 +537,9 @@ async def _iterate_async_gen(agen, converter):
         results.append(converted)
         count += 1
     return results, count
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         // Execute the helper function
         py.run(&code, None, None)?;
@@ -498,11 +551,14 @@ async def _iterate_async_gen(agen, converter):
 
         // Create a converter function that will be called for each item
         // This converts each item to JSON with caching BEFORE appending to the list
-        let converter_code = std::ffi::CString::new(r#"
+        let converter_code = std::ffi::CString::new(
+            r#"
 def _converter(item):
     """Identity function - just return the item as-is for now."""
     return item
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         py.run(&converter_code, None, None)?;
         let converter_fn = locals.get_item("_converter")?;
@@ -530,7 +586,11 @@ def _converter(item):
             }
         }
 
-        tracing::info!("Converted {} items from async generator for node {}", json_items.len(), self.node_type);
+        tracing::info!(
+            "Converted {} items from async generator for node {}",
+            json_items.len(),
+            self.node_type
+        );
 
         Ok(json_items)
     }
@@ -572,7 +632,8 @@ impl NodeExecutor for CPythonNodeExecutor {
                 Python::with_gil(|py| {
                     let sys = py.import("sys").expect("Failed to import sys");
                     // Reduce from default 1000 to 100 to avoid browser stack overflow
-                    sys.setattr("recursionlimit", 100).expect("Failed to set recursion limit");
+                    sys.setattr("recursionlimit", 100)
+                        .expect("Failed to set recursion limit");
                     tracing::info!("Set Python recursion limit to 100 for WASM");
                 });
             });
@@ -767,7 +828,10 @@ impl NodeExecutor for CPythonNodeExecutor {
     /// Cleanup the CPython node
     async fn cleanup(&mut self) -> Result<()> {
         if !self.initialized {
-            tracing::info!("CPython node {} not initialized, skipping cleanup", self.node_type);
+            tracing::info!(
+                "CPython node {} not initialized, skipping cleanup",
+                self.node_type
+            );
             return Ok(());
         }
 
@@ -787,7 +851,10 @@ impl NodeExecutor for CPythonNodeExecutor {
             self.streaming_finished = true;
 
             // Pull any remaining items from the generator
-            tracing::info!("Draining remaining items from streaming node {}", self.node_type);
+            tracing::info!(
+                "Draining remaining items from streaming node {}",
+                self.node_type
+            );
             loop {
                 if let Some(gen) = &self.active_generator {
                     match Python::with_gil(|py| -> PyResult<Option<Value>> {
@@ -795,7 +862,7 @@ impl NodeExecutor for CPythonNodeExecutor {
                         self.get_next_from_generator(py, bound_gen)
                     }) {
                         Ok(Some(_)) => continue, // Keep draining
-                        _ => break,  // Generator exhausted or error
+                        _ => break,              // Generator exhausted or error
                     }
                 } else {
                     break;
@@ -840,7 +907,10 @@ impl NodeExecutor for CPythonNodeExecutor {
         // FIRST: Try to collect any outputs that were already yielded
         // The generator may have already processed the finish signal and yielded data
         let mut outputs = Vec::new();
-        tracing::info!("Pre-finish: checking for any already-yielded outputs from {}", self.node_type);
+        tracing::info!(
+            "Pre-finish: checking for any already-yielded outputs from {}",
+            self.node_type
+        );
         if let Some(gen) = &self.active_generator {
             // Try a non-blocking poll first
             match Python::with_gil(|py| -> PyResult<Option<Value>> {
@@ -848,7 +918,10 @@ impl NodeExecutor for CPythonNodeExecutor {
                 self.try_get_next_from_generator(py, bound_gen)
             }) {
                 Ok(Some(value)) => {
-                    tracing::info!("Found pre-yielded value from streaming node {}", self.node_type);
+                    tracing::info!(
+                        "Found pre-yielded value from streaming node {}",
+                        self.node_type
+                    );
                     outputs.push(value);
                 }
                 _ => {}
@@ -873,7 +946,10 @@ impl NodeExecutor for CPythonNodeExecutor {
         // IMPORTANT: After finishing the queue, the generator needs to be polled
         // for it to notice the stream ended and execute flush code.
         // Calling __anext__() will resume the generator and let it complete.
-        tracing::info!("Collecting remaining outputs from streaming node {}", self.node_type);
+        tracing::info!(
+            "Collecting remaining outputs from streaming node {}",
+            self.node_type
+        );
         loop {
             if let Some(gen) = &self.active_generator {
                 tracing::info!("Polling async generator for node: {}", self.node_type);
@@ -883,13 +959,16 @@ impl NodeExecutor for CPythonNodeExecutor {
                     self.get_next_from_generator(py, bound_gen)
                 }) {
                     Ok(Some(value)) => {
-                        tracing::info!("Streaming node {} yielded value during flush", self.node_type);
+                        tracing::info!(
+                            "Streaming node {} yielded value during flush",
+                            self.node_type
+                        );
                         outputs.push(value);
                         // Continue polling in case there are more items
                     }
                     Ok(None) => {
                         tracing::info!("Async generator exhausted for node {}", self.node_type);
-                        break;  // Generator exhausted
+                        break; // Generator exhausted
                     }
                     Err(e) => {
                         return Err(Error::Execution(format!(
@@ -903,7 +982,11 @@ impl NodeExecutor for CPythonNodeExecutor {
             }
         }
 
-        tracing::info!("Streaming node {} finished, collected {} outputs", self.node_type, outputs.len());
+        tracing::info!(
+            "Streaming node {} finished, collected {} outputs",
+            self.node_type,
+            outputs.len()
+        );
         Ok(outputs)
     }
 
@@ -939,7 +1022,8 @@ mod tests {
 
         // Create a simple test node in Python
         Python::with_gil(|py| {
-            let code = CString::new(r#"
+            let code = CString::new(
+                r#"
 class TestNodeLifecycle:
     def __init__(self, multiplier=1):
         self.multiplier = multiplier
@@ -954,7 +1038,9 @@ class TestNodeLifecycle:
 
     def cleanup(self):
         pass
-"#).unwrap();
+"#,
+            )
+            .unwrap();
             py.run(&code, None, None).unwrap();
 
             // Register it in remotemedia.nodes (mock)
@@ -1002,11 +1088,14 @@ class TestNodeLifecycle:
 
         // Create a minimal node without initialize/cleanup
         Python::with_gil(|py| {
-            let code = CString::new(r#"
+            let code = CString::new(
+                r#"
 class MinimalNode:
     def process(self, data):
         return {"result": data}
-"#).unwrap();
+"#,
+            )
+            .unwrap();
             py.run(&code, None, None).unwrap();
 
             let sys = py.import("sys").unwrap();
@@ -1017,7 +1106,9 @@ class MinimalNode:
             ).unwrap();
             py.run(&mock_code, None, None).unwrap();
 
-            let mock_module = py.eval(&CString::new("mock_module").unwrap(), None, None).unwrap();
+            let mock_module = py
+                .eval(&CString::new("mock_module").unwrap(), None, None)
+                .unwrap();
             modules.set_item("remotemedia.nodes", mock_module).unwrap();
         });
 
@@ -1046,7 +1137,8 @@ class MinimalNode:
 
         // Create a streaming node with async generator
         Python::with_gil(|py| {
-            let code = CString::new(r#"
+            let code = CString::new(
+                r#"
 class StreamingNodeAsyncGen:
     def __init__(self):
         self.count = 0
@@ -1055,7 +1147,9 @@ class StreamingNodeAsyncGen:
         """Async generator that yields multiple results."""
         for i in range(3):
             yield {"index": i, "data": data, "multiplier": i * 2}
-"#).unwrap();
+"#,
+            )
+            .unwrap();
             py.run(&code, None, None).unwrap();
 
             let sys = py.import("sys").unwrap();
@@ -1080,7 +1174,10 @@ class StreamingNodeAsyncGen:
         executor.initialize(&context).await.unwrap();
 
         // Process data through async generator
-        let result = executor.process(serde_json::json!("test_data")).await.unwrap();
+        let result = executor
+            .process(serde_json::json!("test_data"))
+            .await
+            .unwrap();
         assert!(!result.is_empty());
 
         // result is now Vec<Value>, check it directly
@@ -1102,7 +1199,8 @@ class StreamingNodeAsyncGen:
 
         // Create a node with async process method (coroutine, not generator)
         Python::with_gil(|py| {
-            let code = CString::new(r#"
+            let code = CString::new(
+                r#"
 import asyncio
 
 class AsyncNode:
@@ -1110,7 +1208,9 @@ class AsyncNode:
         """Async function that returns a single result."""
         await asyncio.sleep(0)  # Simulate async work
         return {"result": data * 2, "async": True}
-"#).unwrap();
+"#,
+            )
+            .unwrap();
             py.run(&code, None, None).unwrap();
 
             let sys = py.import("sys").unwrap();
@@ -1121,7 +1221,9 @@ class AsyncNode:
             ).unwrap();
             py.run(&mock_code, None, None).unwrap();
 
-            let mock_module = py.eval(&CString::new("mock_module").unwrap(), None, None).unwrap();
+            let mock_module = py
+                .eval(&CString::new("mock_module").unwrap(), None, None)
+                .unwrap();
             modules.set_item("remotemedia.nodes", mock_module).unwrap();
         });
 

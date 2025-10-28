@@ -3,8 +3,8 @@
 //! The NodeRegistry manages node factories and handles runtime hint resolution
 //! to select between Rust-native and Python-fallback implementations.
 
-use crate::executor::node_executor::{NodeExecutor, NodeContext};
 use crate::error::{Error, Result};
+use crate::executor::node_executor::{NodeContext, NodeExecutor};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -41,10 +41,10 @@ impl Default for RuntimeHint {
 pub trait NodeFactory: Send + Sync {
     /// Create a new node executor with given parameters
     fn create(&self, params: Value) -> Result<Box<dyn NodeExecutor>>;
-    
+
     /// Get the node type name
     fn node_type(&self) -> &str;
-    
+
     /// Check if this is a Rust-native implementation
     fn is_rust_native(&self) -> bool {
         true
@@ -55,7 +55,7 @@ pub trait NodeFactory: Send + Sync {
 pub struct NodeRegistry {
     /// Rust-native factories by node type
     rust_factories: HashMap<String, Arc<dyn NodeFactory>>,
-    
+
     /// Python fallback factories by node type
     python_factories: HashMap<String, Arc<dyn NodeFactory>>,
 }
@@ -68,19 +68,19 @@ impl NodeRegistry {
             python_factories: HashMap::new(),
         }
     }
-    
+
     /// Register a Rust-native node factory
     pub fn register_rust(&mut self, factory: Arc<dyn NodeFactory>) {
         let node_type = factory.node_type().to_string();
         self.rust_factories.insert(node_type, factory);
     }
-    
+
     /// Register a Python fallback factory
     pub fn register_python(&mut self, factory: Arc<dyn NodeFactory>) {
         let node_type = factory.node_type().to_string();
         self.python_factories.insert(node_type, factory);
     }
-    
+
     /// Create a node executor with runtime hint resolution
     ///
     /// # Arguments
@@ -132,17 +132,17 @@ impl NodeRegistry {
             }
         }
     }
-    
+
     /// Check if a Rust implementation is available for a node type
     pub fn has_rust_impl(&self, node_type: &str) -> bool {
         self.rust_factories.contains_key(node_type)
     }
-    
+
     /// Check if a Python implementation is available for a node type
     pub fn has_python_impl(&self, node_type: &str) -> bool {
         self.python_factories.contains_key(node_type)
     }
-    
+
     /// List all registered node types
     pub fn list_node_types(&self) -> Vec<String> {
         let mut types: Vec<String> = self
@@ -167,55 +167,55 @@ impl Default for NodeRegistry {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    
+
     // Mock node executor for testing
     struct MockExecutor {
         node_type: String,
     }
-    
+
     #[async_trait]
     impl NodeExecutor for MockExecutor {
         async fn initialize(&mut self, _ctx: &NodeContext) -> Result<()> {
             Ok(())
         }
-        
+
         async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
             Ok(vec![input])
         }
-        
+
         async fn cleanup(&mut self) -> Result<()> {
             Ok(())
         }
     }
-    
+
     // Mock factory for testing
     struct MockFactory {
         node_type: String,
         is_rust: bool,
     }
-    
+
     impl NodeFactory for MockFactory {
         fn create(&self, _params: Value) -> Result<Box<dyn NodeExecutor>> {
             Ok(Box::new(MockExecutor {
                 node_type: self.node_type.clone(),
             }))
         }
-        
+
         fn node_type(&self) -> &str {
             &self.node_type
         }
-        
+
         fn is_rust_native(&self) -> bool {
             self.is_rust
         }
     }
-    
+
     #[test]
     fn test_registry_creation() {
         let registry = NodeRegistry::new();
         assert_eq!(registry.list_node_types().len(), 0);
     }
-    
+
     #[test]
     fn test_register_rust_factory() {
         let mut registry = NodeRegistry::new();
@@ -223,12 +223,12 @@ mod tests {
             node_type: "test_node".to_string(),
             is_rust: true,
         });
-        
+
         registry.register_rust(factory);
         assert!(registry.has_rust_impl("test_node"));
         assert!(!registry.has_python_impl("test_node"));
     }
-    
+
     #[test]
     fn test_register_python_factory() {
         let mut registry = NodeRegistry::new();
@@ -236,12 +236,12 @@ mod tests {
             node_type: "test_node".to_string(),
             is_rust: false,
         });
-        
+
         registry.register_python(factory);
         assert!(!registry.has_rust_impl("test_node"));
         assert!(registry.has_python_impl("test_node"));
     }
-    
+
     #[tokio::test]
     async fn test_create_node_rust_hint() {
         let mut registry = NodeRegistry::new();
@@ -250,11 +250,11 @@ mod tests {
             is_rust: true,
         });
         registry.register_rust(factory);
-        
+
         let mut node = registry
             .create_node("test_node", RuntimeHint::Rust, Value::Null)
             .unwrap();
-        
+
         // Node should be created successfully
         let ctx = NodeContext {
             node_id: "test".to_string(),
@@ -264,11 +264,11 @@ mod tests {
         };
         assert!(node.initialize(&ctx).await.is_ok());
     }
-    
+
     #[tokio::test]
     async fn test_create_node_auto_prefers_rust() {
         let mut registry = NodeRegistry::new();
-        
+
         // Register both Rust and Python implementations
         let rust_factory = Arc::new(MockFactory {
             node_type: "test_node".to_string(),
@@ -278,15 +278,15 @@ mod tests {
             node_type: "test_node".to_string(),
             is_rust: false,
         });
-        
+
         registry.register_rust(rust_factory);
         registry.register_python(python_factory);
-        
+
         // Auto should prefer Rust
         let mut node = registry
             .create_node("test_node", RuntimeHint::Auto, Value::Null)
             .unwrap();
-        
+
         let ctx = NodeContext {
             node_id: "test".to_string(),
             node_type: "test_node".to_string(),
@@ -295,31 +295,31 @@ mod tests {
         };
         assert!(node.initialize(&ctx).await.is_ok());
     }
-    
+
     #[test]
     fn test_create_node_auto_fallback_to_python() {
         let mut registry = NodeRegistry::new();
-        
+
         // Register only Python implementation
         let factory = Arc::new(MockFactory {
             node_type: "test_node".to_string(),
             is_rust: false,
         });
         registry.register_python(factory);
-        
+
         // Auto should fallback to Python
         let result = registry.create_node("test_node", RuntimeHint::Auto, Value::Null);
         assert!(result.is_ok());
     }
-    
+
     #[test]
     fn test_create_node_not_found() {
         let registry = NodeRegistry::new();
-        
+
         let result = registry.create_node("nonexistent", RuntimeHint::Auto, Value::Null);
         assert!(result.is_err());
     }
-    
+
     #[test]
     fn test_runtime_hint_from_str() {
         assert_eq!(RuntimeHint::from_str("rust"), RuntimeHint::Rust);
@@ -329,11 +329,11 @@ mod tests {
         assert_eq!(RuntimeHint::from_str("auto"), RuntimeHint::Auto);
         assert_eq!(RuntimeHint::from_str("unknown"), RuntimeHint::Auto);
     }
-    
+
     #[test]
     fn test_list_node_types() {
         let mut registry = NodeRegistry::new();
-        
+
         let rust_factory = Arc::new(MockFactory {
             node_type: "node_a".to_string(),
             is_rust: true,
@@ -342,10 +342,10 @@ mod tests {
             node_type: "node_b".to_string(),
             is_rust: false,
         });
-        
+
         registry.register_rust(rust_factory);
         registry.register_python(python_factory);
-        
+
         let types = registry.list_node_types();
         assert_eq!(types.len(), 2);
         assert!(types.contains(&"node_a".to_string()));

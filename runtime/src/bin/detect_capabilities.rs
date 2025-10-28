@@ -24,7 +24,7 @@ fn main() {
     let node_path = &args[1];
 
     match detect_and_print(node_path) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => {
             eprintln!("Error: {}", e);
             std::process::exit(1);

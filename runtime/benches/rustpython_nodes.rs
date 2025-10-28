@@ -14,7 +14,7 @@
 //! - State preservation: negligible overhead (globals reuse)
 //! - Marshaling: <10% overhead for simple types
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use remotemedia_runtime::python::PythonNodeInstance;
 use serde_json::json;
 
@@ -41,11 +41,9 @@ class CalculatorNode:
 
     c.bench_function("rustpython_simple_node", |b| {
         b.iter(|| {
-            let mut node = PythonNodeInstance::from_source(
-                source_code,
-                "CalculatorNode",
-                params.clone()
-            ).expect("Failed to create node");
+            let mut node =
+                PythonNodeInstance::from_source(source_code, "CalculatorNode", params.clone())
+                    .expect("Failed to create node");
 
             black_box(node.process(json!(42)).expect("Failed to process"))
         });
@@ -66,15 +64,10 @@ class CounterNode:
 
     c.bench_function("rustpython_stateful_node", |b| {
         // Create node once, reuse across iterations to test state preservation
-        let mut node = PythonNodeInstance::from_source(
-            source_code,
-            "CounterNode",
-            json!(null)
-        ).expect("Failed to create node");
+        let mut node = PythonNodeInstance::from_source(source_code, "CounterNode", json!(null))
+            .expect("Failed to create node");
 
-        b.iter(|| {
-            black_box(node.process(json!(42)).expect("Failed to process"))
-        });
+        b.iter(|| black_box(node.process(json!(42)).expect("Failed to process")));
     });
 }
 
@@ -98,24 +91,23 @@ class PassThroughNode:
         ("list_small", json!([1, 2, 3, 4, 5])),
         ("list_large", json!((0..100).collect::<Vec<i32>>())),
         ("dict_simple", json!({"key": "value", "number": 42})),
-        ("dict_nested", json!({
-            "data": {"nested": {"value": 42}},
-            "array": [1, 2, 3],
-            "string": "test"
-        })),
+        (
+            "dict_nested",
+            json!({
+                "data": {"nested": {"value": 42}},
+                "array": [1, 2, 3],
+                "string": "test"
+            }),
+        ),
     ];
 
     for (name, data) in test_cases {
         group.bench_with_input(BenchmarkId::from_parameter(name), &data, |b, data| {
-            let mut node = PythonNodeInstance::from_source(
-                source_code,
-                "PassThroughNode",
-                json!(null)
-            ).expect("Failed to create node");
+            let mut node =
+                PythonNodeInstance::from_source(source_code, "PassThroughNode", json!(null))
+                    .expect("Failed to create node");
 
-            b.iter(|| {
-                black_box(node.process(data.clone()).expect("Failed to process"))
-            });
+            b.iter(|| black_box(node.process(data.clone()).expect("Failed to process")));
         });
     }
 
@@ -141,11 +133,9 @@ class SimpleNode:
 
     c.bench_function("rustpython_node_initialization", |b| {
         b.iter(|| {
-            let mut node = PythonNodeInstance::from_source(
-                source_code,
-                "SimpleNode",
-                json!({"value": 10})
-            ).expect("Failed to create node");
+            let mut node =
+                PythonNodeInstance::from_source(source_code, "SimpleNode", json!({"value": 10}))
+                    .expect("Failed to create node");
 
             node.initialize().expect("Failed to initialize");
             black_box(node.process(json!(32)).expect("Failed to process"))
@@ -185,11 +175,9 @@ class TransformNode:
     let params = json!({"multiplier": 3});
 
     c.bench_function("rustpython_complex_transform", |b| {
-        let mut node = PythonNodeInstance::from_source(
-            source_code,
-            "TransformNode",
-            params.clone()
-        ).expect("Failed to create node");
+        let mut node =
+            PythonNodeInstance::from_source(source_code, "TransformNode", params.clone())
+                .expect("Failed to create node");
 
         let test_data = json!({
             "value1": 10,
@@ -198,9 +186,7 @@ class TransformNode:
             "nested": {"count": 5}
         });
 
-        b.iter(|| {
-            black_box(node.process(test_data.clone()).expect("Failed to process"))
-        });
+        b.iter(|| black_box(node.process(test_data.clone()).expect("Failed to process")));
     });
 }
 
@@ -217,14 +203,15 @@ class StreamingNode:
 "#;
 
     c.bench_function("rustpython_streaming_node", |b| {
-        let mut node = PythonNodeInstance::from_source(
-            source_code,
-            "StreamingNode",
-            json!({"count": 5})
-        ).expect("Failed to create node");
+        let mut node =
+            PythonNodeInstance::from_source(source_code, "StreamingNode", json!({"count": 5}))
+                .expect("Failed to create node");
 
         b.iter(|| {
-            black_box(node.process_streaming(json!(10)).expect("Failed to process"))
+            black_box(
+                node.process_streaming(json!(10))
+                    .expect("Failed to process"),
+            )
         });
     });
 }
@@ -278,25 +265,17 @@ class SimpleNode:
 
     // Benchmark with VM reuse (normal operation)
     group.bench_function("with_reuse", |b| {
-        let mut node = PythonNodeInstance::from_source(
-            source_code,
-            "SimpleNode",
-            json!(null)
-        ).expect("Failed to create node");
+        let mut node = PythonNodeInstance::from_source(source_code, "SimpleNode", json!(null))
+            .expect("Failed to create node");
 
-        b.iter(|| {
-            black_box(node.process(json!(42)).expect("Failed to process"))
-        });
+        b.iter(|| black_box(node.process(json!(42)).expect("Failed to process")));
     });
 
     // Benchmark without VM reuse (recreate each time)
     group.bench_function("without_reuse", |b| {
         b.iter(|| {
-            let mut node = PythonNodeInstance::from_source(
-                source_code,
-                "SimpleNode",
-                json!(null)
-            ).expect("Failed to create node");
+            let mut node = PythonNodeInstance::from_source(source_code, "SimpleNode", json!(null))
+                .expect("Failed to create node");
 
             black_box(node.process(json!(42)).expect("Failed to process"))
         });

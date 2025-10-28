@@ -67,10 +67,7 @@ pub fn f32_to_i16(samples: &[f32]) -> Vec<i16> {
 /// assert!((f32_samples[4] + 1.0).abs() < 0.0001);
 /// ```
 pub fn i32_to_f32(samples: &[i32]) -> Vec<f32> {
-    samples
-        .iter()
-        .map(|&s| s as f32 / 2147483648.0)
-        .collect()
+    samples.iter().map(|&s| s as f32 / 2147483648.0).collect()
 }
 
 /// Convert f32 samples to i32 (range: -1.0..1.0 → -2147483648..2147483647)

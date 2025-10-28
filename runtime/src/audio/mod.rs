@@ -6,11 +6,11 @@
 //! - Sample rate and channel configuration
 //! - Safe format conversions
 
-pub mod format;
 pub mod buffer;
+pub mod format;
 
-use std::sync::Arc;
 pub use buffer::{AudioBuffer as AudioBufferNew, AudioData};
+use std::sync::Arc;
 
 /// Audio sample format
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,13 +31,13 @@ pub enum AudioFormat {
 pub struct AudioBuffer {
     /// Audio sample data (interleaved channels)
     data: Arc<Vec<f32>>,
-    
+
     /// Sample rate in Hz
     sample_rate: u32,
-    
+
     /// Number of channels (1 = mono, 2 = stereo, etc.)
     channels: u16,
-    
+
     /// Audio format
     format: AudioFormat,
 }

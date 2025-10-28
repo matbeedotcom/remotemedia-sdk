@@ -3,8 +3,8 @@
 //! Defines the DAG representation of a pipeline with topological sorting
 //! and cycle detection.
 
-use crate::{Error, Result};
 use crate::executor::error::ExecutionErrorExt;
+use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -89,10 +89,7 @@ impl PipelineGraph {
     /// Add a node to the graph
     pub fn add_node(&mut self, node: PipelineNode) -> Result<()> {
         if self.nodes.contains_key(&node.id) {
-            return Err(Error::Manifest(format!(
-                "Duplicate node ID: {}",
-                node.id
-            )));
+            return Err(Error::Manifest(format!("Duplicate node ID: {}", node.id)));
         }
 
         let node_id = node.id.clone();
@@ -140,7 +137,10 @@ impl PipelineGraph {
                 }
 
                 // Edge from dependency to dependent
-                self.edges.entry(dep.clone()).or_default().push(node_id.clone());
+                self.edges
+                    .entry(dep.clone())
+                    .or_default()
+                    .push(node_id.clone());
             }
         }
 
@@ -246,9 +246,7 @@ impl PipelineGraph {
 
         // Check if all nodes were processed (no cycles)
         if result.len() != self.nodes.len() {
-            return Err(Error::Manifest(
-                "Cycle detected in graph".to_string(),
-            ));
+            return Err(Error::Manifest("Cycle detected in graph".to_string()));
         }
 
         Ok(result)
@@ -262,12 +260,9 @@ impl PipelineGraph {
 
         for node_id in self.nodes.keys() {
             if !visited.contains(node_id) {
-                if let Some(cycle) = self.dfs_cycle_detect(
-                    node_id,
-                    &mut visited,
-                    &mut rec_stack,
-                    &mut path,
-                ) {
+                if let Some(cycle) =
+                    self.dfs_cycle_detect(node_id, &mut visited, &mut rec_stack, &mut path)
+                {
                     return Some(cycle);
                 }
             }
@@ -290,9 +285,7 @@ impl PipelineGraph {
         if let Some(edges) = self.edges.get(node_id) {
             for neighbor in edges {
                 if !visited.contains(neighbor) {
-                    if let Some(cycle) =
-                        self.dfs_cycle_detect(neighbor, visited, rec_stack, path)
-                    {
+                    if let Some(cycle) = self.dfs_cycle_detect(neighbor, visited, rec_stack, path) {
                         return Some(cycle);
                     }
                 } else if rec_stack.contains(neighbor) {

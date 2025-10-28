@@ -12,15 +12,15 @@
 #![warn(clippy::all)]
 
 pub mod audio;
+pub mod cache;
 pub mod capabilities;
 pub mod executor;
 pub mod manifest;
 pub mod nodes;
+pub mod python;
+pub mod registry;
 pub mod transport;
 pub mod wasm;
-pub mod python;
-pub mod cache;
-pub mod registry;
 
 mod error;
 pub use error::{Error, Result};
@@ -32,7 +32,7 @@ pub fn init() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
 

@@ -2,8 +2,8 @@
 //!
 //! Implements exponential backoff and retry logic for failed operations.
 
-use crate::{Error, Result};
 use crate::executor::error::ExecutionErrorExt;
+use crate::{Error, Result};
 use std::future::Future;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -170,10 +170,7 @@ impl Default for CircuitBreaker {
 }
 
 /// Execute a function with retry logic
-pub async fn execute_with_retry<F, Fut, T>(
-    policy: RetryPolicy,
-    mut operation: F,
-) -> Result<T>
+pub async fn execute_with_retry<F, Fut, T>(policy: RetryPolicy, mut operation: F) -> Result<T>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T>>,
@@ -228,10 +225,7 @@ where
 }
 
 /// Execute a synchronous function with retry logic
-pub fn execute_with_retry_sync<F, T>(
-    policy: RetryPolicy,
-    mut operation: F,
-) -> Result<T>
+pub fn execute_with_retry_sync<F, T>(policy: RetryPolicy, mut operation: F) -> Result<T>
 where
     F: FnMut() -> Result<T>,
 {
@@ -287,9 +281,18 @@ mod tests {
     fn test_fixed_policy() {
         let policy = RetryPolicy::fixed(3, Duration::from_millis(100));
 
-        assert_eq!(policy.delay_for_attempt(0), Some(Duration::from_millis(100)));
-        assert_eq!(policy.delay_for_attempt(1), Some(Duration::from_millis(100)));
-        assert_eq!(policy.delay_for_attempt(2), Some(Duration::from_millis(100)));
+        assert_eq!(
+            policy.delay_for_attempt(0),
+            Some(Duration::from_millis(100))
+        );
+        assert_eq!(
+            policy.delay_for_attempt(1),
+            Some(Duration::from_millis(100))
+        );
+        assert_eq!(
+            policy.delay_for_attempt(2),
+            Some(Duration::from_millis(100))
+        );
         assert_eq!(policy.delay_for_attempt(3), None);
     }
 
@@ -310,22 +313,23 @@ mod tests {
     async fn test_execute_with_retry_success() {
         use std::sync::atomic::{AtomicU32, Ordering};
         use std::sync::Arc;
-        
+
         let attempt = Arc::new(AtomicU32::new(0));
         let attempt_clone = attempt.clone();
 
-        let result: Result<i32> = execute_with_retry(RetryPolicy::fixed(3, Duration::from_millis(10)), || {
-            let attempt = attempt_clone.clone();
-            async move {
-                let current = attempt.fetch_add(1, Ordering::SeqCst) + 1;
-                if current < 3 {
-                    Err(Error::timeout("test"))
-                } else {
-                    Ok(42)
+        let result: Result<i32> =
+            execute_with_retry(RetryPolicy::fixed(3, Duration::from_millis(10)), || {
+                let attempt = attempt_clone.clone();
+                async move {
+                    let current = attempt.fetch_add(1, Ordering::SeqCst) + 1;
+                    if current < 3 {
+                        Err(Error::timeout("test"))
+                    } else {
+                        Ok(42)
+                    }
                 }
-            }
-        })
-        .await;
+            })
+            .await;
 
         assert_eq!(result.unwrap(), 42);
         assert_eq!(attempt.load(Ordering::SeqCst), 3);
@@ -335,18 +339,19 @@ mod tests {
     async fn test_execute_with_retry_exhausted() {
         use std::sync::atomic::{AtomicU32, Ordering};
         use std::sync::Arc;
-        
+
         let attempt = Arc::new(AtomicU32::new(0));
         let attempt_clone = attempt.clone();
 
-        let result: Result<()> = execute_with_retry(RetryPolicy::fixed(2, Duration::from_millis(10)), || {
-            let attempt = attempt_clone.clone();
-            async move {
-                attempt.fetch_add(1, Ordering::SeqCst);
-                Err(Error::timeout("test"))
-            }
-        })
-        .await;
+        let result: Result<()> =
+            execute_with_retry(RetryPolicy::fixed(2, Duration::from_millis(10)), || {
+                let attempt = attempt_clone.clone();
+                async move {
+                    attempt.fetch_add(1, Ordering::SeqCst);
+                    Err(Error::timeout("test"))
+                }
+            })
+            .await;
 
         assert!(result.unwrap_err().to_string().contains("Retry exhausted"));
         assert_eq!(attempt.load(Ordering::SeqCst), 3); // Initial + 2 retries
@@ -356,18 +361,19 @@ mod tests {
     async fn test_non_retryable_error() {
         use std::sync::atomic::{AtomicU32, Ordering};
         use std::sync::Arc;
-        
+
         let attempt = Arc::new(AtomicU32::new(0));
         let attempt_clone = attempt.clone();
 
-        let result: Result<()> = execute_with_retry(RetryPolicy::fixed(3, Duration::from_millis(10)), || {
-            let attempt = attempt_clone.clone();
-            async move {
-                attempt.fetch_add(1, Ordering::SeqCst);
-                Err(Error::Manifest("test".into()))
-            }
-        })
-        .await;
+        let result: Result<()> =
+            execute_with_retry(RetryPolicy::fixed(3, Duration::from_millis(10)), || {
+                let attempt = attempt_clone.clone();
+                async move {
+                    attempt.fetch_add(1, Ordering::SeqCst);
+                    Err(Error::Manifest("test".into()))
+                }
+            })
+            .await;
 
         assert!(matches!(result, Err(Error::Manifest(_))));
         assert_eq!(attempt.load(Ordering::SeqCst), 1); // Should not retry

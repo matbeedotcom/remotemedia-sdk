@@ -17,13 +17,12 @@ fn main() {
     }
 
     let manifest_path = &args[1];
-    
+
     // Read manifest
-    let manifest_json = fs::read_to_string(manifest_path)
-        .expect("Failed to read manifest file");
-    
-    let manifest: Manifest = serde_json::from_str(&manifest_json)
-        .expect("Failed to parse manifest JSON");
+    let manifest_json = fs::read_to_string(manifest_path).expect("Failed to read manifest file");
+
+    let manifest: Manifest =
+        serde_json::from_str(&manifest_json).expect("Failed to parse manifest JSON");
 
     println!("╔════════════════════════════════════════════════════════════════════╗");
     println!("║              Pipeline Capability Analysis                         ║");
@@ -51,39 +50,91 @@ fn main() {
 
         // Environment compatibility
         println!("\n  Environment Compatibility:");
-        println!("    Browser:        {}", if caps.supports_browser { "✓ Yes" } else { "✗ No" });
-        println!("    WASM:           {}", if caps.supports_wasm { "✓ Yes" } else { "✗ No" });
-        
+        println!(
+            "    Browser:        {}",
+            if caps.supports_browser {
+                "✓ Yes"
+            } else {
+                "✗ No"
+            }
+        );
+        println!(
+            "    WASM:           {}",
+            if caps.supports_wasm {
+                "✓ Yes"
+            } else {
+                "✗ No"
+            }
+        );
+
         // Requirements
         println!("\n  Requirements:");
-        println!("    Threads:        {}", if caps.requires_threads { "⚠ Required" } else { "○ Not required" });
-        println!("    Native libs:    {}", if caps.requires_native_libs { "⚠ Required" } else { "○ Not required" });
-        println!("    GPU:            {}", if caps.requires_gpu { 
-            format!("⚠ Required ({:?})", caps.gpu_type.as_ref().unwrap_or(&remotemedia_runtime::capabilities::GpuType::Any))
-        } else { 
-            "○ Not required".to_string() 
-        });
-        println!("    Large memory:   {}", if caps.requires_large_memory { "⚠ Required" } else { "○ Not required" });
-        
+        println!(
+            "    Threads:        {}",
+            if caps.requires_threads {
+                "⚠ Required"
+            } else {
+                "○ Not required"
+            }
+        );
+        println!(
+            "    Native libs:    {}",
+            if caps.requires_native_libs {
+                "⚠ Required"
+            } else {
+                "○ Not required"
+            }
+        );
+        println!(
+            "    GPU:            {}",
+            if caps.requires_gpu {
+                format!(
+                    "⚠ Required ({:?})",
+                    caps.gpu_type
+                        .as_ref()
+                        .unwrap_or(&remotemedia_runtime::capabilities::GpuType::Any)
+                )
+            } else {
+                "○ Not required".to_string()
+            }
+        );
+        println!(
+            "    Large memory:   {}",
+            if caps.requires_large_memory {
+                "⚠ Required"
+            } else {
+                "○ Not required"
+            }
+        );
+
         // Resources
         println!("\n  Resources:");
         println!("    Est. memory:    {} MB", caps.estimated_memory_mb);
-        
+
         // Execution placement
         println!("\n  Execution:");
         println!("    Placement:      {:?}", caps.placement);
         if let Some(fallback) = &caps.fallback_node {
             println!("    Fallback:       {}", fallback);
         }
-        
+
         // Parameters (if any interesting ones)
         if let Some(params_obj) = node.params.as_object() {
-            let interesting_params: Vec<_> = params_obj.iter()
+            let interesting_params: Vec<_> = params_obj
+                .iter()
                 .filter(|(k, _)| {
-                    matches!(k.as_str(), "device" | "threads" | "n_threads" | "model" | "model_size" | "model_source")
+                    matches!(
+                        k.as_str(),
+                        "device"
+                            | "threads"
+                            | "n_threads"
+                            | "model"
+                            | "model_size"
+                            | "model_source"
+                    )
                 })
                 .collect();
-            
+
             if !interesting_params.is_empty() {
                 println!("\n  Key Parameters:");
                 for (key, value) in interesting_params {
@@ -91,7 +142,7 @@ fn main() {
                 }
             }
         }
-        
+
         println!();
     }
 
@@ -103,21 +154,49 @@ fn main() {
 
     let pipeline_caps = detect_pipeline_capabilities(&manifest.nodes);
 
-    println!("  Can run fully locally:  {}", if pipeline_caps.fully_local { "✓ Yes" } else { "✗ No" });
-    println!("  Requires remote:        {}", if pipeline_caps.requires_remote { "⚠ Yes" } else { "○ No" });
-    
+    println!(
+        "  Can run fully locally:  {}",
+        if pipeline_caps.fully_local {
+            "✓ Yes"
+        } else {
+            "✗ No"
+        }
+    );
+    println!(
+        "  Requires remote:        {}",
+        if pipeline_caps.requires_remote {
+            "⚠ Yes"
+        } else {
+            "○ No"
+        }
+    );
+
     if !pipeline_caps.remote_nodes.is_empty() {
         println!("\n  Nodes requiring remote execution:");
         for node_id in &pipeline_caps.remote_nodes {
             println!("    • {}", node_id);
         }
     }
-    
+
     println!("\n  Aggregate Requirements:");
     println!("    Max memory:     {} MB", pipeline_caps.max_memory_mb);
-    println!("    Requires GPU:   {}", if pipeline_caps.requires_gpu { "⚠ Yes" } else { "○ No" });
-    println!("    Requires threads: {}", if pipeline_caps.requires_threads { "⚠ Yes" } else { "○ No" });
-    
+    println!(
+        "    Requires GPU:   {}",
+        if pipeline_caps.requires_gpu {
+            "⚠ Yes"
+        } else {
+            "○ No"
+        }
+    );
+    println!(
+        "    Requires threads: {}",
+        if pipeline_caps.requires_threads {
+            "⚠ Yes"
+        } else {
+            "○ No"
+        }
+    );
+
     if !pipeline_caps.environment_requirements.is_empty() {
         println!("\n  Environment Requirements:");
         for (node_id, requirement) in &pipeline_caps.environment_requirements {
