@@ -296,7 +296,21 @@ impl PipelineExecutionService for ExecutionServiceImpl {
                 self.metrics
                     .record_request_end("ExecutePipeline", "error", start_time);
                 self.metrics.record_error("validation");
-                return Err(e.into());
+                
+                // T038: Return validation errors as Error outcome, not gRPC Status
+                let error_response = ErrorResponse {
+                    error_type: ErrorType::Validation as i32,
+                    message: e.to_string(),
+                    failing_node_id: String::new(),
+                    context: "Manifest deserialization failed".to_string(),
+                    stack_trace: String::new(),
+                };
+                
+                let response = ExecuteResponse {
+                    outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
+                };
+                
+                return Ok(Response::new(response));
             }
         };
 
@@ -305,7 +319,21 @@ impl PipelineExecutionService for ExecutionServiceImpl {
             self.metrics
                 .record_request_end("ExecutePipeline", "error", start_time);
             self.metrics.record_error("validation");
-            return Err(e.into());
+            
+            // T038: Return validation errors as Error outcome, not gRPC Status
+            let error_response = ErrorResponse {
+                error_type: ErrorType::Validation as i32,
+                message: e.to_string(),
+                failing_node_id: String::new(),
+                context: "Manifest validation failed".to_string(),
+                stack_trace: String::new(),
+            };
+            
+            let response = ExecuteResponse {
+                outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
+            };
+            
+            return Ok(Response::new(response));
         }
 
         // Convert audio inputs
@@ -319,7 +347,21 @@ impl PipelineExecutionService for ExecutionServiceImpl {
                     self.metrics
                         .record_request_end("ExecutePipeline", "error", start_time);
                     self.metrics.record_error("validation");
-                    return Err(e.into());
+                    
+                    // T038: Return audio input conversion errors as Error outcome
+                    let error_response = ErrorResponse {
+                        error_type: ErrorType::Validation as i32,
+                        message: format!("Audio input conversion failed for node '{}': {}", node_id, e),
+                        failing_node_id: node_id.clone(),
+                        context: "Audio buffer conversion failed".to_string(),
+                        stack_trace: String::new(),
+                    };
+                    
+                    let response = ExecuteResponse {
+                        outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
+                    };
+                    
+                    return Ok(Response::new(response));
                 }
             }
         }
