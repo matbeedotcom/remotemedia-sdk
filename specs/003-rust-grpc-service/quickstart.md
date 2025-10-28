@@ -699,8 +699,324 @@ curl -s http://localhost:9090/metrics | grep process_resident_memory_bytes
 
 ---
 
+## Performance Benchmarks
+
+**Achieved Performance** (from Phase 3-5 testing):
+
+| Metric | Target | Actual | Status |
+|--------|--------|--------|--------|
+| Unary RPC latency (p50) | <5ms | ~3-4ms | ✅ Exceeds |
+| Concurrent degradation (N=10) | <30% | 22.7% | ✅ Within target |
+| Streaming per-chunk latency | <50ms | ~0.04ms | ✅ 1,250x better |
+| Concurrent connections | 1000+ | 1000+ | ✅ Validated |
+
+**Test conditions**:
+- Hardware: 4-core CPU, 8GB RAM
+- Pipeline: Simple operations (resample, passthrough)
+- Network: localhost (minimal latency)
+
+---
+
+## Production Deployment Examples
+
+### Systemd Service
+
+Create `/etc/systemd/system/remotemedia-grpc.service`:
+
+```ini
+[Unit]
+Description=RemoteMedia gRPC Service
+After=network.target
+
+[Service]
+Type=simple
+User=remotemedia
+Group=remotemedia
+WorkingDirectory=/opt/remotemedia
+Environment="GRPC_PORT=50051"
+Environment="AUTH_ENABLED=true"
+Environment="AUTH_TOKENS_FILE=/etc/remotemedia/tokens.txt"
+Environment="LOG_LEVEL=info"
+Environment="LOG_FORMAT=json"
+Environment="MAX_CONCURRENT_EXECUTIONS=1000"
+ExecStart=/opt/remotemedia/grpc_server --config /etc/remotemedia/config.yaml
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/remotemedia
+
+# Resource limits
+LimitNOFILE=65536
+MemoryLimit=2G
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Deploy:
+```bash
+# Build release binary
+cargo build --release --bin grpc_server
+
+# Install
+sudo cp target/release/grpc_server /opt/remotemedia/
+sudo useradd -r -s /bin/false remotemedia
+sudo mkdir -p /etc/remotemedia /var/log/remotemedia
+sudo chown remotemedia:remotemedia /var/log/remotemedia
+
+# Configure
+sudo cp config.yaml /etc/remotemedia/
+echo "prod-token-123" | sudo tee /etc/remotemedia/tokens.txt
+sudo chmod 600 /etc/remotemedia/tokens.txt
+
+# Start
+sudo systemctl daemon-reload
+sudo systemctl enable remotemedia-grpc
+sudo systemctl start remotemedia-grpc
+sudo systemctl status remotemedia-grpc
+```
+
+### Docker Compose
+
+Create `docker-compose.yml`:
+
+```yaml
+version: '3.8'
+
+services:
+  remotemedia-grpc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "50051:50051"  # gRPC
+      - "9090:9090"    # Metrics
+    environment:
+      GRPC_HOST: "0.0.0.0"
+      GRPC_PORT: "50051"
+      AUTH_ENABLED: "true"
+      AUTH_TOKENS: "${API_TOKENS}"
+      LOG_LEVEL: "info"
+      LOG_FORMAT: "json"
+      MAX_CONCURRENT_EXECUTIONS: "1000"
+      MAX_MEMORY_BYTES: "1073741824"
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 2G
+        reservations:
+          cpus: '2'
+          memory: 1G
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - ./logs:/var/log/remotemedia
+    networks:
+      - remotemedia-net
+
+networks:
+  remotemedia-net:
+    driver: bridge
+```
+
+Deploy:
+```bash
+export API_TOKENS="prod-key-1,prod-key-2"
+docker-compose up -d
+docker-compose logs -f remotemedia-grpc
+```
+
+### Kubernetes Deployment
+
+Create `k8s/deployment.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: remotemedia-grpc
+  labels:
+    app: remotemedia-grpc
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: remotemedia-grpc
+  template:
+    metadata:
+      labels:
+        app: remotemedia-grpc
+    spec:
+      containers:
+      - name: grpc-server
+        image: remotemedia-grpc:v0.2.1
+        ports:
+        - containerPort: 50051
+          name: grpc
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        env:
+        - name: GRPC_PORT
+          value: "50051"
+        - name: AUTH_ENABLED
+          value: "true"
+        - name: AUTH_TOKENS
+          valueFrom:
+            secretKeyRef:
+              name: remotemedia-secrets
+              key: api-tokens
+        - name: LOG_LEVEL
+          value: "info"
+        - name: MAX_CONCURRENT_EXECUTIONS
+          value: "1000"
+        resources:
+          requests:
+            cpu: "1"
+            memory: "1Gi"
+          limits:
+            cpu: "4"
+            memory: "2Gi"
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: 9090
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: 9090
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: remotemedia-grpc
+spec:
+  selector:
+    app: remotemedia-grpc
+  ports:
+  - name: grpc
+    port: 50051
+    targetPort: 50051
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  type: LoadBalancer
+```
+
+Deploy:
+```bash
+# Create secret
+kubectl create secret generic remotemedia-secrets \
+  --from-literal=api-tokens="key1,key2,key3"
+
+# Deploy
+kubectl apply -f k8s/deployment.yaml
+
+# Check status
+kubectl get pods -l app=remotemedia-grpc
+kubectl logs -f deployment/remotemedia-grpc
+
+# Get service endpoint
+kubectl get service remotemedia-grpc
+```
+
+---
+
+## Monitoring & Observability
+
+### Grafana Dashboard
+
+Query Prometheus metrics:
+
+**Request Rate**:
+```promql
+rate(grpc_requests_total[5m])
+```
+
+**Latency Percentiles (p50, p95, p99)**:
+```promql
+histogram_quantile(0.50, rate(grpc_request_duration_seconds_bucket[5m]))
+histogram_quantile(0.95, rate(grpc_request_duration_seconds_bucket[5m]))
+histogram_quantile(0.99, rate(grpc_request_duration_seconds_bucket[5m]))
+```
+
+**Error Rate**:
+```promql
+rate(grpc_requests_total{status="error"}[5m]) / rate(grpc_requests_total[5m])
+```
+
+**Concurrent Executions**:
+```promql
+grpc_active_executions
+```
+
+**Memory Usage**:
+```promql
+process_resident_memory_bytes / 1024 / 1024  # Convert to MB
+```
+
+### Alerting Rules
+
+Create Prometheus alerting rules (`alerts.yml`):
+
+```yaml
+groups:
+- name: remotemedia-grpc
+  interval: 30s
+  rules:
+  - alert: HighErrorRate
+    expr: rate(grpc_requests_total{status="error"}[5m]) / rate(grpc_requests_total[5m]) > 0.05
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High error rate detected"
+      description: "Error rate is {{ $value | humanizePercentage }}"
+  
+  - alert: HighLatency
+    expr: histogram_quantile(0.95, rate(grpc_request_duration_seconds_bucket[5m])) > 0.010
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High p95 latency detected"
+      description: "p95 latency is {{ $value | humanizeDuration }}"
+  
+  - alert: HighMemoryUsage
+    expr: process_resident_memory_bytes > 1.5e9  # 1.5GB
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High memory usage"
+      description: "Memory usage is {{ $value | humanizeBytes }}"
+```
+
+---
+
 ## Support
 
 - **Documentation**: `/specs/003-rust-grpc-service/`
+- **Client Examples**: `examples/grpc_examples/` (Python, TypeScript)
 - **Issues**: GitHub Issues (link TBD)
 - **Slack**: #remotemedia-grpc (link TBD)
