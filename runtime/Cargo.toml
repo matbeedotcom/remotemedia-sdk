@@ -40,8 +40,11 @@ wasmtime-wasi = { version = "15.0", optional = true }
 webrtc = { version = "0.9", optional = true }
 
 # gRPC (existing transport) - not available for WASM
-tonic = { version = "0.10", optional = true }
+tonic = { version = "0.10", optional = true, features = ["transport", "tls"] }
 prost = { version = "0.12", optional = true }
+prost-types = { version = "0.12", optional = true }
+tower = { version = "0.4", optional = true }
+hyper = { version = "1.1", optional = true }
 
 # Python FFI (using PyO3 per recommendation)
 # For native builds: use extension-module for Python extensions
@@ -52,7 +55,8 @@ numpy = { version = "0.26", optional = true }  # rust-numpy for zero-copy numpy 
 
 # Logging and tracing
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+prometheus = { version = "0.13", optional = true }
 
 # Error handling
 anyhow = "1.0"
@@ -84,8 +88,8 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 tempfile = "3.8"
 
 [build-dependencies]
-prost-build = { version = "0.12", optional = true }
-tonic-build = { version = "0.10", optional = true }
+prost-build = "0.12"
+tonic-build = "0.10"
 # wlr-libpy needs to be a regular build-dependency since build.rs runs on host
 # It will only be used when building for WASM target (checked in build.rs)
 wlr-libpy = { git = "https://github.com/vmware-labs/webassembly-language-runtimes.git", default-features = false, features = ["build", "py312"] }
@@ -93,7 +97,7 @@ wlr-libpy = { git = "https://github.com/vmware-labs/webassembly-language-runtime
 [features]
 default = ["webrtc-transport", "wasmtime-runtime", "grpc-transport", "python-async", "native-numpy"]
 webrtc-transport = ["webrtc"]
-grpc-transport = ["tonic", "prost"]
+grpc-transport = ["tonic", "prost", "prost-types", "tower", "hyper", "prometheus"]
 python-async = ["pyo3-async-runtimes"]
 native-numpy = ["numpy"]
 whisper = ["rwhisper", "rodio"]

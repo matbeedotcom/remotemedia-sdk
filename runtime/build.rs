@@ -11,8 +11,13 @@ fn main() {
         configure_wasm_libs();
     }
 
+    // Compile protocol buffers if grpc-transport feature is enabled
+    #[cfg(feature = "grpc-transport")]
+    compile_protos();
+
     // Standard build tasks
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=protos/");
 }
 
 /// Configure static libraries for WASM build (wasm32-wasi target)
@@ -29,4 +34,24 @@ fn configure_wasm_libs() {
             panic!("Failed to configure static libraries for WASM: {}", e);
         }
     }
+}
+
+/// Compile protocol buffers for gRPC service
+#[cfg(feature = "grpc-transport")]
+fn compile_protos() {
+    tonic_build::configure()
+        .build_server(true)
+        .build_client(false) // We only need server-side code
+        .out_dir("src/grpc_service/generated") // Output to dedicated directory
+        .compile(
+            &[
+                "protos/common.proto",
+                "protos/execution.proto",
+                "protos/streaming.proto",
+            ],
+            &["protos/"],
+        )
+        .unwrap_or_else(|e| panic!("Failed to compile protos: {}", e));
+
+    println!("cargo:warning=Successfully compiled protocol buffers");
 }
