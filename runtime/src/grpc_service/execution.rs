@@ -38,6 +38,8 @@ pub struct ExecutionServiceImpl {
     limits: ResourceLimits,
     version: VersionManager,
     metrics: Arc<ServiceMetrics>,
+    /// T042: Shared executor to avoid Python re-initialization overhead
+    executor: Arc<Executor>,
 }
 
 impl ExecutionServiceImpl {
@@ -48,11 +50,16 @@ impl ExecutionServiceImpl {
         version: VersionManager,
         metrics: Arc<ServiceMetrics>,
     ) -> Self {
+        // T042: Initialize Python and executor once at service creation
+        let executor = Arc::new(Executor::new());
+        info!("Initialized shared executor for request handling");
+        
         Self {
             auth_config,
             limits,
             version,
             metrics,
+            executor,
         }
     }
 
@@ -366,25 +373,37 @@ impl PipelineExecutionService for ExecutionServiceImpl {
             }
         }
 
-        // Create executor
-        let executor = Executor::new();
+        // T042: Use shared executor with per-request task spawning for true parallelism
+        // Clone the Arc for the spawned task
+        let executor = Arc::clone(&self.executor);
+        
+        // Store manifest metadata for logging before moving manifest
+        let num_nodes = manifest.nodes.len();
+        let num_connections = manifest.connections.len();
+        
+        // T038: Spawn each pipeline execution in its own tokio task
+        // This enables true concurrent execution across CPU cores
+        let execution_task = tokio::spawn(async move {
+            // Convert audio_inputs HashMap to Vec<Value>
+            let input_values: Vec<serde_json::Value> = audio_inputs
+                .into_iter()
+                .map(|(node_id, _buffer)| serde_json::json!({ "node_id": node_id }))
+                .collect();
+
+            executor.execute_with_input(&manifest, input_values).await
+        });
 
         // Execute pipeline
         info!(
-            nodes = manifest.nodes.len(),
-            connections = manifest.connections.len(),
-            "Executing pipeline"
+            nodes = num_nodes,
+            connections = num_connections,
+            "Executing pipeline in isolated task"
         );
 
-        // Convert audio_inputs HashMap to Vec<Value>
-        let input_values: Vec<serde_json::Value> = audio_inputs
-            .into_iter()
-            .map(|(node_id, _buffer)| serde_json::json!({ "node_id": node_id }))
-            .collect();
-
-        let exec_result = match executor.execute_with_input(&manifest, input_values).await {
-            Ok(result) => result,
-            Err(e) => {
+        let exec_result = match execution_task.await {
+            Ok(Ok(result)) => result,
+            Ok(Err(e)) => {
+                // Execution error
                 error!(error = %e, "Pipeline execution failed");
                 self.metrics
                     .record_request_end("ExecutePipeline", "error", start_time);
@@ -404,6 +423,27 @@ impl PipelineExecutionService for ExecutionServiceImpl {
 
                 self.metrics
                     .record_request_end("ExecutePipeline", "success", start_time);
+                return Ok(Response::new(response));
+            }
+            Err(join_err) => {
+                // Task panicked or was cancelled
+                error!(error = %join_err, "Execution task failed");
+                self.metrics
+                    .record_request_end("ExecutePipeline", "error", start_time);
+                self.metrics.record_error("execution");
+
+                let error_response = ErrorResponse {
+                    error_type: ErrorType::Internal as i32,
+                    message: format!("Execution task failed: {}", join_err),
+                    failing_node_id: String::new(),
+                    context: String::new(),
+                    stack_trace: String::new(),
+                };
+
+                let response = ExecuteResponse {
+                    outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
+                };
+
                 return Ok(Response::new(response));
             }
         };
