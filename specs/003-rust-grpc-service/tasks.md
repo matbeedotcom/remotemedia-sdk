@@ -184,8 +184,8 @@
 - [x] T078 [P] Create client library examples in `examples/grpc_examples/typescript/`: ExecutePipeline (simple_execution.ts), multi-node pipeline, StreamPipeline (streaming_example.ts) with TypeScript types ✅
 - [x] T079 [P] Document metrics endpoints in `specs/003-rust-grpc-service/quickstart.md`: Prometheus scraping (/metrics endpoint), Grafana dashboard queries, alerting rules ✅
 - [x] T080 [P] Document authentication setup in `specs/003-rust-grpc-service/quickstart.md`: API token generation, client configuration (Python/TypeScript), systemd integration ✅
-- [ ] T081 Implement Python gRPC client wrapper in `python-client/remotemedia/grpc_client.py`: High-level API wrapping tonic-generated stubs
-- [ ] T082 Implement TypeScript gRPC client wrapper in `nodejs-client/src/grpc_client.ts`: High-level API wrapping grpc-tools-generated stubs
+- [x] T081 Implement Python gRPC client wrapper in `python-grpc-client/remotemedia_client.py`: High-level API wrapping tonic-generated stubs ✅ (already complete)
+- [x] T082 Implement TypeScript gRPC client wrapper in `nodejs-client/src/grpc-client.ts`: High-level API with executePipeline(), streamPipeline(), getVersion(), type-safe interfaces, async/await ✅
 - [ ] T083 [P] Add service health check endpoint in `runtime/src/grpc_service/server.rs`: HTTP /health endpoint for load balancer probes
 - [ ] T084 [P] Optimize proto serialization in `runtime/src/grpc_service/execution.rs`: Use Bytes wrapper for zero-copy audio samples
 - [ ] T085 [P] Add request tracing in `runtime/src/grpc_service/mod.rs`: Distributed tracing with correlation IDs for multi-service debugging
