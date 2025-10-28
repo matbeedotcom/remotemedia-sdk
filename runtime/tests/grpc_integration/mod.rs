@@ -9,3 +9,6 @@ mod test_execution_resample;
 mod test_execution_multi_node;
 mod test_execution_performance;
 mod test_execution_metrics;
+
+// Phase 5: Streaming tests
+mod test_streaming_contract;
