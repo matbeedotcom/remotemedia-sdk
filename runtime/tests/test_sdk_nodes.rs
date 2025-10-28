@@ -25,11 +25,8 @@ fn setup_python_sdk_path() {
 
         if python_client_path.exists() {
             let path_str = python_client_path.to_str().unwrap();
-            let append_code = CString::new(format!(
-                "import sys; sys.path.insert(0, r'{}')",
-                path_str
-            ))
-            .unwrap();
+            let append_code =
+                CString::new(format!("import sys; sys.path.insert(0, r'{}')", path_str)).unwrap();
             py.run(&append_code, None, None).unwrap();
 
             println!("✓ Added Python SDK to path: {}", path_str);
@@ -145,4 +142,3 @@ async fn test_calculator_node_from_sdk() {
 
     println!("✓ CalculatorNode test passed!");
 }
-

@@ -2,9 +2,9 @@
 //!
 //! Tests T117: Error propagation with rich context, stack traces, metadata
 
-use remotemedia_runtime::{Error, Result};
 use remotemedia_runtime::error::ErrorContext;
 use remotemedia_runtime::executor::error::ExecutionErrorExt;
+use remotemedia_runtime::{Error, Result};
 
 /// Test: Error context builder pattern
 #[test]
@@ -241,4 +241,3 @@ fn test_execution_error_ext_helpers() {
     assert!(ctx_err.context().is_some());
     assert!(ctx_err.is_retryable());
 }
-

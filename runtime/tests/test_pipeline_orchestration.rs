@@ -10,7 +10,8 @@ use remotemedia_runtime::executor::PipelineGraph;
 use remotemedia_runtime::manifest::{parse, Manifest};
 
 fn create_manifest_json(name: &str, nodes: &str, connections: &str) -> String {
-    format!(r#"{{
+    format!(
+        r#"{{
         "version": "v1",
         "metadata": {{
             "name": "{}",
@@ -18,7 +19,9 @@ fn create_manifest_json(name: &str, nodes: &str, connections: &str) -> String {
         }},
         "nodes": {},
         "connections": {}
-    }}"#, name, nodes, connections)
+    }}"#,
+        name, nodes, connections
+    )
 }
 
 #[test]
@@ -34,12 +37,12 @@ fn test_linear_pipeline() {
         r#"[
             {"from": "node_a", "to": "node_b"},
             {"from": "node_b", "to": "node_c"}
-        ]"#
+        ]"#,
     );
 
     let manifest = parse(&manifest_json).expect("Failed to parse manifest");
-    let graph = PipelineGraph::from_manifest(&manifest)
-        .expect("Failed to build linear pipeline graph");
+    let graph =
+        PipelineGraph::from_manifest(&manifest).expect("Failed to build linear pipeline graph");
 
     // Verify execution order: A must come before B, B before C
     let order = &graph.execution_order;
@@ -73,12 +76,12 @@ fn test_branching_topology() {
             {"from": "node_a", "to": "node_c"},
             {"from": "node_b", "to": "node_d"},
             {"from": "node_c", "to": "node_d"}
-        ]"#
+        ]"#,
     );
 
     let manifest = parse(&manifest_json).expect("Failed to parse manifest");
-    let graph = PipelineGraph::from_manifest(&manifest)
-        .expect("Failed to build branching pipeline graph");
+    let graph =
+        PipelineGraph::from_manifest(&manifest).expect("Failed to build branching pipeline graph");
 
     let order = &graph.execution_order;
     let a_idx = order.iter().position(|n| n == "node_a").unwrap();
@@ -114,12 +117,12 @@ fn test_converging_topology() {
         r#"[
             {"from": "node_a", "to": "node_c"},
             {"from": "node_b", "to": "node_c"}
-        ]"#
+        ]"#,
     );
 
     let manifest = parse(&manifest_json).expect("Failed to parse manifest");
-    let graph = PipelineGraph::from_manifest(&manifest)
-        .expect("Failed to build converging pipeline graph");
+    let graph =
+        PipelineGraph::from_manifest(&manifest).expect("Failed to build converging pipeline graph");
 
     let order = &graph.execution_order;
     let a_idx = order.iter().position(|n| n == "node_a").unwrap();
@@ -155,18 +158,15 @@ fn test_cycle_detection() {
             {"from": "node_a", "to": "node_b"},
             {"from": "node_b", "to": "node_c"},
             {"from": "node_c", "to": "node_a"}
-        ]"#
+        ]"#,
     );
 
     let manifest = parse(&manifest_json).expect("Failed to parse manifest");
-    
+
     // Graph construction should fail due to cycle
     let result = PipelineGraph::from_manifest(&manifest);
 
-    assert!(
-        result.is_err(),
-        "Pipeline with cycle should fail to build"
-    );
+    assert!(result.is_err(), "Pipeline with cycle should fail to build");
 
     if let Err(err) = result {
         let err_str = err.to_string().to_lowercase();
@@ -179,4 +179,3 @@ fn test_cycle_detection() {
 
     println!("✓ T045: Cycle detection test passed");
 }
-

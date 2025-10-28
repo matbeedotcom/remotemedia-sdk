@@ -104,14 +104,18 @@ sys.modules['remotemedia.nodes'].AddNode = AddNode
                 params: json!({"factor": 2}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
             NodeManifest {
                 id: "add".to_string(),
                 node_type: "AddNode".to_string(),
                 params: json!({"offset": 10}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
         ],
         connections: vec![Connection {
             from: "multiply".to_string(),
@@ -216,7 +220,9 @@ sys.modules['remotemedia.nodes'].StreamingGeneratorNode = StreamingGeneratorNode
             params: json!({}),
             capabilities: None,
             host: None,
-            runtime_hint: Some(RuntimeHint::Cpython),,`n            ..Default::default()`n        }],
+            runtime_hint: Some(RuntimeHint::Cpython),
+            ..Default::default()
+        }],
         connections: vec![],
     };
 
@@ -301,7 +307,9 @@ sys.modules['remotemedia.nodes'].SlowProcessorNode = SlowProcessorNode
             params: json!({}),
             capabilities: None,
             host: None,
-            runtime_hint: Some(RuntimeHint::Cpython),,`n            ..Default::default()`n        }],
+            runtime_hint: Some(RuntimeHint::Cpython),
+            ..Default::default()
+        }],
         connections: vec![],
     };
 
@@ -394,21 +402,27 @@ sys.modules['remotemedia.nodes'].BranchB = BranchB
                 params: json!({}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
             NodeManifest {
                 id: "branch_a".to_string(),
                 node_type: "BranchA".to_string(),
                 params: json!({}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
             NodeManifest {
                 id: "branch_b".to_string(),
                 node_type: "BranchB".to_string(),
                 params: json!({}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
         ],
         connections: vec![
             Connection {
@@ -496,21 +510,27 @@ sys.modules['remotemedia.nodes'].MergeNode = MergeNode
                 params: json!({}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
             NodeManifest {
                 id: "source_b".to_string(),
                 node_type: "SourceB".to_string(),
                 params: json!({}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
             NodeManifest {
                 id: "merge".to_string(),
                 node_type: "MergeNode".to_string(),
                 params: json!({}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
         ],
         connections: vec![
             Connection {
@@ -605,28 +625,36 @@ sys.modules['remotemedia.nodes'].CombinerNode = CombinerNode
                 params: json!({}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
             NodeManifest {
                 id: "proc_a".to_string(),
                 node_type: "ProcessorA".to_string(),
                 params: json!({}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
             NodeManifest {
                 id: "proc_b".to_string(),
                 node_type: "ProcessorB".to_string(),
                 params: json!({}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
             NodeManifest {
                 id: "combiner".to_string(),
                 node_type: "CombinerNode".to_string(),
                 params: json!({}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
         ],
         connections: vec![
             Connection {
@@ -725,28 +753,36 @@ sys.modules['remotemedia.nodes'].Level3Node = Level3Node
                 params: json!({}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
             NodeManifest {
                 id: "l2a".to_string(),
                 node_type: "Level2NodeA".to_string(),
                 params: json!({}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
             NodeManifest {
                 id: "l2b".to_string(),
                 node_type: "Level2NodeB".to_string(),
                 params: json!({}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
             NodeManifest {
                 id: "l3".to_string(),
                 node_type: "Level3Node".to_string(),
                 params: json!({}),
                 capabilities: None,
                 host: None,
-                runtime_hint: Some(RuntimeHint::Cpython),,`n                ..Default::default()`n            },
+                runtime_hint: Some(RuntimeHint::Cpython),
+                ..Default::default()
+            },
         ],
         connections: vec![
             Connection {
