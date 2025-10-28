@@ -16,6 +16,7 @@ crate-type = ["cdylib", "rlib"]
 # Async runtime
 # For WASM, only certain tokio features are supported
 tokio = { version = "1.35", features = ["sync", "macros", "io-util", "rt", "time"] }
+tokio-stream = { version = "0.1", optional = true }  # For gRPC streaming
 futures = "0.3"
 
 # Serialization
@@ -97,7 +98,7 @@ wlr-libpy = { git = "https://github.com/vmware-labs/webassembly-language-runtime
 [features]
 default = ["webrtc-transport", "wasmtime-runtime", "grpc-transport", "python-async", "native-numpy"]
 webrtc-transport = ["webrtc"]
-grpc-transport = ["tonic", "prost", "prost-types", "tower", "hyper", "prometheus"]
+grpc-transport = ["tonic", "prost", "prost-types", "tower", "hyper", "prometheus", "tokio-stream"]
 python-async = ["pyo3-async-runtimes"]
 native-numpy = ["numpy"]
 whisper = ["rwhisper", "rodio"]
