@@ -463,43 +463,62 @@ async fn handle_stream_init(
 async fn handle_audio_chunk(
     chunk: AudioChunk,
     session: Arc<Mutex<StreamSession>>,
-    _executor: Arc<Executor>,
+    executor: Arc<Executor>,
 ) -> Result<ChunkResult, ServiceError> {
     let start_time = Instant::now();
 
-    // Lock session
-    let mut sess = session.lock().await;
+    // Lock session to get manifest and validate
+    let manifest = {
+        let mut sess = session.lock().await;
 
-    // Validate sequence number
-    sess.validate_sequence(chunk.sequence)?;
+        // Validate sequence number
+        sess.validate_sequence(chunk.sequence)?;
+
+        // Clone manifest for execution
+        sess.manifest.clone()
+    };
 
     // Deserialize audio buffer
     let buffer_proto = chunk.buffer.ok_or_else(|| {
         ServiceError::Validation("AudioChunk.buffer required".to_string())
     })?;
-    
-    let _audio_buffer = convert_proto_to_runtime_audio(&buffer_proto)?;
 
-    // TODO: Execute pipeline with chunk
-    // For now, just pass through the audio
-    // In full implementation, would call executor.execute(...) with streaming context
-    
+    let audio_buffer = convert_proto_to_runtime_audio(&buffer_proto)?;
     let samples = buffer_proto.num_samples;
+
+    // Build audio inputs map for the chunk
+    // The chunk's node_id tells us which node should receive this audio
+    let mut audio_inputs = HashMap::new();
+    audio_inputs.insert(chunk.node_id.clone(), audio_buffer);
+
+    // Execute pipeline with fast audio path
+    let result_buffers = executor
+        .execute_fast_pipeline(&manifest, audio_inputs)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("Pipeline execution failed: {}", e)))?;
+
     let processing_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
 
-    // Record metrics
-    sess.record_chunk_metrics(processing_time_ms, samples, 0); // TODO: Track memory
+    // Lock session again to record metrics and get total samples
+    let total_samples = {
+        let mut sess = session.lock().await;
+        sess.record_chunk_metrics(processing_time_ms, samples, 0); // TODO: Track memory
+        sess.total_samples
+    };
 
-    // Prepare output
+    // Convert result buffers to proto format
     let mut audio_outputs = HashMap::new();
-    audio_outputs.insert("output".to_string(), buffer_proto); // Pass through for now
+    for (node_id, buffer) in result_buffers {
+        let proto_buffer = convert_runtime_to_proto_audio(&buffer);
+        audio_outputs.insert(node_id, proto_buffer);
+    }
 
     let result = ChunkResult {
         sequence: chunk.sequence,
         audio_outputs,
         data_outputs: HashMap::new(), // TODO: Populate from execution
         processing_time_ms,
-        total_samples_processed: sess.total_samples,
+        total_samples_processed: total_samples,
     };
 
     Ok(result)
@@ -637,5 +656,59 @@ fn convert_proto_to_runtime_audio(
         proto.channels as u16,
         AudioFormat::F32,
     ))
+}
+
+/// Helper: Convert runtime AudioBuffer to protobuf AudioBuffer
+fn convert_runtime_to_proto_audio(buffer: &RuntimeAudioBuffer) -> ProtoAudioBuffer {
+    use crate::audio::AudioFormat;
+    use crate::grpc_service::generated::AudioFormat as ProtoAudioFormat;
+
+    let format = match buffer.format() {
+        AudioFormat::F32 => ProtoAudioFormat::F32 as i32,
+        AudioFormat::I16 => ProtoAudioFormat::I16 as i32,
+        AudioFormat::I32 => ProtoAudioFormat::I32 as i32,
+    };
+
+    // Convert f32 samples to bytes based on format
+    let samples: Vec<u8> = match buffer.format() {
+        AudioFormat::F32 => {
+            // Convert f32 to bytes (little-endian)
+            buffer
+                .as_slice()
+                .iter()
+                .flat_map(|&sample| sample.to_le_bytes())
+                .collect()
+        }
+        AudioFormat::I16 => {
+            // Convert f32 to i16, then to bytes
+            buffer
+                .as_slice()
+                .iter()
+                .flat_map(|&sample| {
+                    let i_sample = (sample * 32768.0).clamp(-32768.0, 32767.0) as i16;
+                    i_sample.to_le_bytes()
+                })
+                .collect()
+        }
+        AudioFormat::I32 => {
+            // Convert f32 to i32, then to bytes
+            buffer
+                .as_slice()
+                .iter()
+                .flat_map(|&sample| {
+                    let i_sample = (sample * 2147483648.0).clamp(-2147483648.0, 2147483647.0) as i32;
+                    i_sample.to_le_bytes()
+                })
+                .collect()
+        }
+    };
+
+    ProtoAudioBuffer {
+        samples,
+        sample_rate: buffer.sample_rate(),
+        channels: buffer.channels() as u32,
+        format,
+        num_samples: buffer.len_samples() as u64,
+    }
 }
 

@@ -370,89 +370,130 @@ export class RemoteMediaClient {
       },
     });
 
-    // Set up response handling
+    // Queue for results
     const results: ChunkResult[] = [];
-    let resolveNext: ((value: ChunkResult) => void) | null = null;
+    let resolveNext: ((value: IteratorResult<ChunkResult>) => void) | null = null;
+    let rejectNext: ((error: Error) => void) | null = null;
     let streamEnded = false;
+    let streamError: Error | null = null;
 
+    // Handle incoming responses
     stream.on('data', (response: any) => {
-      if (response.chunk_result) {
-        const result: ChunkResult = {
-          sequence: response.chunk_result.sequence,
-          processingTimeMs: response.chunk_result.processing_time_ms,
-          totalSamplesProcessed: response.chunk_result.total_samples_processed,
-          hasAudioOutput: response.chunk_result.has_audio_output,
+      if (response.result) {
+        const hasAudioOutput = response.result.audio_outputs && Object.keys(response.result.audio_outputs).length > 0;
+
+        const chunkResult: ChunkResult = {
+          sequence: response.result.sequence,
+          processingTimeMs: response.result.processing_time_ms,
+          totalSamplesProcessed: response.result.total_samples_processed,
+          hasAudioOutput: hasAudioOutput,
         };
 
-        if (response.chunk_result.audio_output) {
-          result.audioOutput = {
-            samples: Buffer.from(response.chunk_result.audio_output.samples),
-            sampleRate: response.chunk_result.audio_output.sample_rate,
-            channels: response.chunk_result.audio_output.channels,
-            format: response.chunk_result.audio_output.format as AudioFormat,
-            numSamples: response.chunk_result.audio_output.num_samples,
-          };
+        if (hasAudioOutput) {
+          // Get the first audio output (assuming single node for now)
+          const firstOutput = Object.values(response.result.audio_outputs)[0] as any;
+          if (firstOutput) {
+            chunkResult.audioOutput = {
+              samples: Buffer.from(firstOutput.samples),
+              sampleRate: firstOutput.sample_rate,
+              channels: firstOutput.channels,
+              format: firstOutput.format as AudioFormat,
+              numSamples: firstOutput.num_samples,
+            };
+          }
         }
 
         if (resolveNext) {
-          resolveNext(result);
+          resolveNext({ value: chunkResult, done: false });
           resolveNext = null;
+          rejectNext = null;
         } else {
-          results.push(result);
+          results.push(chunkResult);
         }
       } else if (response.error) {
-        throw new RemoteMediaError(
+        const error = new RemoteMediaError(
           response.error.message,
           response.error.error_type as ErrorType,
           response.error.failing_node_id,
           response.error.context
         );
+        if (rejectNext) {
+          rejectNext(error);
+          resolveNext = null;
+          rejectNext = null;
+        } else {
+          streamError = error;
+        }
+      }
+    });
+
+    stream.on('error', (error: Error) => {
+      streamError = error;
+      if (rejectNext) {
+        rejectNext(error);
+        resolveNext = null;
+        rejectNext = null;
       }
     });
 
     stream.on('end', () => {
       streamEnded = true;
+      if (resolveNext) {
+        resolveNext({ value: undefined, done: true });
+        resolveNext = null;
+        rejectNext = null;
+      }
     });
 
-    // Send audio chunks
+    // Send audio chunks in background
     (async () => {
-      for await (const [nodeId, audio, sequence] of audioChunks) {
-        stream.write({
-          audio_chunk: {
-            node_id: nodeId,
-            buffer: {
-              samples: audio.samples,
-              sample_rate: audio.sampleRate,
-              channels: audio.channels,
-              format: audio.format,
-              num_samples: audio.numSamples,
+      try {
+        for await (const [nodeId, audio, sequence] of audioChunks) {
+          stream.write({
+            audio_chunk: {
+              node_id: nodeId,
+              buffer: {
+                samples: audio.samples,
+                sample_rate: audio.sampleRate,
+                channels: audio.channels,
+                format: audio.format,
+                num_samples: audio.numSamples,
+              },
+              sequence,
             },
-            sequence,
+          });
+        }
+
+        // Send close command
+        stream.write({
+          control: {
+            command: 1, // COMMAND_CLOSE
           },
         });
+
+        stream.end();
+      } catch (error) {
+        stream.destroy(error as Error);
       }
-
-      // Send close command
-      stream.write({
-        control: {
-          command: 1, // COMMAND_CLOSE
-        },
-      });
-
-      stream.end();
     })();
 
     // Yield results as they arrive
     while (!streamEnded || results.length > 0) {
+      if (streamError) {
+        throw streamError;
+      }
+
       if (results.length > 0) {
         yield results.shift()!;
-      } else {
-        await new Promise<void>((resolve) => {
-          resolveNext = (result: ChunkResult) => {
-            results.push(result);
-            resolve();
-          };
+      } else if (!streamEnded) {
+        const result = await new Promise<IteratorResult<ChunkResult>>((resolve, reject) => {
+          resolveNext = resolve;
+          rejectNext = reject;
         });
+
+        if (!result.done && result.value) {
+          yield result.value;
+        }
       }
     }
   }
