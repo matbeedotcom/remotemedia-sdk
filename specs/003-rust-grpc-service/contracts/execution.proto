@@ -1,0 +1,261 @@
+// Unary pipeline execution RPC
+// Feature: 003-rust-grpc-service
+// 
+// This file defines the ExecutePipeline RPC for single-shot pipeline execution.
+// Client sends complete pipeline manifest and audio inputs, server executes
+// pipeline and returns all results in a single response.
+//
+// Use this RPC for:
+// - Batch audio processing (complete files)
+// - Non-streaming transformations (resample, format conversion)
+// - Pipelines with known input sizes
+
+syntax = "proto3";
+
+package remotemedia.v1;
+
+import "common.proto";
+
+// ============================================================================
+// Pipeline Execution Service
+// ============================================================================
+
+service PipelineExecutionService {
+  // Execute a pipeline with complete audio input(s) and return all results
+  //
+  // This is a unary RPC: client sends one request, server sends one response.
+  // Suitable for batch processing and non-streaming use cases.
+  //
+  // Performance targets:
+  // - <5ms latency for simple operations (SC-001)
+  // - <10% serialization overhead (SC-003)
+  // - 10x faster than Python-based remote execution (SC-004)
+  rpc ExecutePipeline(ExecuteRequest) returns (ExecuteResponse);
+
+  // Get service version and compatibility information
+  //
+  // Clients should call this on connection initialization to verify compatibility.
+  rpc GetVersion(VersionRequest) returns (VersionResponse);
+}
+
+// ============================================================================
+// Request Types
+// ============================================================================
+
+// Request to execute a pipeline
+message ExecuteRequest {
+  // Pipeline manifest (JSON specification)
+  PipelineManifest manifest = 1;
+
+  // Input audio buffers (keyed by node ID)
+  // 
+  // Example: {"audio_source": <AudioBuffer>}
+  // Node IDs must match nodes in the manifest that require audio input
+  map<string, AudioBuffer> audio_inputs = 2;
+
+  // Non-audio inputs (JSON encoded, keyed by node ID)
+  // 
+  // Example: {"text_input": "{\"text\": \"Hello world\"}"}
+  // Used for text, embeddings, or other non-audio data
+  map<string, string> data_inputs = 3;
+
+  // Optional resource limits for this execution
+  // If not specified, service applies default limits
+  ResourceLimits resource_limits = 4;
+
+  // Client protocol version (e.g., "v1")
+  // Service validates compatibility and returns ERROR_TYPE_VERSION_MISMATCH if incompatible
+  string client_version = 5;
+}
+
+// Response from pipeline execution
+message ExecuteResponse {
+  // Either result or error (mutually exclusive)
+  oneof outcome {
+    // Execution result (if successful)
+    ExecutionResult result = 1;
+
+    // Error details (if execution failed)
+    ErrorResponse error = 2;
+  }
+}
+
+// ============================================================================
+// Pipeline Manifest Types
+// ============================================================================
+
+// Pipeline manifest structure (v1)
+//
+// Defines the processing graph: nodes (processing units) and
+// connections (data flow edges). Compatible with Rust runtime v0.2.1.
+message PipelineManifest {
+  // Schema version (e.g., "v1")
+  // Service validates this matches supported versions
+  string version = 1;
+
+  // Pipeline metadata
+  ManifestMetadata metadata = 2;
+
+  // List of processing nodes
+  // Must contain at least one node
+  // Node IDs must be unique
+  repeated NodeManifest nodes = 3;
+
+  // Connections between nodes (directed edges)
+  // Forms a directed acyclic graph (DAG)
+  repeated Connection connections = 4;
+}
+
+// Pipeline metadata
+message ManifestMetadata {
+  // Pipeline name (required)
+  // Used in logs and metrics
+  string name = 1;
+
+  // Optional human-readable description
+  string description = 2;
+
+  // ISO 8601 timestamp of creation
+  // Example: "2025-10-28T10:30:00Z"
+  string created_at = 3;
+}
+
+// Node manifest entry
+message NodeManifest {
+  // Unique node ID within pipeline
+  string id = 1;
+
+  // Node type (class name)
+  // Example: "AudioResample", "VAD", "HFPipelineNode"
+  // Service validates against registered node types
+  string node_type = 2;
+
+  // Node-specific parameters (JSON encoded)
+  // Service deserializes into serde_json::Value
+  // Example: "{\"target_sample_rate\": 16000}"
+  string params = 3;
+
+  // Whether node uses streaming (async generator)
+  // If true, node's process() method is an async generator
+  bool is_streaming = 4;
+
+  // Optional capability requirements (GPU, CPU, memory)
+  CapabilityRequirements capabilities = 5;
+
+  // Optional execution host preference (reserved for future)
+  string host = 6;
+
+  // Optional runtime hint for Python nodes
+  RuntimeHint runtime_hint = 7;
+}
+
+// Connection between nodes
+message Connection {
+  // Source node ID (produces output)
+  string from = 1;
+
+  // Target node ID (consumes input)
+  string to = 2;
+}
+
+// ============================================================================
+// Capability Types
+// ============================================================================
+
+// Hardware/resource requirements for node execution
+message CapabilityRequirements {
+  // GPU requirements
+  GpuRequirement gpu = 1;
+
+  // CPU requirements
+  CpuRequirement cpu = 2;
+
+  // Memory requirement (gigabytes)
+  double memory_gb = 3;
+}
+
+// GPU hardware requirements
+message GpuRequirement {
+  // GPU type: "cuda", "rocm", "metal"
+  string type = 1;
+
+  // Minimum GPU memory (GB)
+  double min_memory_gb = 2;
+
+  // Whether GPU is required or optional
+  bool required = 3;
+}
+
+// CPU requirements
+message CpuRequirement {
+  // Minimum number of cores
+  uint32 cores = 1;
+
+  // CPU architecture preference
+  // Example: "x86_64", "aarch64"
+  string arch = 2;
+}
+
+// Runtime hint for Python node execution
+enum RuntimeHint {
+  RUNTIME_HINT_UNSPECIFIED = 0;
+  
+  // Use RustPython embedded interpreter (pure Rust, limited stdlib)
+  RUNTIME_HINT_RUSTPYTHON = 1;
+  
+  // Use CPython via PyO3 in-process (full Python ecosystem, C-extensions)
+  RUNTIME_HINT_CPYTHON = 2;
+  
+  // Use CPython compiled to WASM (sandboxed, Phase 3)
+  RUNTIME_HINT_CPYTHON_WASM = 3;
+  
+  // Automatically select runtime based on node requirements
+  RUNTIME_HINT_AUTO = 4;
+}
+
+// ============================================================================
+// Result Types
+// ============================================================================
+
+// Result of successful pipeline execution
+message ExecutionResult {
+  // Processed audio outputs (keyed by node ID)
+  // Empty map for pipelines with no audio outputs
+  map<string, AudioBuffer> audio_outputs = 1;
+
+  // Non-audio outputs (JSON encoded, keyed by node ID)
+  // Example: {"transcribe": "{\"text\": \"Hello world\", \"confidence\": 0.95}"}
+  map<string, string> data_outputs = 2;
+
+  // Execution performance metrics
+  ExecutionMetrics metrics = 3;
+
+  // Per-node execution results
+  repeated NodeResult node_results = 4;
+
+  // Overall execution status
+  ExecutionStatus status = 5;
+}
+
+// ============================================================================
+// Version Types
+// ============================================================================
+
+// Request for version information
+message VersionRequest {
+  // Client version for compatibility check (e.g., "v1", "v1.2.0")
+  string client_version = 1;
+}
+
+// Response with version and compatibility information
+message VersionResponse {
+  // Service version details
+  VersionInfo version_info = 1;
+
+  // Whether client version is compatible
+  bool compatible = 2;
+
+  // Compatibility message (details if incompatible)
+  // Example: "Client v2 requires service v0.3.0+"
+  string compatibility_message = 3;
+}
