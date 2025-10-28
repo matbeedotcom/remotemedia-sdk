@@ -203,7 +203,8 @@ mod integration_tests {
 
         // Execute some successful nodes
         for i in 0..5 {
-            let ctx = ExecutionContext::new("test", format!("node{}", i)).with_input(Value::from(i));
+            let ctx =
+                ExecutionContext::new("test", format!("node{}", i)).with_input(Value::from(i));
 
             scheduler
                 .schedule_node(ctx, |input| async move {
@@ -244,9 +245,8 @@ mod integration_tests {
         let attempt = Arc::new(AtomicU32::new(0));
         let attempt_clone = attempt.clone();
 
-        let result: Result<Value> = execute_with_retry(
-            RetryPolicy::fixed(3, Duration::from_millis(10)),
-            || {
+        let result: Result<Value> =
+            execute_with_retry(RetryPolicy::fixed(3, Duration::from_millis(10)), || {
                 let attempt = attempt_clone.clone();
                 async move {
                     let current = attempt.fetch_add(1, Ordering::SeqCst) + 1;
@@ -259,9 +259,8 @@ mod integration_tests {
                         Ok(Value::from(42))
                     }
                 }
-            },
-        )
-        .await;
+            })
+            .await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Value::from(42));
@@ -277,9 +276,8 @@ mod integration_tests {
         let attempt = Arc::new(AtomicU32::new(0));
         let attempt_clone = attempt.clone();
 
-        let result: Result<()> = execute_with_retry(
-            RetryPolicy::fixed(2, Duration::from_millis(10)),
-            || {
+        let result: Result<()> =
+            execute_with_retry(RetryPolicy::fixed(2, Duration::from_millis(10)), || {
                 let attempt = attempt_clone.clone();
                 async move {
                     attempt.fetch_add(1, Ordering::SeqCst);
@@ -288,9 +286,8 @@ mod integration_tests {
                         "always fails",
                     )))
                 }
-            },
-        )
-        .await;
+            })
+            .await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Retry exhausted"));
@@ -307,17 +304,15 @@ mod integration_tests {
         let attempt = Arc::new(AtomicU32::new(0));
         let attempt_clone = attempt.clone();
 
-        let result: Result<()> = execute_with_retry(
-            RetryPolicy::fixed(3, Duration::from_millis(10)),
-            || {
+        let result: Result<()> =
+            execute_with_retry(RetryPolicy::fixed(3, Duration::from_millis(10)), || {
                 let attempt = attempt_clone.clone();
                 async move {
                     attempt.fetch_add(1, Ordering::SeqCst);
                     Err(Error::Manifest("config error".to_string()))
                 }
-            },
-        )
-        .await;
+            })
+            .await;
 
         assert!(result.is_err());
         assert_eq!(attempt.load(Ordering::SeqCst), 1); // Should not retry non-retryable errors
@@ -373,8 +368,8 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_graph_serialization() {
-        let node = Node::new("test_node", "test_type")
-            .with_config(serde_json::json!({"param": "value"}));
+        let node =
+            Node::new("test_node", "test_type").with_config(serde_json::json!({"param": "value"}));
 
         // Serialize to JSON
         let json = serde_json::to_string(&node).unwrap();
@@ -387,4 +382,3 @@ mod integration_tests {
         assert_eq!(deserialized.node_type, "test_type");
     }
 }
-

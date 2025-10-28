@@ -54,9 +54,15 @@ fn test_roundtrip_collections() {
         ("list_mixed", json!([1, "two", 3.0, true, null])),
         ("dict_empty", json!({})),
         ("dict_simple", json!({"name": "Alice", "age": 30})),
-        ("dict_nested", json!({"user": {"name": "Bob", "roles": ["admin", "user"]}})),
+        (
+            "dict_nested",
+            json!({"user": {"name": "Bob", "roles": ["admin", "user"]}}),
+        ),
         ("list_of_dicts", json!([{"id": 1}, {"id": 2}, {"id": 3}])),
-        ("dict_of_lists", json!({"nums": [1, 2, 3], "strs": ["a", "b"]})),
+        (
+            "dict_of_lists",
+            json!({"nums": [1, 2, 3], "strs": ["a", "b"]}),
+        ),
     ];
 
     pyo3::Python::with_gil(|py| {
@@ -235,7 +241,9 @@ class DataProcessorNode:
 "#;
 
     vm.load_class(node_code, "DataProcessorNode").unwrap();
-    let instance = vm.create_instance("DataProcessorNode", &Value::Null).unwrap();
+    let instance = vm
+        .create_instance("DataProcessorNode", &Value::Null)
+        .unwrap();
 
     // Test with simple number input
     let input_num = json!(21);
@@ -359,4 +367,3 @@ obj
     // In Phase 1.7.4, this should use CloudPickle for serialization
     assert!(result.is_ok() || result.is_err());
 }
-

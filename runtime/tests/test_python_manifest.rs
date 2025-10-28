@@ -160,7 +160,10 @@ fn test_reject_invalid_version() {
     let result = validate(&manifest);
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Unsupported manifest version"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Unsupported manifest version"));
 }
 
 #[test]
@@ -176,7 +179,10 @@ fn test_reject_empty_nodes() {
     let result = validate(&manifest);
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("at least one node"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("at least one node"));
 }
 
 #[test]
@@ -198,4 +204,3 @@ fn test_reject_invalid_connection() {
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("unknown"));
 }
-

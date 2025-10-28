@@ -96,7 +96,9 @@ class NumpyMultiplier:
             }),
             capabilities: None,
             host: None,
-            runtime_hint: Some(RuntimeHint::Cpython), // Explicitly use CPython,`n            ..Default::default()`n        }],
+            runtime_hint: Some(RuntimeHint::Cpython), // Explicitly use CPython
+            ..Default::default()
+        }],
         connections: vec![],
     };
 
@@ -192,7 +194,9 @@ class NumpyProcessor:
             params: json!({}),
             capabilities: None,
             host: None,
-            runtime_hint: None, // No explicit hint - let auto-detection work,`n            ..Default::default()`n        }],
+            runtime_hint: None, // No explicit hint - let auto-detection work
+            ..Default::default()
+        }],
         connections: vec![],
     };
 
@@ -287,7 +291,9 @@ class Matrix2DProcessor:
             params: json!({}),
             capabilities: None,
             host: None,
-            runtime_hint: Some(RuntimeHint::Cpython),,`n            ..Default::default()`n        }],
+            runtime_hint: Some(RuntimeHint::Cpython),
+            ..Default::default()
+        }],
         connections: vec![],
     };
 

@@ -52,8 +52,8 @@ mod timeout_tests {
 
     #[tokio::test]
     async fn test_default_timeout() {
-        let scheduler = Scheduler::new(2, "test_pipeline")
-            .with_default_timeout(Duration::from_millis(100));
+        let scheduler =
+            Scheduler::new(2, "test_pipeline").with_default_timeout(Duration::from_millis(100));
 
         // Node without explicit timeout should use default
         let ctx = ExecutionContext::new("test", "slow_node").with_input(Value::Null);
@@ -71,8 +71,8 @@ mod timeout_tests {
 
     #[tokio::test]
     async fn test_per_node_timeout_override() {
-        let scheduler = Scheduler::new(2, "test_pipeline")
-            .with_default_timeout(Duration::from_millis(50));
+        let scheduler =
+            Scheduler::new(2, "test_pipeline").with_default_timeout(Duration::from_millis(50));
 
         // Node with explicit timeout should override default
         let ctx = ExecutionContext::new("test", "node")
@@ -93,8 +93,8 @@ mod timeout_tests {
 
     #[tokio::test]
     async fn test_parallel_timeout_handling() {
-        let scheduler = Scheduler::new(4, "test_pipeline")
-            .with_default_timeout(Duration::from_millis(100));
+        let scheduler =
+            Scheduler::new(4, "test_pipeline").with_default_timeout(Duration::from_millis(100));
 
         let contexts = vec![
             ExecutionContext::new("test", "fast1").with_input(Value::from(1)),
@@ -186,13 +186,13 @@ mod timeout_tests {
 
     #[tokio::test]
     async fn test_rapid_sequential_timeouts() {
-        let scheduler = Scheduler::new(2, "test_pipeline")
-            .with_default_timeout(Duration::from_millis(50));
+        let scheduler =
+            Scheduler::new(2, "test_pipeline").with_default_timeout(Duration::from_millis(50));
 
         // Execute multiple nodes that timeout in sequence
         for i in 0..5 {
-            let ctx =
-                ExecutionContext::new("test", format!("timeout_node_{}", i)).with_input(Value::Null);
+            let ctx = ExecutionContext::new("test", format!("timeout_node_{}", i))
+                .with_input(Value::Null);
 
             let result = scheduler
                 .schedule_node(ctx, |_| async move {
@@ -226,18 +226,16 @@ mod timeout_tests {
         let attempt = Arc::new(AtomicU32::new(0));
         let attempt_clone = attempt.clone();
 
-        let result: Result<()> = execute_with_retry(
-            RetryPolicy::fixed(2, Duration::from_millis(10)),
-            || {
+        let result: Result<()> =
+            execute_with_retry(RetryPolicy::fixed(2, Duration::from_millis(10)), || {
                 let attempt = attempt_clone.clone();
                 async move {
                     attempt.fetch_add(1, Ordering::SeqCst);
                     // Timeout errors are retryable
                     Err(Error::timeout("simulated timeout"))
                 }
-            },
-        )
-        .await;
+            })
+            .await;
 
         assert!(result.is_err());
         assert_eq!(attempt.load(Ordering::SeqCst), 3); // Initial + 2 retries
@@ -285,4 +283,3 @@ mod timeout_tests {
         assert_eq!(result.unwrap(), Value::from(42));
     }
 }
-

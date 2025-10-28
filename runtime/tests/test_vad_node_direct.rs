@@ -164,7 +164,9 @@ async fn test_vad_node_with_cpython_executor_single_chunk() {
             }),
             capabilities: None,
             host: None,
-            runtime_hint: Some(RuntimeHint::Cpython),,`n            ..Default::default()`n        }],
+            runtime_hint: Some(RuntimeHint::Cpython),
+            ..Default::default()
+        }],
         connections: vec![],
     };
 

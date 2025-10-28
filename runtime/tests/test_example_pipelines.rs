@@ -68,7 +68,7 @@ result
 
     let response = vm.execute(exec_code).unwrap();
     assert_eq!(response["status"], "success");
-    assert_eq!(response["result"], "25");  // (5 * 3) + 10 = 25
+    assert_eq!(response["result"], "25"); // (5 * 3) + 10 = 25
 }
 
 /// Test stateful pipeline with multiple items
@@ -178,8 +178,8 @@ str(valid_result) + " | " + str(invalid_result["error"])
     let response = vm.execute(code).unwrap();
     assert_eq!(response["status"], "success");
     let result = response["result"].as_str().unwrap();
-    assert!(result.contains("10"));  // Valid: 5 * 2 = 10
-    assert!(result.contains("Negative"));  // Error message
+    assert!(result.contains("10")); // Valid: 5 * 2 = 10
+    assert!(result.contains("Negative")); // Error message
 }
 
 /// Test pipeline with data transformation
@@ -631,7 +631,7 @@ result
     // Generator send() may not be fully supported
     if let Ok(result) = response {
         if result["status"] == "success" {
-            assert_eq!(result["result"], "60");  // 10 + 20 + 30
+            assert_eq!(result["result"], "60"); // 10 + 20 + 30
         }
     }
     // send() may not be supported - acceptable limitation
@@ -691,4 +691,3 @@ pipeline.add_node(MockNode(lambda x: x * 2))
     }
     // Async runtime may require CPython
 }
-

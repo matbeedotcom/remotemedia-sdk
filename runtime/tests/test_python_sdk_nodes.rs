@@ -34,7 +34,10 @@ class PassThroughNode:
     let input = json!({"test": "data", "value": 42});
     let output = node.process(input.clone()).expect("Failed to process");
 
-    assert_eq!(output, input, "PassThroughNode should return input unchanged");
+    assert_eq!(
+        output, input,
+        "PassThroughNode should return input unchanged"
+    );
 
     node.cleanup().expect("Failed to cleanup");
 }
@@ -259,7 +262,8 @@ class StreamingNode:
         .expect("Failed to create StreamingNode");
 
     // Test streaming
-    let results = node.process_streaming(json!(10))
+    let results = node
+        .process_streaming(json!(10))
         .expect("Failed to process streaming");
 
     assert_eq!(results.len(), 3);
@@ -521,4 +525,3 @@ class FormatNode:
     node2.cleanup().expect("Failed to cleanup node2");
     node3.cleanup().expect("Failed to cleanup node3");
 }
-

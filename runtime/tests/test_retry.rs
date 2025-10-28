@@ -2,13 +2,13 @@
 //!
 //! Tests T113-T116: Transient error injection, retry behavior, circuit breaker tripping
 
+use remotemedia_runtime::executor::retry::{execute_with_retry, CircuitBreaker, RetryPolicy};
+use remotemedia_runtime::executor::scheduler::{ExecutionContext, Scheduler};
 use remotemedia_runtime::{Error, Result};
-use remotemedia_runtime::executor::retry::{RetryPolicy, CircuitBreaker, execute_with_retry};
-use remotemedia_runtime::executor::scheduler::{Scheduler, ExecutionContext};
+use serde_json::Value;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use serde_json::Value;
 
 /// Test T113: Transient error injection with successful retry
 #[tokio::test]
@@ -16,9 +16,8 @@ async fn test_transient_error_with_retry() {
     let attempt_count = Arc::new(AtomicU32::new(0));
     let attempt_clone = attempt_count.clone();
 
-    let result: Result<String> = execute_with_retry(
-        RetryPolicy::fixed(3, Duration::from_millis(10)),
-        || {
+    let result: Result<String> =
+        execute_with_retry(RetryPolicy::fixed(3, Duration::from_millis(10)), || {
             let attempt = attempt_clone.clone();
             async move {
                 let current = attempt.fetch_add(1, Ordering::SeqCst) + 1;
@@ -29,9 +28,8 @@ async fn test_transient_error_with_retry() {
                     Ok("Success!".to_string())
                 }
             }
-        },
-    )
-    .await;
+        })
+        .await;
 
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "Success!");
@@ -76,18 +74,16 @@ async fn test_immediate_failure_non_retryable() {
     let attempt_count = Arc::new(AtomicU32::new(0));
     let attempt_clone = attempt_count.clone();
 
-    let result: Result<()> = execute_with_retry(
-        RetryPolicy::fixed(3, Duration::from_millis(10)),
-        || {
+    let result: Result<()> =
+        execute_with_retry(RetryPolicy::fixed(3, Duration::from_millis(10)), || {
             let attempt = attempt_clone.clone();
             async move {
                 attempt.fetch_add(1, Ordering::SeqCst);
                 // Non-retryable error: manifest error
                 Err(Error::manifest("Invalid pipeline configuration"))
             }
-        },
-    )
-    .await;
+        })
+        .await;
 
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), Error::Manifest { .. }));
@@ -103,25 +99,33 @@ async fn test_circuit_breaker_trips_after_failures() {
     // Record 4 failures - should not trip yet
     for _ in 0..4 {
         circuit_breaker.record_failure();
-        assert!(!circuit_breaker.is_open(), "Circuit breaker should not be open yet");
+        assert!(
+            !circuit_breaker.is_open(),
+            "Circuit breaker should not be open yet"
+        );
     }
 
     // 5th failure should trip the circuit
     circuit_breaker.record_failure();
-    assert!(circuit_breaker.is_open(), "Circuit breaker should be open after 5 failures");
+    assert!(
+        circuit_breaker.is_open(),
+        "Circuit breaker should be open after 5 failures"
+    );
     assert_eq!(circuit_breaker.consecutive_failures(), 5);
 
     // Success should reset the circuit
     circuit_breaker.record_success();
-    assert!(!circuit_breaker.is_open(), "Circuit breaker should be closed after success");
+    assert!(
+        !circuit_breaker.is_open(),
+        "Circuit breaker should be closed after success"
+    );
     assert_eq!(circuit_breaker.consecutive_failures(), 0);
 }
 
 /// Test: Circuit breaker with scheduler integration
 #[tokio::test]
 async fn test_scheduler_with_circuit_breaker() {
-    let scheduler = Scheduler::new(2, "test_pipeline")
-        .with_circuit_breaker(CircuitBreaker::new(3));
+    let scheduler = Scheduler::new(2, "test_pipeline").with_circuit_breaker(CircuitBreaker::new(3));
 
     let failure_count = Arc::new(AtomicU32::new(0));
 
@@ -142,8 +146,7 @@ async fn test_scheduler_with_circuit_breaker() {
     }
 
     // Circuit should now be open - next attempt should fail immediately
-    let ctx = ExecutionContext::new("test_pipeline", "node_after_trip")
-        .with_input(Value::Null);
+    let ctx = ExecutionContext::new("test_pipeline", "node_after_trip").with_input(Value::Null);
 
     let result = scheduler
         .execute_node_with_retry(ctx, |_| async move { Ok(Value::from(42)) })
@@ -168,9 +171,18 @@ async fn test_exponential_backoff_timing() {
 
     // Verify delay calculation
     assert_eq!(policy.delay_for_attempt(0), Some(Duration::from_millis(50)));
-    assert_eq!(policy.delay_for_attempt(1), Some(Duration::from_millis(100)));
-    assert_eq!(policy.delay_for_attempt(2), Some(Duration::from_millis(200)));
-    assert_eq!(policy.delay_for_attempt(3), Some(Duration::from_millis(400)));
+    assert_eq!(
+        policy.delay_for_attempt(1),
+        Some(Duration::from_millis(100))
+    );
+    assert_eq!(
+        policy.delay_for_attempt(2),
+        Some(Duration::from_millis(200))
+    );
+    assert_eq!(
+        policy.delay_for_attempt(3),
+        Some(Duration::from_millis(400))
+    );
     assert_eq!(policy.delay_for_attempt(4), None); // Exhausted
 }
 
@@ -180,17 +192,15 @@ async fn test_retry_exhaustion() {
     let attempt_count = Arc::new(AtomicU32::new(0));
     let attempt_clone = attempt_count.clone();
 
-    let result: Result<()> = execute_with_retry(
-        RetryPolicy::fixed(2, Duration::from_millis(10)),
-        || {
+    let result: Result<()> =
+        execute_with_retry(RetryPolicy::fixed(2, Duration::from_millis(10)), || {
             let attempt = attempt_clone.clone();
             async move {
                 attempt.fetch_add(1, Ordering::SeqCst);
                 Err(Error::execution("Persistent failure"))
             }
-        },
-    )
-    .await;
+        })
+        .await;
 
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Retry exhausted"));
@@ -202,21 +212,19 @@ async fn test_retry_exhaustion() {
 async fn test_mixed_error_types() {
     // Non-retryable errors
     assert!(!Error::manifest("test").is_retryable());
-    assert!(!Error::Serialization(serde_json::Error::io(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        "test"
-    )))
-    .is_retryable());
+    assert!(
+        !Error::Serialization(serde_json::Error::io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "test"
+        )))
+        .is_retryable()
+    );
 
     // Retryable errors
     assert!(Error::execution("test").is_retryable());
     assert!(Error::transport("test").is_retryable());
     assert!(Error::python_vm("test").is_retryable());
-    assert!(Error::Io(std::io::Error::new(
-        std::io::ErrorKind::NotFound,
-        "test"
-    ))
-    .is_retryable());
+    assert!(Error::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "test")).is_retryable());
 }
 
 /// Test: Circuit breaker reset
@@ -243,8 +251,16 @@ async fn test_default_retry_policy() {
 
     // Default should be 3 attempts with exponential backoff
     assert_eq!(policy.max_attempts(), 3);
-    assert_eq!(policy.delay_for_attempt(0), Some(Duration::from_millis(100)));
-    assert_eq!(policy.delay_for_attempt(1), Some(Duration::from_millis(200)));
-    assert_eq!(policy.delay_for_attempt(2), Some(Duration::from_millis(400)));
+    assert_eq!(
+        policy.delay_for_attempt(0),
+        Some(Duration::from_millis(100))
+    );
+    assert_eq!(
+        policy.delay_for_attempt(1),
+        Some(Duration::from_millis(200))
+    );
+    assert_eq!(
+        policy.delay_for_attempt(2),
+        Some(Duration::from_millis(400))
+    );
 }
-
