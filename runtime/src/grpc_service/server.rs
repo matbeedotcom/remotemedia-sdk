@@ -76,7 +76,19 @@ impl GrpcServer {
             Arc::clone(&self.metrics),
         );
 
+        // T037: Configure connection pooling and HTTP/2 keepalive for concurrent clients
         let server = Server::builder()
+            // Allow many concurrent requests per connection
+            .concurrency_limit_per_connection(256)
+            // TCP keepalive to detect dead connections
+            .tcp_keepalive(Some(std::time::Duration::from_secs(60)))
+            .tcp_nodelay(true)
+            // HTTP/2 keepalive ping to keep connections alive
+            .http2_keepalive_interval(Some(std::time::Duration::from_secs(30)))
+            .http2_keepalive_timeout(Some(std::time::Duration::from_secs(10)))
+            // Connection timeouts
+            .timeout(std::time::Duration::from_secs(60))
+            // Tracing
             .trace_fn(|_| tracing::info_span!("grpc_request"))
             .add_service(PipelineExecutionServiceServer::new(execution_service))
             .add_service(StreamingPipelineServiceServer::new(streaming_service))

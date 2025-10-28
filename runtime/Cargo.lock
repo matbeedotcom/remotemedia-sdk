@@ -4117,6 +4117,7 @@ dependencies = [
  "futures",
  "hex",
  "hyper 1.7.0",
+ "num_cpus",
  "numpy",
  "prometheus",
  "prost",
