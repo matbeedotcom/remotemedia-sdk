@@ -16,16 +16,19 @@ async fn test_resample_44100_to_16000() {
     // Create manifest for resample pipeline
     let manifest = PipelineManifest {
         version: "1.0".to_string(),
+        metadata: None,
         nodes: vec![
             NodeManifest {
                 id: "resample".to_string(),
                 node_type: "AudioResample".to_string(),
-                parameters: r#"{"target_sample_rate": 16000}"#.to_string(),
+                params: r#"{"target_sample_rate": 16000}"#.to_string(),
+                is_streaming: false,
+                capabilities: None,
+                host: String::new(),
                 runtime_hint: 0, // Native
             },
         ],
         connections: vec![],
-        metadata: None,
     };
 
     // Create 1 second of 44.1kHz mono audio (sine wave)
@@ -56,6 +59,7 @@ async fn test_resample_44100_to_16000() {
         audio_inputs: vec![("resample".to_string(), audio_input)].into_iter().collect(),
         data_inputs: std::collections::HashMap::new(),
         resource_limits: None,
+        client_version: "v1".to_string(),
     };
 
     // TODO: Call ExecutePipeline service once implemented

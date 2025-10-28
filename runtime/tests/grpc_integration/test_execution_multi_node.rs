@@ -16,29 +16,33 @@ async fn test_multi_node_pipeline() {
     // Create manifest: input → resample → vad → output
     let manifest = PipelineManifest {
         version: "1.0".to_string(),
+        metadata: None,
         nodes: vec![
             NodeManifest {
                 id: "resample".to_string(),
                 node_type: "AudioResample".to_string(),
-                parameters: r#"{"target_sample_rate": 16000}"#.to_string(),
+                params: r#"{"target_sample_rate": 16000}"#.to_string(),
+                is_streaming: false,
+                capabilities: None,
+                host: String::new(),
                 runtime_hint: 0,
             },
             NodeManifest {
                 id: "vad".to_string(),
                 node_type: "VAD".to_string(),
-                parameters: r#"{}"#.to_string(),
+                params: r#"{}"#.to_string(),
+                is_streaming: false,
+                capabilities: None,
+                host: String::new(),
                 runtime_hint: 0,
             },
         ],
         connections: vec![
             Connection {
-                from_node: "resample".to_string(),
-                from_output: "audio".to_string(),
-                to_node: "vad".to_string(),
-                to_input: "audio".to_string(),
+                from: "resample".to_string(),
+                to: "vad".to_string(),
             },
         ],
-        metadata: None,
     };
 
     // Create input audio
@@ -58,6 +62,7 @@ async fn test_multi_node_pipeline() {
         audio_inputs: vec![("resample".to_string(), audio_input)].into_iter().collect(),
         data_inputs: std::collections::HashMap::new(),
         resource_limits: None,
+        client_version: "v1".to_string(),
     };
 
     // TODO: Call ExecutePipeline service once implemented
@@ -77,12 +82,10 @@ async fn test_multi_node_pipeline() {
 fn test_connection_validation() {
     // Verify connection structure
     let conn = Connection {
-        from_node: "node1".to_string(),
-        from_output: "out".to_string(),
-        to_node: "node2".to_string(),
-        to_input: "in".to_string(),
+        from: "node1".to_string(),
+        to: "node2".to_string(),
     };
 
-    assert_eq!(conn.from_node, "node1");
-    assert_eq!(conn.to_node, "node2");
+    assert_eq!(conn.from, "node1");
+    assert_eq!(conn.to, "node2");
 }
