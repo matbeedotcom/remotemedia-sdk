@@ -2,15 +2,15 @@
 //!
 //! Manages concurrent node execution with tokio runtime.
 
-use crate::{Error, Result};
 use crate::executor::error::ExecutionErrorExt;
 use crate::executor::metrics::PipelineMetrics;
-use crate::executor::retry::{RetryPolicy, CircuitBreaker, execute_with_retry};
+use crate::executor::retry::{execute_with_retry, CircuitBreaker, RetryPolicy};
+use crate::{Error, Result};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{Semaphore, RwLock};
+use tokio::sync::{RwLock, Semaphore};
 use tokio::time::timeout;
 
 /// Execution context for a node
@@ -126,7 +126,7 @@ impl Scheduler {
         Fut: std::future::Future<Output = Result<Value>> + Send,
     {
         let node_id = ctx.node_id.clone();
-        
+
         // Check circuit breaker
         {
             let breaker = self.circuit_breaker.read().await;
@@ -158,19 +158,17 @@ impl Scheduler {
     }
 
     /// Schedule a node for execution
-    pub async fn schedule_node<F, Fut>(
-        &self,
-        ctx: ExecutionContext,
-        operation: F,
-    ) -> Result<Value>
+    pub async fn schedule_node<F, Fut>(&self, ctx: ExecutionContext, operation: F) -> Result<Value>
     where
         F: FnOnce(Value) -> Fut + Send,
         Fut: std::future::Future<Output = Result<Value>> + Send,
     {
         // Acquire permit for concurrency control
-        let _permit = self.semaphore.acquire().await.map_err(|e| {
-            Error::Execution(format!("Failed to acquire semaphore: {}", e))
-        })?;
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|e| Error::Execution(format!("Failed to acquire semaphore: {}", e)))?;
 
         let start_time = Instant::now();
         let node_id = ctx.node_id.clone();
@@ -222,9 +220,10 @@ impl Scheduler {
             let default_timeout = self.default_timeout;
 
             let task = tokio::spawn(async move {
-                let _permit = semaphore.acquire().await.map_err(|e| {
-                    Error::Execution(format!("Failed to acquire semaphore: {}", e))
-                })?;
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .map_err(|e| Error::Execution(format!("Failed to acquire semaphore: {}", e)))?;
 
                 let start_time = Instant::now();
                 let node_id = ctx.node_id.clone();
@@ -266,9 +265,9 @@ impl Scheduler {
         // Wait for all tasks to complete
         let mut results = Vec::new();
         for task in tasks {
-            let result = task.await.map_err(|e| {
-                Error::Execution(format!("Task join error: {}", e))
-            })??;
+            let result = task
+                .await
+                .map_err(|e| Error::Execution(format!("Task join error: {}", e)))??;
             results.push(result);
         }
 
@@ -300,8 +299,7 @@ mod tests {
     async fn test_schedule_node() {
         let scheduler = Scheduler::new(2, "test");
 
-        let ctx = ExecutionContext::new("test", "node1")
-            .with_input(Value::from(42));
+        let ctx = ExecutionContext::new("test", "node1").with_input(Value::from(42));
 
         let result = scheduler
             .schedule_node(ctx, |input| async move {
@@ -316,11 +314,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_timeout() {
-        let scheduler = Scheduler::new(2, "test")
-            .with_default_timeout(Duration::from_millis(100));
+        let scheduler = Scheduler::new(2, "test").with_default_timeout(Duration::from_millis(100));
 
-        let ctx = ExecutionContext::new("test", "slow_node")
-            .with_input(Value::Null);
+        let ctx = ExecutionContext::new("test", "slow_node").with_input(Value::Null);
 
         let result = scheduler
             .schedule_node(ctx, |_| async move {

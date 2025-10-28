@@ -1,7 +1,7 @@
 //! High-performance audio buffer types for zero-copy processing
 
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use serde::{Serialize, Deserialize};
 
 /// Audio sample formats
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

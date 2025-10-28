@@ -24,7 +24,6 @@ pub mod cpython_executor;
 #[cfg(feature = "python-async")]
 pub use ffi::*;
 
-pub use node_executor::PythonNodeInstance;
 pub use cpython_executor::CPythonNodeExecutor;
+pub use node_executor::PythonNodeInstance;
 // pub use cpython_node::{CPythonNodeFactory, inputs_to_pydict, pydict_to_outputs};  // Archived in v0.2.1
-

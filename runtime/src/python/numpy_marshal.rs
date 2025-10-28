@@ -119,12 +119,18 @@ pub fn numpy_to_json(py: Python, obj: &Bound<'_, PyAny>) -> PyResult<Value> {
 pub fn json_to_numpy<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
     // Extract array data
     let array_data: NumpyArrayData = serde_json::from_value(
-        value.get("array")
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Missing 'array' field"))?
+        value
+            .get("array")
+            .ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>("Missing 'array' field")
+            })?
             .clone(),
     )
     .map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to parse array data: {}", e))
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Failed to parse array data: {}",
+            e
+        ))
     })?;
 
     // Decode base64 data
@@ -132,7 +138,10 @@ pub fn json_to_numpy<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py,
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&array_data.data)
         .map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to decode base64: {}", e))
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Failed to decode base64: {}",
+                e
+            ))
         })?;
 
     // Import numpy
@@ -170,7 +179,11 @@ pub fn numpy_to_vec_f64(_py: Python, obj: &Bound<'_, PyAny>) -> PyResult<Vec<f64
 /// Convert Rust vector to numpy array (f64)
 ///
 /// This creates a new numpy array from Rust data.
-pub fn vec_to_numpy_f64<'py>(py: Python<'py>, data: &[f64], shape: &[usize]) -> PyResult<Bound<'py, PyAny>> {
+pub fn vec_to_numpy_f64<'py>(
+    py: Python<'py>,
+    data: &[f64],
+    shape: &[usize],
+) -> PyResult<Bound<'py, PyAny>> {
     let array = PyArray::from_slice(py, data);
     let reshaped = array.reshape(shape)?;
     Ok(reshaped.into_any())
@@ -205,18 +218,18 @@ pub fn numpy_to_audio_buffer_ffi<'py>(
 ) -> PyResult<AudioBuffer> {
     // Downcast to f32 array
     let array = arr.downcast::<PyArrayDyn<f32>>()?;
-    
+
     // Get readonly view (zero-copy borrow)
     let readonly = array.readonly();
     let slice = readonly.as_slice()?;
-    
+
     // Copy into Vec for ownership (required since Python array lifetime is limited)
     // In a true zero-copy scenario with stable memory, we'd use unsafe to borrow
     let data = slice.to_vec();
-    
+
     // Wrap in Arc for shared ownership
     let audio_buffer = AudioBuffer::from_vec(data, sample_rate, channels, AudioFormat::F32);
-    
+
     Ok(audio_buffer)
 }
 
@@ -238,11 +251,11 @@ pub fn audio_buffer_to_numpy_ffi<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     // Get slice from AudioBuffer (zero-copy via Arc)
     let slice = buffer.as_slice();
-    
+
     // Create numpy array from slice
     // PyArray::from_slice creates a numpy array that borrows from the Rust data
     let array = PyArray::from_slice(py, slice);
-    
+
     // For multi-channel audio, reshape to (frames, channels)
     if buffer.channels() > 1 {
         let frames = buffer.len_frames();
@@ -271,10 +284,12 @@ mod tests {
 
             // Create a numpy array using run
             use pyo3::ffi::c_str;
-            let code = c_str!(r#"
+            let code = c_str!(
+                r#"
 import numpy as np
 result = np.array([1.0, 2.0, 3.0])
-"#);
+"#
+            );
             py.run(code, None, None).unwrap();
 
             // Get the result from locals
@@ -301,10 +316,12 @@ result = np.array([1.0, 2.0, 3.0])
 
             use pyo3::ffi::c_str;
             // Create a 2D array
-            let code = c_str!(r#"
+            let code = c_str!(
+                r#"
 import numpy as np
 result = np.array([[1, 2], [3, 4]], dtype=np.int32)
-"#);
+"#
+            );
             py.run(code, None, None).unwrap();
             let locals = py.eval(c_str!("locals()"), None, None).unwrap();
             let array = locals.get_item("result").unwrap();
@@ -330,10 +347,12 @@ result = np.array([[1, 2], [3, 4]], dtype=np.int32)
 
             use pyo3::ffi::c_str;
             // Create array
-            let code = c_str!(r#"
+            let code = c_str!(
+                r#"
 import numpy as np
 result = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float64)
-"#);
+"#
+            );
             py.run(code, None, None).unwrap();
             let locals = py.eval(c_str!("locals()"), None, None).unwrap();
             let original = locals.get_item("result").unwrap();
@@ -373,10 +392,12 @@ result = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float64)
 
             use pyo3::ffi::c_str;
             // Create array
-            let code = c_str!(r#"
+            let code = c_str!(
+                r#"
 import numpy as np
 result = np.array([1.0, 2.0, 3.0, 4.0])
-"#);
+"#
+            );
             py.run(code, None, None).unwrap();
             let locals = py.eval(c_str!("locals()"), None, None).unwrap();
             let array = locals.get_item("result").unwrap();
@@ -424,10 +445,12 @@ result = np.array([1.0, 2.0, 3.0, 4.0])
 
             use pyo3::ffi::c_str;
             // Create f32 numpy array
-            let code = c_str!(r#"
+            let code = c_str!(
+                r#"
 import numpy as np
 result = np.array([0.0, 0.5, 1.0, 0.5], dtype=np.float32)
-"#);
+"#
+            );
             py.run(code, None, None).unwrap();
             let locals = py.eval(c_str!("locals()"), None, None).unwrap();
             let array = locals.get_item("result").unwrap();
@@ -439,7 +462,7 @@ result = np.array([0.0, 0.5, 1.0, 0.5], dtype=np.float32)
             assert_eq!(buffer.sample_rate(), 48000);
             assert_eq!(buffer.channels(), 1);
             assert_eq!(buffer.format(), AudioFormat::F32);
-            
+
             // Verify data
             let slice = buffer.as_slice();
             assert_eq!(slice[0], 0.0);
@@ -509,10 +532,12 @@ result = np.array([0.0, 0.5, 1.0, 0.5], dtype=np.float32)
 
             use pyo3::ffi::c_str;
             // Create numpy array
-            let code = c_str!(r#"
+            let code = c_str!(
+                r#"
 import numpy as np
 result = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float32)
-"#);
+"#
+            );
             py.run(code, None, None).unwrap();
             let locals = py.eval(c_str!("locals()"), None, None).unwrap();
             let original = locals.get_item("result").unwrap();
@@ -533,4 +558,3 @@ result = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float32)
         });
     }
 }
-

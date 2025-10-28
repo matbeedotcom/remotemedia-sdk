@@ -8,15 +8,13 @@
 //! - Phase 1.3.7: local-first execution (default if no host specified)
 //! - Phase 1.3.8: fallback logic (local → remote if capabilities not met)
 
-mod detector;
 mod build_detector;
+mod detector;
 
-pub use detector::{detect_node_capabilities, detect_pipeline_capabilities};
 pub use build_detector::{
-    detect_via_compilation,
-    detect_python_node_capabilities,
-    detect_and_print,
+    detect_and_print, detect_python_node_capabilities, detect_via_compilation,
 };
+pub use detector::{detect_node_capabilities, detect_pipeline_capabilities};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -247,7 +245,9 @@ pub fn check_compatibility(
     if !node_caps.supports_browser && executor_caps.environment == ExecutionEnvironment::Browser {
         return CapabilityMatch {
             can_execute: false,
-            reason: Some("Node requires native environment (threads, native libs, etc.)".to_string()),
+            reason: Some(
+                "Node requires native environment (threads, native libs, etc.)".to_string(),
+            ),
             use_remote: true,
             has_fallback: node_caps.fallback_available,
             score: 0,
@@ -297,14 +297,18 @@ pub fn check_compatibility(
             ExecutionPlacement::PreferRemote if executor_caps.remote_execution_available => true,
 
             // Native-only nodes might need remote execution if local host unavailable
-            ExecutionPlacement::RequiresNative if executor_caps.environment != ExecutionEnvironment::Native => {
+            ExecutionPlacement::RequiresNative
+                if executor_caps.environment != ExecutionEnvironment::Native =>
+            {
                 executor_caps.remote_execution_available
-            },
+            }
 
             // WASI nodes need remote if not in WASI environment
-            ExecutionPlacement::RequiresWasi if executor_caps.environment != ExecutionEnvironment::WasmServer => {
+            ExecutionPlacement::RequiresWasi
+                if executor_caps.environment != ExecutionEnvironment::WasmServer =>
+            {
                 executor_caps.remote_execution_available
-            },
+            }
 
             _ => false,
         }
@@ -335,9 +339,9 @@ pub fn detect_browser_capabilities() -> ExecutorCapabilities {
         environment: ExecutionEnvironment::Browser,
         wasm_support: true,
         native_support: false,
-        threading_support: false, // SharedArrayBuffer not always available
+        threading_support: false,  // SharedArrayBuffer not always available
         available_memory_mb: 2048, // Conservative estimate
-        gpu_available: true, // WebGPU might be available
+        gpu_available: true,       // WebGPU might be available
         gpu_type: Some(GpuType::WebGPU),
         cpu_features: vec!["wasm".to_string(), "simd".to_string()],
         remote_execution_available: true, // Can use WebRTC/HTTP
@@ -352,7 +356,7 @@ pub fn detect_native_capabilities() -> ExecutorCapabilities {
         native_support: true,
         threading_support: true,
         available_memory_mb: 8192, // Assume reasonable RAM
-        gpu_available: false, // Would need actual detection
+        gpu_available: false,      // Would need actual detection
         gpu_type: None,
         cpu_features: detect_cpu_features(),
         remote_execution_available: false, // By default
@@ -455,7 +459,10 @@ mod tests {
         let result = check_compatibility(&whisper_caps, &executor_caps);
 
         assert!(!result.can_execute || result.use_remote);
-        assert_eq!(result.reason, Some("Node requires native environment (threads, native libs, etc.)".to_string()));
+        assert_eq!(
+            result.reason,
+            Some("Node requires native environment (threads, native libs, etc.)".to_string())
+        );
     }
 
     #[test]

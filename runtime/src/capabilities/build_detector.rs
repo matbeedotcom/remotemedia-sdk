@@ -6,9 +6,9 @@
 //!
 //! No guessing, no heuristics, just empirical compilation results.
 
-use super::{NodeCapabilities, ExecutionPlacement};
-use std::process::Command;
+use super::{ExecutionPlacement, NodeCapabilities};
 use std::path::Path;
+use std::process::Command;
 
 /// Detect capabilities by attempting to build for each target
 ///
@@ -88,9 +88,11 @@ fn try_compile_browser_wasm(source: &Path) -> bool {
     let output = Command::new("cargo")
         .args(&[
             "build",
-            "--target", "wasm32-unknown-unknown",
+            "--target",
+            "wasm32-unknown-unknown",
             "--release",
-            "--manifest-path", source.to_str().unwrap(),
+            "--manifest-path",
+            source.to_str().unwrap(),
         ])
         .output();
 
@@ -105,9 +107,11 @@ fn try_compile_wasi(source: &Path) -> bool {
     let output = Command::new("cargo")
         .args(&[
             "build",
-            "--target", "wasm32-wasip1",
+            "--target",
+            "wasm32-wasip1",
             "--release",
-            "--manifest-path", source.to_str().unwrap(),
+            "--manifest-path",
+            source.to_str().unwrap(),
             "--no-default-features",
         ])
         .output();
@@ -124,12 +128,17 @@ fn try_compile_wasi_threads(source: &Path) -> bool {
     let output = Command::new("cargo")
         .args(&[
             "build",
-            "--target", "wasm32-wasip1-threads",
+            "--target",
+            "wasm32-wasip1-threads",
             "--release",
-            "--manifest-path", source.to_str().unwrap(),
+            "--manifest-path",
+            source.to_str().unwrap(),
             "--no-default-features",
         ])
-        .env("RUSTFLAGS", "-C target-feature=+atomics,+bulk-memory,+mutable-globals")
+        .env(
+            "RUSTFLAGS",
+            "-C target-feature=+atomics,+bulk-memory,+mutable-globals",
+        )
         .output();
 
     match output {
@@ -144,7 +153,8 @@ fn try_compile_native(source: &Path) -> bool {
         .args(&[
             "build",
             "--release",
-            "--manifest-path", source.to_str().unwrap(),
+            "--manifest-path",
+            source.to_str().unwrap(),
         ])
         .output();
 
@@ -188,9 +198,14 @@ pub fn detect_python_node_capabilities(node_source: &Path) -> NodeCapabilities {
 
     // Check for C-extension imports (these won't work in browser)
     let c_extensions = [
-        "import numpy", "import torch", "import whisper",
-        "import cv2", "import tensorflow", "from scipy",
-        "import pandas", "import sklearn",
+        "import numpy",
+        "import torch",
+        "import whisper",
+        "import cv2",
+        "import tensorflow",
+        "from scipy",
+        "import pandas",
+        "import sklearn",
     ];
 
     for ext in &c_extensions {
@@ -270,14 +285,18 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let node_file = temp_dir.join("test_node.py");
 
-        std::fs::write(&node_file, r#"
+        std::fs::write(
+            &node_file,
+            r#"
 import json
 import sys
 
 class SimpleNode:
     def process(self, data):
         return {"result": data * 2}
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let caps = detect_python_node_capabilities(&node_file);
 
@@ -291,18 +310,25 @@ class SimpleNode:
         let temp_dir = std::env::temp_dir();
         let node_file = temp_dir.join("test_node_numpy.py");
 
-        std::fs::write(&node_file, r#"
+        std::fs::write(
+            &node_file,
+            r#"
 import numpy as np
 
 class NumpyNode:
     def process(self, data):
         return np.array(data) * 2
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let caps = detect_python_node_capabilities(&node_file);
 
         assert!(!caps.supports_browser, "Numpy prevents browser execution");
-        assert!(!caps.supports_wasm, "Numpy C-extension can't compile to WASM");
+        assert!(
+            !caps.supports_wasm,
+            "Numpy C-extension can't compile to WASM"
+        );
         assert!(caps.requires_native_libs, "Numpy is native library");
     }
 }

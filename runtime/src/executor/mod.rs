@@ -22,14 +22,14 @@ pub use metrics::{NodeMetrics, PipelineMetrics};
 pub use retry::RetryPolicy;
 pub use scheduler::{ExecutionContext, Scheduler};
 
-use crate::{Error, Result};
 use crate::manifest::Manifest;
 use crate::nodes::{NodeContext, NodeExecutor, NodeRegistry};
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
-use serde_json::Value;
+use crate::{Error, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
+use serde_json::Value;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 
 pub use runtime_selector::{RuntimeSelector, SelectedRuntime};
@@ -66,9 +66,7 @@ impl PyObjectCache {
     /// Retrieve a Python object by ID
     pub fn get(&self, id: &str) -> Option<Py<PyAny>> {
         let objects = self.objects.lock().unwrap();
-        Python::with_gil(|py| {
-            objects.get(id).map(|obj| obj.clone_ref(py))
-        })
+        Python::with_gil(|py| objects.get(id).map(|obj| obj.clone_ref(py)))
     }
 
     /// Check if an ID exists in the cache
@@ -271,7 +269,7 @@ pub struct Executor {
 
     /// Cache for Python objects to avoid serialization between Python nodes
     py_cache: PyObjectCache,
-    
+
     /// Pipeline metrics collection
     metrics: Arc<RwLock<PipelineMetrics>>,
 }
@@ -340,7 +338,10 @@ impl Executor {
     #[cfg(target_family = "wasm")]
     pub fn execute_sync(&self, manifest: &Manifest) -> Result<ExecutionResult> {
         use futures::executor::block_on;
-        tracing::info!("Executing pipeline synchronously (WASM mode): {}", manifest.metadata.name);
+        tracing::info!(
+            "Executing pipeline synchronously (WASM mode): {}",
+            manifest.metadata.name
+        );
         block_on(self.execute(manifest))
     }
 
@@ -397,18 +398,24 @@ impl Executor {
         let has_streaming_nodes = node_instances.values().any(|n| n.is_streaming());
 
         let outputs = if has_streaming_nodes {
-            tracing::info!("Pipeline has streaming nodes, using concurrent channel-based execution");
+            tracing::info!(
+                "Pipeline has streaming nodes, using concurrent channel-based execution"
+            );
             // Concurrent executor takes ownership and handles cleanup internally
-            return self.execute_concurrent_pipeline(&graph, node_instances).await;
+            return self
+                .execute_concurrent_pipeline(&graph, node_instances)
+                .await;
         } else if is_linear {
             // Use linear execution (simpler, optimized)
             // Start with source nodes by giving them Null input
             tracing::info!("Using linear execution for source-based pipeline");
-            self.execute_linear_source_pipeline(&graph, &mut node_instances).await?
+            self.execute_linear_source_pipeline(&graph, &mut node_instances)
+                .await?
         } else {
             // Use DAG execution for complex topologies
             tracing::info!("Using DAG execution for source-based pipeline");
-            self.execute_dag_source_pipeline(&graph, &mut node_instances).await?
+            self.execute_dag_source_pipeline(&graph, &mut node_instances)
+                .await?
         };
 
         tracing::info!("Pipeline execution completed");
@@ -502,7 +509,10 @@ impl Executor {
         input_data: Vec<Value>,
     ) -> Result<ExecutionResult> {
         use futures::executor::block_on;
-        tracing::info!("Executing pipeline synchronously (WASM mode) with {} inputs", input_data.len());
+        tracing::info!(
+            "Executing pipeline synchronously (WASM mode) with {} inputs",
+            input_data.len()
+        );
         block_on(self.execute_with_input(manifest, input_data))
     }
 
@@ -518,7 +528,11 @@ impl Executor {
         manifest: &Manifest,
         input_data: Vec<Value>,
     ) -> Result<ExecutionResult> {
-        tracing::info!("Executing pipeline: {} with {} inputs", manifest.metadata.name, input_data.len());
+        tracing::info!(
+            "Executing pipeline: {} with {} inputs",
+            manifest.metadata.name,
+            input_data.len()
+        );
 
         // Build graph
         let graph = PipelineGraph::from_manifest(manifest)?;
@@ -530,11 +544,13 @@ impl Executor {
         if is_linear {
             // Simple linear execution path (optimized)
             tracing::info!("Using linear execution strategy");
-            self.execute_linear_pipeline(&graph, manifest, input_data).await
+            self.execute_linear_pipeline(&graph, manifest, input_data)
+                .await
         } else {
             // Complex DAG with branching/merging (Phase 1.11.4)
             tracing::info!("Using DAG execution strategy with branching/merging");
-            self.execute_dag_pipeline(&graph, manifest, input_data).await
+            self.execute_dag_pipeline(&graph, manifest, input_data)
+                .await
         }
     }
 
@@ -605,7 +621,13 @@ impl Executor {
                 // Flow flushed items through remaining nodes in the pipeline
                 let mut current_items = flushed_items;
 
-                for next_node_id in &graph.execution_order[(graph.execution_order.iter().position(|id| id == node_id).unwrap() + 1)..] {
+                for next_node_id in &graph.execution_order[(graph
+                    .execution_order
+                    .iter()
+                    .position(|id| id == node_id)
+                    .unwrap()
+                    + 1)..]
+                {
                     let next_node = node_instances.get_mut(next_node_id).unwrap();
                     let mut next_items = Vec::new();
 
@@ -639,7 +661,8 @@ impl Executor {
     ) -> Result<Value> {
         // For now, just use linear execution
         // TODO: Implement proper DAG execution for source pipelines
-        self.execute_linear_source_pipeline(graph, node_instances).await
+        self.execute_linear_source_pipeline(graph, node_instances)
+            .await
     }
 
     /// Execute pipeline using concurrent channels (for streaming nodes)
@@ -677,19 +700,31 @@ impl Executor {
             let mut rx = output_receivers.remove(node_id).unwrap();
 
             // Get output channels for this node's outputs
-            let output_channels: Vec<mpsc::UnboundedSender<Value>> = graph_node.outputs.iter()
+            let output_channels: Vec<mpsc::UnboundedSender<Value>> = graph_node
+                .outputs
+                .iter()
                 .filter_map(|out_id| input_channels.get(out_id).cloned())
                 .collect();
 
             // If this is a sink node (no outputs), send to final channel
             let is_sink = output_channels.is_empty();
-            let final_sender = if is_sink { Some(final_tx.clone()) } else { None };
+            let final_sender = if is_sink {
+                Some(final_tx.clone())
+            } else {
+                None
+            };
 
             let node_id_clone = node_id.clone();
             let is_source = graph_node.inputs.is_empty();
 
-            tracing::info!("Spawning task for node: {} (source: {}, sink: {}, streaming: {}, outputs: {:?})",
-                node_id, is_source, is_sink, node.is_streaming(), graph_node.outputs);
+            tracing::info!(
+                "Spawning task for node: {} (source: {}, sink: {}, streaming: {}, outputs: {:?})",
+                node_id,
+                is_source,
+                is_sink,
+                node.is_streaming(),
+                graph_node.outputs
+            );
 
             // Spawn async task for this node
             let task = tokio::spawn(async move {
@@ -699,13 +734,26 @@ impl Executor {
                     tracing::info!("Source node {} starting", node_id_clone);
                     let results = node.process(Value::Null).await?;
 
-                    tracing::info!("Source node {} produced {} items", node_id_clone, results.len());
+                    tracing::info!(
+                        "Source node {} produced {} items",
+                        node_id_clone,
+                        results.len()
+                    );
 
-                    tracing::info!("Source node {} sending {} items to {} output channels", node_id_clone, results.len(), output_channels.len());
+                    tracing::info!(
+                        "Source node {} sending {} items to {} output channels",
+                        node_id_clone,
+                        results.len(),
+                        output_channels.len()
+                    );
                     for (idx, result) in results.iter().enumerate() {
                         for out_ch in &output_channels {
                             if out_ch.send(result.clone()).is_err() {
-                                tracing::warn!("Output channel closed for node {} at item {}", node_id_clone, idx + 1);
+                                tracing::warn!(
+                                    "Output channel closed for node {} at item {}",
+                                    node_id_clone,
+                                    idx + 1
+                                );
                                 return Ok(());
                             }
                         }
@@ -723,11 +771,20 @@ impl Executor {
                     while let Some(input) = rx.recv().await {
                         input_count += 1;
                         if input_count == 1 || input_count % 50 == 0 {
-                            tracing::info!("Node {} received input #{}", node_id_clone, input_count);
+                            tracing::info!(
+                                "Node {} received input #{}",
+                                node_id_clone,
+                                input_count
+                            );
                         }
                         let results = node.process(input).await?;
                         if input_count == 1 || input_count % 50 == 0 {
-                            tracing::info!("Node {} produced {} results from input #{}", node_id_clone, results.len(), input_count);
+                            tracing::info!(
+                                "Node {} produced {} results from input #{}",
+                                node_id_clone,
+                                results.len(),
+                                input_count
+                            );
                         }
 
                         for result in results {
@@ -741,7 +798,10 @@ impl Executor {
                             } else {
                                 for out_ch in &output_channels {
                                     if out_ch.send(result.clone()).is_err() {
-                                        tracing::warn!("Output channel closed for node {}", node_id_clone);
+                                        tracing::warn!(
+                                            "Output channel closed for node {}",
+                                            node_id_clone
+                                        );
                                         return Ok(());
                                     }
                                 }
@@ -750,7 +810,11 @@ impl Executor {
                     }
 
                     // Input channel closed - flush streaming node if applicable
-                    tracing::info!("Input channel closed for node {}, received {} total inputs", node_id_clone, input_count);
+                    tracing::info!(
+                        "Input channel closed for node {}, received {} total inputs",
+                        node_id_clone,
+                        input_count
+                    );
                     if is_streaming_node {
                         tracing::info!("Flushing streaming node {}", node_id_clone);
                         let flushed = node.finish_streaming().await?;
@@ -766,7 +830,10 @@ impl Executor {
                             } else {
                                 for out_ch in &output_channels {
                                     if out_ch.send(result.clone()).is_err() {
-                                        tracing::warn!("Output channel closed for node {}", node_id_clone);
+                                        tracing::warn!(
+                                            "Output channel closed for node {}",
+                                            node_id_clone
+                                        );
                                         return Ok(());
                                     }
                                 }
@@ -799,10 +866,14 @@ impl Executor {
 
         // Wait for all tasks to complete
         for task in tasks {
-            task.await.map_err(|e| Error::Execution(format!("Task join error: {}", e)))??;
+            task.await
+                .map_err(|e| Error::Execution(format!("Task join error: {}", e)))??;
         }
 
-        tracing::info!("Concurrent pipeline produced {} results", final_results.len());
+        tracing::info!(
+            "Concurrent pipeline produced {} results",
+            final_results.len()
+        );
 
         // Return final results
         let outputs = if final_results.len() == 1 {
@@ -857,7 +928,9 @@ impl Executor {
                 .nodes
                 .iter()
                 .find(|n| n.id == *node_id)
-                .ok_or_else(|| Error::Manifest(format!("Node {} not found in manifest", node_id)))?;
+                .ok_or_else(|| {
+                    Error::Manifest(format!("Node {} not found in manifest", node_id))
+                })?;
 
             // Create node instance with runtime selection (Phase 1.10.7)
             let mut node = self.create_node_with_runtime(node_manifest)?;
@@ -885,7 +958,11 @@ impl Executor {
             // Check if this is a streaming node
             if node.is_streaming() {
                 // For streaming nodes: feed all inputs first, then collect all outputs
-                tracing::info!("Streaming node {} - feeding {} inputs", node_id, current_data.len());
+                tracing::info!(
+                    "Streaming node {} - feeding {} inputs",
+                    node_id,
+                    current_data.len()
+                );
 
                 // Feed all inputs
                 for item in current_data {
@@ -894,7 +971,11 @@ impl Executor {
 
                 // Signal completion and collect all outputs
                 output_data = node.finish_streaming().await?;
-                tracing::info!("Streaming node {} produced {} outputs", node_id, output_data.len());
+                tracing::info!(
+                    "Streaming node {} produced {} outputs",
+                    node_id,
+                    output_data.len()
+                );
             } else {
                 // For non-streaming nodes: process items one at a time
                 // Phase 1.11.2: Process each item (supports streaming)
@@ -903,7 +984,11 @@ impl Executor {
                     let results = node.process(item).await?;
                     output_data.extend(results);
                 }
-                tracing::info!("Node {} processed, {} items remaining", node_id, output_data.len());
+                tracing::info!(
+                    "Node {} processed, {} items remaining",
+                    node_id,
+                    output_data.len()
+                );
             }
 
             current_data = output_data;
@@ -955,7 +1040,9 @@ impl Executor {
                 .nodes
                 .iter()
                 .find(|n| n.id == *node_id)
-                .ok_or_else(|| Error::Manifest(format!("Node {} not found in manifest", node_id)))?;
+                .ok_or_else(|| {
+                    Error::Manifest(format!("Node {} not found in manifest", node_id))
+                })?;
 
             let mut node = self.create_node_with_runtime(node_manifest)?;
 
@@ -1106,7 +1193,7 @@ pub struct ExecutionResult {
 
     /// Graph information
     pub graph_info: Option<GraphInfo>,
-    
+
     /// Execution metrics
     pub metrics: PipelineMetrics,
 }
@@ -1262,10 +1349,22 @@ mod tests {
                 },
             ],
             connections: vec![
-                Connection { from: "A".to_string(), to: "B".to_string() },
-                Connection { from: "A".to_string(), to: "C".to_string() },
-                Connection { from: "B".to_string(), to: "D".to_string() },
-                Connection { from: "C".to_string(), to: "D".to_string() },
+                Connection {
+                    from: "A".to_string(),
+                    to: "B".to_string(),
+                },
+                Connection {
+                    from: "A".to_string(),
+                    to: "C".to_string(),
+                },
+                Connection {
+                    from: "B".to_string(),
+                    to: "D".to_string(),
+                },
+                Connection {
+                    from: "C".to_string(),
+                    to: "D".to_string(),
+                },
             ],
         };
 
@@ -1334,9 +1433,18 @@ mod tests {
                 },
             ],
             connections: vec![
-                Connection { from: "A".to_string(), to: "B".to_string() },
-                Connection { from: "B".to_string(), to: "C".to_string() },
-                Connection { from: "C".to_string(), to: "A".to_string() }, // Cycle!
+                Connection {
+                    from: "A".to_string(),
+                    to: "B".to_string(),
+                },
+                Connection {
+                    from: "B".to_string(),
+                    to: "C".to_string(),
+                },
+                Connection {
+                    from: "C".to_string(),
+                    to: "A".to_string(),
+                }, // Cycle!
             ],
         };
 
@@ -1376,12 +1484,10 @@ mod tests {
                     execution: None,
                 },
             ],
-            connections: vec![
-                Connection {
-                    from: "input_0".to_string(),
-                    to: "process_1".to_string(),
-                },
-            ],
+            connections: vec![Connection {
+                from: "input_0".to_string(),
+                to: "process_1".to_string(),
+            }],
         };
 
         let executor = Executor::new();
@@ -1442,7 +1548,10 @@ mod tests {
             serde_json::json!("test3"),
         ];
 
-        let result = executor.execute_with_input(&manifest, input_data).await.unwrap();
+        let result = executor
+            .execute_with_input(&manifest, input_data)
+            .await
+            .unwrap();
 
         assert_eq!(result.status, "success");
 

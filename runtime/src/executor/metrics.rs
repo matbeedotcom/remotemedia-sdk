@@ -186,9 +186,9 @@ impl PipelineMetrics {
     /// Export metrics as JSON with microsecond precision
     pub fn to_json(&self) -> serde_json::Value {
         let start = Instant::now();
-        
+
         let total_duration_us = self.total_duration().map(|d| d.as_micros());
-        
+
         // Convert node metrics to JSON with microsecond precision
         let node_metrics_json: Vec<serde_json::Value> = self.node_metrics
             .values()
@@ -204,9 +204,9 @@ impl PipelineMetrics {
                 "max_duration_us": m.max_duration.as_micros(),
             }))
             .collect();
-        
+
         let serialization_overhead_us = start.elapsed().as_micros();
-        
+
         serde_json::json!({
             "pipeline_id": self.pipeline_id,
             "total_executions": self.total_executions,

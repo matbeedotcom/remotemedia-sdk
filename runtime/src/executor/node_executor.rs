@@ -81,7 +81,11 @@ impl RustNodeExecutor {
 #[async_trait]
 impl NodeExecutor for RustNodeExecutor {
     async fn initialize(&mut self, ctx: &NodeContext) -> Result<()> {
-        tracing::info!("Initializing Rust node: {} ({})", ctx.node_id, self.node_type);
+        tracing::info!(
+            "Initializing Rust node: {} ({})",
+            ctx.node_id,
+            self.node_type
+        );
         self.handler.initialize(&ctx.params).await
     }
 
@@ -127,9 +131,7 @@ impl NodeExecutor for PythonNodeExecutor {
 
         #[cfg(not(feature = "python"))]
         {
-            Err(Error::Execution(
-                "Python support not enabled".to_string(),
-            ))
+            Err(Error::Execution("Python support not enabled".to_string()))
         }
     }
 
@@ -139,17 +141,13 @@ impl NodeExecutor for PythonNodeExecutor {
             if let Some(ref mut executor) = self.inner {
                 executor.process(input).await
             } else {
-                Err(Error::Execution(
-                    "Node not initialized".to_string(),
-                ))
+                Err(Error::Execution("Node not initialized".to_string()))
             }
         }
 
         #[cfg(not(feature = "python"))]
         {
-            Err(Error::Execution(
-                "Python support not enabled".to_string(),
-            ))
+            Err(Error::Execution("Python support not enabled".to_string()))
         }
     }
 

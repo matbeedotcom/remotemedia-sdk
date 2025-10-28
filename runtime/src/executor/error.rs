@@ -8,10 +8,10 @@ use crate::error::Error;
 pub trait ExecutionErrorExt {
     /// Check if error is retryable
     fn is_retryable(&self) -> bool;
-    
+
     /// Create an execution error
     fn execution(msg: impl Into<String>) -> Error;
-    
+
     /// Create a timeout error
     fn timeout(msg: impl Into<String>) -> Error;
 }
@@ -25,11 +25,11 @@ impl ExecutionErrorExt for Error {
             _ => false,
         }
     }
-    
+
     fn execution(msg: impl Into<String>) -> Error {
         Error::Execution(msg.into())
     }
-    
+
     fn timeout(msg: impl Into<String>) -> Error {
         Error::Execution(format!("Timeout: {}", msg.into()))
     }
@@ -43,7 +43,7 @@ mod tests {
     fn test_retryable_errors() {
         let io_err = Error::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "test"));
         assert!(io_err.is_retryable());
-        
+
         let manifest_err = Error::Manifest("test".into());
         assert!(!manifest_err.is_retryable());
     }

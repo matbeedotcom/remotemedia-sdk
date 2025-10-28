@@ -34,11 +34,19 @@ pub fn python_to_json(py: Python, obj: &Bound<'_, PyAny>) -> PyResult<Value> {
 }
 
 /// Convert with optional cache support
-pub fn python_to_json_with_cache(py: Python, obj: &Bound<'_, PyAny>, cache: Option<&PyObjectCache>) -> PyResult<Value> {
+pub fn python_to_json_with_cache(
+    py: Python,
+    obj: &Bound<'_, PyAny>,
+    cache: Option<&PyObjectCache>,
+) -> PyResult<Value> {
     python_to_json_impl(py, obj, cache)
 }
 
-fn python_to_json_impl(py: Python, obj: &Bound<'_, PyAny>, cache: Option<&PyObjectCache>) -> PyResult<Value> {
+fn python_to_json_impl(
+    py: Python,
+    obj: &Bound<'_, PyAny>,
+    cache: Option<&PyObjectCache>,
+) -> PyResult<Value> {
     // None
     if obj.is_none() {
         return Ok(Value::Null);
@@ -106,29 +114,44 @@ fn python_to_json_impl(py: Python, obj: &Bound<'_, PyAny>, cache: Option<&PyObje
     }
 
     // Unsupported type - try to cache it if cache is available, otherwise pickle
-    tracing::info!("Complex Python object encountered: {}", obj.get_type().name()?);
+    tracing::info!(
+        "Complex Python object encountered: {}",
+        obj.get_type().name()?
+    );
 
     if let Some(cache) = cache {
         // Cache is available - store object and return reference instead of pickling
-        tracing::info!("Caching {} object instead of pickling", obj.get_type().name()?);
+        tracing::info!(
+            "Caching {} object instead of pickling",
+            obj.get_type().name()?
+        );
         let py_copy = obj.clone().unbind();
         let cache_id = cache.store(py_copy);
 
         let mut ref_obj = serde_json::Map::new();
         ref_obj.insert("__pyobj__".to_string(), Value::Bool(true));
         ref_obj.insert("id".to_string(), Value::String(cache_id));
-        ref_obj.insert("type".to_string(), Value::String(obj.get_type().name()?.to_string()));
+        ref_obj.insert(
+            "type".to_string(),
+            Value::String(obj.get_type().name()?.to_string()),
+        );
 
         return Ok(Value::Object(ref_obj));
     }
 
     // No cache - must pickle
-    tracing::info!("No cache available, attempting to pickle {}", obj.get_type().name()?);
+    tracing::info!(
+        "No cache available, attempting to pickle {}",
+        obj.get_type().name()?
+    );
 
     // Try cloudpickle first (handles more types like Cython objects), fall back to pickle
     let pickled_bytes = match py.import("cloudpickle") {
         Ok(cloudpickle) => {
-            tracing::info!("Using cloudpickle for serialization of {}", obj.get_type().name()?);
+            tracing::info!(
+                "Using cloudpickle for serialization of {}",
+                obj.get_type().name()?
+            );
             match cloudpickle.call_method1("dumps", (obj,)) {
                 Ok(bytes) => bytes,
                 Err(e) => {
@@ -136,7 +159,7 @@ fn python_to_json_impl(py: Python, obj: &Bound<'_, PyAny>, cache: Option<&PyObje
                     return Err(e);
                 }
             }
-        },
+        }
         Err(_) => {
             tracing::info!("cloudpickle not available, using standard pickle");
             let pickle = py.import("pickle")?;
@@ -153,9 +176,15 @@ fn python_to_json_impl(py: Python, obj: &Bound<'_, PyAny>, cache: Option<&PyObje
     let mut map = serde_json::Map::new();
     map.insert("__pickled__".to_string(), Value::Bool(true));
     map.insert("data".to_string(), Value::String(base64_encoded));
-    map.insert("type".to_string(), Value::String(obj.get_type().name()?.to_string()));
+    map.insert(
+        "type".to_string(),
+        Value::String(obj.get_type().name()?.to_string()),
+    );
 
-    tracing::info!("Successfully pickled object of type: {}", obj.get_type().name()?);
+    tracing::info!(
+        "Successfully pickled object of type: {}",
+        obj.get_type().name()?
+    );
     Ok(Value::Object(map))
 }
 
@@ -173,7 +202,11 @@ pub fn json_to_python<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py
 }
 
 /// Convert with optional cache support for __pyobj__ references
-pub fn json_to_python_with_cache<'py>(py: Python<'py>, value: &Value, cache: Option<&PyObjectCache>) -> PyResult<Bound<'py, PyAny>> {
+pub fn json_to_python_with_cache<'py>(
+    py: Python<'py>,
+    value: &Value,
+    cache: Option<&PyObjectCache>,
+) -> PyResult<Bound<'py, PyAny>> {
     match value {
         Value::Null => Ok(py.None().into_bound(py)),
 
@@ -212,16 +245,21 @@ pub fn json_to_python_with_cache<'py>(py: Python<'py>, value: &Value, cache: Opt
             }
 
             // Check if this is a PyObject cache reference (Phase 1.10)
-            if obj.get("__pyobj__").and_then(|v| v.as_bool()).unwrap_or(false) {
+            if obj
+                .get("__pyobj__")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
                 if let Some(cache) = cache {
                     if let Some(Value::String(id)) = obj.get("id") {
                         tracing::info!("Retrieving PyObject reference from cache: {}", id);
                         if let Some(cached_obj) = cache.get(id) {
                             return Ok(cached_obj.into_bound(py));
                         } else {
-                            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                format!("PyObject reference {} not found in cache", id)
-                            ));
+                            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                                "PyObject reference {} not found in cache",
+                                id
+                            )));
                         }
                     }
                 }
@@ -230,16 +268,26 @@ pub fn json_to_python_with_cache<'py>(py: Python<'py>, value: &Value, cache: Opt
             }
 
             // Check if this is a pickled Python object (Phase 1.7.4)
-            if obj.get("__pickled__").and_then(|v| v.as_bool()).unwrap_or(false) {
+            if obj
+                .get("__pickled__")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
                 if let Some(Value::String(base64_data)) = obj.get("data") {
-                    tracing::info!("Unpickling Python object: {}",
-                        obj.get("type").and_then(|v| v.as_str()).unwrap_or("unknown"));
+                    tracing::info!(
+                        "Unpickling Python object: {}",
+                        obj.get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                    );
 
                     // Base64 decode
-                    let pickled_bytes = base64::decode(base64_data)
-                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            format!("Failed to decode base64: {}", e)
-                        ))?;
+                    let pickled_bytes = base64::decode(base64_data).map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                            "Failed to decode base64: {}",
+                            e
+                        ))
+                    })?;
 
                     // Unpickle using Python's pickle module
                     let pickle = py.import("pickle")?;
@@ -313,7 +361,8 @@ mod tests {
             let py_dict = [("name", "Alice"), ("city", "NYC")]
                 .into_iter()
                 .collect::<std::collections::HashMap<_, _>>()
-                .into_bound_py_any(py).unwrap();
+                .into_bound_py_any(py)
+                .unwrap();
 
             let result = python_to_json(py, &py_dict).unwrap();
             assert!(result.is_object());
@@ -382,8 +431,12 @@ mod tests {
             // Create complex Python structure
             let py_list = PyList::empty(py);
             py_list.append(1.into_bound_py_any(py).unwrap()).unwrap();
-            py_list.append("test".into_bound_py_any(py).unwrap()).unwrap();
-            py_list.append(vec![2, 3, 4].into_bound_py_any(py).unwrap()).unwrap();
+            py_list
+                .append("test".into_bound_py_any(py).unwrap())
+                .unwrap();
+            py_list
+                .append(vec![2, 3, 4].into_bound_py_any(py).unwrap())
+                .unwrap();
 
             // Python → JSON
             let json_val = python_to_json(py, py_list.as_any()).unwrap();
@@ -406,7 +459,10 @@ mod tests {
             // Simple tuple
             let tuple = PyTuple::new(py, &[1, 2, 3]).unwrap();
             let json_val = python_to_json(py, tuple.as_any()).unwrap();
-            assert_eq!(json_val, Value::Array(vec![Value::from(1), Value::from(2), Value::from(3)]));
+            assert_eq!(
+                json_val,
+                Value::Array(vec![Value::from(1), Value::from(2), Value::from(3)])
+            );
 
             // Nested tuple
             let inner1 = PyTuple::new(py, &[1, 2]).unwrap();

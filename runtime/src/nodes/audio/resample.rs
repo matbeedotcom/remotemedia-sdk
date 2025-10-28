@@ -1,10 +1,10 @@
 use crate::audio::{AudioBuffer, AudioFormat};
-use crate::executor::node_executor::{NodeExecutor, NodeContext};
-use crate::nodes::registry::NodeFactory;
 use crate::error::{Error, Result};
+use crate::executor::node_executor::{NodeContext, NodeExecutor};
+use crate::nodes::registry::NodeFactory;
+use rubato::{FftFixedIn, Resampler as RubatoResampler};
 use serde_json::Value;
 use std::sync::Arc;
-use rubato::{FftFixedIn, Resampler as RubatoResampler};
 
 /// Quality settings for audio resampling
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +44,12 @@ pub struct RustResampleNode {
 }
 
 impl RustResampleNode {
-    pub fn new(source_rate: u32, target_rate: u32, quality: ResampleQuality, channels: usize) -> Self {
+    pub fn new(
+        source_rate: u32,
+        target_rate: u32,
+        quality: ResampleQuality,
+        channels: usize,
+    ) -> Self {
         Self {
             resampler: None,
             source_rate,
@@ -57,14 +62,15 @@ impl RustResampleNode {
     fn create_resampler(&self) -> Result<FftFixedIn<f32>> {
         let chunk_size = self.quality.chunk_size();
         let sinc_len = self.quality.sinc_len();
-        
+
         FftFixedIn::new(
             self.source_rate as usize,
             self.target_rate as usize,
             chunk_size,
             sinc_len,
             self.channels,
-        ).map_err(|e| Error::Execution(format!("Failed to create resampler: {}", e)))
+        )
+        .map_err(|e| Error::Execution(format!("Failed to create resampler: {}", e)))
     }
 }
 
@@ -76,27 +82,34 @@ impl NodeExecutor for RustResampleNode {
     }
 
     async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
-        let resampler = self.resampler.as_mut()
+        let resampler = self
+            .resampler
+            .as_mut()
             .ok_or_else(|| Error::Execution("Resampler not initialized".into()))?;
 
         // Extract audio data from input
-        let audio_data = input.get("data")
+        let audio_data = input
+            .get("data")
             .and_then(|d| d.as_array())
             .ok_or_else(|| Error::Execution("Missing audio data array".into()))?;
 
-        let samples: Vec<f32> = audio_data.iter()
+        let samples: Vec<f32> = audio_data
+            .iter()
             .filter_map(|v| v.as_f64().map(|f| f as f32))
             .collect();
 
-        let sample_rate = input.get("sample_rate")
+        let sample_rate = input
+            .get("sample_rate")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| Error::Execution("Missing sample_rate".into()))? as u32;
+            .ok_or_else(|| Error::Execution("Missing sample_rate".into()))?
+            as u32;
 
         // Validate sample rate
         if sample_rate != self.source_rate {
-            return Err(Error::Execution(
-                format!("Input sample rate {} doesn't match expected {}", sample_rate, self.source_rate)
-            ));
+            return Err(Error::Execution(format!(
+                "Input sample rate {} doesn't match expected {}",
+                sample_rate, self.source_rate
+            )));
         }
 
         // Prepare input frames for rubato
@@ -107,7 +120,8 @@ impl NodeExecutor for RustResampleNode {
         }
 
         // Process with rubato
-        let output_frames = resampler.process(&input_frames, None)
+        let output_frames = resampler
+            .process(&input_frames, None)
             .map_err(|e| Error::Execution(format!("Resampling failed: {}", e)))?;
 
         // Interleave output channels
@@ -143,8 +157,18 @@ pub struct ResampleNodeFactory {
 }
 
 impl ResampleNodeFactory {
-    pub fn new(source_rate: u32, target_rate: u32, quality: ResampleQuality, channels: usize) -> Self {
-        Self { source_rate, target_rate, quality, channels }
+    pub fn new(
+        source_rate: u32,
+        target_rate: u32,
+        quality: ResampleQuality,
+        channels: usize,
+    ) -> Self {
+        Self {
+            source_rate,
+            target_rate,
+            quality,
+            channels,
+        }
     }
 }
 
@@ -191,7 +215,7 @@ mod tests {
             params: serde_json::json!({}),
             metadata: std::collections::HashMap::new(),
         };
-        
+
         let result = node.initialize(&context).await;
         assert!(result.is_ok());
         assert!(node.resampler.is_some());
@@ -201,7 +225,7 @@ mod tests {
     async fn test_resample_factory() {
         let factory = ResampleNodeFactory::new(16000, 48000, ResampleQuality::High, 2);
         let node = factory.create(serde_json::json!({}));
-        
+
         assert!(node.is_ok());
     }
 }

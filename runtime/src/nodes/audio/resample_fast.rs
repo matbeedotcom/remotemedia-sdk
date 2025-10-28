@@ -1,6 +1,6 @@
 use crate::audio::buffer::{AudioBuffer, AudioData, AudioFormat};
-use crate::nodes::audio::fast::FastAudioNode;
 use crate::error::{Error, Result};
+use crate::nodes::audio::fast::FastAudioNode;
 use rubato::{FftFixedIn, Resampler as RubatoResampler};
 
 /// Quality settings for audio resampling
@@ -36,17 +36,23 @@ pub struct FastResampleNode {
 }
 
 impl FastResampleNode {
-    pub fn new(source_rate: u32, target_rate: u32, quality: ResampleQuality, channels: usize) -> Result<Self> {
+    pub fn new(
+        source_rate: u32,
+        target_rate: u32,
+        quality: ResampleQuality,
+        channels: usize,
+    ) -> Result<Self> {
         let chunk_size = quality.chunk_size();
         let sinc_len = quality.sinc_len();
-        
+
         let resampler = FftFixedIn::new(
             source_rate as usize,
             target_rate as usize,
             chunk_size,
             sinc_len,
             channels,
-        ).map_err(|e| Error::Execution(format!("Failed to create resampler: {}", e)))?;
+        )
+        .map_err(|e| Error::Execution(format!("Failed to create resampler: {}", e)))?;
 
         Ok(Self {
             resampler,
@@ -62,7 +68,9 @@ impl FastAudioNode for FastResampleNode {
 
     fn process_audio(&mut self, input: AudioData) -> Result<AudioData> {
         // Get F32 buffer
-        let samples = input.buffer.as_f32()
+        let samples = input
+            .buffer
+            .as_f32()
             .ok_or_else(|| Error::Execution("Resample requires F32 format".into()))?;
 
         let channels = input.channels;
@@ -75,7 +83,9 @@ impl FastAudioNode for FastResampleNode {
         }
 
         // Process with rubato (direct buffer access)
-        let output_frames = self.resampler.process(&input_frames, None)
+        let output_frames = self
+            .resampler
+            .process(&input_frames, None)
             .map_err(|e| Error::Execution(format!("Resampling failed: {}", e)))?;
 
         // Interleave output channels
@@ -108,7 +118,7 @@ mod tests {
     #[test]
     fn test_fast_resample_process() {
         let mut node = FastResampleNode::new(44100, 16000, ResampleQuality::Low, 2).unwrap();
-        
+
         // Generate 1 second of test audio (44100 samples per channel, 2 channels)
         let samples: Vec<f32> = (0..88200)
             .map(|i| {
@@ -117,23 +127,24 @@ mod tests {
             })
             .collect();
 
-        let input = AudioData::new(
-            AudioBuffer::new_f32(samples),
-            44100,
-            2,
-        );
+        let input = AudioData::new(AudioBuffer::new_f32(samples), 44100, 2);
 
         let result = node.process_audio(input);
         assert!(result.is_ok());
-        
+
         let output = result.unwrap();
         assert_eq!(output.sample_rate, 16000);
         assert_eq!(output.channels, 2);
-        
+
         // Output should have approximately 32000 samples (16000 per channel * 2)
         let expected_samples = (16000 * 2) as f32;
         let actual_samples = output.buffer.len() as f32;
         let ratio = actual_samples / expected_samples;
-        assert!((ratio - 1.0).abs() < 0.1, "Expected ~{} samples, got {}", expected_samples, actual_samples);
+        assert!(
+            (ratio - 1.0).abs() < 0.1,
+            "Expected ~{} samples, got {}",
+            expected_samples,
+            actual_samples
+        );
     }
 }

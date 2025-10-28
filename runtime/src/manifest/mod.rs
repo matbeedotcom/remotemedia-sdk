@@ -5,8 +5,8 @@
 //!
 //! Schema specification: ../schemas/manifest.v1.json
 
-use serde::{Deserialize, Serialize};
 use crate::{Error, Result};
+use serde::{Deserialize, Serialize};
 
 /// Pipeline manifest structure (v1)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,17 +185,16 @@ pub fn validate(manifest: &Manifest) -> Result<()> {
 
     // Check nodes are not empty
     if manifest.nodes.is_empty() {
-        return Err(Error::Manifest("Manifest must contain at least one node".to_string()));
+        return Err(Error::Manifest(
+            "Manifest must contain at least one node".to_string(),
+        ));
     }
 
     // Validate node IDs are unique
     let mut seen_ids = std::collections::HashSet::new();
     for node in &manifest.nodes {
         if !seen_ids.insert(&node.id) {
-            return Err(Error::Manifest(format!(
-                "Duplicate node ID: {}",
-                node.id
-            )));
+            return Err(Error::Manifest(format!("Duplicate node ID: {}", node.id)));
         }
     }
 

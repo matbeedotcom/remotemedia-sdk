@@ -11,9 +11,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[cfg(feature = "whisper")]
-use rwhisper::{WhisperBuilder, WhisperSource};
-#[cfg(feature = "whisper")]
 use rodio;
+#[cfg(feature = "whisper")]
+use rwhisper::{WhisperBuilder, WhisperSource};
 
 /// Whisper transcription node using rwhisper
 ///
@@ -72,7 +72,11 @@ impl RustWhisperNode {
 
                 // Check if it's a __numpy__ format
                 if let Some(obj) = audio_element.as_object() {
-                    if obj.get("__numpy__").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    if obj
+                        .get("__numpy__")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    {
                         tracing::info!("Found __numpy__ format, extracting audio data");
                         return self.extract_from_numpy_format(audio_element);
                     }
@@ -119,8 +123,11 @@ impl RustWhisperNode {
                                     *sample /= num_channels;
                                 }
 
-                                tracing::info!("Extracted and mixed {} channels into {} mono samples",
-                                             all_samples.len(), mono_audio.len());
+                                tracing::info!(
+                                    "Extracted and mixed {} channels into {} mono samples",
+                                    all_samples.len(),
+                                    mono_audio.len()
+                                );
                                 return Ok(mono_audio);
                             }
                         } else {
@@ -132,7 +139,10 @@ impl RustWhisperNode {
                                 .collect();
 
                             if !audio.is_empty() {
-                                tracing::info!("Extracted {} audio samples from 1D array", audio.len());
+                                tracing::info!(
+                                    "Extracted {} audio samples from 1D array",
+                                    audio.len()
+                                );
                                 return Ok(audio);
                             }
                         }
@@ -143,7 +153,10 @@ impl RustWhisperNode {
 
         // Handle dict format: {"audio_data": [...], "sample_rate": 16000}
         if let Some(obj) = input.as_object() {
-            tracing::info!("Input is object with keys: {:?}", obj.keys().collect::<Vec<_>>());
+            tracing::info!(
+                "Input is object with keys: {:?}",
+                obj.keys().collect::<Vec<_>>()
+            );
             if let Some(audio_val) = obj.get("audio_data").or_else(|| obj.get("audio")) {
                 // Try 2D array first
                 if let Some(outer_array) = audio_val.as_array() {
@@ -175,7 +188,10 @@ impl RustWhisperNode {
                                 *sample /= num_channels;
                             }
 
-                            tracing::info!("Extracted {} audio samples from dict (2D)", mono_audio.len());
+                            tracing::info!(
+                                "Extracted {} audio samples from dict (2D)",
+                                mono_audio.len()
+                            );
                             return Ok(mono_audio);
                         }
                     } else {
@@ -186,7 +202,10 @@ impl RustWhisperNode {
                             .collect();
 
                         if !audio.is_empty() {
-                            tracing::info!("Extracted {} audio samples from dict (1D)", audio.len());
+                            tracing::info!(
+                                "Extracted {} audio samples from dict (1D)",
+                                audio.len()
+                            );
                             return Ok(audio);
                         }
                     }
@@ -203,9 +222,9 @@ impl RustWhisperNode {
     #[cfg(feature = "whisper")]
     fn extract_from_numpy_format(&self, numpy_obj: &Value) -> Result<Vec<f32>> {
         // Extract the array metadata and data
-        let array_data = numpy_obj
-            .get("array")
-            .ok_or_else(|| Error::Execution("__numpy__ format missing 'array' field".to_string()))?;
+        let array_data = numpy_obj.get("array").ok_or_else(|| {
+            Error::Execution("__numpy__ format missing 'array' field".to_string())
+        })?;
 
         let meta = array_data
             .get("meta")
@@ -264,10 +283,7 @@ impl RustWhisperNode {
                         bytes.len() / std::mem::size_of::<i16>(),
                     )
                 };
-                i16_slice
-                    .iter()
-                    .map(|&x| x as f32 / 32768.0)
-                    .collect()
+                i16_slice.iter().map(|&x| x as f32 / 32768.0).collect()
             }
             _ => {
                 return Err(Error::Execution(format!(
@@ -285,18 +301,29 @@ impl RustWhisperNode {
             let channels = shape[0].as_u64().unwrap_or(1) as usize;
             let samples_per_channel = shape[1].as_u64().unwrap_or(0) as usize;
 
-            tracing::info!("Processing 2D numpy array: shape=({}, {}), total_elements={}",
-                         channels, samples_per_channel, audio_vec.len());
+            tracing::info!(
+                "Processing 2D numpy array: shape=({}, {}), total_elements={}",
+                channels,
+                samples_per_channel,
+                audio_vec.len()
+            );
 
             if channels > 1 && samples_per_channel > 0 {
                 // Mix to mono by averaging channels
-                tracing::info!("Mixing {} channels to mono, {} samples per channel", channels, samples_per_channel);
+                tracing::info!(
+                    "Mixing {} channels to mono, {} samples per channel",
+                    channels,
+                    samples_per_channel
+                );
 
                 // Verify we have enough data
                 let expected_len = channels * samples_per_channel;
                 if audio_vec.len() < expected_len {
-                    tracing::warn!("Audio vector length {} < expected {}, using available data",
-                                 audio_vec.len(), expected_len);
+                    tracing::warn!(
+                        "Audio vector length {} < expected {}, using available data",
+                        audio_vec.len(),
+                        expected_len
+                    );
                 }
 
                 let mut mono = vec![0.0f32; samples_per_channel];
@@ -319,10 +346,18 @@ impl RustWhisperNode {
                     *sample /= num_channels_f32;
                 }
 
-                tracing::info!("Extracted {} mono samples from numpy array ({}x{})", mono.len(), channels, samples_per_channel);
+                tracing::info!(
+                    "Extracted {} mono samples from numpy array ({}x{})",
+                    mono.len(),
+                    channels,
+                    samples_per_channel
+                );
                 Ok(mono)
             } else {
-                tracing::info!("Extracted {} mono samples from numpy array (single channel or empty)", audio_vec.len());
+                tracing::info!(
+                    "Extracted {} mono samples from numpy array (single channel or empty)",
+                    audio_vec.len()
+                );
                 Ok(audio_vec)
             }
         } else if shape.len() == 1 {
@@ -330,7 +365,10 @@ impl RustWhisperNode {
             tracing::info!("Extracted {} samples from 1D numpy array", audio_vec.len());
             Ok(audio_vec)
         } else {
-            tracing::warn!("Unexpected numpy array shape length: {}, treating as 1D", shape.len());
+            tracing::warn!(
+                "Unexpected numpy array shape length: {}, treating as 1D",
+                shape.len()
+            );
             Ok(audio_vec)
         }
     }
@@ -353,14 +391,22 @@ impl RustWhisperNode {
         // Create a rodio Source from our audio samples
         // SamplesBuffer::new(channels, sample_rate, samples)
         let audio_len = audio.len();
-        tracing::info!("Creating rodio SamplesBuffer: {} samples, 1 channel, 16000 Hz", audio_len);
+        tracing::info!(
+            "Creating rodio SamplesBuffer: {} samples, 1 channel, 16000 Hz",
+            audio_len
+        );
 
         // Debug: Check audio values before passing to SamplesBuffer
         let non_zero = audio.iter().filter(|&&s| s.abs() > 0.0001).count();
         let max_val = audio.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
         let first_10: Vec<f32> = audio.iter().take(10).copied().collect();
-        tracing::info!("Before SamplesBuffer: non_zero={}/{}, max={:.6}, first_10={:?}",
-                      non_zero, audio_len, max_val, first_10);
+        tracing::info!(
+            "Before SamplesBuffer: non_zero={}/{}, max={:.6}, first_10={:?}",
+            non_zero,
+            audio_len,
+            max_val,
+            first_10
+        );
 
         let source = rodio::buffer::SamplesBuffer::new(1, 16000, audio);
         tracing::info!("✓ SamplesBuffer created successfully");
@@ -377,15 +423,12 @@ impl RustWhisperNode {
         tracing::info!("About to poll task.next() for first segment (30s timeout)...");
 
         // Try to get at least one segment with a timeout-like approach
-        let first_segment = tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            async {
-                tracing::info!("Inside timeout async block, calling task.next().await...");
-                let result = task.next().await;
-                tracing::info!("task.next().await returned: {:?}", result.is_some());
-                result
-            }
-        )
+        let first_segment = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            tracing::info!("Inside timeout async block, calling task.next().await...");
+            let result = task.next().await;
+            tracing::info!("task.next().await returned: {:?}", result.is_some());
+            result
+        })
         .await
         .map_err(|_| {
             tracing::error!("✗ Transcription TIMED OUT after 30 seconds waiting for first segment");
@@ -428,8 +471,11 @@ impl RustWhisperNode {
             }
         }
 
-        tracing::info!("Transcription completed: {} segments, {} characters",
-                     segments_list.len(), full_text.len());
+        tracing::info!(
+            "Transcription completed: {} segments, {} characters",
+            segments_list.len(),
+            full_text.len()
+        );
 
         Ok(json!({
             "text": full_text.trim(),
@@ -488,9 +534,13 @@ impl NodeExecutor for RustWhisperNode {
 
             // Note: For now we only support model_source with WhisperBuilder
             // model_path support requires different rwhisper API
-            let source_str = self.model_source.as_ref()
+            let source_str = self
+                .model_source
+                .as_ref()
                 .or(self.model_path.as_ref())
-                .ok_or_else(|| Error::Manifest("model_source or model_path required".to_string()))?;
+                .ok_or_else(|| {
+                    Error::Manifest("model_source or model_path required".to_string())
+                })?;
 
             tracing::info!("Loading Whisper model from source: {}", source_str);
 
@@ -536,7 +586,7 @@ impl NodeExecutor for RustWhisperNode {
                 .await
                 .map_err(|e| Error::Execution(format!("Failed to build Whisper model: {}", e)))?;
 
-                self.context = Some(Arc::new(Mutex::new(ctx)));
+            self.context = Some(Arc::new(Mutex::new(ctx)));
             tracing::info!("Whisper model loaded successfully");
         }
 
@@ -562,19 +612,28 @@ impl NodeExecutor for RustWhisperNode {
 
             if self.accumulate_chunks {
                 // Accumulate audio chunks - don't transcribe yet
-                tracing::info!("Accumulating {} samples (total accumulated: {})",
-                              audio.len(), self.accumulated_audio.len());
+                tracing::info!(
+                    "Accumulating {} samples (total accumulated: {})",
+                    audio.len(),
+                    self.accumulated_audio.len()
+                );
                 self.accumulated_audio.extend(audio);
-                tracing::info!("Total accumulated audio: {} samples ({:.2}s at 16kHz)",
-                              self.accumulated_audio.len(),
-                              self.accumulated_audio.len() as f32 / 16000.0);
+                tracing::info!(
+                    "Total accumulated audio: {} samples ({:.2}s at 16kHz)",
+                    self.accumulated_audio.len(),
+                    self.accumulated_audio.len() as f32 / 16000.0
+                );
                 Ok(vec![])
             } else {
                 // Transcribe immediately (old behavior)
                 let non_zero_count = audio.iter().filter(|&&s| s.abs() > 0.0001).count();
                 let max_amplitude = audio.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                tracing::info!("Audio stats: non_zero={}/{}, max_amplitude={:.6}",
-                              non_zero_count, audio.len(), max_amplitude);
+                tracing::info!(
+                    "Audio stats: non_zero={}/{}, max_amplitude={:.6}",
+                    non_zero_count,
+                    audio.len(),
+                    max_amplitude
+                );
 
                 let result = self.transcribe_audio(audio).await?;
                 tracing::info!("Transcription result ready, returning");
@@ -602,9 +661,11 @@ impl NodeExecutor for RustWhisperNode {
                 return Ok(vec![]);
             }
 
-            tracing::info!("Transcribing accumulated audio: {} samples ({:.2}s at 16kHz)",
-                          self.accumulated_audio.len(),
-                          self.accumulated_audio.len() as f32 / 16000.0);
+            tracing::info!(
+                "Transcribing accumulated audio: {} samples ({:.2}s at 16kHz)",
+                self.accumulated_audio.len(),
+                self.accumulated_audio.len() as f32 / 16000.0
+            );
 
             // Take ownership of accumulated audio and clear the buffer
             let audio = std::mem::take(&mut self.accumulated_audio);
