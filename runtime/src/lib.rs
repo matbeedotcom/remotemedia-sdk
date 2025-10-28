@@ -22,6 +22,10 @@ pub mod registry;
 pub mod transport;
 pub mod wasm;
 
+// gRPC service (only available with grpc-transport feature)
+#[cfg(feature = "grpc-transport")]
+pub mod grpc_service;
+
 mod error;
 pub use error::{Error, Result};
 
