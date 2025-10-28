@@ -33,7 +33,9 @@
 
 #![cfg(feature = "grpc-transport")]
 
+use remotemedia_runtime::executor::Executor;
 use remotemedia_runtime::grpc_service::{init_tracing, server::GrpcServer, ServiceConfig};
+use std::sync::Arc;
 use tracing::{error, info};
 
 #[tokio::main]
@@ -60,8 +62,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Configuration loaded"
     );
 
+    // Create executor for pipeline execution
+    let executor = Arc::new(Executor::new());
+    info!("Pipeline executor initialized");
+
     // Create and start server
-    let server = GrpcServer::new(config)?;
+    let server = GrpcServer::new(config, executor)?;
 
     info!("Server initialized, starting listener...");
 

@@ -31,6 +31,7 @@ use crate::grpc_service::generated::{
     stream_control::Command, stream_request::Request as StreamRequestType,
     stream_response::Response as StreamResponseType,
 };
+use crate::grpc_service::metrics::ServiceMetrics;
 use crate::grpc_service::{ServiceConfig, ServiceError};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -59,15 +60,19 @@ pub struct StreamingServiceImpl {
     
     /// Global executor (shared across sessions)
     executor: Arc<Executor>,
+    
+    /// Prometheus metrics
+    metrics: Arc<ServiceMetrics>,
 }
 
 impl StreamingServiceImpl {
     /// Create new streaming service instance
-    pub fn new(config: ServiceConfig, executor: Arc<Executor>) -> Self {
+    pub fn new(config: ServiceConfig, executor: Arc<Executor>, metrics: Arc<ServiceMetrics>) -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             config,
             executor,
+            metrics,
         }
     }
 
@@ -233,10 +238,11 @@ impl crate::grpc_service::StreamingPipelineService for StreamingServiceImpl {
         let mut stream = request.into_inner();
         let sessions = self.sessions.clone();
         let executor = self.executor.clone();
+        let metrics = self.metrics.clone();
 
         // Spawn async task to handle bidirectional streaming
         tokio::spawn(async move {
-            let result = handle_stream(&mut stream, tx.clone(), sessions, executor).await;
+            let result = handle_stream(&mut stream, tx.clone(), sessions, executor, metrics).await;
             
             if let Err(e) = result {
                 error!(error = %e, "Stream handling error");
@@ -264,6 +270,7 @@ async fn handle_stream(
     tx: tokio::sync::mpsc::Sender<Result<StreamResponse, Status>>,
     sessions: Arc<RwLock<HashMap<String, Arc<Mutex<StreamSession>>>>>,
     executor: Arc<Executor>,
+    metrics: Arc<ServiceMetrics>,
 ) -> Result<(), ServiceError> {
     let mut session: Option<Arc<Mutex<StreamSession>>> = None;
     let mut session_id = String::new();
@@ -286,6 +293,9 @@ async fn handle_stream(
                 session_id = new_session_id.clone();
                 session = Some(sessions.read().await.get(&session_id).unwrap().clone());
 
+                // Record metrics
+                metrics.record_stream_start();
+
                 // Send StreamReady response
                 let response = StreamResponse {
                     response: Some(StreamResponseType::Ready(ready)),
@@ -301,29 +311,42 @@ async fn handle_stream(
                     ServiceError::Validation("StreamInit required before AudioChunk".to_string())
                 })?;
 
+                let chunk_start = Instant::now();
                 debug!(sequence = chunk.sequence, "Processing AudioChunk");
-                let result = handle_audio_chunk(chunk, sess.clone(), executor.clone()).await?;
+                
+                let result = handle_audio_chunk(chunk, sess.clone(), executor.clone()).await;
+                
+                match result {
+                    Ok(chunk_result) => {
+                        let latency = chunk_start.elapsed().as_secs_f64();
+                        metrics.record_chunk_processed(&session_id, latency);
 
-                // Send ChunkResult response
-                let response = StreamResponse {
-                    response: Some(StreamResponseType::Result(result.clone())),
-                };
-                tx.send(Ok(response)).await.map_err(|_| {
-                    ServiceError::Internal("Failed to send ChunkResult".to_string())
-                })?;
+                        // Send ChunkResult response
+                        let response = StreamResponse {
+                            response: Some(StreamResponseType::Result(chunk_result.clone())),
+                        };
+                        tx.send(Ok(response)).await.map_err(|_| {
+                            ServiceError::Internal("Failed to send ChunkResult".to_string())
+                        })?;
 
-                // Send periodic metrics
-                let sess_lock = sess.lock().await;
-                if sess_lock.chunks_processed % METRICS_UPDATE_INTERVAL == 0 {
-                    let metrics = sess_lock.create_metrics();
-                    drop(sess_lock);
-                    
-                    let metrics_response = StreamResponse {
-                        response: Some(StreamResponseType::Metrics(metrics)),
-                    };
-                    tx.send(Ok(metrics_response)).await.map_err(|_| {
-                        ServiceError::Internal("Failed to send StreamMetrics".to_string())
-                    })?;
+                        // Send periodic metrics
+                        let sess_lock = sess.lock().await;
+                        if sess_lock.chunks_processed % METRICS_UPDATE_INTERVAL == 0 {
+                            let stream_metrics = sess_lock.create_metrics();
+                            drop(sess_lock);
+                            
+                            let metrics_response = StreamResponse {
+                                response: Some(StreamResponseType::Metrics(stream_metrics)),
+                            };
+                            tx.send(Ok(metrics_response)).await.map_err(|_| {
+                                ServiceError::Internal("Failed to send StreamMetrics".to_string())
+                            })?;
+                        }
+                    }
+                    Err(e) => {
+                        metrics.record_chunk_error(&session_id);
+                        return Err(e);
+                    }
                 }
             }
 
@@ -344,8 +367,9 @@ async fn handle_stream(
                     ServiceError::Internal("Failed to send StreamClosed".to_string())
                 })?;
 
-                // Cleanup session
+                // Cleanup session and metrics
                 sessions.write().await.remove(&session_id);
+                metrics.record_stream_end();
                 info!(session_id = %session_id, "Session closed");
                 break; // Exit stream loop
             }
@@ -359,6 +383,7 @@ async fn handle_stream(
     // If we exit loop without explicit close, cleanup
     if !session_id.is_empty() {
         sessions.write().await.remove(&session_id);
+        metrics.record_stream_end();
         info!(session_id = %session_id, "Session disconnected");
     }
 

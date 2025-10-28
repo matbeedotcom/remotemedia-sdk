@@ -8,10 +8,15 @@
 use crate::grpc_service::{
     auth::AuthConfig,
     execution::ExecutionServiceImpl,
-    generated::pipeline_execution_service_server::PipelineExecutionServiceServer,
+    streaming::StreamingServiceImpl,
+    generated::{
+        pipeline_execution_service_server::PipelineExecutionServiceServer,
+        streaming_pipeline_service_server::StreamingPipelineServiceServer,
+    },
     metrics::ServiceMetrics,
     ServiceConfig,
 };
+use crate::executor::Executor;
 use std::sync::Arc;
 use tonic::transport::Server;
 use tracing::{info, warn};
@@ -20,14 +25,19 @@ use tracing::{info, warn};
 pub struct GrpcServer {
     config: ServiceConfig,
     metrics: Arc<ServiceMetrics>,
+    executor: Arc<Executor>,
 }
 
 impl GrpcServer {
-    /// Create new server with configuration
-    pub fn new(config: ServiceConfig) -> Result<Self, Box<dyn std::error::Error>> {
+    /// Create new server with configuration and executor
+    pub fn new(config: ServiceConfig, executor: Arc<Executor>) -> Result<Self, Box<dyn std::error::Error>> {
         let metrics = Arc::new(ServiceMetrics::with_default_registry()?);
         
-        Ok(Self { config, metrics })
+        Ok(Self { 
+            config, 
+            metrics,
+            executor,
+        })
     }
 
     /// Get metrics for use in service implementations
@@ -59,9 +69,17 @@ impl GrpcServer {
             Arc::clone(&self.metrics),
         );
 
+        // Phase 5: Streaming service (T058)
+        let streaming_service = StreamingServiceImpl::new(
+            self.config.clone(),
+            Arc::clone(&self.executor),
+            Arc::clone(&self.metrics),
+        );
+
         let server = Server::builder()
             .trace_fn(|_| tracing::info_span!("grpc_request"))
             .add_service(PipelineExecutionServiceServer::new(execution_service))
+            .add_service(StreamingPipelineServiceServer::new(streaming_service))
             ;
 
         // Graceful shutdown on Ctrl+C

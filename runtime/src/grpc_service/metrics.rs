@@ -34,6 +34,18 @@ pub struct ServiceMetrics {
     /// Memory usage gauge per execution (labeled by execution ID)
     pub execution_memory_bytes: IntGaugeVec,
 
+    /// Active streaming sessions gauge (Phase 5 - T057)
+    pub active_streams: IntGauge,
+
+    /// Streaming chunks processed counter (Phase 5 - T057)
+    pub stream_chunks_total: CounterVec,
+
+    /// Streaming chunk latency distribution in seconds (Phase 5 - T057)
+    pub stream_chunk_latency_seconds: HistogramVec,
+
+    /// Streaming chunks dropped counter (Phase 5 - T057)
+    pub stream_chunks_dropped_total: CounterVec,
+
     /// Prometheus registry
     pub registry: Arc<Registry>,
 }
@@ -97,6 +109,41 @@ impl ServiceMetrics {
             &["execution_id"],
         )?;
 
+        // Phase 5 - Streaming metrics (T057)
+        let active_streams = IntGauge::new(
+            "remotemedia_grpc_active_streams",
+            "Number of active streaming sessions",
+        )?;
+
+        let stream_chunks_total = CounterVec::new(
+            Opts::new(
+                "remotemedia_stream_chunks_total",
+                "Total streaming chunks processed",
+            ),
+            &["session_id", "status"],
+        )?;
+
+        let stream_chunk_latency_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "remotemedia_stream_chunk_latency_seconds",
+                "Per-chunk processing latency distribution (target: <0.05s)",
+            )
+            .buckets(vec![
+                0.001, 0.005, 0.01, 0.025, // 1ms, 5ms, 10ms, 25ms
+                0.05, // 50ms (target threshold)
+                0.1, 0.25, 0.5, 1.0, // 100ms, 250ms, 500ms, 1s
+            ]),
+            &["session_id"],
+        )?;
+
+        let stream_chunks_dropped_total = CounterVec::new(
+            Opts::new(
+                "remotemedia_stream_chunks_dropped_total",
+                "Total chunks dropped due to backpressure",
+            ),
+            &["session_id", "reason"],
+        )?;
+
         // Register all metrics
         registry.register(Box::new(requests_total.clone()))?;
         registry.register(Box::new(request_duration_seconds.clone()))?;
@@ -105,6 +152,10 @@ impl ServiceMetrics {
         registry.register(Box::new(execution_errors_total.clone()))?;
         registry.register(Box::new(audio_samples_processed.clone()))?;
         registry.register(Box::new(execution_memory_bytes.clone()))?;
+        registry.register(Box::new(active_streams.clone()))?;
+        registry.register(Box::new(stream_chunks_total.clone()))?;
+        registry.register(Box::new(stream_chunk_latency_seconds.clone()))?;
+        registry.register(Box::new(stream_chunks_dropped_total.clone()))?;
 
         Ok(Self {
             requests_total,
@@ -114,6 +165,10 @@ impl ServiceMetrics {
             execution_errors_total,
             audio_samples_processed,
             execution_memory_bytes,
+            active_streams,
+            stream_chunks_total,
+            stream_chunk_latency_seconds,
+            stream_chunks_dropped_total,
             registry: Arc::new(registry),
         })
     }
@@ -165,6 +220,42 @@ impl ServiceMetrics {
     /// Remove execution memory tracking
     pub fn clear_execution_memory(&self, execution_id: &str) {
         let _ = self.execution_memory_bytes.remove_label_values(&[execution_id]);
+    }
+
+    // Phase 5 - Streaming metrics methods (T057)
+
+    /// Record streaming session start
+    pub fn record_stream_start(&self) {
+        self.active_streams.inc();
+    }
+
+    /// Record streaming session end
+    pub fn record_stream_end(&self) {
+        self.active_streams.dec();
+    }
+
+    /// Record chunk processed successfully
+    pub fn record_chunk_processed(&self, session_id: &str, latency_seconds: f64) {
+        self.stream_chunks_total
+            .with_label_values(&[session_id, "success"])
+            .inc();
+        self.stream_chunk_latency_seconds
+            .with_label_values(&[session_id])
+            .observe(latency_seconds);
+    }
+
+    /// Record chunk processing error
+    pub fn record_chunk_error(&self, session_id: &str) {
+        self.stream_chunks_total
+            .with_label_values(&[session_id, "error"])
+            .inc();
+    }
+
+    /// Record chunk dropped due to backpressure
+    pub fn record_chunk_dropped(&self, session_id: &str, reason: &str) {
+        self.stream_chunks_dropped_total
+            .with_label_values(&[session_id, reason])
+            .inc();
     }
 }
 
