@@ -59,26 +59,26 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T016 [P] [US1] Contract test for ExecutePipeline RPC in `runtime/tests/grpc_integration/test_execution_contract.rs`: Submit valid manifest, verify response schema matches ExecuteResponse proto
-- [ ] T017 [P] [US1] Integration test: Simple resample pipeline in `runtime/tests/grpc_integration/test_execution_resample.rs`: 44.1kHz → 16kHz, verify sample-accurate output
-- [ ] T018 [P] [US1] Integration test: Multi-node pipeline in `runtime/tests/grpc_integration/test_execution_multi_node.rs`: Resample → VAD → output, verify node execution order
-- [ ] T019 [P] [US1] Performance test in `runtime/tests/grpc_integration/test_execution_performance.rs`: Measure latency for 1s audio resample, assert <5ms p50, <10ms p95
-- [ ] T020 [P] [US1] Metrics test in `runtime/tests/grpc_integration/test_execution_metrics.rs`: Verify ExecutionMetrics includes wall_time, memory_used, node_metrics
+- [x] T016 [P] [US1] Contract test for ExecutePipeline RPC in `runtime/tests/grpc_integration/test_execution_contract.rs`: Submit valid manifest, verify response schema matches ExecuteResponse proto
+- [x] T017 [P] [US1] Integration test: Simple resample pipeline in `runtime/tests/grpc_integration/test_execution_resample.rs`: 44.1kHz → 16kHz, verify sample-accurate output
+- [x] T018 [P] [US1] Integration test: Multi-node pipeline in `runtime/tests/grpc_integration/test_execution_multi_node.rs`: Resample → VAD → output, verify node execution order
+- [x] T019 [P] [US1] Performance test in `runtime/tests/grpc_integration/test_execution_performance.rs`: Measure latency for 1s audio resample, assert <5ms p50, <10ms p95
+- [x] T020 [P] [US1] Metrics test in `runtime/tests/grpc_integration/test_execution_metrics.rs`: Verify ExecutionMetrics includes wall_time, memory_used, node_metrics
 
 ### Implementation for User Story 1
 
-- [ ] T021 [P] [US1] Implement manifest deserialization in `runtime/src/grpc_service/execution.rs`: Parse PipelineManifest proto to runtime::Manifest struct
-- [ ] T022 [P] [US1] Implement audio buffer conversion in `runtime/src/grpc_service/execution.rs`: Convert AudioBuffer proto to runtime::AudioBuffer with zero-copy where possible
-- [ ] T023 [US1] Implement ExecutePipeline handler in `runtime/src/grpc_service/execution.rs`: Validate manifest → deserialize audio inputs → execute pipeline → serialize results
-- [ ] T024 [US1] Implement manifest validation in `runtime/src/grpc_service/execution.rs`: Check version, validate node IDs unique, verify connections form DAG, validate node types exist
-- [ ] T025 [US1] Implement execution result serialization in `runtime/src/grpc_service/execution.rs`: Convert runtime outputs to ExecutionResult proto with audio_outputs and data_outputs maps
-- [ ] T026 [US1] Implement metrics collection in `runtime/src/grpc_service/execution.rs`: Capture wall_time, cpu_time, memory_used, serialization_time, populate per-node NodeMetrics
-- [ ] T027 [US1] Implement error handling in `runtime/src/grpc_service/execution.rs`: Map Rust runtime errors to ErrorResponse proto with appropriate ErrorType
-- [ ] T028 [US1] Wire ExecutePipeline RPC to PipelineExecutionService in `runtime/src/grpc_service/server.rs`: Add tonic service impl with auth/metrics middleware
-- [ ] T029 [US1] Add GetVersion RPC implementation in `runtime/src/grpc_service/version.rs`: Return VersionInfo with protocol_version, runtime_version, supported_node_types
-- [ ] T030 [US1] Integration: Test ExecutePipeline RPC end-to-end with tonic client from `runtime/tests/grpc_integration/test_execution.rs`
+- [x] T021 [P] [US1] Implement manifest deserialization in `runtime/src/grpc_service/execution.rs`: Parse PipelineManifest proto to runtime::Manifest struct
+- [x] T022 [P] [US1] Implement audio buffer conversion in `runtime/src/grpc_service/execution.rs`: Convert AudioBuffer proto to runtime::AudioBuffer with zero-copy where possible
+- [x] T023 [US1] Implement ExecutePipeline handler in `runtime/src/grpc_service/execution.rs`: Validate manifest → deserialize audio inputs → execute pipeline → serialize results
+- [x] T024 [US1] Implement manifest validation in `runtime/src/grpc_service/execution.rs`: Check version, validate node IDs unique, verify connections form DAG, validate node types exist
+- [x] T025 [US1] Implement execution result serialization in `runtime/src/grpc_service/execution.rs`: Convert runtime outputs to ExecutionResult proto with audio_outputs and data_outputs maps
+- [x] T026 [US1] Implement metrics collection in `runtime/src/grpc_service/execution.rs`: Capture wall_time, cpu_time, memory_used, serialization_time, populate per-node NodeMetrics
+- [x] T027 [US1] Implement error handling in `runtime/src/grpc_service/execution.rs`: Map Rust runtime errors to ErrorResponse proto with appropriate ErrorType
+- [x] T028 [US1] Wire ExecutePipeline RPC to PipelineExecutionService in `runtime/src/grpc_service/server.rs`: Add tonic service impl with auth/metrics middleware
+- [x] T029 [US1] Add GetVersion RPC implementation in `runtime/src/grpc_service/version.rs`: Return VersionInfo with protocol_version, runtime_version, supported_node_types
+- [x] T030 [US1] Integration: Test ExecutePipeline RPC end-to-end with tonic client from `runtime/tests/grpc_integration/test_execution.rs`
 
-**Checkpoint**: User Story 1 complete - unary pipeline execution fully functional with <5ms latency for simple operations
+**Checkpoint**: ✅ User Story 1 complete - unary pipeline execution fully functional with <5ms latency for simple operations
 
 ---
 
