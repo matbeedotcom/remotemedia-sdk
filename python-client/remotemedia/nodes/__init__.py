@@ -19,9 +19,11 @@ from .io_nodes import * # noqa: F401, F403
 from .grpc_source import * # noqa: F401, F403
 from .simple_math import * # noqa: F401, F403
 from .transcription import * # noqa: F401, F403
+from .tts import * # noqa: F401, F403
 from remotemedia.core.node import Node
 from .audio import AudioTransform, AudioBuffer, AudioResampler, VoiceActivityDetector
 from .transcription import WhisperXTranscriber, RustWhisperTranscriber
+from .tts import KokoroTTSNode
 from .text_processor import TextProcessorNode
 from .transform import DataTransform
 from .video import VideoTransform, VideoBuffer, VideoResizer
@@ -74,4 +76,6 @@ __all__ = [
     # Transcription nodes
     "WhisperXTranscriber",
     "RustWhisperTranscriber",
+    # TTS nodes
+    "KokoroTTSNode",
 ] 

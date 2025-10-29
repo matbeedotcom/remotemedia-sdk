@@ -25,7 +25,7 @@ export interface ErrorDisplayProps {
 /**
  * Get error icon based on error code
  */
-function getErrorIcon(errorCode: string): JSX.Element {
+function getErrorIcon(errorCode: string): React.ReactElement {
   // Network/connection errors
   if (
     errorCode.includes('CONNECTION') ||

@@ -6,18 +6,14 @@
 /**
  * Status of a TTS request
  */
-export enum TTSStatus {
-  /** Request is queued and waiting to start */
-  Pending = 'pending',
-  /** Request is being processed and streaming */
-  Streaming = 'streaming',
-  /** Request completed successfully */
-  Completed = 'completed',
-  /** Request failed with error */
-  Failed = 'failed',
-  /** Request was cancelled by user */
-  Cancelled = 'cancelled',
-}
+export type TTSStatus =
+  | 'idle'
+  | 'pending'
+  | 'streaming'
+  | 'playing'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
 
 /**
  * Voice configuration for TTS synthesis
@@ -122,14 +118,14 @@ export const TTS_LIMITS = {
  * Type guard to check if a status is terminal (no further updates expected)
  */
 export function isTerminalStatus(status: TTSStatus): boolean {
-  return [TTSStatus.Completed, TTSStatus.Failed, TTSStatus.Cancelled].includes(status);
+  return ['completed', 'failed', 'cancelled'].includes(status);
 }
 
 /**
  * Type guard to check if a request can be cancelled
  */
 export function isCancellable(status: TTSStatus): boolean {
-  return [TTSStatus.Pending, TTSStatus.Streaming].includes(status);
+  return ['pending', 'streaming', 'playing'].includes(status);
 }
 
 /**

@@ -2,12 +2,11 @@
 const nextConfig = {
   reactStrictMode: true,
 
-  // Enable experimental features if needed
-  experimental: {
-    // Add experimental features here
-  },
+  // Turbopack configuration (Next.js 16+ default bundler)
+  // Empty config to silence the warning about webpack config
+  turbopack: {},
 
-  // Webpack configuration for handling gRPC
+  // Webpack configuration for handling gRPC (fallback for webpack builds)
   webpack: (config, { isServer }) => {
     // Add fallbacks for Node.js modules not available in browser
     if (!isServer) {

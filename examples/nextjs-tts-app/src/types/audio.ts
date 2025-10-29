@@ -6,34 +6,12 @@
 /**
  * Playback state values
  */
-export enum PlaybackState {
-  /** Audio is not playing */
-  Idle = 'idle',
-  /** Audio is currently playing */
-  Playing = 'playing',
-  /** Audio is paused */
-  Paused = 'paused',
-  /** Audio playback stopped */
-  Stopped = 'stopped',
-  /** Audio is buffering */
-  Buffering = 'buffering',
-}
+export type PlaybackState = 'idle' | 'playing' | 'paused' | 'stopped' | 'buffering';
 
 /**
  * Buffer health status
  */
-export enum BufferStatus {
-  /** Buffer is healthy (>2s ahead) */
-  Healthy = 'healthy',
-  /** Buffer is low (1-2s ahead) */
-  Low = 'low',
-  /** Buffer is critically low (<1s ahead) */
-  Critical = 'critical',
-  /** Buffer is empty */
-  Empty = 'empty',
-  /** Buffer is full (no more data expected) */
-  Complete = 'complete',
-}
+export type BufferStatus = 'healthy' | 'low' | 'critical' | 'empty' | 'complete';
 
 /**
  * Audio format specification
@@ -127,34 +105,23 @@ export interface AudioStreamState {
 /**
  * Audio player event types
  */
-export enum AudioPlayerEvent {
-  /** Playback started */
-  PlaybackStarted = 'playback-started',
-  /** Playback paused */
-  PlaybackPaused = 'playback-paused',
-  /** Playback stopped */
-  PlaybackStopped = 'playback-stopped',
-  /** Playback resumed */
-  PlaybackResumed = 'playback-resumed',
-  /** Playback completed (reached end) */
-  PlaybackEnded = 'playback-ended',
-  /** Buffer is low */
-  BufferLow = 'buffer-low',
-  /** Buffer is critically low */
-  BufferCritical = 'buffer-critical',
-  /** Buffer is healthy again */
-  BufferHealthy = 'buffer-healthy',
-  /** New audio chunk received */
-  ChunkReceived = 'chunk-received',
-  /** Audio stream completed */
-  StreamCompleted = 'stream-completed',
-  /** Audio player error */
-  Error = 'error',
-  /** Volume changed */
-  VolumeChanged = 'volume-changed',
-  /** Seek position changed */
-  Seeked = 'seeked',
-}
+export const AudioPlayerEvent = {
+  PlaybackStarted: 'playback-started',
+  PlaybackPaused: 'playback-paused',
+  PlaybackStopped: 'playback-stopped',
+  PlaybackResumed: 'playback-resumed',
+  PlaybackEnded: 'playback-ended',
+  BufferLow: 'buffer-low',
+  BufferCritical: 'buffer-critical',
+  BufferHealthy: 'buffer-healthy',
+  ChunkReceived: 'chunk-received',
+  StreamCompleted: 'stream-completed',
+  Error: 'error',
+  VolumeChanged: 'volume-changed',
+  Seeked: 'seeked',
+} as const;
+
+export type AudioPlayerEventType = typeof AudioPlayerEvent[keyof typeof AudioPlayerEvent];
 
 /**
  * Audio player event data
@@ -215,14 +182,14 @@ export const AUDIO_CONSTRAINTS = {
  * Type guard to check if playback is active
  */
 export function isPlaybackActive(state: PlaybackState): boolean {
-  return [PlaybackState.Playing, PlaybackState.Buffering].includes(state);
+  return ['playing', 'buffering'].includes(state);
 }
 
 /**
  * Type guard to check if buffer needs attention
  */
 export function needsBuffering(status: BufferStatus): boolean {
-  return [BufferStatus.Low, BufferStatus.Critical, BufferStatus.Empty].includes(status);
+  return ['low', 'critical', 'empty'].includes(status);
 }
 
 /**
@@ -230,18 +197,18 @@ export function needsBuffering(status: BufferStatus): boolean {
  */
 export function calculateBufferStatus(bufferedAhead: number, isComplete: boolean): BufferStatus {
   if (isComplete) {
-    return BufferStatus.Complete;
+    return 'complete';
   }
   if (bufferedAhead === 0) {
-    return BufferStatus.Empty;
+    return 'empty';
   }
   if (bufferedAhead < AUDIO_BUFFER_CONFIG.CRITICAL_BUFFER_THRESHOLD) {
-    return BufferStatus.Critical;
+    return 'critical';
   }
   if (bufferedAhead < AUDIO_BUFFER_CONFIG.LOW_BUFFER_THRESHOLD) {
-    return BufferStatus.Low;
+    return 'low';
   }
-  return BufferStatus.Healthy;
+  return 'healthy';
 }
 
 /**
@@ -262,14 +229,29 @@ export function createAudioBufferFromFloat32(
   data: Float32Array,
   format: AudioFormat
 ): AudioBuffer {
+  const numChannels = format.channels;
+  const framesPerChannel = data.length / numChannels;
+
   const buffer = audioContext.createBuffer(
-    format.channels,
-    data.length / format.channels,
+    numChannels,
+    framesPerChannel,
     format.sampleRate
   );
 
-  // Copy data to buffer (mono channel)
-  buffer.copyToChannel(data, 0);
+  // Copy data to buffer, handling interleaved multi-channel data
+  if (numChannels === 1) {
+    // Mono: direct copy using getChannelData
+    const channelData = buffer.getChannelData(0);
+    channelData.set(data);
+  } else {
+    // Multi-channel: de-interleave
+    for (let channel = 0; channel < numChannels; channel++) {
+      const channelData = buffer.getChannelData(channel);
+      for (let i = 0; i < framesPerChannel; i++) {
+        channelData[i] = data[i * numChannels + channel];
+      }
+    }
+  }
 
   return buffer;
 }

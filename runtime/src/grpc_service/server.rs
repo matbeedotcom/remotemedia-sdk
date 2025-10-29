@@ -20,6 +20,7 @@ use crate::executor::Executor;
 use std::sync::Arc;
 use tonic::transport::Server;
 use tracing::{info, warn};
+use tower_http::cors::{CorsLayer, Any};
 
 /// gRPC server builder with middleware
 pub struct GrpcServer {
@@ -77,6 +78,13 @@ impl GrpcServer {
             Arc::clone(&self.metrics),
         );
 
+        // Configure CORS for gRPC-Web browser requests
+        let cors = CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+            .expose_headers(Any);
+
         // T037: Configure connection pooling and HTTP/2 keepalive for concurrent clients
         let server = Server::builder()
             // Allow many concurrent requests per connection
@@ -89,17 +97,24 @@ impl GrpcServer {
             .http2_keepalive_timeout(Some(std::time::Duration::from_secs(10)))
             // Connection timeouts
             .timeout(std::time::Duration::from_secs(60))
+            // Add gRPC-Web support
+            .accept_http1(true)
             // Tracing
             .trace_fn(|_| tracing::info_span!("grpc_request"))
+            .layer(cors)
             .add_service(
-                PipelineExecutionServiceServer::new(execution_service)
-                    .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
-                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+                tonic_web::enable(
+                    PipelineExecutionServiceServer::new(execution_service)
+                        .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
+                        .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+                )
             )
             .add_service(
-                StreamingPipelineServiceServer::new(streaming_service)
-                    .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
-                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+                tonic_web::enable(
+                    StreamingPipelineServiceServer::new(streaming_service)
+                        .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
+                        .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+                )
             )
             ;
 
