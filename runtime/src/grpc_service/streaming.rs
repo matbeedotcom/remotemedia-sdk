@@ -54,25 +54,32 @@ const METRICS_UPDATE_INTERVAL: u64 = 10;
 pub struct StreamingServiceImpl {
     /// Active streaming sessions (keyed by session_id)
     sessions: Arc<RwLock<HashMap<String, Arc<Mutex<StreamSession>>>>>,
-    
+
     /// Service configuration
     config: ServiceConfig,
-    
+
     /// Global executor (shared across sessions)
     executor: Arc<Executor>,
-    
+
     /// Prometheus metrics
     metrics: Arc<ServiceMetrics>,
+
+    /// Streaming node registry
+    streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
 }
 
 impl StreamingServiceImpl {
     /// Create new streaming service instance
     pub fn new(config: ServiceConfig, executor: Arc<Executor>, metrics: Arc<ServiceMetrics>) -> Self {
+        // Create default streaming node registry
+        let streaming_registry = Arc::new(crate::nodes::streaming_registry::create_default_streaming_registry());
+
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             config,
             executor,
             metrics,
+            streaming_registry,
         }
     }
 
@@ -266,9 +273,12 @@ impl crate::grpc_service::StreamingPipelineService for StreamingServiceImpl {
         let executor = self.executor.clone();
         let metrics = self.metrics.clone();
 
+        // Clone registry for the async task
+        let streaming_registry = self.streaming_registry.clone();
+
         // Spawn async task to handle bidirectional streaming
         tokio::spawn(async move {
-            let result = handle_stream(&mut stream, tx.clone(), sessions, executor, metrics).await;
+            let result = handle_stream(&mut stream, tx.clone(), sessions, executor, metrics, streaming_registry).await;
             
             if let Err(e) = result {
                 error!(error = %e, "Stream handling error");
@@ -297,6 +307,7 @@ async fn handle_stream(
     sessions: Arc<RwLock<HashMap<String, Arc<Mutex<StreamSession>>>>>,
     executor: Arc<Executor>,
     metrics: Arc<ServiceMetrics>,
+    streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
 ) -> Result<(), ServiceError> {
     let mut session: Option<Arc<Mutex<StreamSession>>> = None;
     let mut session_id = String::new();
@@ -385,7 +396,7 @@ async fn handle_stream(
                 let chunk_start = Instant::now();
                 debug!(sequence = data_chunk.sequence, "Processing DataChunk");
 
-                let result = handle_data_chunk(data_chunk, sess.clone(), executor.clone()).await;
+                let result = handle_data_chunk(data_chunk, sess.clone(), streaming_registry.clone()).await;
 
                 match result {
                     Ok(chunk_result) => {
@@ -589,12 +600,12 @@ async fn handle_audio_chunk(
 async fn handle_data_chunk(
     chunk: crate::grpc_service::generated::DataChunk,
     session: Arc<Mutex<StreamSession>>,
-    _executor: Arc<Executor>,
+    streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
 ) -> Result<ChunkResult, ServiceError> {
     let start_time = Instant::now();
 
     // Lock session to validate and get manifest
-    let (manifest, node_type, params) = {
+    let (node_type, params) = {
         let mut sess = session.lock().await;
         sess.validate_sequence(chunk.sequence)?;
 
@@ -605,8 +616,13 @@ async fn handle_data_chunk(
                 format!("Node '{}' not found in manifest", chunk.node_id)
             ))?;
 
-        (sess.manifest.clone(), node_spec.node_type.clone(), node_spec.params.clone())
+        (node_spec.node_type.clone(), node_spec.params.clone())
     };
+
+    // Create the streaming node dynamically using the registry
+    let node = streaming_registry
+        .create_node(&node_type, chunk.node_id.clone(), &params)
+        .map_err(|e| ServiceError::Internal(format!("Failed to create node: {}", e)))?;
 
     // Convert DataBuffer(s) to RuntimeData
     // Support either single buffer OR named_buffers (for multi-input nodes)
@@ -653,59 +669,20 @@ async fn handle_data_chunk(
         ));
     };
 
-    // Process data through node based on node type
-    // For single-input nodes, extract the first (or "input") value
-    // For multi-input nodes, pass the entire HashMap
-    let output_data = match node_type.as_str() {
-        "CalculatorNode" => {
-            use crate::nodes::calculator::CalculatorNode;
-            let node = CalculatorNode::new(chunk.node_id.clone(), &params.to_string())
-                .map_err(|e| ServiceError::Internal(format!("Failed to create CalculatorNode: {}", e)))?;
+    // Process data through node using the StreamingNode trait
+    let output_data = if node.is_multi_input() {
+        // Multi-input node: pass entire HashMap
+        node.process_multi(runtime_data_map)
+            .map_err(|e| ServiceError::Internal(format!("Node execution failed: {}", e)))?
+    } else {
+        // Single-input node: extract the first value
+        let input_data = runtime_data_map.get("input")
+            .or_else(|| runtime_data_map.values().next())
+            .ok_or_else(|| ServiceError::Validation("No input data provided".to_string()))?
+            .clone();
 
-            // Single-input node: extract first value
-            let input_data = runtime_data_map.get("input")
-                .or_else(|| runtime_data_map.values().next())
-                .ok_or_else(|| ServiceError::Validation("No input data provided".to_string()))?
-                .clone();
-
-            node.process(input_data)
-                .map_err(|e| ServiceError::Internal(format!("Node execution failed: {}", e)))?
-        }
-        "VideoProcessorNode" => {
-            use crate::nodes::video_processor::VideoProcessorNode;
-            let node = VideoProcessorNode::new(chunk.node_id.clone(), &params.to_string())
-                .map_err(|e| ServiceError::Internal(format!("Failed to create VideoProcessorNode: {}", e)))?;
-
-            // Single-input node: extract first value
-            let input_data = runtime_data_map.get("input")
-                .or_else(|| runtime_data_map.values().next())
-                .ok_or_else(|| ServiceError::Validation("No input data provided".to_string()))?
-                .clone();
-
-            node.process(input_data)
-                .map_err(|e| ServiceError::Internal(format!("Node execution failed: {}", e)))?
-        }
-        "PassThrough" => {
-            // Simple passthrough for testing - return first input
-            runtime_data_map.get("input")
-                .or_else(|| runtime_data_map.values().next())
-                .ok_or_else(|| ServiceError::Validation("No input data provided".to_string()))?
-                .clone()
-        }
-        "SynchronizedAudioVideoNode" => {
-            // Multi-input node: pass entire HashMap
-            use crate::nodes::sync_av::SynchronizedAudioVideoNode;
-            let node = SynchronizedAudioVideoNode::new(chunk.node_id.clone(), &params.to_string())
-                .map_err(|e| ServiceError::Internal(format!("Failed to create SynchronizedAudioVideoNode: {}", e)))?;
-
-            node.process_multi(runtime_data_map)
-                .map_err(|e| ServiceError::Internal(format!("Node execution failed: {}", e)))?
-        }
-        other => {
-            return Err(ServiceError::Internal(
-                format!("Node type '{}' not supported for generic streaming yet", other)
-            ));
-        }
+        node.process(input_data)
+            .map_err(|e| ServiceError::Internal(format!("Node execution failed: {}", e)))?
     };
 
     // Convert runtime data back to proto

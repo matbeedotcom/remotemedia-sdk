@@ -19,6 +19,10 @@ pub mod calculator;
 pub mod registry;
 pub mod video_processor;
 pub mod sync_av;
+pub mod python_nodes;
+pub mod streaming_node;
+pub mod streaming_registry;
+pub mod passthrough;
 
 #[cfg(feature = "whisper")]
 mod whisper;
@@ -26,6 +30,7 @@ mod whisper;
 pub use whisper::RustWhisperNode;
 
 pub use registry::{NodeFactory as NodeFactoryTrait, RuntimeHint, CompositeRegistry};
+pub use streaming_node::{StreamingNode, StreamingNodeFactory, StreamingNodeRegistry};
 
 /// Node execution context containing runtime state
 #[derive(Debug, Clone)]

@@ -11,6 +11,7 @@
 //!   { "result": number, "operation": string }
 
 use crate::data::RuntimeData;
+use crate::nodes::StreamingNode;
 use crate::Error;
 use serde_json::{json, Value};
 
@@ -109,6 +110,17 @@ impl CalculatorNode {
         });
 
         Ok(RuntimeData::Json(output))
+    }
+}
+
+impl StreamingNode for CalculatorNode {
+    fn node_type(&self) -> &str {
+        "CalculatorNode"
+    }
+
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+        // Delegate to the existing process method
+        CalculatorNode::process(self, data)
     }
 }
 

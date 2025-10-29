@@ -17,6 +17,7 @@
 
 use crate::data::RuntimeData;
 use crate::error::{Error, Result};
+use crate::nodes::StreamingNode;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -154,6 +155,24 @@ impl SynchronizedAudioVideoNode {
             node_id: self.node_id.clone(),
             context: "Use process_multi() method with both audio and video inputs".to_string(),
         })
+    }
+}
+
+impl StreamingNode for SynchronizedAudioVideoNode {
+    fn node_type(&self) -> &str {
+        "SynchronizedAudioVideoNode"
+    }
+
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData> {
+        SynchronizedAudioVideoNode::process(self, data)
+    }
+
+    fn process_multi(&self, inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData> {
+        SynchronizedAudioVideoNode::process_multi(self, inputs)
+    }
+
+    fn is_multi_input(&self) -> bool {
+        true
     }
 }
 
