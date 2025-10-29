@@ -25,55 +25,47 @@ _sym_db = _symbol_database.Default()
 from . import common_pb2 as common__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0f\x65xecution.proto\x12\x0eremotemedia.v1\x1a\x0c\x63ommon.proto\"\xa5\x03\n\x0e\x45xecuteRequest\x12\x32\n\x08manifest\x18\x01 \x01(\x0b\x32 .remotemedia.v1.PipelineManifest\x12\x45\n\x0c\x61udio_inputs\x18\x02 \x03(\x0b\x32/.remotemedia.v1.ExecuteRequest.AudioInputsEntry\x12\x43\n\x0b\x64\x61ta_inputs\x18\x03 \x03(\x0b\x32..remotemedia.v1.ExecuteRequest.DataInputsEntry\x12\x37\n\x0fresource_limits\x18\x04 \x01(\x0b\x32\x1e.remotemedia.v1.ResourceLimits\x12\x16\n\x0e\x63lient_version\x18\x05 \x01(\t\x1aO\n\x10\x41udioInputsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12*\n\x05value\x18\x02 \x01(\x0b\x32\x1b.remotemedia.v1.AudioBuffer:\x02\x38\x01\x1a\x31\n\x0f\x44\x61taInputsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\x7f\n\x0f\x45xecuteResponse\x12\x31\n\x06result\x18\x01 \x01(\x0b\x32\x1f.remotemedia.v1.ExecutionResultH\x00\x12.\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1d.remotemedia.v1.ErrorResponseH\x00\x42\t\n\x07outcome\"\xb5\x01\n\x10PipelineManifest\x12\x0f\n\x07version\x18\x01 \x01(\t\x12\x32\n\x08metadata\x18\x02 \x01(\x0b\x32 .remotemedia.v1.ManifestMetadata\x12+\n\x05nodes\x18\x03 \x03(\x0b\x32\x1c.remotemedia.v1.NodeManifest\x12/\n\x0b\x63onnections\x18\x04 \x03(\x0b\x32\x1a.remotemedia.v1.Connection\"I\n\x10ManifestMetadata\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12\x12\n\ncreated_at\x18\x03 \x01(\t\"\xd2\x01\n\x0cNodeManifest\x12\n\n\x02id\x18\x01 \x01(\t\x12\x11\n\tnode_type\x18\x02 \x01(\t\x12\x0e\n\x06params\x18\x03 \x01(\t\x12\x14\n\x0cis_streaming\x18\x04 \x01(\x08\x12<\n\x0c\x63\x61pabilities\x18\x05 \x01(\x0b\x32&.remotemedia.v1.CapabilityRequirements\x12\x0c\n\x04host\x18\x06 \x01(\t\x12\x31\n\x0cruntime_hint\x18\x07 \x01(\x0e\x32\x1b.remotemedia.v1.RuntimeHint\"&\n\nConnection\x12\x0c\n\x04\x66rom\x18\x01 \x01(\t\x12\n\n\x02to\x18\x02 \x01(\t\"\x85\x01\n\x16\x43\x61pabilityRequirements\x12+\n\x03gpu\x18\x01 \x01(\x0b\x32\x1e.remotemedia.v1.GpuRequirement\x12+\n\x03\x63pu\x18\x02 \x01(\x0b\x32\x1e.remotemedia.v1.CpuRequirement\x12\x11\n\tmemory_gb\x18\x03 \x01(\x01\"G\n\x0eGpuRequirement\x12\x0c\n\x04type\x18\x01 \x01(\t\x12\x15\n\rmin_memory_gb\x18\x02 \x01(\x01\x12\x10\n\x08required\x18\x03 \x01(\x08\"-\n\x0e\x43puRequirement\x12\r\n\x05\x63ores\x18\x01 \x01(\r\x12\x0c\n\x04\x61rch\x18\x02 \x01(\t\"\xbf\x03\n\x0f\x45xecutionResult\x12H\n\raudio_outputs\x18\x01 \x03(\x0b\x32\x31.remotemedia.v1.ExecutionResult.AudioOutputsEntry\x12\x46\n\x0c\x64\x61ta_outputs\x18\x02 \x03(\x0b\x32\x30.remotemedia.v1.ExecutionResult.DataOutputsEntry\x12\x31\n\x07metrics\x18\x03 \x01(\x0b\x32 .remotemedia.v1.ExecutionMetrics\x12\x30\n\x0cnode_results\x18\x04 \x03(\x0b\x32\x1a.remotemedia.v1.NodeResult\x12/\n\x06status\x18\x05 \x01(\x0e\x32\x1f.remotemedia.v1.ExecutionStatus\x1aP\n\x11\x41udioOutputsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12*\n\x05value\x18\x02 \x01(\x0b\x32\x1b.remotemedia.v1.AudioBuffer:\x02\x38\x01\x1a\x32\n\x10\x44\x61taOutputsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"(\n\x0eVersionRequest\x12\x16\n\x0e\x63lient_version\x18\x01 \x01(\t\"w\n\x0fVersionResponse\x12\x31\n\x0cversion_info\x18\x01 \x01(\x0b\x32\x1b.remotemedia.v1.VersionInfo\x12\x12\n\ncompatible\x18\x02 \x01(\x08\x12\x1d\n\x15\x63ompatibility_message\x18\x03 \x01(\t*\x98\x01\n\x0bRuntimeHint\x12\x1c\n\x18RUNTIME_HINT_UNSPECIFIED\x10\x00\x12\x1b\n\x17RUNTIME_HINT_RUSTPYTHON\x10\x01\x12\x18\n\x14RUNTIME_HINT_CPYTHON\x10\x02\x12\x1d\n\x19RUNTIME_HINT_CPYTHON_WASM\x10\x03\x12\x15\n\x11RUNTIME_HINT_AUTO\x10\x04\x32\xbd\x01\n\x18PipelineExecutionService\x12R\n\x0f\x45xecutePipeline\x12\x1e.remotemedia.v1.ExecuteRequest\x1a\x1f.remotemedia.v1.ExecuteResponse\x12M\n\nGetVersion\x12\x1e.remotemedia.v1.VersionRequest\x1a\x1f.remotemedia.v1.VersionResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0f\x65xecution.proto\x12\x0eremotemedia.v1\x1a\x0c\x63ommon.proto\"\xa9\x02\n\x0e\x45xecuteRequest\x12\x32\n\x08manifest\x18\x01 \x01(\x0b\x32 .remotemedia.v1.PipelineManifest\x12\x43\n\x0b\x64\x61ta_inputs\x18\x02 \x03(\x0b\x32..remotemedia.v1.ExecuteRequest.DataInputsEntry\x12\x37\n\x0fresource_limits\x18\x03 \x01(\x0b\x32\x1e.remotemedia.v1.ResourceLimits\x12\x16\n\x0e\x63lient_version\x18\x04 \x01(\t\x1aM\n\x0f\x44\x61taInputsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12)\n\x05value\x18\x02 \x01(\x0b\x32\x1a.remotemedia.v1.DataBuffer:\x02\x38\x01\"\x7f\n\x0f\x45xecuteResponse\x12\x31\n\x06result\x18\x01 \x01(\x0b\x32\x1f.remotemedia.v1.ExecutionResultH\x00\x12.\n\x05\x65rror\x18\x02 \x01(\x0b\x32\x1d.remotemedia.v1.ErrorResponseH\x00\x42\t\n\x07outcome\"\xb5\x01\n\x10PipelineManifest\x12\x0f\n\x07version\x18\x01 \x01(\t\x12\x32\n\x08metadata\x18\x02 \x01(\x0b\x32 .remotemedia.v1.ManifestMetadata\x12+\n\x05nodes\x18\x03 \x03(\x0b\x32\x1c.remotemedia.v1.NodeManifest\x12/\n\x0b\x63onnections\x18\x04 \x03(\x0b\x32\x1a.remotemedia.v1.Connection\"I\n\x10ManifestMetadata\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12\x12\n\ncreated_at\x18\x03 \x01(\t\"\xb9\x02\n\x0cNodeManifest\x12\n\n\x02id\x18\x01 \x01(\t\x12\x11\n\tnode_type\x18\x02 \x01(\t\x12\x0e\n\x06params\x18\x03 \x01(\t\x12\x14\n\x0cis_streaming\x18\x04 \x01(\x08\x12<\n\x0c\x63\x61pabilities\x18\x05 \x01(\x0b\x32&.remotemedia.v1.CapabilityRequirements\x12\x0c\n\x04host\x18\x06 \x01(\t\x12\x31\n\x0cruntime_hint\x18\x07 \x01(\x0e\x32\x1b.remotemedia.v1.RuntimeHint\x12\x31\n\x0binput_types\x18\x08 \x03(\x0e\x32\x1c.remotemedia.v1.DataTypeHint\x12\x32\n\x0coutput_types\x18\t \x03(\x0e\x32\x1c.remotemedia.v1.DataTypeHint\"&\n\nConnection\x12\x0c\n\x04\x66rom\x18\x01 \x01(\t\x12\n\n\x02to\x18\x02 \x01(\t\"\x85\x01\n\x16\x43\x61pabilityRequirements\x12+\n\x03gpu\x18\x01 \x01(\x0b\x32\x1e.remotemedia.v1.GpuRequirement\x12+\n\x03\x63pu\x18\x02 \x01(\x0b\x32\x1e.remotemedia.v1.CpuRequirement\x12\x11\n\tmemory_gb\x18\x03 \x01(\x01\"G\n\x0eGpuRequirement\x12\x0c\n\x04type\x18\x01 \x01(\t\x12\x15\n\rmin_memory_gb\x18\x02 \x01(\x01\x12\x10\n\x08required\x18\x03 \x01(\x08\"-\n\x0e\x43puRequirement\x12\r\n\x05\x63ores\x18\x01 \x01(\r\x12\x0c\n\x04\x61rch\x18\x02 \x01(\t\"\xbf\x02\n\x0f\x45xecutionResult\x12\x46\n\x0c\x64\x61ta_outputs\x18\x01 \x03(\x0b\x32\x30.remotemedia.v1.ExecutionResult.DataOutputsEntry\x12\x31\n\x07metrics\x18\x02 \x01(\x0b\x32 .remotemedia.v1.ExecutionMetrics\x12\x30\n\x0cnode_results\x18\x03 \x03(\x0b\x32\x1a.remotemedia.v1.NodeResult\x12/\n\x06status\x18\x04 \x01(\x0e\x32\x1f.remotemedia.v1.ExecutionStatus\x1aN\n\x10\x44\x61taOutputsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12)\n\x05value\x18\x02 \x01(\x0b\x32\x1a.remotemedia.v1.DataBuffer:\x02\x38\x01\"(\n\x0eVersionRequest\x12\x16\n\x0e\x63lient_version\x18\x01 \x01(\t\"w\n\x0fVersionResponse\x12\x31\n\x0cversion_info\x18\x01 \x01(\x0b\x32\x1b.remotemedia.v1.VersionInfo\x12\x12\n\ncompatible\x18\x02 \x01(\x08\x12\x1d\n\x15\x63ompatibility_message\x18\x03 \x01(\t*\x98\x01\n\x0bRuntimeHint\x12\x1c\n\x18RUNTIME_HINT_UNSPECIFIED\x10\x00\x12\x1b\n\x17RUNTIME_HINT_RUSTPYTHON\x10\x01\x12\x18\n\x14RUNTIME_HINT_CPYTHON\x10\x02\x12\x1d\n\x19RUNTIME_HINT_CPYTHON_WASM\x10\x03\x12\x15\n\x11RUNTIME_HINT_AUTO\x10\x04\x32\xbd\x01\n\x18PipelineExecutionService\x12R\n\x0f\x45xecutePipeline\x12\x1e.remotemedia.v1.ExecuteRequest\x1a\x1f.remotemedia.v1.ExecuteResponse\x12M\n\nGetVersion\x12\x1e.remotemedia.v1.VersionRequest\x1a\x1f.remotemedia.v1.VersionResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'execution_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_EXECUTEREQUEST_AUDIOINPUTSENTRY']._loaded_options = None
-  _globals['_EXECUTEREQUEST_AUDIOINPUTSENTRY']._serialized_options = b'8\001'
   _globals['_EXECUTEREQUEST_DATAINPUTSENTRY']._loaded_options = None
   _globals['_EXECUTEREQUEST_DATAINPUTSENTRY']._serialized_options = b'8\001'
-  _globals['_EXECUTIONRESULT_AUDIOOUTPUTSENTRY']._loaded_options = None
-  _globals['_EXECUTIONRESULT_AUDIOOUTPUTSENTRY']._serialized_options = b'8\001'
   _globals['_EXECUTIONRESULT_DATAOUTPUTSENTRY']._loaded_options = None
   _globals['_EXECUTIONRESULT_DATAOUTPUTSENTRY']._serialized_options = b'8\001'
-  _globals['_RUNTIMEHINT']._serialized_start=1984
-  _globals['_RUNTIMEHINT']._serialized_end=2136
+  _globals['_RUNTIMEHINT']._serialized_start=1835
+  _globals['_RUNTIMEHINT']._serialized_end=1987
   _globals['_EXECUTEREQUEST']._serialized_start=50
-  _globals['_EXECUTEREQUEST']._serialized_end=471
-  _globals['_EXECUTEREQUEST_AUDIOINPUTSENTRY']._serialized_start=341
-  _globals['_EXECUTEREQUEST_AUDIOINPUTSENTRY']._serialized_end=420
-  _globals['_EXECUTEREQUEST_DATAINPUTSENTRY']._serialized_start=422
-  _globals['_EXECUTEREQUEST_DATAINPUTSENTRY']._serialized_end=471
-  _globals['_EXECUTERESPONSE']._serialized_start=473
-  _globals['_EXECUTERESPONSE']._serialized_end=600
-  _globals['_PIPELINEMANIFEST']._serialized_start=603
-  _globals['_PIPELINEMANIFEST']._serialized_end=784
-  _globals['_MANIFESTMETADATA']._serialized_start=786
-  _globals['_MANIFESTMETADATA']._serialized_end=859
-  _globals['_NODEMANIFEST']._serialized_start=862
-  _globals['_NODEMANIFEST']._serialized_end=1072
-  _globals['_CONNECTION']._serialized_start=1074
-  _globals['_CONNECTION']._serialized_end=1112
-  _globals['_CAPABILITYREQUIREMENTS']._serialized_start=1115
-  _globals['_CAPABILITYREQUIREMENTS']._serialized_end=1248
-  _globals['_GPUREQUIREMENT']._serialized_start=1250
-  _globals['_GPUREQUIREMENT']._serialized_end=1321
-  _globals['_CPUREQUIREMENT']._serialized_start=1323
-  _globals['_CPUREQUIREMENT']._serialized_end=1368
-  _globals['_EXECUTIONRESULT']._serialized_start=1371
-  _globals['_EXECUTIONRESULT']._serialized_end=1818
-  _globals['_EXECUTIONRESULT_AUDIOOUTPUTSENTRY']._serialized_start=1686
-  _globals['_EXECUTIONRESULT_AUDIOOUTPUTSENTRY']._serialized_end=1766
-  _globals['_EXECUTIONRESULT_DATAOUTPUTSENTRY']._serialized_start=1768
-  _globals['_EXECUTIONRESULT_DATAOUTPUTSENTRY']._serialized_end=1818
-  _globals['_VERSIONREQUEST']._serialized_start=1820
-  _globals['_VERSIONREQUEST']._serialized_end=1860
-  _globals['_VERSIONRESPONSE']._serialized_start=1862
-  _globals['_VERSIONRESPONSE']._serialized_end=1981
-  _globals['_PIPELINEEXECUTIONSERVICE']._serialized_start=2139
-  _globals['_PIPELINEEXECUTIONSERVICE']._serialized_end=2328
+  _globals['_EXECUTEREQUEST']._serialized_end=347
+  _globals['_EXECUTEREQUEST_DATAINPUTSENTRY']._serialized_start=270
+  _globals['_EXECUTEREQUEST_DATAINPUTSENTRY']._serialized_end=347
+  _globals['_EXECUTERESPONSE']._serialized_start=349
+  _globals['_EXECUTERESPONSE']._serialized_end=476
+  _globals['_PIPELINEMANIFEST']._serialized_start=479
+  _globals['_PIPELINEMANIFEST']._serialized_end=660
+  _globals['_MANIFESTMETADATA']._serialized_start=662
+  _globals['_MANIFESTMETADATA']._serialized_end=735
+  _globals['_NODEMANIFEST']._serialized_start=738
+  _globals['_NODEMANIFEST']._serialized_end=1051
+  _globals['_CONNECTION']._serialized_start=1053
+  _globals['_CONNECTION']._serialized_end=1091
+  _globals['_CAPABILITYREQUIREMENTS']._serialized_start=1094
+  _globals['_CAPABILITYREQUIREMENTS']._serialized_end=1227
+  _globals['_GPUREQUIREMENT']._serialized_start=1229
+  _globals['_GPUREQUIREMENT']._serialized_end=1300
+  _globals['_CPUREQUIREMENT']._serialized_start=1302
+  _globals['_CPUREQUIREMENT']._serialized_end=1347
+  _globals['_EXECUTIONRESULT']._serialized_start=1350
+  _globals['_EXECUTIONRESULT']._serialized_end=1669
+  _globals['_EXECUTIONRESULT_DATAOUTPUTSENTRY']._serialized_start=1591
+  _globals['_EXECUTIONRESULT_DATAOUTPUTSENTRY']._serialized_end=1669
+  _globals['_VERSIONREQUEST']._serialized_start=1671
+  _globals['_VERSIONREQUEST']._serialized_end=1711
+  _globals['_VERSIONRESPONSE']._serialized_start=1713
+  _globals['_VERSIONRESPONSE']._serialized_end=1832
+  _globals['_PIPELINEEXECUTIONSERVICE']._serialized_start=1990
+  _globals['_PIPELINEEXECUTIONSERVICE']._serialized_end=2179
 # @@protoc_insertion_point(module_scope)

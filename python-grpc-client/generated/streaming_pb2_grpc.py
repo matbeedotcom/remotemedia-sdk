@@ -53,20 +53,21 @@ class StreamingPipelineServiceServicer(object):
     """
 
     def StreamPipeline(self, request_iterator, context):
-        """Execute a pipeline with streaming audio input/output
+        """Execute a pipeline with streaming data input/output
 
         This is a bidirectional streaming RPC:
-        - Client sends: pipeline manifest (first message), then audio chunks
+        - Client sends: pipeline manifest (first message), then data chunks
         - Server sends: ready confirmation, then processing results per chunk
 
         Connection lifecycle:
         1. Client sends manifest → Server validates and responds with StreamReady
-        2. Client sends audio chunks → Server processes and responds with results
+        2. Client sends data chunks → Server processes and responds with results
         3. Client sends StreamControl::CLOSE → Server sends final metrics and closes
 
         Performance targets:
         - <50ms average latency per chunk (User Story 3)
         - Support 1000+ concurrent streaming sessions (SC-002)
+        - <5% overhead vs audio-only protocol for audio pipelines (SC-008)
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')

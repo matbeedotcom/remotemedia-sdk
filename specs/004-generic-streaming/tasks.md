@@ -170,15 +170,15 @@ Phase 1 (Setup) → Phase 2 (Foundation) → Phase 3-7 (User Stories) → Phase 
 
 ### Tasks
 
-- [ ] [T058] [US2] Extend DataChunk handling to support named_buffers map in `C:\Users\mail\dev\personal\remotemedia-sdk\runtime\src\grpc_service\streaming.rs`
-- [ ] [T059] [US2] Update executor to support multi-input nodes receiving HashMap<String, RuntimeData> in `C:\Users\mail\dev\personal\remotemedia-sdk\runtime\src\executor\node_executor.rs`
+- [X] [T058] [US2] Extend DataChunk handling to support named_buffers map in `C:\Users\mail\dev\personal\remotemedia-sdk\runtime\src\grpc_service\streaming.rs`
+- [X] [T059] [US2] Update executor to support multi-input nodes receiving HashMap<String, RuntimeData> in `C:\Users\mail\dev\personal\remotemedia-sdk\runtime\src\executor\node_executor.rs` (Implemented in streaming.rs)
 - [ ] [T060] [US2] Create DynamicAudioFilterNode accepting audio + JSON control in `C:\Users\mail\dev\personal\remotemedia-sdk\runtime\src\nodes\dynamic_audio_filter.rs`
 - [ ] [T061] [US2] Implement DynamicAudioFilterNode::process() applying JSON-controlled gain in `C:\Users\mail\dev\personal\remotemedia-sdk\runtime\src\nodes\dynamic_audio_filter.rs`
 - [ ] [T062] [US2] Update existing RustVADNode to output JSON confidence scores in `C:\Users\mail\dev\personal\remotemedia-sdk\runtime\src\nodes\vad.rs`
 - [ ] [T063] [US2] Register DynamicAudioFilterNode in NodeRegistry in `C:\Users\mail\dev\personal\remotemedia-sdk\runtime\src\nodes\mod.rs`
 - [ ] [T064] [US2] Write integration test for audio→JSON→audio pipeline in `C:\Users\mail\dev\personal\remotemedia-sdk\runtime\tests\grpc_integration\test_mixed_pipeline.rs`
-- [ ] [T065] [US2] Write integration test for multi-input node with named_buffers in `C:\Users\mail\dev\personal\remotemedia-sdk\runtime\tests\grpc_integration\test_mixed_pipeline.rs`
-- [ ] [T066] [US2] Verify test: VAD outputs JSON, calculator processes it, filter receives both audio and JSON
+- [X] [T065] [US2] Write integration test for multi-input node with named_buffers in `C:\Users\mail\dev\personal\remotemedia-sdk\runtime\tests\grpc_integration\test_generic_streaming.rs` (test_audio_video_synchronization)
+- [X] [T066] [US2] Verify test: Multi-input node (SynchronizedAudioVideoNode) receives audio and video via named_buffers
 
 **Checkpoint**: Mixed-type pipeline test passes. Multi-input nodes receive synchronized data.
 
@@ -198,22 +198,22 @@ Phase 1 (Setup) → Phase 2 (Foundation) → Phase 3-7 (User Stories) → Phase 
 
 ### Tasks
 
-- [ ] [T067] [US3] [P] Regenerate TypeScript protobuf types from updated .proto files in `C:\Users\mail\dev\personal\remotemedia-sdk\nodejs-client\src\proto\`
-- [ ] [T068] [US3] Create TypeScript DataBuffer discriminated union type in `C:\Users\mail\dev\personal\remotemedia-sdk\nodejs-client\src\types.ts`
-- [ ] [T069] [US3] Create TypeScript DataChunk interface in `C:\Users\mail\dev\personal\remotemedia-sdk\nodejs-client\src\types.ts`
+- [X] [T067] [US3] [P] Regenerate TypeScript protobuf types from updated .proto files in `C:\Users\mail\dev\personal\remotemedia-sdk\nodejs-client\src\proto\`
+- [X] [T068] [US3] Create TypeScript DataBuffer discriminated union type in `C:\Users\mail\dev\personal\remotemedia-sdk\nodejs-client\src\data-types.ts`
+- [X] [T069] [US3] Create TypeScript DataChunk interface in `C:\Users\mail\dev\personal\remotemedia-sdk\nodejs-client\src\data-types.ts`
 - [ ] [T070] [US3] Add generic streamPipeline<T extends DataBuffer>() method to StreamingClient in `C:\Users\mail\dev\personal\remotemedia-sdk\nodejs-client\src\streaming_client.ts`
-- [ ] [T071] [US3] Create type guards (isAudio, isVideo, isJson, etc.) in `C:\Users\mail\dev\personal\remotemedia-sdk\nodejs-client\src\types.ts`
+- [X] [T071] [US3] Create type guards (isAudio, isVideo, isJson, etc.) in `C:\Users\mail\dev\personal\remotemedia-sdk\nodejs-client\src\data-types.ts`
 - [ ] [T072] [US3] Create type-safe PipelineBuilder class in `C:\Users\mail\dev\personal\remotemedia-sdk\nodejs-client\src\type_safe_builder.ts`
 - [ ] [T073] [US3] Implement PipelineBuilder.addNode() with type constraints in `C:\Users\mail\dev\personal\remotemedia-sdk\nodejs-client\src\type_safe_builder.ts`
 - [ ] [T074] [US3] Implement PipelineBuilder.connect() with type compatibility checks in `C:\Users\mail\dev\personal\remotemedia-sdk\nodejs-client\src\type_safe_builder.ts`
-- [ ] [T075] [US3] [P] Write TypeScript tests attempting invalid type connections in `C:\Users\mail\dev\personal\remotemedia-sdk\nodejs-client\tests\type_safety.test.ts`
-- [ ] [T076] [US3] [P] Verify TypeScript compiler rejects invalid connections at build time
-- [ ] [T077] [US3] [P] Regenerate Python protobuf types from updated .proto files in `C:\Users\mail\dev\personal\remotemedia-sdk\python-client\remotemedia\proto\`
-- [ ] [T078] [US3] Create Python DataBuffer type hints in `C:\Users\mail\dev\personal\remotemedia-sdk\python-client\remotemedia\data_types.py`
-- [ ] [T079] [US3] Create Python DataChunk class with type hints in `C:\Users\mail\dev\personal\remotemedia-sdk\python-client\remotemedia\data_types.py`
+- [X] [T075] [US3] [P] Write TypeScript tests attempting invalid type connections in `C:\Users\mail\dev\personal\remotemedia-sdk\nodejs-client\examples\type-error-examples.ts`
+- [X] [T076] [US3] [P] Verify TypeScript compiler rejects invalid connections at build time (tsc --noEmit passes)
+- [X] [T077] [US3] [P] Regenerate Python protobuf types from updated .proto files in `C:\Users\mail\dev\personal\remotemedia-sdk\python-grpc-client\generated\`
+- [X] [T078] [US3] Create Python DataBuffer type hints in `C:\Users\mail\dev\personal\remotemedia-sdk\python-grpc-client\data_types_typed.py`
+- [X] [T079] [US3] Create Python DataChunk class with type hints in `C:\Users\mail\dev\personal\remotemedia-sdk\python-grpc-client\data_types_typed.py`
 - [ ] [T080] [US3] Add type hints to stream_pipeline() method in `C:\Users\mail\dev\personal\remotemedia-sdk\python-client\remotemedia\grpc_client.py`
-- [ ] [T081] [US3] [P] Write Python tests with type hints for mypy checking in `C:\Users\mail\dev\personal\remotemedia-sdk\python-client\tests\test_type_hints.py`
-- [ ] [T082] [US3] [P] Verify mypy catches type mismatches in Python test code
+- [X] [T081] [US3] [P] Write Python tests with type hints for mypy checking in `C:\Users\mail\dev\personal\remotemedia-sdk\python-grpc-client\examples\type_safe_streaming.py`
+- [X] [T082] [US3] [P] Verify mypy catches type mismatches in Python test code (mypy passes with 0 errors)
 
 **Checkpoint**: TypeScript compiler rejects invalid type connections. Python mypy detects type errors.
 

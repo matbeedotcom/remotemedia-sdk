@@ -2,8 +2,14 @@
 
 # Clean imports without _pb2 suffix
 from .common_pb2 import (
+    # Messages
     AudioBuffer,
-    AudioFormat,
+    VideoFrame,
+    TensorBuffer,
+    JsonData,
+    TextBuffer,
+    BinaryBuffer,
+    DataBuffer,
     ExecutionMetrics,
     NodeMetrics,
     ErrorResponse,
@@ -13,9 +19,19 @@ from .common_pb2 import (
     ExecutionStatus,
     NodeStatus,
     NodeResult,
+    # Enums
+    AudioFormat,
+    PixelFormat,
+    TensorDtype,
+    DataTypeHint,
+    # Enum values
     AUDIO_FORMAT_F32,
     AUDIO_FORMAT_I16,
     AUDIO_FORMAT_I32,
+    PIXEL_FORMAT_RGB24,
+    PIXEL_FORMAT_RGBA32,
+    PIXEL_FORMAT_YUV420P,
+    PIXEL_FORMAT_GRAY8,
     ERROR_TYPE_VALIDATION,
     ERROR_TYPE_NODE_EXECUTION,
     ERROR_TYPE_RESOURCE_LIMIT,
@@ -56,6 +72,7 @@ from .streaming_pb2 import (
     StreamRequest,
     StreamResponse,
     StreamInit,
+    DataChunk,
     AudioChunk,
     StreamControl,
     StreamReady,
@@ -72,14 +89,27 @@ from .streaming_pb2_grpc import (
 )
 
 __all__ = [
-    # Common types
+    # Common types - Data Buffers
     "AudioBuffer",
+    "VideoFrame",
+    "TensorBuffer",
+    "JsonData",
+    "TextBuffer",
+    "BinaryBuffer",
+    "DataBuffer",
+
+    # Common types - Enums
     "AudioFormat",
+    "PixelFormat",
+    "TensorDtype",
+    "DataTypeHint",
+
+    # Common types - Others
     "ExecutionMetrics",
     "ErrorResponse",
     "ErrorType",
     "VersionInfo",
-    
+
     # Execution types
     "PipelineManifest",
     "ExecuteRequest",
@@ -87,14 +117,15 @@ __all__ = [
     "ExecutionResult",
     "VersionRequest",
     "VersionResponse",
-    
+
     # Streaming types
     "StreamRequest",
     "StreamResponse",
     "StreamInit",
+    "DataChunk",
     "AudioChunk",
     "ChunkResult",
-    
+
     # Service stubs
     "PipelineExecutionServiceStub",
     "StreamingPipelineServiceStub",

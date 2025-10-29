@@ -58,7 +58,7 @@ class PipelineExecutionServiceServicer(object):
     """
 
     def ExecutePipeline(self, request, context):
-        """Execute a pipeline with complete audio input(s) and return all results
+        """Execute a pipeline with complete data input(s) and return all results
 
         This is a unary RPC: client sends one request, server sends one response.
         Suitable for batch processing and non-streaming use cases.
@@ -67,6 +67,7 @@ class PipelineExecutionServiceServicer(object):
         - <5ms latency for simple operations (SC-001)
         - <10% serialization overhead (SC-003)
         - 10x faster than Python-based remote execution (SC-004)
+        - <5% overhead vs audio-only protocol for audio pipelines (SC-008)
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
