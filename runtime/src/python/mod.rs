@@ -12,6 +12,7 @@ pub mod ffi;
 
 pub mod marshal;
 pub mod node_executor;
+pub mod runtime_data_py;
 
 // numpy_marshal requires native-numpy feature
 #[cfg(feature = "native-numpy")]

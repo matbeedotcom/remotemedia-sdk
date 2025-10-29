@@ -85,7 +85,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let audio_registry = remotemedia_runtime::nodes::audio::create_audio_registry();
     executor.add_audio_registry(Arc::new(audio_registry));
     info!("Audio processing nodes registered (RustResampleNode, RustVADNode, RustFormatConverterNode)");
-    
+
+    // Register Python TTS nodes (KokoroTTSNode)
+    let python_tts_registry = remotemedia_runtime::nodes::python_nodes::create_python_tts_registry();
+    executor.add_user_registry(Arc::new(python_tts_registry));
+    info!("Python TTS nodes registered (KokoroTTSNode)");
+
     // Get all node types from all registries for version info
     let node_types = executor.list_all_node_types();
     info!(

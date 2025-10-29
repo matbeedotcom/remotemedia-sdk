@@ -1,0 +1,42 @@
+//! Python Node Factories
+//!
+//! This module provides factory implementations for Python SDK nodes
+//! that are executed via CPython (PyO3).
+
+use crate::executor::node_executor::{NodeExecutor, PythonNodeExecutor};
+use crate::nodes::registry::{NodeFactory, NodeRegistry};
+use crate::Result;
+use serde_json::Value;
+use std::sync::Arc;
+
+/// Factory for KokoroTTSNode (Python TTS engine)
+pub struct KokoroTTSNodeFactory;
+
+impl NodeFactory for KokoroTTSNodeFactory {
+    fn create(&self, _params: Value) -> Result<Box<dyn NodeExecutor>> {
+        // Use PythonNodeExecutor wrapper which properly implements NodeExecutor trait
+        let executor = PythonNodeExecutor::new("KokoroTTSNode");
+        Ok(Box::new(executor))
+    }
+
+    fn node_type(&self) -> &str {
+        "KokoroTTSNode"
+    }
+
+    fn is_rust_native(&self) -> bool {
+        false // Python implementation
+    }
+}
+
+/// Create a registry with Python TTS nodes
+///
+/// This registers Python-based nodes that are available via the
+/// remotemedia Python package (examples/audio_examples/kokoro_tts.py)
+pub fn create_python_tts_registry() -> NodeRegistry {
+    let mut registry = NodeRegistry::new();
+
+    // Register KokoroTTSNode as Python implementation
+    registry.register_python(Arc::new(KokoroTTSNodeFactory));
+
+    registry
+}

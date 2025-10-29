@@ -10,6 +10,7 @@
 
 use crate::data::RuntimeData;
 use crate::grpc_service::generated::VideoFrame;
+use crate::nodes::StreamingNode;
 use crate::Error;
 use serde_json::json;
 
@@ -102,6 +103,16 @@ impl VideoProcessorNode {
         }
 
         detections
+    }
+}
+
+impl StreamingNode for VideoProcessorNode {
+    fn node_type(&self) -> &str {
+        "VideoProcessorNode"
+    }
+
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+        VideoProcessorNode::process(self, data)
     }
 }
 
