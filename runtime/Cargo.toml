@@ -42,6 +42,7 @@ webrtc = { version = "0.9", optional = true }
 
 # gRPC (existing transport) - not available for WASM
 tonic = { version = "0.10", optional = true, features = ["transport", "tls"] }
+tonic-web = { version = "0.10", optional = true }
 prost = { version = "0.12", optional = true }
 prost-types = { version = "0.12", optional = true }
 tower = { version = "0.4", optional = true }
@@ -109,7 +110,7 @@ wlr-libpy = { git = "https://github.com/vmware-labs/webassembly-language-runtime
 [features]
 default = ["webrtc-transport", "wasmtime-runtime", "grpc-transport", "python-async", "native-numpy"]
 webrtc-transport = ["webrtc"]
-grpc-transport = ["tonic", "prost", "prost-types", "tower", "hyper", "prometheus", "tokio-stream"]
+grpc-transport = ["tonic", "tonic-web", "prost", "prost-types", "tower", "hyper", "prometheus", "tokio-stream"]
 python-async = ["pyo3-async-runtimes"]
 native-numpy = ["numpy"]
 whisper = ["rwhisper", "rodio"]
