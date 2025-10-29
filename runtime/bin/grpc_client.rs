@@ -108,6 +108,8 @@ async fn test_execute_pipeline(server_addr: &str) -> Result<(), Box<dyn std::err
             capabilities: None,
             host: String::new(),
             runtime_hint: 0, // RUNTIME_HINT_UNSPECIFIED
+            input_types: vec![4], // DATA_TYPE_HINT_JSON
+            output_types: vec![4], // DATA_TYPE_HINT_JSON
         }],
         connections: vec![],
     };
@@ -118,12 +120,21 @@ async fn test_execute_pipeline(server_addr: &str) -> Result<(), Box<dyn std::err
         "b": 3
     });
 
+    // Create DataBuffer with JSON data
+    use remotemedia_runtime::grpc_service::generated::{DataBuffer, JsonData, data_buffer};
+    let json_buffer = DataBuffer {
+        data_type: Some(data_buffer::DataType::Json(JsonData {
+            json_payload: input_data.to_string(),
+            schema_type: "CalculatorInput".to_string(),
+        })),
+        metadata: std::collections::HashMap::new(),
+    };
+
     let mut data_inputs = std::collections::HashMap::new();
-    data_inputs.insert("node1".to_string(), input_data.to_string());
+    data_inputs.insert("node1".to_string(), json_buffer);
 
     let request = Request::new(ExecuteRequest {
         manifest: Some(manifest),
-        audio_inputs: std::collections::HashMap::new(),
         data_inputs,
         resource_limits: None,
         client_version: "v1".to_string(),
@@ -187,6 +198,8 @@ async fn test_streaming_pipeline(server_addr: &str) -> Result<(), Box<dyn std::e
             capabilities: None,
             host: String::new(),
             runtime_hint: 4, // RuntimeHint::Auto
+            input_types: vec![1], // DATA_TYPE_HINT_AUDIO
+            output_types: vec![1], // DATA_TYPE_HINT_AUDIO
         }],
         connections: vec![],
     };
@@ -272,10 +285,10 @@ async fn test_streaming_pipeline(server_addr: &str) -> Result<(), Box<dyn std::e
         if let Some(response) = response_stream.message().await? {
             match response.response {
                 Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Result(result)) => {
-                    info!("   ✅ Received result for chunk {}: {:.2}ms latency, {} audio outputs",
+                    info!("   ✅ Received result for chunk {}: {:.2}ms latency, {} data outputs",
                         result.sequence,
                         result.processing_time_ms,
-                        result.audio_outputs.len()
+                        result.data_outputs.len()
                     );
                 }
                 Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Error(error)) => {

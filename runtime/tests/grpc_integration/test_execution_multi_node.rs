@@ -7,8 +7,9 @@
 
 use remotemedia_runtime::grpc_service::generated::{
     ExecuteRequest, PipelineManifest, AudioBuffer, AudioFormat, NodeManifest,
-    Connection, ExecutionStatus,
+    Connection, ExecutionStatus, DataBuffer, data_buffer,
 };
+use std::collections::HashMap;
 
 #[tokio::test]
 #[ignore] // Will pass once ExecutePipeline is implemented
@@ -26,6 +27,8 @@ async fn test_multi_node_pipeline() {
                 capabilities: None,
                 host: String::new(),
                 runtime_hint: 0,
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
             },
             NodeManifest {
                 id: "vad".to_string(),
@@ -35,6 +38,8 @@ async fn test_multi_node_pipeline() {
                 capabilities: None,
                 host: String::new(),
                 runtime_hint: 0,
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
             },
         ],
         connections: vec![
@@ -57,10 +62,18 @@ async fn test_multi_node_pipeline() {
         num_samples: input_samples as u64,
     };
 
+    let mut data_inputs = HashMap::new();
+    data_inputs.insert(
+        "resample".to_string(),
+        DataBuffer {
+            data_type: Some(data_buffer::DataType::Audio(audio_input)),
+            metadata: HashMap::new(),
+        },
+    );
+
     let request = ExecuteRequest {
         manifest: Some(manifest),
-        audio_inputs: vec![("resample".to_string(), audio_input)].into_iter().collect(),
-        data_inputs: std::collections::HashMap::new(),
+        data_inputs,
         resource_limits: None,
         client_version: "v1".to_string(),
     };

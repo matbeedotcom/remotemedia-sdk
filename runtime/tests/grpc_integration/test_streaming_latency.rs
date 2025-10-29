@@ -93,6 +93,8 @@ fn create_passthrough_manifest() -> PipelineManifest {
                 capabilities: None,
                 host: "".to_string(),
                 runtime_hint: 0,
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
             },
             NodeManifest {
                 id: "output".to_string(),
@@ -102,6 +104,8 @@ fn create_passthrough_manifest() -> PipelineManifest {
                 capabilities: None,
                 host: "".to_string(),
                 runtime_hint: 0,
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
             },
         ],
         connections: vec![],

@@ -13,9 +13,10 @@
 
 use remotemedia_runtime::grpc_service::generated::{
     pipeline_execution_service_client::PipelineExecutionServiceClient, ExecuteRequest,
-    ManifestMetadata, NodeManifest, PipelineManifest,
+    ManifestMetadata, NodeManifest, PipelineManifest, DataBuffer, data_buffer, JsonData,
 };
 use std::time::{Duration, Instant};
+use std::collections::HashMap;
 
 /// Helper to create a simple test manifest
 fn create_test_manifest(id: usize) -> PipelineManifest {
@@ -34,6 +35,8 @@ fn create_test_manifest(id: usize) -> PipelineManifest {
             capabilities: None,
             host: String::new(),
             runtime_hint: 0,
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
         }],
         connections: vec![],
     }
@@ -57,13 +60,21 @@ async fn measure_concurrent_latency(
                 .expect("Failed to connect");
             
             let manifest = create_test_manifest(i);
-            
-            let mut data_inputs = std::collections::HashMap::new();
-            data_inputs.insert("calc".to_string(), r#"{"value": 100.0}"#.to_string());
-            
+
+            let mut data_inputs = HashMap::new();
+            data_inputs.insert(
+                "calc".to_string(),
+                DataBuffer {
+                    data_type: Some(data_buffer::DataType::Json(JsonData {
+                        json_payload: r#"{"value": 100.0}"#.to_string(),
+                        schema_type: String::new(),
+                    })),
+                    metadata: HashMap::new(),
+                },
+            );
+
             let request = tonic::Request::new(ExecuteRequest {
                 manifest: Some(manifest),
-                audio_inputs: std::collections::HashMap::new(),
                 data_inputs,
                 resource_limits: None,
                 client_version: "test-v1".to_string(),
@@ -263,13 +274,21 @@ async fn test_sustained_load_performance() {
                         .ok()?;
                 
                 let manifest = create_test_manifest(i);
-                
-                let mut data_inputs = std::collections::HashMap::new();
-                data_inputs.insert("calc".to_string(), r#"{"value": 50.0}"#.to_string());
-                
+
+                let mut data_inputs = HashMap::new();
+                data_inputs.insert(
+                    "calc".to_string(),
+                    DataBuffer {
+                        data_type: Some(data_buffer::DataType::Json(JsonData {
+                            json_payload: r#"{"value": 50.0}"#.to_string(),
+                            schema_type: String::new(),
+                        })),
+                        metadata: HashMap::new(),
+                    },
+                );
+
                 let request = tonic::Request::new(ExecuteRequest {
                     manifest: Some(manifest),
-                    audio_inputs: std::collections::HashMap::new(),
                     data_inputs,
                     resource_limits: None,
                     client_version: "test-v1".to_string(),

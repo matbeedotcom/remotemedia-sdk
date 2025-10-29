@@ -14,6 +14,7 @@
 pub mod audio;
 pub mod cache;
 pub mod capabilities;
+pub mod data;
 pub mod executor;
 pub mod manifest;
 pub mod nodes;

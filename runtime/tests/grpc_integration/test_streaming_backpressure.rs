@@ -75,6 +75,8 @@ fn create_slow_pipeline_manifest() -> PipelineManifest {
                 capabilities: None,
                 host: "".to_string(),
                 runtime_hint: 0,
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
             },
             NodeManifest {
                 id: "delay".to_string(),
@@ -84,6 +86,8 @@ fn create_slow_pipeline_manifest() -> PipelineManifest {
                 capabilities: None,
                 host: "".to_string(),
                 runtime_hint: 0,
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
             },
         ],
         connections: vec![],

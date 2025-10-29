@@ -8,10 +8,11 @@
 use remotemedia_runtime::grpc_service::{
     generated::{
         ExecuteRequest, ExecuteResponse, PipelineManifest, AudioBuffer, AudioFormat,
-        ExecutionStatus, NodeManifest, ExecutionResult,
+        ExecutionStatus, NodeManifest, ExecutionResult, DataBuffer, data_buffer,
         execute_response::Outcome,
     },
 };
+use std::collections::HashMap;
 
 #[tokio::test]
 async fn test_execute_request_schema() {
@@ -28,6 +29,8 @@ async fn test_execute_request_schema() {
                 capabilities: None,
                 host: String::new(),
                 runtime_hint: 0, // Native
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
             },
         ],
         connections: vec![],
@@ -41,26 +44,33 @@ async fn test_execute_request_schema() {
         num_samples: 44100,
     };
 
+    let mut data_inputs = HashMap::new();
+    data_inputs.insert(
+        "input".to_string(),
+        DataBuffer {
+            data_type: Some(data_buffer::DataType::Audio(audio_input)),
+            metadata: HashMap::new(),
+        },
+    );
+
     let request = ExecuteRequest {
         manifest: Some(manifest),
-        audio_inputs: vec![("input".to_string(), audio_input)].into_iter().collect(),
-        data_inputs: std::collections::HashMap::new(),
+        data_inputs,
         resource_limits: None,
         client_version: "v1".to_string(),
     };
 
     // Verify request structure
     assert!(request.manifest.is_some());
-    assert_eq!(request.audio_inputs.len(), 1);
-    assert!(request.audio_inputs.contains_key("input"));
+    assert_eq!(request.data_inputs.len(), 1);
+    assert!(request.data_inputs.contains_key("input"));
 }
 
 #[test]
 fn test_execute_response_schema() {
     // Create a valid ExecuteResponse with success result
     let exec_result = ExecutionResult {
-        audio_outputs: std::collections::HashMap::new(),
-        data_outputs: std::collections::HashMap::new(),
+        data_outputs: HashMap::new(),
         metrics: None,
         node_results: vec![],
         status: ExecutionStatus::Success as i32,
@@ -95,6 +105,8 @@ fn test_pipeline_manifest_serialization() {
                 capabilities: None,
                 host: String::new(),
                 runtime_hint: 0,
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
             },
         ],
         connections: vec![],

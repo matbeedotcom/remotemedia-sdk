@@ -39,7 +39,7 @@ pub async fn start_test_server() -> String {
     let executor = Arc::new(Executor::new());
     
     // Create server
-    let server = GrpcServer::new(config, executor).expect("Failed to create test server");
+    let _server = GrpcServer::new(config, executor).expect("Failed to create test server");
     
     // Get a random available port
     let listener = tokio::net::TcpListener::bind("[::1]:0")
@@ -150,6 +150,8 @@ pub fn create_calculator_manifest(
             capabilities: None,
             host: String::new(),
             runtime_hint: 0,
+            input_types: vec![3], // JSON
+            output_types: vec![3], // JSON
         }],
         connections: vec![],
     }
@@ -162,7 +164,7 @@ pub fn create_passthrough_manifest(
     use remotemedia_runtime::grpc_service::generated::{
         ManifestMetadata, NodeManifest, PipelineManifest,
     };
-    
+
     PipelineManifest {
         version: "v1".to_string(),
         metadata: Some(ManifestMetadata {
@@ -178,8 +180,22 @@ pub fn create_passthrough_manifest(
             capabilities: None,
             host: String::new(),
             runtime_hint: 0,
+            input_types: vec![1], // Audio
+            output_types: vec![1], // Audio
         }],
         connections: vec![],
+    }
+}
+
+/// Wrap AudioBuffer in DataBuffer (for Phase 1-2 generic protocol)
+pub fn wrap_audio_in_data_buffer(
+    audio: remotemedia_runtime::grpc_service::generated::AudioBuffer,
+) -> remotemedia_runtime::grpc_service::generated::DataBuffer {
+    use remotemedia_runtime::grpc_service::generated::{DataBuffer, data_buffer};
+
+    DataBuffer {
+        data_type: Some(data_buffer::DataType::Audio(audio)),
+        metadata: std::collections::HashMap::new(),
     }
 }
 

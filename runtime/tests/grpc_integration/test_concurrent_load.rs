@@ -13,9 +13,10 @@
 
 use remotemedia_runtime::grpc_service::generated::{
     pipeline_execution_service_client::PipelineExecutionServiceClient, AudioFormat, ExecuteRequest,
-    ManifestMetadata, NodeManifest, PipelineManifest,
+    ManifestMetadata, NodeManifest, PipelineManifest, DataBuffer, data_buffer, AudioBuffer, JsonData,
 };
 use std::time::{Duration, Instant};
+use std::collections::HashMap;
 use tokio::time::timeout;
 
 /// Helper to create a simple test manifest
@@ -35,6 +36,8 @@ fn create_test_manifest(id_suffix: usize) -> PipelineManifest {
             capabilities: None,
             host: String::new(),
             runtime_hint: 0,
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
         }],
         connections: vec![],
     }
@@ -43,13 +46,21 @@ fn create_test_manifest(id_suffix: usize) -> PipelineManifest {
 /// Helper to create a simple execute request
 fn create_execute_request(id_suffix: usize) -> ExecuteRequest {
     let manifest = create_test_manifest(id_suffix);
-    
-    let mut data_inputs = std::collections::HashMap::new();
-    data_inputs.insert("calc".to_string(), r#"{"value": 10.0}"#.to_string());
-    
+
+    let mut data_inputs = HashMap::new();
+    data_inputs.insert(
+        "calc".to_string(),
+        DataBuffer {
+            data_type: Some(data_buffer::DataType::Json(JsonData {
+                json_payload: r#"{"value": 10.0}"#.to_string(),
+                schema_type: String::new(),
+            })),
+            metadata: HashMap::new(),
+        },
+    );
+
     ExecuteRequest {
         manifest: Some(manifest),
-        audio_inputs: std::collections::HashMap::new(),
         data_inputs,
         resource_limits: None,
         client_version: "test-v1".to_string(),
@@ -215,26 +226,32 @@ async fn test_concurrent_with_audio_input() {
                     capabilities: None,
                     host: String::new(),
                     runtime_hint: 0,
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
                 }],
                 connections: vec![],
             };
             
-            let mut audio_inputs = std::collections::HashMap::new();
-            audio_inputs.insert(
+            let audio_buffer = AudioBuffer {
+                samples: audio_data,
+                sample_rate: 16000,
+                channels: 1,
+                format: AudioFormat::F32 as i32,
+                num_samples: num_samples as u64,
+            };
+
+            let mut data_inputs = HashMap::new();
+            data_inputs.insert(
                 "passthrough".to_string(),
-                remotemedia_runtime::grpc_service::generated::AudioBuffer {
-                    samples: audio_data,
-                    sample_rate: 16000,
-                    channels: 1,
-                    format: AudioFormat::F32 as i32,
-                    num_samples: num_samples as u64,
+                DataBuffer {
+                    data_type: Some(data_buffer::DataType::Audio(audio_buffer)),
+                    metadata: HashMap::new(),
                 },
             );
-            
+
             let request = tonic::Request::new(ExecuteRequest {
                 manifest: Some(manifest),
-                audio_inputs,
-                data_inputs: std::collections::HashMap::new(),
+                data_inputs,
                 resource_limits: None,
                 client_version: "test-v1".to_string(),
             });

@@ -28,6 +28,8 @@ async fn test_execution_metrics_populated() {
                 capabilities: None,
                 host: String::new(),
                 runtime_hint: 0,
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
             },
         ],
         connections: vec![],
@@ -46,7 +48,6 @@ async fn test_execution_metrics_populated() {
 
     let request = ExecuteRequest {
         manifest: Some(manifest),
-        audio_inputs: vec![("resample".to_string(), audio_input)].into_iter().collect(),
         data_inputs: std::collections::HashMap::new(),
         resource_limits: None,
         client_version: "v1".to_string(),
@@ -66,7 +67,7 @@ async fn test_execution_metrics_populated() {
     
     // let node_metrics = &metrics.node_metrics["resample"];
     // assert!(node_metrics.execution_time_ms > 0.0);
-    // assert_eq!(node_metrics.samples_processed, 44100);
+    // assert_eq!(node_metrics.items_processed, 44100);
 }
 
 #[test]
@@ -77,7 +78,7 @@ fn test_metrics_structure() {
     let node_metrics = NodeMetrics {
         execution_time_ms: 1.5,
         memory_bytes: 1_000_000,
-        samples_processed: 44100,
+        items_processed: 44100,
         custom_metrics: String::new(),
     };
 
@@ -87,6 +88,9 @@ fn test_metrics_structure() {
         memory_used_bytes: 10_000_000,
         node_metrics: vec![("test_node".to_string(), node_metrics)].into_iter().collect(),
         serialization_time_ms: 0.5,
+        proto_to_runtime_ms: 0.0,
+        runtime_to_proto_ms: 0.0,
+        data_type_breakdown: std::collections::HashMap::new(),
     };
 
     assert_eq!(metrics.wall_time_ms, 5.0);

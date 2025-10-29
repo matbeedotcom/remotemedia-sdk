@@ -96,8 +96,11 @@ struct StreamSession {
     /// Total chunks processed
     chunks_processed: u64,
     
-    /// Total audio samples processed
-    total_samples: u64,
+    /// Total items processed (samples, frames, tokens, etc.)
+    total_items: u64,
+
+    /// Data type distribution
+    data_type_counts: HashMap<String, u64>,
     
     /// Total chunks dropped (backpressure)
     chunks_dropped: u64,
@@ -108,8 +111,8 @@ struct StreamSession {
     /// Peak memory usage (bytes)
     peak_memory_bytes: u64,
     
-    /// Current buffer occupancy (samples)
-    buffer_samples: u64,
+    /// Current buffer occupancy (items)
+    buffer_items: u64,
     
     /// Session creation time
     created_at: Instant,
@@ -130,11 +133,12 @@ impl StreamSession {
             manifest,
             next_sequence: 0,
             chunks_processed: 0,
-            total_samples: 0,
+            total_items: 0,
+            data_type_counts: HashMap::new(),
             chunks_dropped: 0,
             cumulative_processing_time_ms: 0.0,
             peak_memory_bytes: 0,
-            buffer_samples: 0,
+            buffer_items: 0,
             created_at: now,
             last_activity: now,
             recommended_chunk_size,
@@ -178,15 +182,18 @@ impl StreamSession {
     }
 
     /// Record processing metrics for a chunk
-    fn record_chunk_metrics(&mut self, processing_time_ms: f64, samples: u64, memory_bytes: u64) {
+    fn record_chunk_metrics(&mut self, processing_time_ms: f64, items: u64, memory_bytes: u64, data_type: &str) {
         self.chunks_processed += 1;
-        self.total_samples += samples;
+        self.total_items += items;
         self.cumulative_processing_time_ms += processing_time_ms;
-        
+
+        // Update data type breakdown
+        *self.data_type_counts.entry(data_type.to_string()).or_insert(0) += 1;
+
         if memory_bytes > self.peak_memory_bytes {
             self.peak_memory_bytes = memory_bytes;
         }
-        
+
         self.touch();
     }
 
@@ -205,10 +212,11 @@ impl StreamSession {
             session_id: self.session_id.clone(),
             chunks_processed: self.chunks_processed,
             average_latency_ms: self.average_latency_ms(),
-            total_samples: self.total_samples,
-            buffer_samples: self.buffer_samples,
+            total_items: self.total_items,
+            buffer_items: self.buffer_items,
             chunks_dropped: self.chunks_dropped,
             peak_memory_bytes: self.peak_memory_bytes,
+            data_type_breakdown: self.data_type_counts.clone(),
         }
     }
 
@@ -220,6 +228,9 @@ impl StreamSession {
             memory_used_bytes: self.peak_memory_bytes,
             node_metrics: HashMap::new(), // TODO: Populate from executor
             serialization_time_ms: 0.0, // Not tracked for streaming
+            proto_to_runtime_ms: 0.0, // Not tracked yet
+            runtime_to_proto_ms: 0.0, // Not tracked yet
+            data_type_breakdown: self.data_type_counts.clone(),
         }
     }
 }
@@ -350,6 +361,51 @@ async fn handle_stream(
                             let stream_metrics = sess_lock.create_metrics();
                             drop(sess_lock);
                             
+                            let metrics_response = StreamResponse {
+                                response: Some(StreamResponseType::Metrics(stream_metrics)),
+                            };
+                            tx.send(Ok(metrics_response)).await.map_err(|_| {
+                                ServiceError::Internal("Failed to send StreamMetrics".to_string())
+                            })?;
+                        }
+                    }
+                    Err(e) => {
+                        metrics.record_chunk_error(&session_id);
+                        return Err(e);
+                    }
+                }
+            }
+
+            Some(StreamRequestType::DataChunk(data_chunk)) => {
+                // Handle DataChunk (generic streaming)
+                let sess = session.as_ref().ok_or_else(|| {
+                    ServiceError::Validation("StreamInit required before DataChunk".to_string())
+                })?;
+
+                let chunk_start = Instant::now();
+                debug!(sequence = data_chunk.sequence, "Processing DataChunk");
+
+                let result = handle_data_chunk(data_chunk, sess.clone(), executor.clone()).await;
+
+                match result {
+                    Ok(chunk_result) => {
+                        let latency = chunk_start.elapsed().as_secs_f64();
+                        metrics.record_chunk_processed(&session_id, latency);
+
+                        // Send ChunkResult response
+                        let response = StreamResponse {
+                            response: Some(StreamResponseType::Result(chunk_result.clone())),
+                        };
+                        tx.send(Ok(response)).await.map_err(|_| {
+                            ServiceError::Internal("Failed to send ChunkResult".to_string())
+                        })?;
+
+                        // Send periodic metrics
+                        let sess_lock = sess.lock().await;
+                        if sess_lock.chunks_processed % METRICS_UPDATE_INTERVAL == 0 {
+                            let stream_metrics = sess_lock.create_metrics();
+                            drop(sess_lock);
+
                             let metrics_response = StreamResponse {
                                 response: Some(StreamResponseType::Metrics(stream_metrics)),
                             };
@@ -499,26 +555,179 @@ async fn handle_audio_chunk(
 
     let processing_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
 
-    // Lock session again to record metrics and get total samples
-    let total_samples = {
+    // Lock session again to record metrics and get total items
+    let total_items = {
         let mut sess = session.lock().await;
-        sess.record_chunk_metrics(processing_time_ms, samples, 0); // TODO: Track memory
-        sess.total_samples
+        sess.record_chunk_metrics(processing_time_ms, samples, 0, "audio"); // TODO: Track memory
+        sess.total_items
     };
 
     // Convert result buffers to proto format
-    let mut audio_outputs = HashMap::new();
+    // Convert audio buffers to DataBuffer format
+    let mut data_outputs = HashMap::new();
     for (node_id, buffer) in result_buffers {
         let proto_buffer = convert_runtime_to_proto_audio(&buffer);
-        audio_outputs.insert(node_id, proto_buffer);
+        // Wrap audio buffer in DataBuffer
+        let data_buffer = crate::grpc_service::generated::DataBuffer {
+            data_type: Some(crate::grpc_service::generated::data_buffer::DataType::Audio(proto_buffer)),
+            metadata: HashMap::new(),
+        };
+        data_outputs.insert(node_id, data_buffer);
     }
 
     let result = ChunkResult {
         sequence: chunk.sequence,
-        audio_outputs,
-        data_outputs: HashMap::new(), // TODO: Populate from execution
+        data_outputs,
         processing_time_ms,
-        total_samples_processed: total_samples,
+        total_items_processed: total_items,
+    };
+
+    Ok(result)
+}
+
+/// Handle DataChunk message (generic streaming)
+async fn handle_data_chunk(
+    chunk: crate::grpc_service::generated::DataChunk,
+    session: Arc<Mutex<StreamSession>>,
+    _executor: Arc<Executor>,
+) -> Result<ChunkResult, ServiceError> {
+    let start_time = Instant::now();
+
+    // Lock session to validate and get manifest
+    let (manifest, node_type, params) = {
+        let mut sess = session.lock().await;
+        sess.validate_sequence(chunk.sequence)?;
+
+        // Get node info from manifest
+        let node_spec = sess.manifest.nodes.iter()
+            .find(|n| n.id == chunk.node_id)
+            .ok_or_else(|| ServiceError::Validation(
+                format!("Node '{}' not found in manifest", chunk.node_id)
+            ))?;
+
+        (sess.manifest.clone(), node_spec.node_type.clone(), node_spec.params.clone())
+    };
+
+    // Convert DataBuffer(s) to RuntimeData
+    // Support either single buffer OR named_buffers (for multi-input nodes)
+    use crate::data::convert_proto_to_runtime_data;
+
+    let (runtime_data_map, data_type, item_count) = if !chunk.named_buffers.is_empty() {
+        // Multi-input mode: convert all named buffers
+        let mut map = HashMap::new();
+        let mut total_items = 0u64;
+        let mut types = Vec::new();
+
+        for (name, data_buffer) in chunk.named_buffers {
+            let runtime_data = convert_proto_to_runtime_data(data_buffer)
+                .map_err(|e| ServiceError::Validation(format!("Data conversion failed for '{}': {}", name, e)))?;
+
+            types.push(runtime_data.type_name());
+            total_items += runtime_data.item_count() as u64;
+            map.insert(name, runtime_data);
+        }
+
+        let combined_type = if types.len() == 1 {
+            types[0].to_string()
+        } else {
+            format!("multi[{}]", types.join("+"))
+        };
+
+        (map, combined_type, total_items)
+    } else if let Some(data_buffer) = chunk.buffer {
+        // Single-input mode: use buffer field
+        let runtime_data = convert_proto_to_runtime_data(data_buffer)
+            .map_err(|e| ServiceError::Validation(format!("Data conversion failed: {}", e)))?;
+
+        let data_type = runtime_data.type_name().to_string();
+        let item_count = runtime_data.item_count() as u64;
+
+        // Wrap in map with default key for backward compatibility
+        let mut map = HashMap::new();
+        map.insert("input".to_string(), runtime_data);
+
+        (map, data_type, item_count)
+    } else {
+        return Err(ServiceError::Validation(
+            "DataChunk must have either 'buffer' or 'named_buffers' set".to_string()
+        ));
+    };
+
+    // Process data through node based on node type
+    // For single-input nodes, extract the first (or "input") value
+    // For multi-input nodes, pass the entire HashMap
+    let output_data = match node_type.as_str() {
+        "CalculatorNode" => {
+            use crate::nodes::calculator::CalculatorNode;
+            let node = CalculatorNode::new(chunk.node_id.clone(), &params.to_string())
+                .map_err(|e| ServiceError::Internal(format!("Failed to create CalculatorNode: {}", e)))?;
+
+            // Single-input node: extract first value
+            let input_data = runtime_data_map.get("input")
+                .or_else(|| runtime_data_map.values().next())
+                .ok_or_else(|| ServiceError::Validation("No input data provided".to_string()))?
+                .clone();
+
+            node.process(input_data)
+                .map_err(|e| ServiceError::Internal(format!("Node execution failed: {}", e)))?
+        }
+        "VideoProcessorNode" => {
+            use crate::nodes::video_processor::VideoProcessorNode;
+            let node = VideoProcessorNode::new(chunk.node_id.clone(), &params.to_string())
+                .map_err(|e| ServiceError::Internal(format!("Failed to create VideoProcessorNode: {}", e)))?;
+
+            // Single-input node: extract first value
+            let input_data = runtime_data_map.get("input")
+                .or_else(|| runtime_data_map.values().next())
+                .ok_or_else(|| ServiceError::Validation("No input data provided".to_string()))?
+                .clone();
+
+            node.process(input_data)
+                .map_err(|e| ServiceError::Internal(format!("Node execution failed: {}", e)))?
+        }
+        "PassThrough" => {
+            // Simple passthrough for testing - return first input
+            runtime_data_map.get("input")
+                .or_else(|| runtime_data_map.values().next())
+                .ok_or_else(|| ServiceError::Validation("No input data provided".to_string()))?
+                .clone()
+        }
+        "SynchronizedAudioVideoNode" => {
+            // Multi-input node: pass entire HashMap
+            use crate::nodes::sync_av::SynchronizedAudioVideoNode;
+            let node = SynchronizedAudioVideoNode::new(chunk.node_id.clone(), &params.to_string())
+                .map_err(|e| ServiceError::Internal(format!("Failed to create SynchronizedAudioVideoNode: {}", e)))?;
+
+            node.process_multi(runtime_data_map)
+                .map_err(|e| ServiceError::Internal(format!("Node execution failed: {}", e)))?
+        }
+        other => {
+            return Err(ServiceError::Internal(
+                format!("Node type '{}' not supported for generic streaming yet", other)
+            ));
+        }
+    };
+
+    // Convert runtime data back to proto
+    use crate::data::convert_runtime_to_proto_data;
+    let mut data_outputs = HashMap::new();
+    let output_buffer = convert_runtime_to_proto_data(output_data);
+    data_outputs.insert(chunk.node_id.clone(), output_buffer);
+
+    let processing_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+
+    // Lock session again to record metrics
+    let total_items = {
+        let mut sess = session.lock().await;
+        sess.record_chunk_metrics(processing_time_ms, item_count, 0, &data_type);
+        sess.total_items
+    };
+
+    let result = ChunkResult {
+        sequence: chunk.sequence,
+        data_outputs,
+        processing_time_ms,
+        total_items_processed: total_items,
     };
 
     Ok(result)

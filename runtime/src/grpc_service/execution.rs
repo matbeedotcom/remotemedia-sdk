@@ -274,6 +274,9 @@ impl ExecutionServiceImpl {
             memory_used_bytes: memory_used,
             node_metrics: HashMap::new(), // TODO: Collect per-node metrics
             serialization_time_ms: 0.0,   // TODO: Measure serialization time
+            proto_to_runtime_ms: 0.0,     // TODO: Track conversion time
+            runtime_to_proto_ms: 0.0,     // TODO: Track conversion time
+            data_type_breakdown: HashMap::new(), // TODO: Track data types
         }
     }
 }
@@ -343,9 +346,31 @@ impl PipelineExecutionService for ExecutionServiceImpl {
             return Ok(Response::new(response));
         }
 
-        // Convert audio inputs
+        // Convert data inputs (generic)
         let mut audio_inputs = HashMap::new();
-        for (node_id, proto_buffer) in &req.audio_inputs {
+        for (node_id, data_buffer) in &req.data_inputs {
+            // For now, only handle audio data (Phase 3 will add other types)
+            let proto_buffer = match &data_buffer.data_type {
+                Some(crate::grpc_service::generated::data_buffer::DataType::Audio(audio)) => audio,
+                _ => {
+                    self.metrics.record_request_end("ExecutePipeline", "error", start_time);
+                    self.metrics.record_error("validation");
+
+                    let error_response = ErrorResponse {
+                        error_type: ErrorType::Validation as i32,
+                        message: format!("Non-audio data types not yet supported for node '{}'", node_id),
+                        failing_node_id: node_id.clone(),
+                        context: "Only audio input supported in Phase 2".to_string(),
+                        stack_trace: String::new(),
+                    };
+
+                    let response = ExecuteResponse {
+                        outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
+                    };
+
+                    return Ok(Response::new(response));
+                }
+            };
             match self.convert_audio_buffer(proto_buffer) {
                 Ok(buffer) => {
                     audio_inputs.insert(node_id.clone(), buffer);
@@ -442,15 +467,20 @@ impl PipelineExecutionService for ExecutionServiceImpl {
             }
         };
 
-        // Serialize outputs to protobuf format
-        let mut audio_outputs = HashMap::new();
+        // Serialize outputs to protobuf format (wrap audio in DataBuffer)
+        let mut data_outputs = HashMap::new();
         for (node_id, buffer) in result_buffers {
             let proto_buffer = self.serialize_audio_buffer(&buffer);
-            audio_outputs.insert(node_id, proto_buffer);
+            // Wrap audio buffer in DataBuffer
+            let data_buffer = crate::grpc_service::generated::DataBuffer {
+                data_type: Some(crate::grpc_service::generated::data_buffer::DataType::Audio(proto_buffer)),
+                metadata: HashMap::new(),
+            };
+            data_outputs.insert(node_id, data_buffer);
         }
-        
+
         info!(
-            outputs = audio_outputs.len(),
+            outputs = data_outputs.len(),
             "Fast pipeline execution completed"
         );
 
@@ -458,8 +488,7 @@ impl PipelineExecutionService for ExecutionServiceImpl {
         let metrics = self.collect_metrics(start_time, 10_000_000); // TODO: Measure actual memory
 
         let exec_result_proto = ProtoExecutionResult {
-            audio_outputs,
-            data_outputs: HashMap::new(), // TODO: Support data outputs
+            data_outputs,
             metrics: Some(metrics),
             node_results: vec![], // TODO: Include per-node results
             status: ExecutionStatus::Success as i32,
@@ -474,7 +503,7 @@ impl PipelineExecutionService for ExecutionServiceImpl {
 
         info!(
             outputs = if let Some(crate::grpc_service::generated::execute_response::Outcome::Result(ref r)) = response.outcome {
-                r.audio_outputs.len()
+                r.data_outputs.len()
             } else { 0 },
             "Pipeline execution completed"
         );

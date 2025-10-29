@@ -91,8 +91,16 @@ impl GrpcServer {
             .timeout(std::time::Duration::from_secs(60))
             // Tracing
             .trace_fn(|_| tracing::info_span!("grpc_request"))
-            .add_service(PipelineExecutionServiceServer::new(execution_service))
-            .add_service(StreamingPipelineServiceServer::new(streaming_service))
+            .add_service(
+                PipelineExecutionServiceServer::new(execution_service)
+                    .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
+                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+            )
+            .add_service(
+                StreamingPipelineServiceServer::new(streaming_service)
+                    .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
+                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+            )
             ;
 
         // Graceful shutdown on Ctrl+C
@@ -138,16 +146,18 @@ mod tests {
     #[test]
     fn test_server_creation() {
         let config = ServiceConfig::default();
-        let server = GrpcServer::new(config);
+        let executor = Arc::new(Executor::new());
+        let server = GrpcServer::new(config, executor);
         assert!(server.is_ok());
     }
 
     #[test]
     fn test_metrics_access() {
         let config = ServiceConfig::default();
-        let server = GrpcServer::new(config).unwrap();
+        let executor = Arc::new(Executor::new());
+        let server = GrpcServer::new(config, executor).unwrap();
         let metrics = server.metrics();
-        
+
         // Test metrics are accessible
         metrics.active_connections.inc();
         assert_eq!(metrics.active_connections.get(), 1);
@@ -156,8 +166,9 @@ mod tests {
     #[test]
     fn test_metrics_text_export() {
         let config = ServiceConfig::default();
-        let server = GrpcServer::new(config).unwrap();
-        
+        let executor = Arc::new(Executor::new());
+        let server = GrpcServer::new(config, executor).unwrap();
+
         let text = server.metrics_text();
         assert!(text.contains("remotemedia_grpc"));
     }
@@ -166,8 +177,9 @@ mod tests {
     fn test_auth_config_access() {
         let mut config = ServiceConfig::default();
         config.auth.require_auth = false;
-        
-        let server = GrpcServer::new(config).unwrap();
+
+        let executor = Arc::new(Executor::new());
+        let server = GrpcServer::new(config, executor).unwrap();
         assert!(!server.auth_config().require_auth);
     }
 }
