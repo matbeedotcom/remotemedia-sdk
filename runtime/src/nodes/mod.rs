@@ -15,7 +15,10 @@ use std::sync::Arc;
 
 // Sub-modules
 pub mod audio;
+pub mod calculator;
 pub mod registry;
+pub mod video_processor;
+pub mod sync_av;
 
 #[cfg(feature = "whisper")]
 mod whisper;
@@ -548,14 +551,14 @@ mod tests {
 /// Registers: PassThroughNode, Echo, CalculatorNode, AddNode, MultiplyNode
 pub fn create_builtin_registry() -> registry::NodeRegistry {
     let mut reg = registry::NodeRegistry::new();
-    
+
     // Register simple test nodes
     reg.register_rust(Arc::new(PassThroughNodeFactory));
     reg.register_rust(Arc::new(EchoNodeFactory));
     reg.register_rust(Arc::new(CalculatorNodeFactory));
     reg.register_rust(Arc::new(AddNodeFactory));
     reg.register_rust(Arc::new(MultiplyNodeFactory));
-    
+
     reg
 }
 

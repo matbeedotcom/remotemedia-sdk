@@ -12,7 +12,7 @@
 use remotemedia_runtime::grpc_service::generated::{
     AudioChunk, ChunkResult, StreamControl, StreamInit, StreamRequest, StreamResponse,
     StreamReady, StreamMetrics, StreamClosed, stream_control::Command,
-    PipelineManifest, NodeManifest, AudioBuffer, AudioFormat,
+    PipelineManifest, NodeManifest, AudioBuffer, AudioFormat, DataBuffer, data_buffer, JsonData,
 };
 use std::collections::HashMap;
 
@@ -32,6 +32,8 @@ fn test_stream_request_construction() {
                 capabilities: None, // Optional
                 host: "".to_string(),
                 runtime_hint: 0, // RUNTIME_HINT_UNSPECIFIED
+                input_types: vec![],
+                output_types: vec![],
             },
         ],
         connections: vec![],
@@ -169,18 +171,23 @@ fn test_chunk_result_construction() {
         num_samples: 1600,
     };
 
-    let mut audio_outputs = HashMap::new();
-    audio_outputs.insert("output".to_string(), buffer);
-
     let mut data_outputs = HashMap::new();
-    data_outputs.insert("vad".to_string(), r#"{"has_speech": true}"#.to_string());
+    data_outputs.insert(
+        "vad".to_string(),
+        DataBuffer {
+            data_type: Some(data_buffer::DataType::Json(JsonData {
+                json_payload: r#"{"has_speech": true}"#.to_string(),
+                schema_type: String::new(),
+            })),
+            metadata: HashMap::new(),
+        },
+    );
 
     let result = ChunkResult {
         sequence: 42,
-        audio_outputs,
         data_outputs,
         processing_time_ms: 12.5,
-        total_samples_processed: 67200,
+        total_items_processed: 67200,
     };
 
     let response = StreamResponse {
@@ -191,8 +198,8 @@ fn test_chunk_result_construction() {
         Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Result(r)) => {
             assert_eq!(r.sequence, 42);
             assert_eq!(r.processing_time_ms, 12.5);
-            assert_eq!(r.total_samples_processed, 67200);
-            assert_eq!(r.audio_outputs.len(), 1);
+            assert_eq!(r.total_items_processed, 67200);
+            assert_eq!(r.data_outputs.len(), 1);
             assert_eq!(r.data_outputs.len(), 1);
         }
         _ => panic!("Expected Result variant"),
@@ -206,10 +213,11 @@ fn test_stream_metrics_construction() {
         session_id: "session-123".to_string(),
         chunks_processed: 100,
         average_latency_ms: 35.2,
-        total_samples: 160000,
-        buffer_samples: 4096,
+        total_items: 160000,
+        buffer_items: 4096,
         chunks_dropped: 0,
         peak_memory_bytes: 1048576,
+        data_type_breakdown: std::collections::HashMap::new(),
     };
 
     let response = StreamResponse {
@@ -221,8 +229,8 @@ fn test_stream_metrics_construction() {
             assert_eq!(m.session_id, "session-123");
             assert_eq!(m.chunks_processed, 100);
             assert_eq!(m.average_latency_ms, 35.2);
-            assert_eq!(m.total_samples, 160000);
-            assert_eq!(m.buffer_samples, 4096);
+            assert_eq!(m.total_items, 160000);
+            assert_eq!(m.buffer_items, 4096);
             assert_eq!(m.chunks_dropped, 0);
             assert_eq!(m.peak_memory_bytes, 1048576);
         }

@@ -26,6 +26,8 @@ async fn test_resample_44100_to_16000() {
                 capabilities: None,
                 host: String::new(),
                 runtime_hint: 0, // Native
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
             },
         ],
         connections: vec![],
@@ -56,7 +58,6 @@ async fn test_resample_44100_to_16000() {
 
     let request = ExecuteRequest {
         manifest: Some(manifest),
-        audio_inputs: vec![("resample".to_string(), audio_input)].into_iter().collect(),
         data_inputs: std::collections::HashMap::new(),
         resource_limits: None,
         client_version: "v1".to_string(),
@@ -67,9 +68,9 @@ async fn test_resample_44100_to_16000() {
     
     // Verify response
     // assert_eq!(response.status, ExecutionStatus::Success as i32);
-    // assert!(response.audio_outputs.contains_key("resample"));
+    // assert!(response.data_outputs.contains_key("resample"));
     
-    // let output = &response.audio_outputs["resample"];
+    // let output = &response.data_outputs["resample"];
     // Expected: 16000 samples for 1 second of 16kHz audio
     // assert_eq!(output.sample_rate, 16000);
     // assert_eq!(output.num_samples, 16000);

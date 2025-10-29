@@ -13,7 +13,9 @@
 
 use remotemedia_runtime::grpc_service::generated::{
     pipeline_execution_service_client::PipelineExecutionServiceClient, ExecuteRequest,
+    DataBuffer, data_buffer, JsonData,
 };
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -118,12 +120,20 @@ async fn test_connection_reuse() {
     let start_time = Instant::now();
     
     for i in 0..10 {
-        let mut data_inputs = std::collections::HashMap::new();
-        data_inputs.insert("calc".to_string(), format!(r#"{{"value": {}.0}}"#, i));
+        let mut data_inputs = HashMap::new();
+        data_inputs.insert(
+            "calc".to_string(),
+            DataBuffer {
+                data_type: Some(data_buffer::DataType::Json(JsonData {
+                    json_payload: format!(r#"{{"value": {}.0}}"#, i),
+                    schema_type: String::new(),
+                })),
+                metadata: HashMap::new(),
+            },
+        );
         
         let request = tonic::Request::new(ExecuteRequest {
             manifest: Some(manifest.clone()),
-            audio_inputs: std::collections::HashMap::new(),
             data_inputs,
             resource_limits: None,
             client_version: "test-v1".to_string(),

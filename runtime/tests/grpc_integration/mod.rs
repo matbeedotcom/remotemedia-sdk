@@ -24,5 +24,8 @@ mod test_streaming_latency;
 mod test_streaming_backpressure;
 mod test_streaming_lifecycle;
 
+// Phase 3: Generic streaming tests (Feature 004)
+mod test_generic_streaming;
+
 // Test helpers
 mod test_helpers;

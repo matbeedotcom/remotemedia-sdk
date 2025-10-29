@@ -26,6 +26,8 @@ async fn test_execution_latency() {
                 capabilities: None,
                 host: String::new(),
                 runtime_hint: 0,
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
             },
         ],
         connections: vec![],
@@ -45,7 +47,6 @@ async fn test_execution_latency() {
 
     let request = ExecuteRequest {
         manifest: Some(manifest),
-        audio_inputs: vec![("resample".to_string(), audio_input)].into_iter().collect(),
         data_inputs: std::collections::HashMap::new(),
         resource_limits: None,
         client_version: "v1".to_string(),

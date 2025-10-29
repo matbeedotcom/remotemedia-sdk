@@ -13,9 +13,10 @@
 
 use remotemedia_runtime::grpc_service::generated::{
     pipeline_execution_service_client::PipelineExecutionServiceClient, ExecuteRequest,
-    ManifestMetadata, NodeManifest, PipelineManifest,
+    ManifestMetadata, NodeManifest, PipelineManifest, DataBuffer, data_buffer, JsonData,
 };
 use std::time::{Duration, Instant};
+use std::collections::HashMap;
 
 /// Helper to create a valid test manifest
 fn create_valid_manifest(id_suffix: usize) -> PipelineManifest {
@@ -34,6 +35,8 @@ fn create_valid_manifest(id_suffix: usize) -> PipelineManifest {
             capabilities: None,
             host: String::new(),
             runtime_hint: 0,
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
         }],
         connections: vec![],
     }
@@ -56,6 +59,8 @@ fn create_invalid_manifest() -> PipelineManifest {
             capabilities: None,
             host: String::new(),
             runtime_hint: 0,
+                input_types: vec![1], // Audio
+                output_types: vec![1], // Audio
         }],
         connections: vec![],
     }
@@ -89,13 +94,21 @@ async fn test_failure_isolation() {
             } else {
                 create_valid_manifest(i)
             };
-            
-            let mut data_inputs = std::collections::HashMap::new();
-            data_inputs.insert("calc".to_string(), r#"{"value": 10.0}"#.to_string());
-            
+
+            let mut data_inputs = HashMap::new();
+            data_inputs.insert(
+                "calc".to_string(),
+                DataBuffer {
+                    data_type: Some(data_buffer::DataType::Json(JsonData {
+                        json_payload: r#"{"value": 10.0}"#.to_string(),
+                        schema_type: String::new(),
+                    })),
+                    metadata: HashMap::new(),
+                },
+            );
+
             let request = tonic::Request::new(ExecuteRequest {
                 manifest: Some(manifest),
-                audio_inputs: std::collections::HashMap::new(),
                 data_inputs,
                 resource_limits: None,
                 client_version: "test-v1".to_string(),
@@ -235,13 +248,21 @@ async fn test_timeout_isolation() {
                 .expect("Failed to connect");
             
             let manifest = create_valid_manifest(i);
-            
-            let mut data_inputs = std::collections::HashMap::new();
-            data_inputs.insert("calc".to_string(), r#"{"value": 5.0}"#.to_string());
-            
+
+            let mut data_inputs = HashMap::new();
+            data_inputs.insert(
+                "calc".to_string(),
+                DataBuffer {
+                    data_type: Some(data_buffer::DataType::Json(JsonData {
+                        json_payload: r#"{"value": 5.0}"#.to_string(),
+                        schema_type: String::new(),
+                    })),
+                    metadata: HashMap::new(),
+                },
+            );
+
             let request = tonic::Request::new(ExecuteRequest {
                 manifest: Some(manifest),
-                audio_inputs: std::collections::HashMap::new(),
                 data_inputs,
                 resource_limits: None,
                 client_version: "test-v1".to_string(),
@@ -317,11 +338,19 @@ async fn test_error_propagation_isolation() {
             };
             
             let mut data_inputs = std::collections::HashMap::new();
-            data_inputs.insert("calc".to_string(), r#"{"value": 3.0}"#.to_string());
+            data_inputs.insert(
+                "calc".to_string(),
+                DataBuffer {
+                    data_type: Some(data_buffer::DataType::Json(JsonData {
+                        json_payload: r#"{"value": 3.0}"#.to_string(),
+                        schema_type: String::new(),
+                    })),
+                    metadata: HashMap::new(),
+                },
+            );
             
             let request = tonic::Request::new(ExecuteRequest {
                 manifest: Some(manifest),
-                audio_inputs: std::collections::HashMap::new(),
                 data_inputs,
                 resource_limits: None,
                 client_version: "test-v1".to_string(),
