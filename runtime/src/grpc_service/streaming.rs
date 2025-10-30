@@ -906,20 +906,29 @@ async fn handle_data_chunk_multi(
             // Node not cached - create new instance
             info!("🆕 Creating new node: {} (type: {}, key: {})", chunk.node_id, node_type, cache_key);
 
-            // For Python streaming nodes (like TTS), create the PythonStreamingNode directly
-            // so we can cache it separately for process_streaming() access
-            let (new_node, py_streaming_node) = if node_type == "KokoroTTSNode" || node_type.contains("TTS") || node_type.contains("PyTorch") {
+            // Check if this is a Python node via the registry
+            // Python nodes need special handling to preserve the unwrapped instance for caching
+            let (new_node, py_streaming_node) = if streaming_registry.is_python_node(&node_type) {
                 use crate::nodes::{python_streaming::PythonStreamingNode, AsyncNodeWrapper};
+
+                info!("🐍 Creating Python streaming node: {}", node_type);
 
                 let py_node = PythonStreamingNode::new(chunk.node_id.clone(), &node_type, &params)
                     .map_err(|e| ServiceError::Internal(format!("Failed to create Python streaming node: {}", e)))?;
+
+                // Initialize the node immediately to load the model into memory
+                info!("🔧 Initializing Python streaming node '{}'...", chunk.node_id);
+                py_node.ensure_initialized().await
+                    .map_err(|e| ServiceError::Internal(format!("Failed to initialize Python node: {}", e)))?;
+                info!("✅ Python streaming node '{}' initialized successfully", chunk.node_id);
 
                 let py_node_arc = Arc::new(py_node);
                 let wrapped: Box<dyn crate::nodes::StreamingNode> = Box::new(AsyncNodeWrapper(Arc::clone(&py_node_arc)));
 
                 (wrapped, Some(py_node_arc))
             } else {
-                // Regular nodes - use registry
+                // Regular Rust nodes - use registry normally
+                info!("🦀 Creating Rust streaming node: {}", node_type);
                 let node = streaming_registry
                     .create_node(&node_type, chunk.node_id.clone(), &params)
                     .map_err(|e| ServiceError::Internal(format!("Failed to create node: {}", e)))?;
@@ -1000,9 +1009,10 @@ async fn handle_data_chunk_multi(
     let node_type = node.node_type();
     let output_count: usize;
 
-    if node_type == "KokoroTTSNode" || node_type.contains("TTS") {
+    // Use streaming path for all Python nodes that have the unwrapped py_streaming_node
+    if py_streaming_node.is_some() {
         // Multi-yield Python streaming node - use callback for incremental sending
-        info!("🎙️ Detected multi-yield node '{}', using streaming iteration", node_type);
+        info!("🎙️ Detected multi-yield Python streaming node '{}', using streaming iteration", node_type);
 
         use crate::data::convert_runtime_to_proto_data;
 
