@@ -104,7 +104,7 @@ impl<T: SyncStreamingNode + 'static> StreamingNode for SyncNodeWrapper<T> {
 }
 
 /// Wrapper that makes an AsyncStreamingNode into a StreamingNode
-pub struct AsyncNodeWrapper<T: AsyncStreamingNode>(pub T);
+pub struct AsyncNodeWrapper<T: AsyncStreamingNode>(pub Arc<T>);
 
 #[async_trait::async_trait]
 impl<T: AsyncStreamingNode + 'static> StreamingNode for AsyncNodeWrapper<T> {

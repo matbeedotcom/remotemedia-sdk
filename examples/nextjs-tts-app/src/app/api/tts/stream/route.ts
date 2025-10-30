@@ -3,9 +3,12 @@
  *
  * This route handler connects to the Rust gRPC server using the Node.js client
  * and streams raw audio data back to the browser for direct playback.
+ *
+ * Uses a persistent gRPC connection pool to enable server-side node caching,
+ * dramatically reducing latency for subsequent requests.
  */
 
-import { RemoteMediaClient } from '../../../../../../../nodejs-client/src/grpc-client';
+import clientPool from '@/lib/grpc-client-pool';
 import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs'; // Use Node.js runtime for gRPC
@@ -42,13 +45,11 @@ export async function POST(request: NextRequest) {
   // Create a ReadableStream that produces audio chunks
   const stream = new ReadableStream({
     async start(controller) {
-      const client = new RemoteMediaClient(
-        process.env.GRPC_HOST || 'localhost:50051'
-      );
-
+      // Get persistent client from pool (reuses connection + server-side cache)
+      let client;
       try {
-        await client.connect();
-        console.log('[API] Connected to gRPC server');
+        client = await clientPool.getClient();
+        console.log('[API] Using persistent gRPC client');
 
         // Create pipeline manifest
         const manifest = {
@@ -114,12 +115,13 @@ export async function POST(request: NextRequest) {
 
         console.log(`[API] TTS streaming completed (${totalSamples} total samples)`);
 
-        await client.disconnect();
+        // DON'T disconnect - keep connection alive for node caching!
         controller.close();
 
       } catch (error) {
         console.error('[API] TTS streaming error:', error);
-        await client.disconnect();
+        // On error, try to reconnect for next request
+        await clientPool.reconnect();
         controller.error(error);
       }
     },
