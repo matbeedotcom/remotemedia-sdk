@@ -86,7 +86,7 @@ impl PythonStreamingNode {
     /// It iterates the Python async generator and calls the callback for each chunk as it arrives.
     pub async fn process_streaming<F>(&self, data: RuntimeData, callback: F) -> Result<usize, Error>
     where
-        F: FnMut(RuntimeData) -> Result<(), Error>,
+        F: FnMut(RuntimeData) -> Result<(), Error> + Send,
     {
         // Ensure the Python node is initialized
         self.ensure_initialized().await?;

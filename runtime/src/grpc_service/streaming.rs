@@ -918,50 +918,75 @@ async fn handle_data_chunk_multi(
         let py_node = PythonStreamingNode::new(node_id, node_type, &params)
             .map_err(|e| ServiceError::Internal(format!("Failed to create Python node: {}", e)))?;
 
-        // Shared state for callback
-        let mut chunk_idx = 0u64;
-        let session_clone = session.clone();
+        // Create a channel for chunks from Python -> Rust async world
+        let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel::<RuntimeData>();
+
+        // Spawn async task to send chunks as they arrive from the channel
         let tx_clone = tx.clone();
+        let session_clone = session.clone();
         let chunk_node_id = chunk.node_id.clone();
         let base_sequence = chunk.sequence;
+        let data_type_clone = data_type.clone();
 
-        // Stream chunks via callback - each chunk is sent immediately as it arrives
-        output_count = py_node.process_streaming(input_data, move |output_data| {
-            info!("🎯 Received chunk {} from Python generator", chunk_idx + 1);
-            info!("Converting to proto: type={}, items={}", output_data.type_name(), output_data.item_count());
+        let send_task = tokio::spawn(async move {
+            let mut chunk_idx = 0u64;
 
-            let output_buffer = convert_runtime_to_proto_data(output_data);
-            let mut data_outputs = HashMap::new();
-            data_outputs.insert(chunk_node_id.clone(), output_buffer);
+            while let Some(output_data) = chunk_rx.recv().await {
+                info!("🎯 Received chunk {} from Python generator", chunk_idx + 1);
+                info!("Converting to proto: type={}, items={}", output_data.type_name(), output_data.item_count());
 
-            // Record metrics for this chunk
-            let total_items = {
-                let mut sess = futures::executor::block_on(session_clone.lock());
-                sess.record_chunk_metrics(0.0, item_count, 0, &data_type);  // Processing time calculated at end
-                sess.total_items
-            };
+                let output_buffer = convert_runtime_to_proto_data(output_data);
+                let mut data_outputs = HashMap::new();
+                data_outputs.insert(chunk_node_id.clone(), output_buffer);
 
-            let chunk_result = ChunkResult {
-                sequence: base_sequence + chunk_idx,
-                data_outputs,
-                processing_time_ms: 0.0,  // Will be updated with average at the end
-                total_items_processed: total_items,
-            };
+                // Record metrics for this chunk
+                let total_items = {
+                    let mut sess = session_clone.lock().await;
+                    sess.record_chunk_metrics(0.0, item_count, 0, &data_type_clone);
+                    sess.total_items
+                };
 
-            info!("📤 Sending ChunkResult {}: sequence={}", chunk_idx + 1, chunk_result.sequence);
+                let chunk_result = ChunkResult {
+                    sequence: base_sequence + chunk_idx,
+                    data_outputs,
+                    processing_time_ms: 0.0,
+                    total_items_processed: total_items,
+                };
 
-            // Send the ChunkResult immediately
-            let response = StreamResponse {
-                response: Some(StreamResponseType::Result(chunk_result)),
-            };
+                info!("📤 Sending ChunkResult {}: sequence={}", chunk_idx + 1, chunk_result.sequence);
 
-            futures::executor::block_on(tx_clone.send(Ok(response)))
-                .map_err(|_| crate::Error::Execution("Failed to send ChunkResult".to_string()))?;
+                // Send the ChunkResult immediately (non-blocking await)
+                let response = StreamResponse {
+                    response: Some(StreamResponseType::Result(chunk_result)),
+                };
 
-            chunk_idx += 1;
+                if let Err(e) = tx_clone.send(Ok(response)).await {
+                    error!("Failed to send ChunkResult: {:?}", e);
+                    break;
+                }
+
+                chunk_idx += 1;
+            }
+
+            chunk_idx
+        });
+
+        // Process streaming with callback that just enqueues chunks
+        let chunk_tx_clone = chunk_tx.clone();
+        py_node.process_streaming(input_data, move |output_data| {
+            // Non-blocking send to channel
+            chunk_tx_clone.send(output_data)
+                .map_err(|_| crate::Error::Execution("Failed to enqueue chunk".to_string()))?;
             Ok(())
         }).await
             .map_err(|e| ServiceError::Internal(format!("Multi-chunk streaming failed: {}", e)))?;
+
+        // Close the channel to signal completion
+        drop(chunk_tx);
+
+        // Wait for all chunks to be sent
+        output_count = send_task.await
+            .map_err(|e| ServiceError::Internal(format!("Send task failed: {}", e)))? as usize;
 
         info!("✅ Completed streaming {} chunks", output_count);
     } else {
