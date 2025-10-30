@@ -26,6 +26,7 @@ from .audio import AudioTransform, AudioBuffer, AudioResampler, VoiceActivityDet
 from .transcription import WhisperXTranscriber, RustWhisperTranscriber
 from .tts import KokoroTTSNode
 from .simple_pytorch_test import SimplePyTorchNode
+from .ml import LFM2AudioNode
 from .text_processor import TextProcessorNode
 from .transform import DataTransform
 from .video import VideoTransform, VideoBuffer, VideoResizer
@@ -82,4 +83,6 @@ __all__ = [
     "KokoroTTSNode",
     # Test nodes
     "SimplePyTorchNode",
+    # ML nodes
+    "LFM2AudioNode",
 ] 

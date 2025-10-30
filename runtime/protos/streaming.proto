@@ -345,6 +345,19 @@ message StreamMetrics {
   //     "json": 20    // 20 JSON chunks (control parameters)
   //   }
   map<string, uint64> data_type_breakdown = 8;
+
+  // Feature 005: Node cache metrics
+  // Total cache hits for this session
+  uint64 cache_hits = 9;
+
+  // Total cache misses for this session
+  uint64 cache_misses = 10;
+
+  // Number of nodes currently cached globally
+  uint64 cached_nodes_count = 11;
+
+  // Cache hit rate (0.0 - 1.0)
+  double cache_hit_rate = 12;
 }
 
 // ============================================================================

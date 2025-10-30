@@ -23,6 +23,8 @@ export interface UseTTSOptions {
   autoPlay?: boolean;
   /** Callback when synthesis starts */
   onStart?: (requestId: string) => void;
+  /** Callback when each audio chunk is received */
+  onChunk?: () => void;
   /** Callback when synthesis completes */
   onComplete?: (requestId: string) => void;
   /** Callback when error occurs */
@@ -48,10 +50,18 @@ export interface UseTTSReturn {
   setVoiceConfig: (config: VoiceConfig) => void;
   /** Retry last failed request */
   retry: () => Promise<void>;
+  /** Replay last audio */
+  replay: () => void;
   /** Whether synthesis is in progress */
   isSynthesizing: boolean;
   /** Whether ready to synthesize */
   isReady: boolean;
+  /** Whether audio can be replayed */
+  canReplay: boolean;
+  /** Current playback time in seconds */
+  currentTime: number;
+  /** Total duration in seconds */
+  duration: number | null;
 }
 
 export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
@@ -59,6 +69,7 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
     voiceConfig: initialVoiceConfig = DEFAULT_VOICE_CONFIG,
     autoPlay = true,
     onStart,
+    onChunk,
     onComplete,
     onError,
   } = options;
@@ -68,48 +79,105 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
   const [status, setStatus] = useState<TTSStatus>('idle');
   const [error, setError] = useState<TTSError | null>(null);
   const [voiceConfig, setVoiceConfig] = useState<VoiceConfig>(initialVoiceConfig);
+  const [currentTime, setCurrentTime] = useState<number>(0);
+  const [duration, setDuration] = useState<number | null>(null);
 
   // Refs for maintaining instances
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastRequestTextRef = useRef<string>('');
+  const lastCompletedAudioRef = useRef<HTMLAudioElement | null>(null);
+  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const audioListenersRef = useRef<{
+    play: () => void;
+    ended: () => void;
+    error: (e: Event) => void;
+  } | null>(null);
 
   // Initialize audio element on mount
   useEffect(() => {
-    // Create HTML audio element for playback
+    // Create HTML audio element for playback (will be replaced by streaming audio)
     if (!audioRef.current) {
       audioRef.current = new Audio();
-      audioRef.current.addEventListener('play', () => {
-        console.log(`[${new Date().toISOString()}] [useTTS] Playback started`);
-        setStatus('playing');
-      });
-      audioRef.current.addEventListener('ended', () => {
-        console.log(`[${new Date().toISOString()}] [useTTS] Playback ended`);
-        setStatus('completed');
-        setCurrentRequest(prev =>
-          prev ? { ...prev, status: 'completed', updatedAt: new Date() } : null
-        );
-      });
-      audioRef.current.addEventListener('error', (e) => {
-        console.error(`[${new Date().toISOString()}] [useTTS] Playback error:`, e);
-        const playbackError: TTSError = {
-          code: 'PLAYBACK_ERROR',
-          message: 'Audio playback failed',
-          timestamp: new Date(),
-        };
-        setError(playbackError);
-        setStatus('failed');
-      });
+
+      // Store listeners so we can remove them later
+      audioListenersRef.current = {
+        play: () => {
+          console.log(`[${new Date().toISOString()}] [useTTS] Playback started`);
+          setStatus('playing');
+        },
+        ended: () => {
+          console.log(`[${new Date().toISOString()}] [useTTS] Playback ended`);
+          setStatus('completed');
+          setCurrentRequest(prev =>
+            prev ? { ...prev, status: 'completed', updatedAt: new Date() } : null
+          );
+        },
+        error: (e: Event) => {
+          console.error(`[${new Date().toISOString()}] [useTTS] Playback error:`, e);
+          const playbackError: TTSError = {
+            code: 'PLAYBACK_ERROR',
+            message: 'Audio playback failed',
+            timestamp: new Date(),
+          };
+          setError(playbackError);
+          setStatus('failed');
+        },
+      };
+
+      audioRef.current.addEventListener('play', audioListenersRef.current.play);
+      audioRef.current.addEventListener('ended', audioListenersRef.current.ended);
+      audioRef.current.addEventListener('error', audioListenersRef.current.error);
     }
 
     // Cleanup on unmount
     return () => {
-      if (audioRef.current) {
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+      if (audioRef.current && audioListenersRef.current) {
+        audioRef.current.removeEventListener('play', audioListenersRef.current.play);
+        audioRef.current.removeEventListener('ended', audioListenersRef.current.ended);
+        audioRef.current.removeEventListener('error', audioListenersRef.current.error);
         audioRef.current.pause();
         audioRef.current.src = '';
         audioRef.current = null;
       }
     };
   }, []);
+
+  // Track progress during playback
+  useEffect(() => {
+    if (status === 'playing' && audioRef.current) {
+      // Clear any existing interval
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+      }
+
+      // Update progress every 100ms
+      progressIntervalRef.current = setInterval(() => {
+        if (audioRef.current) {
+          setCurrentTime(audioRef.current.currentTime);
+          if (audioRef.current.duration && isFinite(audioRef.current.duration)) {
+            setDuration(audioRef.current.duration);
+          }
+        }
+      }, 100);
+    } else {
+      // Clear interval when not playing
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+    }
+
+    return () => {
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+    };
+  }, [status]);
 
   /**
    * Start TTS synthesis
@@ -171,6 +239,10 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
               console.log(`[${new Date().toISOString()}] [useTTS] First chunk received, playback starting`);
               setStatus('playing');
             },
+            onChunk: () => {
+              // Pass through chunk callback
+              onChunk?.();
+            },
             onProgress: (bytesReceived) => {
               console.log(`[${new Date().toISOString()}] [useTTS] Bytes received:`, bytesReceived);
             },
@@ -199,9 +271,14 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
         );
 
         // Replace the existing audio element with the new streaming one
-        if (audioRef.current) {
-          audioRef.current.pause();
-          audioRef.current.src = '';
+        if (audioRef.current && audioListenersRef.current) {
+          // Remove all event listeners from the old audio element before replacing
+          const oldAudio = audioRef.current;
+          oldAudio.removeEventListener('play', audioListenersRef.current.play);
+          oldAudio.removeEventListener('ended', audioListenersRef.current.ended);
+          oldAudio.removeEventListener('error', audioListenersRef.current.error);
+          oldAudio.pause();
+          oldAudio.src = '';
         }
         audioRef.current = audio;
 
@@ -216,6 +293,13 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
           setCurrentRequest(prev =>
             prev ? { ...prev, status: 'completed', updatedAt: new Date() } : null
           );
+          // Store the completed audio for replay
+          lastCompletedAudioRef.current = audio;
+          // Update final time
+          if (audio.duration && isFinite(audio.duration)) {
+            setCurrentTime(audio.duration);
+            setDuration(audio.duration);
+          }
           onComplete?.(requestId);
         });
         audio.addEventListener('error', (e) => {
@@ -248,7 +332,7 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
         onError?.(synthesisError);
       }
     },
-    [voiceConfig, autoPlay, onStart, onComplete, onError]
+    [voiceConfig, autoPlay, onStart, onChunk, onComplete, onError]
   );
 
   /**
@@ -284,10 +368,33 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
     }
   }, [synthesize]);
 
+  /**
+   * Replay last completed audio
+   */
+  const replay = useCallback(() => {
+    if (lastCompletedAudioRef.current) {
+      const audio = lastCompletedAudioRef.current;
+      audio.currentTime = 0;
+      setCurrentTime(0);
+      setStatus('playing');
+      audio.play().catch((err) => {
+        console.error('Replay failed:', err);
+        const replayError: TTSError = {
+          code: 'PLAYBACK_ERROR',
+          message: 'Failed to replay audio',
+          timestamp: new Date(),
+        };
+        setError(replayError);
+        setStatus('failed');
+      });
+    }
+  }, []);
+
   // Derived state
   const isSynthesizing =
     status === 'pending' || status === 'streaming' || status === 'playing';
   const isReady = status === 'idle' || status === 'completed' || status === 'failed';
+  const canReplay = lastCompletedAudioRef.current !== null && (status === 'completed' || status === 'idle');
 
   return {
     currentRequest,
@@ -299,7 +406,11 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
     clearError,
     setVoiceConfig,
     retry,
+    replay,
     isSynthesizing,
     isReady,
+    canReplay,
+    currentTime,
+    duration,
   };
 }

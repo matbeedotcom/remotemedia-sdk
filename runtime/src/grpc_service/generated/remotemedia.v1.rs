@@ -1724,6 +1724,19 @@ pub struct StreamMetrics {
         ::prost::alloc::string::String,
         u64,
     >,
+    /// Feature 005: Node cache metrics
+    /// Total cache hits for this session
+    #[prost(uint64, tag = "9")]
+    pub cache_hits: u64,
+    /// Total cache misses for this session
+    #[prost(uint64, tag = "10")]
+    pub cache_misses: u64,
+    /// Number of nodes currently cached globally
+    #[prost(uint64, tag = "11")]
+    pub cached_nodes_count: u64,
+    /// Cache hit rate (0.0 - 1.0)
+    #[prost(double, tag = "12")]
+    pub cache_hit_rate: f64,
 }
 /// Stream closed gracefully (unchanged from Feature 003)
 #[derive(Clone, PartialEq, ::prost::Message)]

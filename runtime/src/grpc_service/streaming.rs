@@ -186,6 +186,12 @@ struct StreamSession {
     /// Key: node_id, Value: cached StreamingNode instance
     /// This prevents expensive re-initialization (e.g., ML model loading)
     node_cache: HashMap<String, Arc<Box<dyn crate::nodes::StreamingNode>>>,
+
+    /// Cache hits for this session (Feature 005)
+    cache_hits: u64,
+
+    /// Cache misses for this session (Feature 005)
+    cache_misses: u64,
 }
 
 impl StreamSession {
@@ -207,6 +213,8 @@ impl StreamSession {
             last_activity: now,
             recommended_chunk_size,
             node_cache: HashMap::new(),
+            cache_hits: 0,
+            cache_misses: 0,
         }
     }
 
@@ -286,7 +294,14 @@ impl StreamSession {
     }
 
     /// Generate StreamMetrics message
-    fn create_metrics(&self) -> StreamMetrics {
+    fn create_metrics(&self, cached_nodes_count: u64) -> StreamMetrics {
+        let cache_total = self.cache_hits + self.cache_misses;
+        let cache_hit_rate = if cache_total > 0 {
+            self.cache_hits as f64 / cache_total as f64
+        } else {
+            0.0
+        };
+
         StreamMetrics {
             session_id: self.session_id.clone(),
             chunks_processed: self.chunks_processed,
@@ -296,6 +311,10 @@ impl StreamSession {
             chunks_dropped: self.chunks_dropped,
             peak_memory_bytes: self.peak_memory_bytes,
             data_type_breakdown: self.data_type_counts.clone(),
+            cache_hits: self.cache_hits,
+            cache_misses: self.cache_misses,
+            cached_nodes_count,
+            cache_hit_rate,
         }
     }
 
@@ -461,9 +480,10 @@ async fn handle_stream(
                         // Send periodic metrics
                         let sess_lock = sess.lock().await;
                         if sess_lock.chunks_processed % METRICS_UPDATE_INTERVAL == 0 {
-                            let stream_metrics = sess_lock.create_metrics();
+                            let cached_nodes_count = global_node_cache.read().await.len() as u64;
+                            let stream_metrics = sess_lock.create_metrics(cached_nodes_count);
                             drop(sess_lock);
-                            
+
                             let metrics_response = StreamResponse {
                                 response: Some(StreamResponseType::Metrics(stream_metrics)),
                             };
@@ -492,6 +512,7 @@ async fn handle_stream(
                     data_chunk,
                     sess.clone(),
                     streaming_registry.clone(),
+                    metrics.clone(),
                     tx.clone(),
                     global_node_cache.clone()
                 ).await;
@@ -508,7 +529,8 @@ async fn handle_stream(
                         // Send periodic metrics
                         let sess_lock = sess.lock().await;
                         if sess_lock.chunks_processed % METRICS_UPDATE_INTERVAL == 0 {
-                            let stream_metrics = sess_lock.create_metrics();
+                            let cached_nodes_count = global_node_cache.read().await.len() as u64;
+                            let stream_metrics = sess_lock.create_metrics(cached_nodes_count);
                             drop(sess_lock);
 
                             let metrics_response = StreamResponse {
@@ -856,6 +878,7 @@ async fn handle_data_chunk_multi(
     chunk: crate::grpc_service::generated::DataChunk,
     session: Arc<Mutex<StreamSession>>,
     streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
+    metrics: Arc<ServiceMetrics>,
     tx: tokio::sync::mpsc::Sender<Result<StreamResponse, Status>>,
     global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>>,
 ) -> Result<usize, ServiceError> {
@@ -893,6 +916,11 @@ async fn handle_data_chunk_multi(
         };
 
         let (node, py_streaming_node) = if let Some((cached_node, cached_py_node)) = cache_entry {
+            // CACHE HIT!
+            sess.cache_hits += 1;
+            metrics.record_cache_hit(&node_type);
+            info!("✅ Cache HIT for node type '{}' (session hits: {}, misses: {})", node_type, sess.cache_hits, sess.cache_misses);
+
             // Update timestamp in global cache (write lock)
             let mut global_cache = global_node_cache.write().await;
             if let Some(cached) = global_cache.get_mut(&cache_key) {
@@ -903,6 +931,11 @@ async fn handle_data_chunk_multi(
             sess.node_cache.insert(chunk.node_id.clone(), Arc::clone(&cached_node));
             (cached_node, cached_py_node)
         } else {
+            // CACHE MISS!
+            sess.cache_misses += 1;
+            metrics.record_cache_miss(&node_type);
+            info!("❌ Cache MISS for node type '{}' (session hits: {}, misses: {})", node_type, sess.cache_hits, sess.cache_misses);
+
             // Node not cached - create new instance
             info!("🆕 Creating new node: {} (type: {}, key: {})", chunk.node_id, node_type, cache_key);
 
@@ -946,10 +979,13 @@ async fn handle_data_chunk_multi(
                 last_used: Instant::now(),
             });
 
+            // Update Prometheus gauge for cached nodes count
+            metrics.set_cached_nodes_count(global_cache.len() as i64);
+
             // Also store in session cache for quick lookup
             sess.node_cache.insert(chunk.node_id.clone(), Arc::clone(&arc_node));
 
-            info!("💾 Globally cached node '{}' (type: {}, key: {})", chunk.node_id, node_type, cache_key);
+            info!("💾 Globally cached node '{}' (type: {}, key: {}, total cached: {})", chunk.node_id, node_type, cache_key, global_cache.len());
             (arc_node, py_streaming_node)
         };
 

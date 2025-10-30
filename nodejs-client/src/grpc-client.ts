@@ -90,12 +90,28 @@ export interface VersionInfo {
   buildTimestamp?: string;
 }
 
+export interface StreamMetrics {
+  sessionId: string;
+  chunksProcessed: number;
+  averageLatencyMs: number;
+  totalItems: number;
+  bufferItems: number;
+  chunksDropped: number;
+  peakMemoryBytes: number;
+  dataTypeBreakdown: Record<string, number>;
+  cacheHits: number;
+  cacheMisses: number;
+  cachedNodesCount: number;
+  cacheHitRate: number;
+}
+
 export interface ChunkResult {
   sequence: number;
   processingTimeMs: number;
   totalSamplesProcessed: number;
   hasAudioOutput: boolean;
   audioOutput?: AudioBuffer;
+  metrics?: StreamMetrics;
 }
 
 export class RemoteMediaError extends Error {
@@ -391,6 +407,9 @@ export class RemoteMediaClient {
     let streamEnded = false;
     let streamError: Error | null = null;
 
+    // Store latest metrics to attach to next chunk result
+    let latestMetrics: StreamMetrics | undefined;
+
     // Handle incoming responses
     stream.on('data', (response: any) => {
       if (response.result) {
@@ -401,6 +420,7 @@ export class RemoteMediaClient {
           processingTimeMs: response.result.processing_time_ms,
           totalSamplesProcessed: response.result.total_items_processed || response.result.total_samples_processed || 0,
           hasAudioOutput: hasDataOutput,
+          metrics: latestMetrics, // Attach latest metrics if available
         };
 
         if (hasDataOutput) {
@@ -435,6 +455,23 @@ export class RemoteMediaClient {
         } else {
           results.push(chunkResult);
         }
+      } else if (response.metrics) {
+        // Handle StreamMetrics message
+        console.log('[gRPC Client] Received StreamMetrics:', response.metrics);
+        latestMetrics = {
+          sessionId: response.metrics.session_id || '',
+          chunksProcessed: parseInt(response.metrics.chunks_processed) || 0,
+          averageLatencyMs: response.metrics.average_latency_ms || 0,
+          totalItems: parseInt(response.metrics.total_items) || 0,
+          bufferItems: parseInt(response.metrics.buffer_items) || 0,
+          chunksDropped: parseInt(response.metrics.chunks_dropped) || 0,
+          peakMemoryBytes: parseInt(response.metrics.peak_memory_bytes) || 0,
+          dataTypeBreakdown: response.metrics.data_type_breakdown || {},
+          cacheHits: parseInt(response.metrics.cache_hits) || 0,
+          cacheMisses: parseInt(response.metrics.cache_misses) || 0,
+          cachedNodesCount: parseInt(response.metrics.cached_nodes_count) || 0,
+          cacheHitRate: response.metrics.cache_hit_rate || 0,
+        };
       } else if (response.error) {
         const error = new RemoteMediaError(
           response.error.message,
