@@ -74,6 +74,10 @@ impl StreamingNodeFactory for KokoroTTSNodeFactory {
     fn node_type(&self) -> &str {
         "KokoroTTSNode"
     }
+
+    fn is_python_node(&self) -> bool {
+        true
+    }
 }
 
 struct SimplePyTorchNodeFactory;
@@ -85,6 +89,10 @@ impl StreamingNodeFactory for SimplePyTorchNodeFactory {
 
     fn node_type(&self) -> &str {
         "SimplePyTorchNode"
+    }
+
+    fn is_python_node(&self) -> bool {
+        true
     }
 }
 

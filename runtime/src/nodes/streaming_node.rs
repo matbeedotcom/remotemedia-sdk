@@ -132,6 +132,12 @@ pub trait StreamingNodeFactory: Send + Sync {
 
     /// Get the node type this factory creates
     fn node_type(&self) -> &str;
+
+    /// Check if this factory creates Python-based nodes
+    /// Python nodes need special handling for caching the unwrapped instance
+    fn is_python_node(&self) -> bool {
+        false // Default: not a Python node
+    }
 }
 
 /// Registry for streaming nodes
@@ -174,6 +180,14 @@ impl StreamingNodeRegistry {
     /// Check if a node type is registered
     pub fn has_node_type(&self, node_type: &str) -> bool {
         self.factories.contains_key(node_type)
+    }
+
+    /// Check if a node type is a Python-based node
+    pub fn is_python_node(&self, node_type: &str) -> bool {
+        self.factories
+            .get(node_type)
+            .map(|factory| factory.is_python_node())
+            .unwrap_or(false)
     }
 
     /// List all registered node types

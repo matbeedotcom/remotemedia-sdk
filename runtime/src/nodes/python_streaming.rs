@@ -39,7 +39,7 @@ impl PythonStreamingNode {
         })
     }
 
-    async fn ensure_initialized(&self) -> Result<(), Error> {
+    pub async fn ensure_initialized(&self) -> Result<(), Error> {
         let mut executor_guard = self.executor.lock().await;
         if executor_guard.is_none() {
             // Create the Python executor
