@@ -442,7 +442,11 @@ export class RemoteMediaClient {
             };
           } else if (firstOutput?.text) {
             console.log('[gRPC Client] Found text data');
-            // Could add text handling here if needed
+            // Extract text from TextBuffer (text_data is bytes)
+            const textData = firstOutput.text.text_data;
+            if (textData) {
+              chunkResult.textOutput = Buffer.from(textData).toString('utf-8');
+            }
           } else {
             console.log('[gRPC Client] Unknown data type:', firstOutput?.data_type);
           }
@@ -619,5 +623,277 @@ export class RemoteMediaClient {
         }
       }
     }
+  }
+
+  /**
+   * Create a persistent streaming session that can receive multiple chunks
+   *
+   * This method creates a bidirectional gRPC stream that stays open across
+   * multiple requests, allowing conversation history to persist in the runtime.
+   *
+   * @param manifest Pipeline manifest
+   * @returns PersistentStreamSession object with methods to send chunks and receive results
+   */
+  createPersistentStreamSession(manifest: PipelineManifest): PersistentStreamSession {
+    if (!this.connected) {
+      throw new Error('Client not connected');
+    }
+
+    const stream = this.streamingClient.StreamPipeline(this.getMetadata());
+
+    // Send init message
+    stream.write({
+      init: {
+        manifest: {
+          version: manifest.version,
+          metadata: {
+            name: manifest.metadata.name,
+            description: manifest.metadata.description || '',
+            created_at: manifest.metadata.createdAt || new Date().toISOString(),
+          },
+          nodes: manifest.nodes.map(node => ({
+            id: node.id,
+            node_type: node.nodeType,
+            params: node.params,
+            is_streaming: node.isStreaming || false,
+          })),
+          connections: (manifest.connections || []).map(conn => ({
+            from: conn.from,
+            to: conn.to,
+          })),
+        },
+        client_version: 'v1',
+      },
+    });
+
+    return new PersistentStreamSession(stream);
+  }
+}
+
+/**
+ * Persistent streaming session that stays open across multiple requests
+ */
+export class PersistentStreamSession {
+  private stream: any;
+  private results: ChunkResult[] = [];
+  private resolveNext: ((value: IteratorResult<ChunkResult>) => void) | null = null;
+  private rejectNext: ((error: Error) => void) | null = null;
+  private streamEnded = false;
+  private streamError: Error | null = null;
+  private latestMetrics: StreamMetrics | undefined;
+  private sessionId: string = '';
+  private sequence = 0;
+
+  constructor(stream: any) {
+    this.stream = stream;
+    this.setupStreamHandlers();
+  }
+
+  private setupStreamHandlers() {
+    this.stream.on('data', (response: any) => {
+      if (response.ready) {
+        // Store session ID from StreamReady
+        this.sessionId = response.ready.session_id;
+        console.log(`[PersistentSession] Session ready: ${this.sessionId}`);
+      } else if (response.result) {
+        const hasDataOutput = response.result.data_outputs && Object.keys(response.result.data_outputs).length > 0;
+
+        const chunkResult: ChunkResult = {
+          sequence: response.result.sequence,
+          processingTimeMs: response.result.processing_time_ms,
+          totalSamplesProcessed: response.result.total_items_processed || response.result.total_samples_processed || 0,
+          hasAudioOutput: hasDataOutput,
+          metrics: this.latestMetrics,
+        };
+
+        if (hasDataOutput) {
+          const firstOutput = Object.values(response.result.data_outputs)[0] as any;
+
+          if (firstOutput?.audio) {
+            const audioData = firstOutput.audio;
+            chunkResult.audioOutput = {
+              samples: Buffer.from(audioData.samples),
+              sampleRate: audioData.sample_rate,
+              channels: audioData.channels,
+              format: audioData.format as AudioFormat,
+              numSamples: parseInt(audioData.num_samples) || audioData.num_samples,
+            };
+          } else if (firstOutput?.text) {
+            // Extract text from TextBuffer (text_data is bytes)
+            const textData = firstOutput.text.text_data;
+            if (textData) {
+              chunkResult.textOutput = Buffer.from(textData).toString('utf-8');
+            }
+          }
+        }
+
+        if (this.resolveNext) {
+          this.resolveNext({ value: chunkResult, done: false });
+          this.resolveNext = null;
+          this.rejectNext = null;
+        } else {
+          this.results.push(chunkResult);
+        }
+      } else if (response.metrics) {
+        console.log('[PersistentSession] Received metrics');
+        this.latestMetrics = {
+          sessionId: response.metrics.session_id || '',
+          chunksProcessed: parseInt(response.metrics.chunks_processed) || 0,
+          averageLatencyMs: response.metrics.average_latency_ms || 0,
+          totalItems: parseInt(response.metrics.total_items) || 0,
+          bufferItems: parseInt(response.metrics.buffer_items) || 0,
+          chunksDropped: parseInt(response.metrics.chunks_dropped) || 0,
+          peakMemoryBytes: parseInt(response.metrics.peak_memory_bytes) || 0,
+          dataTypeBreakdown: response.metrics.data_type_breakdown || {},
+          cacheHits: parseInt(response.metrics.cache_hits) || 0,
+          cacheMisses: parseInt(response.metrics.cache_misses) || 0,
+          cachedNodesCount: parseInt(response.metrics.cached_nodes_count) || 0,
+          cacheHitRate: response.metrics.cache_hit_rate || 0,
+        };
+      } else if (response.error) {
+        const error = new RemoteMediaError(
+          response.error.message,
+          response.error.error_type as ErrorType,
+          response.error.failing_node_id,
+          response.error.context
+        );
+        if (this.rejectNext) {
+          this.rejectNext(error);
+          this.resolveNext = null;
+          this.rejectNext = null;
+        } else {
+          this.streamError = error;
+        }
+      }
+    });
+
+    this.stream.on('error', (error: Error) => {
+      console.error('[PersistentSession] Stream error:', error);
+      this.streamError = error;
+      if (this.rejectNext) {
+        this.rejectNext(error);
+        this.resolveNext = null;
+        this.rejectNext = null;
+      }
+    });
+
+    this.stream.on('end', () => {
+      console.log('[PersistentSession] Stream ended');
+      this.streamEnded = true;
+      if (this.resolveNext) {
+        this.resolveNext({ value: undefined, done: true });
+        this.resolveNext = null;
+        this.rejectNext = null;
+      }
+    });
+  }
+
+  /**
+   * Send a data chunk to the stream
+   */
+  async sendChunk(nodeId: string, dataBuffer: DataBuffer, metadata?: Record<string, string>): Promise<void> {
+    if (this.streamEnded) {
+      throw new Error('Stream has ended');
+    }
+
+    let protoDataType: any;
+
+    switch (dataBuffer.type) {
+      case 'audio':
+        protoDataType = {
+          audio: {
+            samples: dataBuffer.data.samples,
+            sample_rate: dataBuffer.data.sampleRate,
+            channels: dataBuffer.data.numChannels || dataBuffer.data.channels,
+            format: dataBuffer.data.format,
+            num_samples: dataBuffer.data.numSamples,
+          },
+        };
+        break;
+      case 'text':
+        protoDataType = {
+          text: dataBuffer.data,
+        };
+        break;
+      case 'json':
+        protoDataType = {
+          json: JSON.stringify(dataBuffer.data),
+        };
+        break;
+      default:
+        throw new Error(`Unsupported data type: ${dataBuffer.type}`);
+    }
+
+    const protoMetadata: { [key: string]: string } = {};
+    if (metadata) {
+      for (const [key, value] of Object.entries(metadata)) {
+        protoMetadata[key] = String(value);
+      }
+    }
+
+    this.stream.write({
+      data_chunk: {
+        node_id: nodeId,
+        buffer: {
+          ...protoDataType,
+          metadata: protoMetadata,
+        },
+        sequence: this.sequence++,
+        timestamp_ms: Date.now(),
+      },
+    });
+  }
+
+  /**
+   * Get all available results
+   */
+  async *getResults(): AsyncGenerator<ChunkResult> {
+    while (!this.streamEnded || this.results.length > 0) {
+      if (this.streamError) {
+        throw this.streamError;
+      }
+
+      if (this.results.length > 0) {
+        yield this.results.shift()!;
+      } else if (!this.streamEnded) {
+        const result = await new Promise<IteratorResult<ChunkResult>>((resolve, reject) => {
+          this.resolveNext = resolve;
+          this.rejectNext = reject;
+        });
+
+        if (!result.done && result.value) {
+          yield result.value;
+        }
+      }
+    }
+  }
+
+  /**
+   * Close the stream
+   */
+  async close(): Promise<void> {
+    if (!this.streamEnded) {
+      console.log(`[PersistentSession] Closing session: ${this.sessionId}`);
+      this.stream.write({
+        control: {
+          command: 1, // COMMAND_CLOSE
+        },
+      });
+      this.stream.end();
+    }
+  }
+
+  /**
+   * Get the session ID
+   */
+  getSessionId(): string {
+    return this.sessionId;
+  }
+
+  /**
+   * Get latest metrics
+   */
+  getMetrics(): StreamMetrics | undefined {
+    return this.latestMetrics;
   }
 }
