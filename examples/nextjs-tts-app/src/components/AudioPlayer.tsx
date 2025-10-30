@@ -26,6 +26,10 @@ export interface AudioPlayerProps {
   onPlay?: () => void;
   /** Callback when stop button is clicked */
   onStop?: () => void;
+  /** Callback when replay button is clicked */
+  onReplay?: () => void;
+  /** Whether replay is available */
+  canReplay?: boolean;
   /** Custom class name for styling */
   className?: string;
 }
@@ -90,16 +94,20 @@ export function AudioPlayer({
   onPause,
   onPlay,
   onStop,
+  onReplay,
+  canReplay = false,
   className = '',
 }: AudioPlayerProps) {
   const isPlaying = playbackState === 'playing';
   const isPaused = playbackState === 'paused';
   const isBuffering = playbackState === 'buffering';
   const isIdle = playbackState === 'idle' || playbackState === 'stopped';
+  const isCompleted = playbackState === 'completed';
 
   const canPlay = (isIdle || isPaused) && onPlay;
   const canPause = isPlaying && onPause;
   const canStop = !isIdle && onStop;
+  const showReplay = canReplay && onReplay && (isCompleted || isIdle);
 
   // Calculate progress percentage
   const progressPercentage = duration && duration > 0
@@ -199,6 +207,26 @@ export function AudioPlayer({
 
       {/* Controls */}
       <div className="flex items-center justify-center gap-2">
+        {/* Replay button */}
+        {showReplay && (
+          <button
+            onClick={onReplay}
+            className={`
+              p-3 rounded-full
+              bg-indigo-600 text-white
+              hover:bg-indigo-700 active:bg-indigo-800
+              transition-colors
+              focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2
+            `}
+            aria-label="Replay"
+            title="Replay audio"
+          >
+            <svg className="h-6 w-6" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z" />
+            </svg>
+          </button>
+        )}
+
         {/* Play/Pause button */}
         {canPlay && (
           <button

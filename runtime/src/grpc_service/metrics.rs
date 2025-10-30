@@ -46,6 +46,15 @@ pub struct ServiceMetrics {
     /// Streaming chunks dropped counter (Phase 5 - T057)
     pub stream_chunks_dropped_total: CounterVec,
 
+    /// Node cache hits counter (Feature 005 - Backend Infrastructure)
+    pub node_cache_hits_total: CounterVec,
+
+    /// Node cache misses counter (Feature 005 - Backend Infrastructure)
+    pub node_cache_misses_total: CounterVec,
+
+    /// Cached nodes gauge (Feature 005 - Backend Infrastructure)
+    pub cached_nodes: IntGauge,
+
     /// Prometheus registry
     pub registry: Arc<Registry>,
 }
@@ -144,6 +153,28 @@ impl ServiceMetrics {
             &["session_id", "reason"],
         )?;
 
+        // Feature 005 - Node cache metrics
+        let node_cache_hits_total = CounterVec::new(
+            Opts::new(
+                "remotemedia_node_cache_hits_total",
+                "Total node cache hits",
+            ),
+            &["node_type"],
+        )?;
+
+        let node_cache_misses_total = CounterVec::new(
+            Opts::new(
+                "remotemedia_node_cache_misses_total",
+                "Total node cache misses",
+            ),
+            &["node_type"],
+        )?;
+
+        let cached_nodes = IntGauge::new(
+            "remotemedia_cached_nodes",
+            "Number of nodes currently cached",
+        )?;
+
         // Register all metrics
         registry.register(Box::new(requests_total.clone()))?;
         registry.register(Box::new(request_duration_seconds.clone()))?;
@@ -156,6 +187,9 @@ impl ServiceMetrics {
         registry.register(Box::new(stream_chunks_total.clone()))?;
         registry.register(Box::new(stream_chunk_latency_seconds.clone()))?;
         registry.register(Box::new(stream_chunks_dropped_total.clone()))?;
+        registry.register(Box::new(node_cache_hits_total.clone()))?;
+        registry.register(Box::new(node_cache_misses_total.clone()))?;
+        registry.register(Box::new(cached_nodes.clone()))?;
 
         Ok(Self {
             requests_total,
@@ -169,6 +203,9 @@ impl ServiceMetrics {
             stream_chunks_total,
             stream_chunk_latency_seconds,
             stream_chunks_dropped_total,
+            node_cache_hits_total,
+            node_cache_misses_total,
+            cached_nodes,
             registry: Arc::new(registry),
         })
     }
@@ -256,6 +293,27 @@ impl ServiceMetrics {
         self.stream_chunks_dropped_total
             .with_label_values(&[session_id, reason])
             .inc();
+    }
+
+    // Feature 005 - Node cache metrics methods
+
+    /// Record node cache hit
+    pub fn record_cache_hit(&self, node_type: &str) {
+        self.node_cache_hits_total
+            .with_label_values(&[node_type])
+            .inc();
+    }
+
+    /// Record node cache miss
+    pub fn record_cache_miss(&self, node_type: &str) {
+        self.node_cache_misses_total
+            .with_label_values(&[node_type])
+            .inc();
+    }
+
+    /// Update cached nodes count
+    pub fn set_cached_nodes_count(&self, count: i64) {
+        self.cached_nodes.set(count);
     }
 }
 

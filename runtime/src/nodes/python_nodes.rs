@@ -46,6 +46,24 @@ impl NodeFactory for SimplePyTorchNodeFactory {
     }
 }
 
+/// Factory for LFM2AudioNode (Python LFM2 audio generation)
+pub struct LFM2AudioNodeFactory;
+
+impl NodeFactory for LFM2AudioNodeFactory {
+    fn create(&self, _params: Value) -> Result<Box<dyn NodeExecutor>> {
+        let executor = PythonNodeExecutor::new("LFM2AudioNode");
+        Ok(Box::new(executor))
+    }
+
+    fn node_type(&self) -> &str {
+        "LFM2AudioNode"
+    }
+
+    fn is_rust_native(&self) -> bool {
+        false // Python implementation
+    }
+}
+
 /// Create a registry with Python TTS nodes
 ///
 /// This registers Python-based nodes that are available via the
@@ -55,6 +73,8 @@ pub fn create_python_tts_registry() -> NodeRegistry {
 
     // Register KokoroTTSNode as Python implementation
     registry.register_python(Arc::new(KokoroTTSNodeFactory));
+
+    registry.register_python(Arc::new(LFM2AudioNodeFactory));
 
     // Register SimplePyTorchNode for testing
     registry.register_python(Arc::new(SimplePyTorchNodeFactory));

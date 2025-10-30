@@ -125,53 +125,6 @@ class KokoroTTSNode:
             self._initialized = False
             logger.info("Kokoro TTS pipeline cleaned up")
 
-    def _synthesize_all_chunks_sync(self, text: str) -> list:
-        """
-        Synchronously synthesize ALL audio chunks (thread-safe, PyTorch isolated).
-
-        This runs PyTorch operations in a synchronous context to avoid heap corruption.
-        Returns a list of audio chunks instead of concatenating them, enabling streaming.
-
-        Args:
-            text: Text to synthesize
-
-        Returns:
-            List of tuples (graphemes, phonemes, audio_array) for each chunk
-        """
-        logger.info("Synthesizing all audio chunks synchronously in thread (PyTorch-safe)")
-
-        generator = self._create_generator(text)
-        all_chunks = []
-        chunk_count = 0
-
-        for graphemes, phonemes, audio in generator:
-            chunk_count += 1
-
-            # Ensure audio is a numpy array
-            if not isinstance(audio, np.ndarray):
-                audio = np.array(audio, dtype=np.float32)
-
-            # Ensure audio is properly shaped (1D for mono)
-            if audio.ndim == 1:
-                pass  # Mono audio - keep as 1D
-            elif audio.ndim == 2:
-                # If stereo/multi-channel, take first channel
-                audio = audio[:, 0] if audio.shape[1] > 0 else audio.flatten()
-            else:
-                audio = audio.flatten()
-
-            chunk_samples = len(audio)
-            chunk_duration = chunk_samples / self.sample_rate
-            logger.info(
-                f"🎙️ Kokoro chunk {chunk_count}: '{graphemes[:30]}...' "
-                f"-> {chunk_duration:.2f}s ({chunk_samples} samples)"
-            )
-
-            all_chunks.append((graphemes, phonemes, audio))
-
-        logger.info(f"🎙️ Kokoro TTS: Generated {chunk_count} chunks for streaming")
-        return all_chunks
-
     def _synthesize_chunk_sync(self, generator_iter) -> tuple:
         """
         Get the next chunk from Kokoro generator synchronously (thread-safe).

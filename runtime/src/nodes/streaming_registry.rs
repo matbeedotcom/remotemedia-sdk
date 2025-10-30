@@ -96,6 +96,22 @@ impl StreamingNodeFactory for SimplePyTorchNodeFactory {
     }
 }
 
+struct LFM2AudioNodeFactory;
+impl StreamingNodeFactory for LFM2AudioNodeFactory {
+    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = PythonStreamingNode::new(node_id, "LFM2AudioNode", params)?;
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "LFM2AudioNode"
+    }
+
+    fn is_python_node(&self) -> bool {
+        true
+    }
+}
+
 /// Create a default streaming node registry with all built-in nodes registered
 pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
     let mut registry = StreamingNodeRegistry::new();
@@ -108,6 +124,9 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
 
     // Register Python TTS nodes
     registry.register(Arc::new(KokoroTTSNodeFactory));
+
+    // Register Python speech-to-speech nodes
+    registry.register(Arc::new(LFM2AudioNodeFactory));
 
     // Register Python test nodes
     registry.register(Arc::new(SimplePyTorchNodeFactory));

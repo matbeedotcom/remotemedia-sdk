@@ -67,6 +67,10 @@ export default function TTSDemo() {
     cancel,
     clearError,
     retry,
+    replay,
+    canReplay,
+    currentTime,
+    duration,
   } = useTTS({
     autoPlay: true,
     onStart: () => {
@@ -100,11 +104,9 @@ export default function TTSDemo() {
     },
   });
 
-  // Audio player hook
+  // Audio player hook (for buffer status only, playback is handled by useTTS)
   const {
     playbackState,
-    currentTime,
-    duration,
     bufferStatus,
     bufferedAhead,
     pause,
@@ -250,20 +252,22 @@ export default function TTSDemo() {
             )}
 
             {/* Audio Player */}
-            {(status !== 'idle' || playbackState !== 'idle') && (
+            {(status !== 'idle' || playbackState !== 'idle' || canReplay) && (
               <section className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <span>🎵</span>
                   Audio Playback
                 </h2>
                 <AudioPlayer
-                  playbackState={playbackState}
+                  playbackState={status as any}
                   currentTime={currentTime}
                   duration={duration}
                   bufferStatus={bufferStatus}
                   bufferedAhead={bufferedAhead}
                   onPause={handlePause}
                   onStop={handleStop}
+                  onReplay={replay}
+                  canReplay={canReplay}
                 />
               </section>
             )}

@@ -96,10 +96,22 @@ export async function POST(request: NextRequest) {
         }
 
         let totalSamples = 0;
+        let latestMetrics: any = null;
 
         // Stream the pipeline and send raw audio chunks
         for await (const chunk of client.streamPipeline(manifest, textDataGenerator())) {
           console.log(`[API] Chunk keys:`, Object.keys(chunk));
+
+          // Store latest metrics
+          if (chunk.metrics) {
+            latestMetrics = chunk.metrics;
+            console.log(`[API] Received metrics:`, {
+              cacheHits: chunk.metrics.cacheHits,
+              cacheMisses: chunk.metrics.cacheMisses,
+              cachedNodesCount: chunk.metrics.cachedNodesCount,
+              cacheHitRate: chunk.metrics.cacheHitRate,
+            });
+          }
 
           if (chunk.audioOutput) {
             // Send raw audio buffer directly

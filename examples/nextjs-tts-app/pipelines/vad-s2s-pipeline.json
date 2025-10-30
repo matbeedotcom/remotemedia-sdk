@@ -1,0 +1,85 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "vad-s2s-streaming",
+    "description": "VAD-based continuous speech-to-speech pipeline with LFM2-Audio",
+    "author": "RemoteMedia SDK",
+    "createdAt": "2025-01-30T00:00:00Z"
+  },
+  "nodes": [
+    {
+      "id": "audio_transform",
+      "nodeType": "AudioTransform",
+      "params": {
+        "output_sample_rate": 24000,
+        "output_channels": 1
+      },
+      "isStreaming": true,
+      "description": "Resample and convert audio to 24kHz mono"
+    },
+    {
+      "id": "vad",
+      "nodeType": "VoiceActivityDetector",
+      "params": {
+        "frame_duration_ms": 30,
+        "energy_threshold": 0.02,
+        "speech_threshold": 0.3,
+        "filter_mode": false,
+        "include_metadata": true
+      },
+      "isStreaming": true,
+      "description": "Detect speech segments in audio stream"
+    },
+    {
+      "id": "vad_buffer",
+      "nodeType": "VADTriggeredBuffer",
+      "params": {
+        "min_speech_duration_s": 0.8,
+        "max_speech_duration_s": 10.0,
+        "silence_duration_s": 1.0,
+        "sample_rate": 24000
+      },
+      "isStreaming": true,
+      "description": "Buffer complete speech utterances"
+    },
+    {
+      "id": "lfm2_audio",
+      "nodeType": "LFM2AudioNode",
+      "params": {
+        "node_id": "lfm2_audio",
+        "hf_repo": "LiquidAI/LFM2-Audio-1.5B",
+        "system_prompt": "You are a helpful AI assistant. Respond naturally and conversationally.",
+        "audio_temperature": 1.0,
+        "audio_top_k": 4,
+        "max_new_tokens": 512,
+        "sample_rate": 24000,
+        "session_timeout_minutes": 30
+      },
+      "isStreaming": true,
+      "description": "Generate conversational responses with text and audio"
+    }
+  ],
+  "connections": [
+    {
+      "from": "audio_transform",
+      "to": "vad",
+      "description": "Resampled audio to VAD"
+    },
+    {
+      "from": "vad",
+      "to": "vad_buffer",
+      "description": "VAD-annotated audio to buffer"
+    },
+    {
+      "from": "vad_buffer",
+      "to": "lfm2_audio",
+      "description": "Complete speech segments to LFM2-Audio"
+    }
+  ],
+  "config": {
+    "execution_mode": "streaming",
+    "enable_caching": true,
+    "cache_ttl_seconds": 600,
+    "max_concurrent_sessions": 100
+  }
+}
