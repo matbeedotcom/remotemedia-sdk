@@ -14,7 +14,7 @@ import type {
   VoiceConfig,
 } from '@/types/tts';
 import { DEFAULT_VOICE_CONFIG, validateTTSText } from '@/types/tts';
-import { streamTTS } from '@/lib/streaming-api-client';
+import { streamTTSRealtime } from '@/lib/realtime-streaming-client';
 
 export interface UseTTSOptions {
   /** Initial voice configuration */
@@ -79,18 +79,18 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
     if (!audioRef.current) {
       audioRef.current = new Audio();
       audioRef.current.addEventListener('play', () => {
-        console.log('[useTTS] Playback started');
+        console.log(`[${new Date().toISOString()}] [useTTS] Playback started`);
         setStatus('playing');
       });
       audioRef.current.addEventListener('ended', () => {
-        console.log('[useTTS] Playback ended');
+        console.log(`[${new Date().toISOString()}] [useTTS] Playback ended`);
         setStatus('completed');
         setCurrentRequest(prev =>
           prev ? { ...prev, status: 'completed', updatedAt: new Date() } : null
         );
       });
       audioRef.current.addEventListener('error', (e) => {
-        console.error('[useTTS] Playback error:', e);
+        console.error(`[${new Date().toISOString()}] [useTTS] Playback error:`, e);
         const playbackError: TTSError = {
           code: 'PLAYBACK_ERROR',
           message: 'Audio playback failed',
@@ -152,11 +152,11 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
         // Call start callback
         onStart?.(requestId);
 
-        // Stream TTS audio from API
-        console.log('[useTTS] Starting TTS stream for request:', requestId);
+        // Stream TTS audio from API with real-time playback
+        console.log(`[${new Date().toISOString()}] [useTTS] Starting real-time TTS stream for request:`, requestId);
         setStatus('streaming');
 
-        const audioUrl = await streamTTS(
+        const audio = await streamTTSRealtime(
           {
             text,
             language: voiceConfig.language,
@@ -165,17 +165,20 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
           },
           {
             onStart: () => {
-              console.log('[useTTS] Stream started');
+              console.log(`[${new Date().toISOString()}] [useTTS] Stream started`);
+            },
+            onFirstChunk: () => {
+              console.log(`[${new Date().toISOString()}] [useTTS] First chunk received, playback starting`);
+              setStatus('playing');
             },
             onProgress: (bytesReceived) => {
-              console.log('[useTTS] Bytes received:', bytesReceived);
+              console.log(`[${new Date().toISOString()}] [useTTS] Bytes received:`, bytesReceived);
             },
             onComplete: () => {
-              console.log('[useTTS] Stream completed');
-              // Audio will start playing automatically via audio element
+              console.log(`[${new Date().toISOString()}] [useTTS] Stream completed`);
             },
             onError: (streamError) => {
-              console.error('[useTTS] Stream error:', streamError);
+              console.error(`[${new Date().toISOString()}] [useTTS] Stream error:`, streamError);
               const ttsError: TTSError = {
                 code: 'TTS_STREAM_ERROR',
                 message: streamError.message || 'An error occurred during synthesis',
@@ -195,16 +198,39 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
           }
         );
 
-        // Set audio source and play if autoPlay is enabled
+        // Replace the existing audio element with the new streaming one
         if (audioRef.current) {
-          audioRef.current.src = audioUrl;
-          if (autoPlay) {
-            await audioRef.current.play();
-          }
+          audioRef.current.pause();
+          audioRef.current.src = '';
         }
+        audioRef.current = audio;
+
+        // Add event listeners to the new audio element
+        audio.addEventListener('play', () => {
+          console.log(`[${new Date().toISOString()}] [useTTS] Playback started`);
+          setStatus('playing');
+        });
+        audio.addEventListener('ended', () => {
+          console.log(`[${new Date().toISOString()}] [useTTS] Playback ended`);
+          setStatus('completed');
+          setCurrentRequest(prev =>
+            prev ? { ...prev, status: 'completed', updatedAt: new Date() } : null
+          );
+          onComplete?.(requestId);
+        });
+        audio.addEventListener('error', (e) => {
+          console.error(`[${new Date().toISOString()}] [useTTS] Playback error:`, e);
+          const playbackError: TTSError = {
+            code: 'PLAYBACK_ERROR',
+            message: 'Audio playback failed',
+            timestamp: new Date(),
+          };
+          setError(playbackError);
+          setStatus('failed');
+        });
 
       } catch (err) {
-        console.error('[useTTS] Synthesis error:', err);
+        console.error(`[${new Date().toISOString()}] [useTTS] Synthesis error:`, err);
         const synthesisError: TTSError = {
           code: 'GRPC_CONNECTION_FAILED',
           message: err instanceof Error ? err.message : 'Failed to connect to TTS service',

@@ -160,15 +160,70 @@ impl CPythonNodeExecutor {
             let is_coroutine = inspect.call_method1("iscoroutine", (&result,))?.extract::<bool>()?;
 
             if is_coroutine {
-                tracing::info!("Initialize method is async, awaiting it...");
-                // Create a new event loop for this thread and run the coroutine
+                tracing::info!("Initialize method is async, awaiting it with thread isolation...");
+
+                // CRITICAL WORKAROUND: PyTorch and other libraries cause heap corruption when
+                // their operations execute within an async event loop context on Windows.
+                // We MUST run the coroutine in a completely isolated thread pool.
+
+                let code = std::ffi::CString::new(
+                    r#"
+import asyncio
+
+def _run_init_in_thread(coro):
+    """Run async initialization in a separate thread to isolate from async context.
+
+    CRITICAL: PyTorch operations cause heap corruption when executed within
+    an event loop context on Windows. This function creates a new thread with
+    its own event loop, completely isolating PyTorch from the caller's context.
+    """
+    # Create a new event loop for this thread
+    new_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(new_loop)
+
+    try:
+        # Run the coroutine in this thread's event loop
+        result = new_loop.run_until_complete(coro)
+        return result
+    finally:
+        # Clean up the thread's event loop
+        new_loop.close()
+"#,
+                )
+                .unwrap();
+
+                py.run(&code, None, None)?;
+
+                let locals_code = std::ffi::CString::new("locals()").unwrap();
+                let locals = py.eval(&locals_code, None, None)?;
+                let run_init_fn = locals.get_item("_run_init_in_thread")?;
+
+                // Import asyncio for to_thread
                 let asyncio = py.import("asyncio")?;
 
-                // On Windows, use SelectorEventLoop instead of ProactorEventLoop
-                // ProactorEventLoop has issues with reuse and can cause heap corruption
+                // Create a coroutine that runs the initialization in a thread
+                let thread_runner_code = std::ffi::CString::new(
+                    r#"
+import asyncio
+
+async def _run_with_thread_isolation(run_fn, coro):
+    """Wrapper that runs initialization in thread pool."""
+    return await asyncio.to_thread(run_fn, coro)
+"#,
+                )
+                .unwrap();
+
+                py.run(&thread_runner_code, None, None)?;
+                let locals2 = py.eval(&locals_code, None, None)?;
+                let thread_wrapper_fn = locals2.get_item("_run_with_thread_isolation")?;
+
+                // Create the wrapper coroutine
+                let wrapped_coro = thread_wrapper_fn.call1((run_init_fn, result))?;
+
+                // Create event loop to run the wrapper
                 #[cfg(target_os = "windows")]
                 let new_loop = {
-                    tracing::info!("Windows detected: using SelectorEventLoop to avoid ProactorEventLoop issues");
+                    tracing::info!("Windows: creating SelectorEventLoop for initialization wrapper");
                     py.run(&std::ffi::CString::new(
                         "import asyncio; selector_loop = asyncio.SelectorEventLoop()"
                     ).unwrap(), None, None)?;
@@ -186,12 +241,10 @@ impl CPythonNodeExecutor {
                 let loop_type = new_loop.get_type().name().map(|s| s.to_string()).unwrap_or_else(|_| "unknown".to_string());
                 tracing::info!("Stored event loop for future use (type: {})", loop_type);
 
-                // Run the coroutine and handle all exceptions including SystemExit
-                // We need to catch SystemExit because some Python libraries (like spaCy) call sys.exit()
-                // which would otherwise kill the entire Rust process
-                match new_loop.call_method1("run_until_complete", (result,)) {
+                // Run the wrapper coroutine (which runs actual init in thread pool)
+                match new_loop.call_method1("run_until_complete", (wrapped_coro,)) {
                     Ok(_) => {
-                        tracing::info!("Async initialize completed successfully");
+                        tracing::info!("Async initialize completed successfully (thread-isolated)");
                     }
                     Err(e) => {
                         // Check if this is a SystemExit exception
@@ -1085,7 +1138,7 @@ def _run_with_existing_loop(agen, loop):
     /// It creates the generator and calls the callback for each yielded chunk as it arrives.
     pub async fn process_runtime_data_streaming<F>(&mut self, input: RuntimeData, mut callback: F) -> Result<usize>
     where
-        F: FnMut(RuntimeData) -> Result<()>,
+        F: FnMut(RuntimeData) -> Result<()> + Send,
     {
         tracing::info!("========================================");
         tracing::info!("process_runtime_data_all_chunks called for node: {}", self.node_type);
@@ -1099,7 +1152,8 @@ def _run_with_existing_loop(agen, loop):
             )));
         }
 
-        Python::with_gil(|py| -> Result<usize> {
+        // Create the generator and helper function, then release GIL
+        let (process_result_py, event_loop_py, get_next_fn_py) = Python::with_gil(|py| -> Result<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
             let instance = self.instance.as_ref()
                 .ok_or_else(|| Error::Execution("Python node not initialized".to_string()))?
                 .bind(py);
@@ -1223,16 +1277,26 @@ def _get_next_with_loop(agen, loop):
                     Error::Execution(format!("Failed to get next function: {}", e))
                 })?;
 
-            tracing::info!("Iterating generator and calling callback for each chunk");
+            // Return Py objects that we can use across GIL release/acquire
+            Ok((process_result.unbind(), event_loop.unbind(), get_next_fn.unbind()))
+        })?;
 
-            let mut chunk_count = 0;
+        // Now iterate with GIL release between chunks
+        tracing::info!("Iterating generator and calling callback for each chunk");
 
-            // Iterate generator, calling callback for each chunk as it arrives
-            loop {
-                let result_tuple = get_next_fn.call1((process_result.clone(), &event_loop))
+        let mut chunk_count = 0;
+
+        // Iterate generator, calling callback for each chunk as it arrives
+        // IMPORTANT: We release and re-acquire GIL for each iteration
+        loop {
+            // Acquire GIL for this iteration
+            let (has_value, runtime_data_opt) = Python::with_gil(|py| -> Result<(bool, Option<RuntimeData>)> {
+                let process_result = process_result_py.bind(py);
+                let event_loop = event_loop_py.bind(py);
+                let get_next_fn = get_next_fn_py.bind(py);
+                let result_tuple = get_next_fn.call1((process_result, &event_loop))
                     .map_err(|e| {
                         tracing::error!("Failed to get next item: {}", e);
-                        let _ = event_loop.call_method0("close");
                         Error::Execution(format!("Failed to get next item: {}", e))
                     })?;
 
@@ -1240,42 +1304,38 @@ def _get_next_with_loop(agen, loop):
                 let has_value: bool = result_tuple.get_item(0)
                     .and_then(|v| v.extract())
                     .map_err(|e| {
-                        let _ = event_loop.call_method0("close");
                         Error::Execution(format!("Failed to extract has_value: {}", e))
                     })?;
 
                 if !has_value {
                     tracing::info!("Generator exhausted after {} chunks", chunk_count);
-                    break;
+                    return Ok((false, None));
                 }
 
-                chunk_count += 1;
                 let py_item = result_tuple.get_item(1)
                     .map_err(|e| {
-                        let _ = event_loop.call_method0("close");
                         Error::Execution(format!("Failed to get item: {}", e))
                     })?;
 
-                tracing::info!("Processing chunk {} from generator", chunk_count);
+                tracing::info!("Processing chunk {} from generator", chunk_count + 1);
 
                 // Extract RuntimeData using same logic as process_runtime_data
                 let data_type: String = py_item.call_method0("data_type")
                     .and_then(|v| v.extract())
                     .map_err(|e| {
-                        let _ = event_loop.call_method0("close");
-                        Error::Execution(format!("Chunk {}: failed to get data_type: {}", chunk_count, e))
+                        Error::Execution(format!("Chunk {}: failed to get data_type: {}", chunk_count + 1, e))
                     })?;
 
                 let runtime_data = match data_type.as_str() {
                     "audio" => {
                         let audio_tuple_opt = py_item.call_method0("as_audio")
-                            .map_err(|e| Error::Execution(format!("Chunk {}: failed to call as_audio(): {}", chunk_count, e)))?;
+                            .map_err(|e| Error::Execution(format!("Chunk {}: failed to call as_audio(): {}", chunk_count + 1, e)))?;
 
                         let audio_tuple_opt: Option<(Vec<u8>, u32, u32, String, u64)> = audio_tuple_opt.extract()
-                            .map_err(|e| Error::Execution(format!("Chunk {}: failed to extract audio tuple: {}", chunk_count, e)))?;
+                            .map_err(|e| Error::Execution(format!("Chunk {}: failed to extract audio tuple: {}", chunk_count + 1, e)))?;
 
                         let (samples, sample_rate, channels, format_str, num_samples) = audio_tuple_opt
-                            .ok_or_else(|| Error::Execution(format!("Chunk {}: as_audio() returned None", chunk_count)))?;
+                            .ok_or_else(|| Error::Execution(format!("Chunk {}: as_audio() returned None", chunk_count + 1)))?;
 
                         let format = match format_str.as_str() {
                             "f32" => 0,
@@ -1285,7 +1345,7 @@ def _get_next_with_loop(agen, loop):
                         };
 
                         tracing::info!("Chunk {}: audio with {} samples, {}Hz, {} channels",
-                            chunk_count, num_samples, sample_rate, channels);
+                            chunk_count + 1, num_samples, sample_rate, channels);
 
                         RuntimeData::Audio(crate::grpc_service::generated::AudioBuffer {
                             samples,
@@ -1298,30 +1358,42 @@ def _get_next_with_loop(agen, loop):
                     "text" => {
                         let text_opt: Option<String> = py_item.call_method0("as_text")
                             .and_then(|v| v.extract())
-                            .map_err(|e| Error::Execution(format!("Chunk {}: failed to extract text: {}", chunk_count, e)))?;
+                            .map_err(|e| Error::Execution(format!("Chunk {}: failed to extract text: {}", chunk_count + 1, e)))?;
 
-                        let text = text_opt.ok_or_else(|| Error::Execution(format!("Chunk {}: as_text() returned None", chunk_count)))?;
+                        let text = text_opt.ok_or_else(|| Error::Execution(format!("Chunk {}: as_text() returned None", chunk_count + 1)))?;
                         RuntimeData::Text(text)
                     }
                     _ => {
-                        let _ = event_loop.call_method0("close");
-                        return Err(Error::Execution(format!("Chunk {}: unsupported data type: {}", chunk_count, data_type)));
+                        return Err(Error::Execution(format!("Chunk {}: unsupported data type: {}", chunk_count + 1, data_type)));
                     }
                 };
 
-                // Call the callback with this chunk immediately
-                tracing::info!("Calling callback for chunk {}", chunk_count);
-                callback(runtime_data).map_err(|e| {
-                    let _ = event_loop.call_method0("close");
-                    e
-                })?;
-                tracing::info!("Callback completed for chunk {}", chunk_count);
+                Ok((true, Some(runtime_data)))
+            })?;
+
+            // Check if generator is exhausted
+            if !has_value {
+                break;
             }
 
-            tracing::info!("Successfully processed {} chunks via callback", chunk_count);
-            tracing::info!("========================================");
-            Ok(chunk_count)
-        })
+            // We now have the chunk outside of GIL context
+            if let Some(runtime_data) = runtime_data_opt {
+                chunk_count += 1;
+                tracing::info!("Calling callback for chunk {} (GIL released)", chunk_count);
+
+                // Call callback WITHOUT holding GIL - this allows Tokio to run
+                callback(runtime_data)?;
+
+                tracing::info!("Callback completed for chunk {}", chunk_count);
+
+                // Yield to allow Tokio scheduler to run the send task
+                tokio::task::yield_now().await;
+            }
+        }
+
+        tracing::info!("Successfully processed {} chunks via callback", chunk_count);
+        tracing::info!("========================================");
+        Ok(chunk_count)
     }
 }
 
