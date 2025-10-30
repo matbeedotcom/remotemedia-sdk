@@ -18,10 +18,10 @@ import asyncio
 
 # Import RuntimeData bindings
 if TYPE_CHECKING:
-    from remotemedia.runtime_data import RuntimeData
+    from remotemedia_runtime.runtime_data import RuntimeData
 
 try:
-    from remotemedia.runtime_data import RuntimeData, numpy_to_audio, audio_to_numpy
+    from remotemedia_runtime.runtime_data import RuntimeData, numpy_to_audio, audio_to_numpy
     RUNTIME_DATA_AVAILABLE = True
 except ImportError:
     RUNTIME_DATA_AVAILABLE = False
@@ -31,6 +31,15 @@ except ImportError:
     logging.warning("RuntimeData bindings not available. Using fallback implementation.")
 
 logger = logging.getLogger(__name__)
+
+# Configure logger to output to console
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    logger.setLevel(logging.INFO)
 
 
 class KokoroTTSNode:
@@ -51,7 +60,7 @@ class KokoroTTSNode:
         lang_code: str = 'a',
         voice: str = 'af_heart',
         speed: float = 1.0,
-        split_pattern: str = r'\n+',
+        split_pattern: str = r'[.!?,;:\n]+',
         sample_rate: int = 24000,
         stream_chunks: bool = True,
         **kwargs
@@ -93,10 +102,10 @@ class KokoroTTSNode:
 
             logger.info(f"Initializing Kokoro TTS with lang_code='{self.lang_code}', voice='{self.voice}'")
 
-            # Initialize the pipeline in a thread to avoid blocking
-            self._pipeline = await asyncio.to_thread(
-                lambda: KPipeline(lang_code=self.lang_code)
-            )
+            # Initialize the pipeline synchronously
+            # WORKAROUND: Kokoro's PyTorch operations cause heap corruption when called
+            # from Rust/PyO3 event loop on Windows. We initialize here which is safe.
+            self._pipeline = KPipeline(lang_code=self.lang_code)
 
             self._initialized = True
             logger.info("Kokoro TTS pipeline initialized successfully")
@@ -116,15 +125,105 @@ class KokoroTTSNode:
             self._initialized = False
             logger.info("Kokoro TTS pipeline cleaned up")
 
+    def _synthesize_all_chunks_sync(self, text: str) -> list:
+        """
+        Synchronously synthesize ALL audio chunks (thread-safe, PyTorch isolated).
+
+        This runs PyTorch operations in a synchronous context to avoid heap corruption.
+        Returns a list of audio chunks instead of concatenating them, enabling streaming.
+
+        Args:
+            text: Text to synthesize
+
+        Returns:
+            List of tuples (graphemes, phonemes, audio_array) for each chunk
+        """
+        logger.info("Synthesizing all audio chunks synchronously in thread (PyTorch-safe)")
+
+        generator = self._create_generator(text)
+        all_chunks = []
+        chunk_count = 0
+
+        for graphemes, phonemes, audio in generator:
+            chunk_count += 1
+
+            # Ensure audio is a numpy array
+            if not isinstance(audio, np.ndarray):
+                audio = np.array(audio, dtype=np.float32)
+
+            # Ensure audio is properly shaped (1D for mono)
+            if audio.ndim == 1:
+                pass  # Mono audio - keep as 1D
+            elif audio.ndim == 2:
+                # If stereo/multi-channel, take first channel
+                audio = audio[:, 0] if audio.shape[1] > 0 else audio.flatten()
+            else:
+                audio = audio.flatten()
+
+            chunk_samples = len(audio)
+            chunk_duration = chunk_samples / self.sample_rate
+            logger.info(
+                f"🎙️ Kokoro chunk {chunk_count}: '{graphemes[:30]}...' "
+                f"-> {chunk_duration:.2f}s ({chunk_samples} samples)"
+            )
+
+            all_chunks.append((graphemes, phonemes, audio))
+
+        logger.info(f"🎙️ Kokoro TTS: Generated {chunk_count} chunks for streaming")
+        return all_chunks
+
+    def _synthesize_chunk_sync(self, generator_iter) -> tuple:
+        """
+        Get the next chunk from Kokoro generator synchronously (thread-safe).
+
+        This runs in a thread to isolate PyTorch operations.
+
+        Args:
+            generator_iter: Iterator from Kokoro pipeline
+
+        Returns:
+            Tuple of (graphemes, phonemes, audio_array) or None if exhausted
+        """
+        try:
+            graphemes, phonemes, audio = next(generator_iter)
+
+            # Ensure audio is a numpy array
+            if not isinstance(audio, np.ndarray):
+                audio = np.array(audio, dtype=np.float32)
+
+            # Ensure audio is properly shaped (1D for mono)
+            if audio.ndim == 1:
+                pass  # Mono audio - keep as 1D
+            elif audio.ndim == 2:
+                # If stereo/multi-channel, take first channel
+                audio = audio[:, 0] if audio.shape[1] > 0 else audio.flatten()
+            else:
+                audio = audio.flatten()
+
+            chunk_samples = len(audio)
+            chunk_duration = chunk_samples / self.sample_rate
+            logger.info(
+                f"🎙️ Kokoro chunk: '{graphemes[:30]}...' "
+                f"-> {chunk_duration:.2f}s ({chunk_samples} samples)"
+            )
+
+            return (graphemes, phonemes, audio)
+        except StopIteration:
+            return None
+
     async def process(self, data: RuntimeData) -> AsyncGenerator[RuntimeData, None]:
         """
-        Process text input and generate speech audio using RuntimeData.
+        Process text input and generate speech audio chunks incrementally.
+
+        ARCHITECTURE: To avoid heap corruption with PyTorch on Windows, we run EACH
+        PyTorch operation (next() call on Kokoro generator) in a thread pool. This
+        allows true streaming: chunks are yielded as soon as Kokoro generates them.
 
         Args:
             data: RuntimeData containing text to synthesize (RuntimeData.Text)
 
         Yields:
-            RuntimeData.Audio chunks containing synthesized speech
+            RuntimeData.Audio containing synthesized speech chunks
 
         Raises:
             ValueError: If input is not RuntimeData.Text
@@ -146,43 +245,53 @@ class KokoroTTSNode:
             logger.warning("Empty text input, skipping synthesis")
             return
 
-        logger.info(f"🎙️ Kokoro TTS: Starting synthesis for text: '{text[:100]}{'...' if len(text) > 100 else ''}'")
+        logger.info(f"🎙️ Kokoro TTS: Starting synthesis for: '{text[:100]}{'...' if len(text) > 100 else ''}'")
 
-        # Synthesize audio and yield chunks
-        chunk_count = 0
-        total_audio_duration = 0.0
+        # Create the Kokoro generator (this is safe, doesn't run PyTorch yet)
+        generator = self._create_generator(text)
 
-        async for audio_data in self._synthesize_streaming(text):
-            chunk_count += 1
+        # Now iterate the generator, running EACH next() call in a thread
+        import asyncio
+        chunk_idx = 0
+        total_samples = 0
 
-            # audio_data is already RuntimeData.Audio from _synthesize_streaming
+        while True:
+            # Get next chunk from generator in thread (PyTorch-safe)
+            chunk_data = await asyncio.to_thread(self._synthesize_chunk_sync, generator)
 
-            # Calculate duration for logging
-            audio_array = audio_to_numpy(audio_data)
-            chunk_duration = len(audio_array) / self.sample_rate
-            total_audio_duration += chunk_duration
+            if chunk_data is None:
+                # Generator exhausted
+                break
+
+            chunk_idx += 1
+            graphemes, phonemes, audio = chunk_data
+
+            # Convert to RuntimeData.Audio
+            audio_runtime_data = numpy_to_audio(audio, self.sample_rate, channels=1)
+
+            total_samples += len(audio)
+            chunk_duration = len(audio) / self.sample_rate
+            total_duration = total_samples / self.sample_rate
 
             logger.info(
-                f"🎙️ Kokoro TTS: Streaming chunk {chunk_count}, "
-                f"duration={chunk_duration:.2f}s, total={total_audio_duration:.2f}s"
+                f"🎙️ Kokoro TTS: Yielding chunk {chunk_idx} "
+                f"({chunk_duration:.2f}s) | Total: {total_duration:.2f}s"
             )
 
-            yield audio_data
+            # Yield immediately!
+            yield audio_runtime_data
 
-        logger.info(
-            f"🎙️ Kokoro TTS: Completed synthesis - {chunk_count} chunks, "
-            f"total={total_audio_duration:.2f}s"
-        )
+        logger.info(f"🎙️ Kokoro TTS: Streaming complete - {chunk_idx} chunks, {total_samples} samples ({total_duration:.2f}s)")
 
     async def _synthesize_streaming(self, text: str) -> AsyncGenerator[RuntimeData, None]:
         """
-        Generate audio chunks for the given text using RuntimeData.
+        Generate audio chunks for the given text.
 
         Args:
             text: Text to synthesize
 
         Yields:
-            RuntimeData.Audio containing audio chunks
+            RuntimeData.Audio containing synthesized speech chunks
         """
         try:
             logger.info(
@@ -190,32 +299,40 @@ class KokoroTTSNode:
                 f"'{text[:50]}{'...' if len(text) > 50 else ''}'"
             )
 
-            # Run synthesis in a thread to avoid blocking
-            generator = await asyncio.to_thread(
-                self._create_generator, text
-            )
+            # WORKAROUND FOR WINDOWS HEAP CORRUPTION:
+            # Calling Kokoro's generator directly from async context causes heap corruption
+            # on Windows when called through Rust/PyO3. Solution: Call Kokoro synchronously
+            # OUTSIDE the async generator, collect all results, then yield them.
 
-            # Process each generated chunk
-            chunk_count = 0
-            total_samples = 0
+            logger.info("Synthesizing ALL audio synchronously (Windows workaround)")
+
+            # Call Kokoro synchronously and collect all chunks
+            generator = self._create_generator(text)
+            all_audio_chunks = []
 
             for i, (graphemes, phonemes, audio) in enumerate(generator):
-                chunk_count += 1
-
                 # Ensure audio is a numpy array
                 if not isinstance(audio, np.ndarray):
                     audio = np.array(audio, dtype=np.float32)
 
                 # Ensure audio is properly shaped (1D for mono, 2D for multi-channel)
                 if audio.ndim == 1:
-                    # Mono audio - keep as 1D
-                    pass
+                    pass  # Mono audio - keep as 1D
                 elif audio.ndim == 2:
-                    # Multi-channel - keep as is
-                    pass
+                    pass  # Multi-channel - keep as is
                 else:
-                    # Unexpected shape - flatten
-                    audio = audio.flatten()
+                    audio = audio.flatten()  # Unexpected shape - flatten
+
+                all_audio_chunks.append((graphemes, phonemes, audio))
+
+            logger.info(f"Kokoro generated {len(all_audio_chunks)} chunks, now yielding them")
+
+            # Now yield the pre-generated chunks through the async generator
+            chunk_count = 0
+            total_samples = 0
+
+            for graphemes, phonemes, audio in all_audio_chunks:
+                chunk_count += 1
 
                 chunk_samples = len(audio) if audio.ndim == 1 else audio.shape[0]
                 total_samples += chunk_samples
@@ -228,16 +345,64 @@ class KokoroTTSNode:
                     f"-> {chunk_duration:.2f}s ({chunk_samples} samples) | Total: {total_duration:.2f}s"
                 )
 
-                # Convert numpy array to RuntimeData.Audio
-                # Assume mono output (channels=1) - adjust if Kokoro outputs stereo
-                audio_data = numpy_to_audio(audio, self.sample_rate, channels=1)
+                # Convert numpy audio to RuntimeData.Audio BEFORE yielding
+                # This is safe now that we've fixed the event loop close issue
+                audio_runtime_data = numpy_to_audio(audio, self.sample_rate, channels=1)
 
-                yield audio_data
+                yield audio_runtime_data
 
             logger.info(
                 f"🎙️ Kokoro TTS: Synthesis complete - {chunk_count} chunks, "
                 f"{total_duration:.2f}s total audio"
             )
+            return
+
+            # # Original streaming code - causes heap corruption on Windows
+            # generator = self._create_generator(text)
+            #
+            # # Process each generated chunk
+            # chunk_count = 0
+            # total_samples = 0
+            #
+            # for i, (graphemes, phonemes, audio) in enumerate(generator):
+            #     chunk_count += 1
+            #
+            #     # Ensure audio is a numpy array
+            #     if not isinstance(audio, np.ndarray):
+            #         audio = np.array(audio, dtype=np.float32)
+            #
+            #     # Ensure audio is properly shaped (1D for mono, 2D for multi-channel)
+            #     if audio.ndim == 1:
+            #         # Mono audio - keep as 1D
+            #         pass
+            #     elif audio.ndim == 2:
+            #         # Multi-channel - keep as is
+            #         pass
+            #     else:
+            #         # Unexpected shape - flatten
+            #         audio = audio.flatten()
+            #
+            #     chunk_samples = len(audio) if audio.ndim == 1 else audio.shape[0]
+            #     total_samples += chunk_samples
+            #     chunk_duration = chunk_samples / self.sample_rate
+            #     total_duration = total_samples / self.sample_rate
+            #
+            #     logger.info(
+            #         f"🎙️ Kokoro TTS: Chunk {chunk_count}: "
+            #         f"'{graphemes[:30]}{'...' if len(graphemes) > 30 else ''}' "
+            #         f"-> {chunk_duration:.2f}s ({chunk_samples} samples) | Total: {total_duration:.2f}s"
+            #     )
+            #
+            #     # Convert numpy array to RuntimeData.Audio
+            #     # Assume mono output (channels=1) - adjust if Kokoro outputs stereo
+            #     audio_data = numpy_to_audio(audio, self.sample_rate, channels=1)
+            #
+            #     yield audio_data
+            #
+            # logger.info(
+            #     f"🎙️ Kokoro TTS: Synthesis complete - {chunk_count} chunks, "
+            #     f"{total_duration:.2f}s total audio"
+            # )
 
         except Exception as e:
             logger.error(f"Error during Kokoro TTS synthesis: {e}")

@@ -18,9 +18,8 @@ use crate::grpc_service::{
 };
 use crate::executor::Executor;
 use std::sync::Arc;
-use tonic::transport::Server;
+use tonic::{service::LayerExt as _, transport::Server};
 use tracing::{info, warn};
-use tower_http::cors::{CorsLayer, Any};
 
 /// gRPC server builder with middleware
 pub struct GrpcServer {
@@ -78,12 +77,26 @@ impl GrpcServer {
             Arc::clone(&self.metrics),
         );
 
-        // Configure CORS for gRPC-Web browser requests
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any)
-            .expose_headers(Any);
+        // Wrap services with gRPC-Web and CORS support using tower ServiceBuilder
+        let execution_service = tower::ServiceBuilder::new()
+            .layer(tower_http::cors::CorsLayer::permissive())
+            .layer(tonic_web::GrpcWebLayer::new())
+            .into_inner()
+            .named_layer(
+                PipelineExecutionServiceServer::new(execution_service)
+                    .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
+                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+            );
+
+        let streaming_service = tower::ServiceBuilder::new()
+            .layer(tower_http::cors::CorsLayer::permissive())
+            .layer(tonic_web::GrpcWebLayer::new())
+            .into_inner()
+            .named_layer(
+                StreamingPipelineServiceServer::new(streaming_service)
+                    .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
+                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+            );
 
         // T037: Configure connection pooling and HTTP/2 keepalive for concurrent clients
         let server = Server::builder()
@@ -97,25 +110,12 @@ impl GrpcServer {
             .http2_keepalive_timeout(Some(std::time::Duration::from_secs(10)))
             // Connection timeouts
             .timeout(std::time::Duration::from_secs(60))
-            // Add gRPC-Web support
+            // Enable HTTP/1.1 for gRPC-Web
             .accept_http1(true)
             // Tracing
             .trace_fn(|_| tracing::info_span!("grpc_request"))
-            .layer(cors)
-            .add_service(
-                tonic_web::enable(
-                    PipelineExecutionServiceServer::new(execution_service)
-                        .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
-                        .max_encoding_message_size(10 * 1024 * 1024) // 10MB
-                )
-            )
-            .add_service(
-                tonic_web::enable(
-                    StreamingPipelineServiceServer::new(streaming_service)
-                        .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
-                        .max_encoding_message_size(10 * 1024 * 1024) // 10MB
-                )
-            )
+            .add_service(execution_service)
+            .add_service(streaming_service)
             ;
 
         // Graceful shutdown on Ctrl+C

@@ -28,6 +28,24 @@ impl NodeFactory for KokoroTTSNodeFactory {
     }
 }
 
+/// Factory for SimplePyTorchNode (minimal PyTorch test)
+pub struct SimplePyTorchNodeFactory;
+
+impl NodeFactory for SimplePyTorchNodeFactory {
+    fn create(&self, _params: Value) -> Result<Box<dyn NodeExecutor>> {
+        let executor = PythonNodeExecutor::new("SimplePyTorchNode");
+        Ok(Box::new(executor))
+    }
+
+    fn node_type(&self) -> &str {
+        "SimplePyTorchNode"
+    }
+
+    fn is_rust_native(&self) -> bool {
+        false // Python implementation
+    }
+}
+
 /// Create a registry with Python TTS nodes
 ///
 /// This registers Python-based nodes that are available via the
@@ -37,6 +55,9 @@ pub fn create_python_tts_registry() -> NodeRegistry {
 
     // Register KokoroTTSNode as Python implementation
     registry.register_python(Arc::new(KokoroTTSNodeFactory));
+
+    // Register SimplePyTorchNode for testing
+    registry.register_python(Arc::new(SimplePyTorchNodeFactory));
 
     registry
 }

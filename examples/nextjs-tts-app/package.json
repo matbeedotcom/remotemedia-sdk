@@ -9,11 +9,15 @@
     "start": "next start",
     "lint": "next lint",
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,json,css,md}\"",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "generate:protos": "protoc --ts_out src/generated --ts_opt generate_dependencies --proto_path ../../runtime/protos ../../runtime/protos/*.proto"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.10.0",
     "@grpc/proto-loader": "^0.7.13",
+    "@protobuf-ts/grpcweb-transport": "^2.11.1",
+    "@protobuf-ts/runtime": "^2.11.1",
+    "@protobuf-ts/runtime-rpc": "^2.11.1",
     "next": "^16.0.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -21,6 +25,7 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@protobuf-ts/plugin": "^2.11.1",
     "@types/node": "^20.11.0",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",

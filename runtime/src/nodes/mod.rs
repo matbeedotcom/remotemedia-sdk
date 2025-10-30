@@ -16,13 +16,14 @@ use std::sync::Arc;
 // Sub-modules
 pub mod audio;
 pub mod calculator;
-pub mod registry;
-pub mod video_processor;
-pub mod sync_av;
+pub mod passthrough;
 pub mod python_nodes;
+pub mod python_streaming;
+pub mod registry;
 pub mod streaming_node;
 pub mod streaming_registry;
-pub mod passthrough;
+pub mod sync_av;
+pub mod video_processor;
 
 #[cfg(feature = "whisper")]
 mod whisper;
@@ -30,7 +31,10 @@ mod whisper;
 pub use whisper::RustWhisperNode;
 
 pub use registry::{NodeFactory as NodeFactoryTrait, RuntimeHint, CompositeRegistry};
-pub use streaming_node::{StreamingNode, StreamingNodeFactory, StreamingNodeRegistry};
+pub use streaming_node::{
+    AsyncNodeWrapper, AsyncStreamingNode, StreamingNode, StreamingNodeFactory,
+    StreamingNodeRegistry, SyncNodeWrapper, SyncStreamingNode,
+};
 
 /// Node execution context containing runtime state
 #[derive(Debug, Clone)]
@@ -99,6 +103,10 @@ pub trait NodeExecutor: Send + Sync {
     async fn finish_streaming(&mut self) -> Result<Vec<Value>> {
         Ok(vec![])
     }
+
+    /// Downcast support for accessing concrete types
+    /// Implementers should simply return `self`
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 
     /// Get node information
     fn info(&self) -> NodeInfo {
@@ -192,6 +200,10 @@ impl NodeExecutor for PassThroughNode {
     async fn cleanup(&mut self) -> Result<()> {
         Ok(())
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 /// Echo node that wraps input in a JSON object
@@ -240,6 +252,10 @@ impl NodeExecutor for EchoNode {
     async fn cleanup(&mut self) -> Result<()> {
         tracing::info!("EchoNode processed {} items", self.counter);
         Ok(())
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }
 
@@ -308,6 +324,10 @@ impl NodeExecutor for CalculatorNode {
 
     async fn cleanup(&mut self) -> Result<()> {
         Ok(())
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }
 
@@ -391,6 +411,10 @@ impl NodeExecutor for MultiplyNode {
     async fn cleanup(&mut self) -> Result<()> {
         Ok(())
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 /// Add node - adds a constant to input
@@ -468,6 +492,10 @@ impl NodeExecutor for AddNode {
 
     async fn cleanup(&mut self) -> Result<()> {
         Ok(())
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }
 

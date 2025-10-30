@@ -39,11 +39,11 @@ fn configure_wasm_libs() {
 /// Compile protocol buffers for gRPC service
 #[cfg(feature = "grpc-transport")]
 fn compile_protos() {
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .build_server(true)
         .build_client(true) // Enable client generation for testing
         .out_dir("src/grpc_service/generated") // Output to dedicated directory
-        .compile(
+        .compile_protos(
             &[
                 "protos/common.proto",
                 "protos/execution.proto",

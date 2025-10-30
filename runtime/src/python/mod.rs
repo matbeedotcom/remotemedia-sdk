@@ -27,4 +27,5 @@ pub use ffi::*;
 
 pub use cpython_executor::CPythonNodeExecutor;
 pub use node_executor::PythonNodeInstance;
+pub use runtime_data_py::{py_to_runtime_data, runtime_data_to_py, PyRuntimeData};
 // pub use cpython_node::{CPythonNodeFactory, inputs_to_pydict, pydict_to_outputs};  // Archived in v0.2.1

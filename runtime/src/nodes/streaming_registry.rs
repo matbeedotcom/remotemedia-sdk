@@ -2,9 +2,10 @@
 
 use crate::nodes::calculator::CalculatorNode;
 use crate::nodes::passthrough::PassThroughNode;
+use crate::nodes::python_streaming::PythonStreamingNode;
 use crate::nodes::sync_av::SynchronizedAudioVideoNode;
 use crate::nodes::video_processor::VideoProcessorNode;
-use crate::nodes::{StreamingNode, StreamingNodeFactory, StreamingNodeRegistry};
+use crate::nodes::{AsyncNodeWrapper, SyncNodeWrapper, StreamingNode, StreamingNodeFactory, StreamingNodeRegistry};
 use crate::Error;
 use serde_json::Value;
 use std::sync::Arc;
@@ -15,7 +16,8 @@ struct CalculatorNodeFactory;
 impl StreamingNodeFactory for CalculatorNodeFactory {
     fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
         let params_str = params.to_string();
-        Ok(Box::new(CalculatorNode::new(node_id, &params_str)?))
+        let node = CalculatorNode::new(node_id, &params_str)?;
+        Ok(Box::new(SyncNodeWrapper(node)))
     }
 
     fn node_type(&self) -> &str {
@@ -27,7 +29,8 @@ struct VideoProcessorNodeFactory;
 impl StreamingNodeFactory for VideoProcessorNodeFactory {
     fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
         let params_str = params.to_string();
-        Ok(Box::new(VideoProcessorNode::new(node_id, &params_str)?))
+        let node = VideoProcessorNode::new(node_id, &params_str)?;
+        Ok(Box::new(SyncNodeWrapper(node)))
     }
 
     fn node_type(&self) -> &str {
@@ -39,7 +42,8 @@ struct SynchronizedAudioVideoNodeFactory;
 impl StreamingNodeFactory for SynchronizedAudioVideoNodeFactory {
     fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
         let params_str = params.to_string();
-        Ok(Box::new(SynchronizedAudioVideoNode::new(node_id, &params_str)?))
+        let node = SynchronizedAudioVideoNode::new(node_id, &params_str)?;
+        Ok(Box::new(SyncNodeWrapper(node)))
     }
 
     fn node_type(&self) -> &str {
@@ -51,11 +55,36 @@ struct PassThroughNodeFactory;
 impl StreamingNodeFactory for PassThroughNodeFactory {
     fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
         let params_str = params.to_string();
-        Ok(Box::new(PassThroughNode::new(node_id, &params_str)?))
+        let node = PassThroughNode::new(node_id, &params_str)?;
+        Ok(Box::new(SyncNodeWrapper(node)))
     }
 
     fn node_type(&self) -> &str {
         "PassThrough"
+    }
+}
+
+struct KokoroTTSNodeFactory;
+impl StreamingNodeFactory for KokoroTTSNodeFactory {
+    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = PythonStreamingNode::new(node_id, "KokoroTTSNode", params)?;
+        Ok(Box::new(AsyncNodeWrapper(node)))
+    }
+
+    fn node_type(&self) -> &str {
+        "KokoroTTSNode"
+    }
+}
+
+struct SimplePyTorchNodeFactory;
+impl StreamingNodeFactory for SimplePyTorchNodeFactory {
+    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = PythonStreamingNode::new(node_id, "SimplePyTorchNode", params)?;
+        Ok(Box::new(AsyncNodeWrapper(node)))
+    }
+
+    fn node_type(&self) -> &str {
+        "SimplePyTorchNode"
     }
 }
 
@@ -68,6 +97,12 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
     registry.register(Arc::new(VideoProcessorNodeFactory));
     registry.register(Arc::new(SynchronizedAudioVideoNodeFactory));
     registry.register(Arc::new(PassThroughNodeFactory));
+
+    // Register Python TTS nodes
+    registry.register(Arc::new(KokoroTTSNodeFactory));
+
+    // Register Python test nodes
+    registry.register(Arc::new(SimplePyTorchNodeFactory));
 
     registry
 }

@@ -215,6 +215,10 @@ fn remotemedia_runtime(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(is_available, m)?)?;
     m.add_function(wrap_pyfunction!(get_metrics, m)?)?;
 
+    // Register the runtime_data submodule (PyRuntimeData, numpy_to_audio, etc.)
+    use crate::python::runtime_data_py::register_runtime_data_module;
+    register_runtime_data_module(m.py(), m)?;
+
     // Add version as module constant
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 

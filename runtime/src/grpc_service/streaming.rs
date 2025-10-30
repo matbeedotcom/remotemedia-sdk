@@ -23,6 +23,7 @@
 //! - Backpressure via STREAM_ERROR_BUFFER_OVERFLOW
 
 use crate::audio::AudioBuffer as RuntimeAudioBuffer;
+use crate::data::RuntimeData;
 use crate::executor::Executor;
 use crate::manifest::Manifest;
 use crate::grpc_service::generated::{
@@ -93,42 +94,47 @@ impl StreamingServiceImpl {
 struct StreamSession {
     /// Unique session identifier
     session_id: String,
-    
+
     /// Parsed pipeline manifest
     manifest: Manifest,
-    
+
     /// Expected next sequence number
     next_sequence: u64,
-    
+
     /// Total chunks processed
     chunks_processed: u64,
-    
+
     /// Total items processed (samples, frames, tokens, etc.)
     total_items: u64,
 
     /// Data type distribution
     data_type_counts: HashMap<String, u64>,
-    
+
     /// Total chunks dropped (backpressure)
     chunks_dropped: u64,
-    
+
     /// Cumulative processing time (milliseconds)
     cumulative_processing_time_ms: f64,
-    
+
     /// Peak memory usage (bytes)
     peak_memory_bytes: u64,
-    
+
     /// Current buffer occupancy (items)
     buffer_items: u64,
-    
+
     /// Session creation time
     created_at: Instant,
-    
+
     /// Last activity time (for timeout detection)
     last_activity: Instant,
-    
+
     /// Recommended chunk size (samples)
     recommended_chunk_size: u64,
+
+    /// Node cache: reuses initialized nodes across chunks
+    /// Key: node_id, Value: cached StreamingNode instance
+    /// This prevents expensive re-initialization (e.g., ML model loading)
+    node_cache: HashMap<String, Arc<Box<dyn crate::nodes::StreamingNode>>>,
 }
 
 impl StreamSession {
@@ -149,6 +155,7 @@ impl StreamSession {
             created_at: now,
             last_activity: now,
             recommended_chunk_size,
+            node_cache: HashMap::new(),
         }
     }
 
@@ -160,6 +167,20 @@ impl StreamSession {
     /// Check if session has timed out
     fn is_timed_out(&self) -> bool {
         self.last_activity.elapsed().as_secs() > SESSION_TIMEOUT_SECS
+    }
+
+    /// Get number of cached nodes
+    fn cached_nodes_count(&self) -> usize {
+        self.node_cache.len()
+    }
+
+    /// Clear node cache (called on session cleanup)
+    fn clear_node_cache(&mut self) {
+        let count = self.node_cache.len();
+        self.node_cache.clear();
+        if count > 0 {
+            info!("🗑️ Cleared {} cached nodes for session {}", count, self.session_id);
+        }
     }
 
     /// Validate sequence number (detect gaps or out-of-order)
@@ -358,6 +379,24 @@ async fn handle_stream(
                         let latency = chunk_start.elapsed().as_secs_f64();
                         metrics.record_chunk_processed(&session_id, latency);
 
+                        // Log ChunkResult details before sending
+                        info!("Sending ChunkResult: sequence={}, data_outputs count={}",
+                            chunk_result.sequence, chunk_result.data_outputs.len());
+                        for (node_id, data_buffer) in &chunk_result.data_outputs {
+                            use crate::grpc_service::generated::data_buffer::DataType;
+                            match &data_buffer.data_type {
+                                Some(DataType::Audio(audio)) => {
+                                    info!("ChunkResult output[{}]: Audio with {} bytes", node_id, audio.samples.len());
+                                },
+                                Some(DataType::Text(text)) => {
+                                    info!("ChunkResult output[{}]: Text with {} bytes", node_id, text.text_data.len());
+                                },
+                                _ => {
+                                    info!("ChunkResult output[{}]: Other type", node_id);
+                                }
+                            }
+                        }
+
                         // Send ChunkResult response
                         let response = StreamResponse {
                             response: Some(StreamResponseType::Result(chunk_result.clone())),
@@ -396,20 +435,21 @@ async fn handle_stream(
                 let chunk_start = Instant::now();
                 debug!(sequence = data_chunk.sequence, "Processing DataChunk");
 
-                let result = handle_data_chunk(data_chunk, sess.clone(), streaming_registry.clone()).await;
+                let result = handle_data_chunk_multi(
+                    data_chunk,
+                    sess.clone(),
+                    streaming_registry.clone(),
+                    tx.clone()
+                ).await;
 
                 match result {
-                    Ok(chunk_result) => {
+                    Ok(chunk_count) => {
                         let latency = chunk_start.elapsed().as_secs_f64();
-                        metrics.record_chunk_processed(&session_id, latency);
+                        for _ in 0..chunk_count {
+                            metrics.record_chunk_processed(&session_id, latency / chunk_count as f64);
+                        }
 
-                        // Send ChunkResult response
-                        let response = StreamResponse {
-                            response: Some(StreamResponseType::Result(chunk_result.clone())),
-                        };
-                        tx.send(Ok(response)).await.map_err(|_| {
-                            ServiceError::Internal("Failed to send ChunkResult".to_string())
-                        })?;
+                        info!("Processed DataChunk and sent {} output chunks", chunk_count);
 
                         // Send periodic metrics
                         let sess_lock = sess.lock().await;
@@ -450,7 +490,10 @@ async fn handle_stream(
                 })?;
 
                 // Cleanup session and metrics
-                sessions.write().await.remove(&session_id);
+                if let Some(session_arc) = sessions.write().await.remove(&session_id) {
+                    // Clear node cache before dropping session
+                    session_arc.lock().await.clear_node_cache();
+                }
                 metrics.record_stream_end();
                 info!(session_id = %session_id, "Session closed");
                 break; // Exit stream loop
@@ -464,7 +507,10 @@ async fn handle_stream(
 
     // If we exit loop without explicit close, cleanup
     if !session_id.is_empty() {
-        sessions.write().await.remove(&session_id);
+        if let Some(session_arc) = sessions.write().await.remove(&session_id) {
+            // Clear node cache before dropping session
+            session_arc.lock().await.clear_node_cache();
+        }
         metrics.record_stream_end();
         info!(session_id = %session_id, "Session disconnected");
     }
@@ -604,25 +650,42 @@ async fn handle_data_chunk(
 ) -> Result<ChunkResult, ServiceError> {
     let start_time = Instant::now();
 
-    // Lock session to validate and get manifest
-    let (node_type, params) = {
+    // Get or create node from cache
+    let node: Arc<Box<dyn crate::nodes::StreamingNode>> = {
         let mut sess = session.lock().await;
         sess.validate_sequence(chunk.sequence)?;
 
-        // Get node info from manifest
-        let node_spec = sess.manifest.nodes.iter()
-            .find(|n| n.id == chunk.node_id)
-            .ok_or_else(|| ServiceError::Validation(
-                format!("Node '{}' not found in manifest", chunk.node_id)
-            ))?;
+        // Check if node is already cached
+        if let Some(cached_node) = sess.node_cache.get(&chunk.node_id) {
+            info!("♻️ Reusing cached node: {}", chunk.node_id);
+            Arc::clone(cached_node)
+        } else {
+            // Node not cached - create new instance
+            info!("🆕 Creating new node: {}", chunk.node_id);
 
-        (node_spec.node_type.clone(), node_spec.params.clone())
+            // Get node info from manifest
+            let node_spec = sess.manifest.nodes.iter()
+                .find(|n| n.id == chunk.node_id)
+                .ok_or_else(|| ServiceError::Validation(
+                    format!("Node '{}' not found in manifest", chunk.node_id)
+                ))?;
+
+            let node_type = node_spec.node_type.clone();
+            let params = node_spec.params.clone();
+
+            // Create the streaming node dynamically using the registry
+            let new_node = streaming_registry
+                .create_node(&node_type, chunk.node_id.clone(), &params)
+                .map_err(|e| ServiceError::Internal(format!("Failed to create node: {}", e)))?;
+
+            // Wrap in Arc and cache it
+            let arc_node = Arc::new(new_node);
+            sess.node_cache.insert(chunk.node_id.clone(), Arc::clone(&arc_node));
+
+            info!("💾 Cached node '{}' (type: {})", chunk.node_id, node_type);
+            arc_node
+        }
     };
-
-    // Create the streaming node dynamically using the registry
-    let node = streaming_registry
-        .create_node(&node_type, chunk.node_id.clone(), &params)
-        .map_err(|e| ServiceError::Internal(format!("Failed to create node: {}", e)))?;
 
     // Convert DataBuffer(s) to RuntimeData
     // Support either single buffer OR named_buffers (for multi-input nodes)
@@ -669,10 +732,10 @@ async fn handle_data_chunk(
         ));
     };
 
-    // Process data through node using the StreamingNode trait
+    // Process data through node using the StreamingNode trait (async)
     let output_data = if node.is_multi_input() {
         // Multi-input node: pass entire HashMap
-        node.process_multi(runtime_data_map)
+        node.process_multi_async(runtime_data_map).await
             .map_err(|e| ServiceError::Internal(format!("Node execution failed: {}", e)))?
     } else {
         // Single-input node: extract the first value
@@ -681,14 +744,38 @@ async fn handle_data_chunk(
             .ok_or_else(|| ServiceError::Validation("No input data provided".to_string()))?
             .clone();
 
-        node.process(input_data)
+        node.process_async(input_data).await
             .map_err(|e| ServiceError::Internal(format!("Node execution failed: {}", e)))?
     };
 
     // Convert runtime data back to proto
     use crate::data::convert_runtime_to_proto_data;
     let mut data_outputs = HashMap::new();
+
+    // Log output data details before conversion
+    info!("Converting RuntimeData to proto: type={}, items={}", output_data.type_name(), output_data.item_count());
+    if let crate::data::RuntimeData::Audio(ref audio_buf) = output_data {
+        info!("Audio RuntimeData details: samples={} bytes, sample_rate={}Hz, channels={}, format={}, num_samples={}",
+            audio_buf.samples.len(), audio_buf.sample_rate, audio_buf.channels, audio_buf.format, audio_buf.num_samples);
+    }
+
     let output_buffer = convert_runtime_to_proto_data(output_data);
+
+    // Log proto buffer size after conversion
+    use crate::grpc_service::generated::data_buffer::DataType;
+    match &output_buffer.data_type {
+        Some(DataType::Audio(audio)) => {
+            info!("Proto AudioBuffer: samples={} bytes, sample_rate={}Hz, channels={}, format={}, num_samples={}",
+                audio.samples.len(), audio.sample_rate, audio.channels, audio.format, audio.num_samples);
+        },
+        Some(DataType::Text(text)) => {
+            info!("Proto TextBuffer: {} bytes", text.text_data.len());
+        },
+        _ => {
+            info!("Proto DataBuffer: non-audio/text type");
+        }
+    }
+
     data_outputs.insert(chunk.node_id.clone(), output_buffer);
 
     let processing_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -708,6 +795,213 @@ async fn handle_data_chunk(
     };
 
     Ok(result)
+}
+
+/// Handle DataChunk message with multi-output support (for streaming generators)
+async fn handle_data_chunk_multi(
+    chunk: crate::grpc_service::generated::DataChunk,
+    session: Arc<Mutex<StreamSession>>,
+    streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
+    tx: tokio::sync::mpsc::Sender<Result<StreamResponse, Status>>,
+) -> Result<usize, ServiceError> {
+    let start_time = Instant::now();
+
+    // Get or create node from cache
+    let node: Arc<Box<dyn crate::nodes::StreamingNode>> = {
+        let mut sess = session.lock().await;
+        sess.validate_sequence(chunk.sequence)?;
+
+        // Check if node is already cached
+        if let Some(cached_node) = sess.node_cache.get(&chunk.node_id) {
+            info!("♻️ Reusing cached node: {}", chunk.node_id);
+            Arc::clone(cached_node)
+        } else {
+            // Node not cached - create new instance
+            info!("🆕 Creating new node: {}", chunk.node_id);
+
+            // Get node info from manifest
+            let node_spec = sess.manifest.nodes.iter()
+                .find(|n| n.id == chunk.node_id)
+                .ok_or_else(|| ServiceError::Validation(
+                    format!("Node '{}' not found in manifest", chunk.node_id)
+                ))?;
+
+            let node_type = node_spec.node_type.clone();
+            let params = node_spec.params.clone();
+
+            // Create the streaming node dynamically using the registry
+            let new_node = streaming_registry
+                .create_node(&node_type, chunk.node_id.clone(), &params)
+                .map_err(|e| ServiceError::Internal(format!("Failed to create node: {}", e)))?;
+
+            // Wrap in Arc and cache it
+            let arc_node = Arc::new(new_node);
+            sess.node_cache.insert(chunk.node_id.clone(), Arc::clone(&arc_node));
+
+            info!("💾 Cached node '{}' (type: {})", chunk.node_id, node_type);
+            arc_node
+        }
+    };
+
+    // Convert DataBuffer(s) to RuntimeData
+    use crate::data::convert_proto_to_runtime_data;
+
+    let (runtime_data_map, data_type, item_count) = if !chunk.named_buffers.is_empty() {
+        // Multi-input mode
+        let mut map = HashMap::new();
+        let mut total_items = 0u64;
+        let mut types = Vec::new();
+
+        for (name, data_buffer) in chunk.named_buffers {
+            let runtime_data = convert_proto_to_runtime_data(data_buffer)
+                .map_err(|e| ServiceError::Validation(format!("Data conversion failed for '{}': {}", name, e)))?;
+
+            types.push(runtime_data.type_name());
+            total_items += runtime_data.item_count() as u64;
+            map.insert(name, runtime_data);
+        }
+
+        let combined_type = if types.len() == 1 {
+            types[0].to_string()
+        } else {
+            format!("multi[{}]", types.join("+"))
+        };
+
+        (map, combined_type, total_items)
+    } else if let Some(data_buffer) = chunk.buffer {
+        // Single-input mode
+        let runtime_data = convert_proto_to_runtime_data(data_buffer)
+            .map_err(|e| ServiceError::Validation(format!("Data conversion failed: {}", e)))?;
+
+        let data_type = runtime_data.type_name().to_string();
+        let item_count = runtime_data.item_count() as u64;
+
+        let mut map = HashMap::new();
+        map.insert("input".to_string(), runtime_data);
+
+        (map, data_type, item_count)
+    } else {
+        return Err(ServiceError::Validation(
+            "DataChunk must have either 'buffer' or 'named_buffers' set".to_string()
+        ));
+    };
+
+    // Extract input data for single-input nodes
+    let input_data = runtime_data_map.get("input")
+        .or_else(|| runtime_data_map.values().next())
+        .ok_or_else(|| ServiceError::Validation("No input data provided".to_string()))?
+        .clone();
+
+    // Check if this is a PythonStreamingNode - if so, use streaming with callback
+    let node_type = node.node_type();
+    let output_count: usize;
+
+    if node_type == "KokoroTTSNode" || node_type.contains("TTS") {
+        // Multi-yield Python streaming node - use callback for incremental sending
+        info!("🎙️ Detected multi-yield node '{}', using streaming iteration", node_type);
+
+        use crate::nodes::python_streaming::PythonStreamingNode;
+        use crate::data::convert_runtime_to_proto_data;
+
+        // Get node info from session
+        let (params, node_id) = {
+            let sess = session.lock().await;
+            let node_spec = sess.manifest.nodes.iter()
+                .find(|n| n.id == chunk.node_id)
+                .ok_or_else(|| ServiceError::Validation(
+                    format!("Node '{}' not found in manifest", chunk.node_id)
+                ))?;
+            (node_spec.params.clone(), chunk.node_id.clone())
+        };
+
+        // Create a temporary PythonStreamingNode instance for multi-chunk processing
+        let py_node = PythonStreamingNode::new(node_id, node_type, &params)
+            .map_err(|e| ServiceError::Internal(format!("Failed to create Python node: {}", e)))?;
+
+        // Shared state for callback
+        let mut chunk_idx = 0u64;
+        let session_clone = session.clone();
+        let tx_clone = tx.clone();
+        let chunk_node_id = chunk.node_id.clone();
+        let base_sequence = chunk.sequence;
+
+        // Stream chunks via callback - each chunk is sent immediately as it arrives
+        output_count = py_node.process_streaming(input_data, move |output_data| {
+            info!("🎯 Received chunk {} from Python generator", chunk_idx + 1);
+            info!("Converting to proto: type={}, items={}", output_data.type_name(), output_data.item_count());
+
+            let output_buffer = convert_runtime_to_proto_data(output_data);
+            let mut data_outputs = HashMap::new();
+            data_outputs.insert(chunk_node_id.clone(), output_buffer);
+
+            // Record metrics for this chunk
+            let total_items = {
+                let mut sess = futures::executor::block_on(session_clone.lock());
+                sess.record_chunk_metrics(0.0, item_count, 0, &data_type);  // Processing time calculated at end
+                sess.total_items
+            };
+
+            let chunk_result = ChunkResult {
+                sequence: base_sequence + chunk_idx,
+                data_outputs,
+                processing_time_ms: 0.0,  // Will be updated with average at the end
+                total_items_processed: total_items,
+            };
+
+            info!("📤 Sending ChunkResult {}: sequence={}", chunk_idx + 1, chunk_result.sequence);
+
+            // Send the ChunkResult immediately
+            let response = StreamResponse {
+                response: Some(StreamResponseType::Result(chunk_result)),
+            };
+
+            futures::executor::block_on(tx_clone.send(Ok(response)))
+                .map_err(|_| crate::Error::Execution("Failed to send ChunkResult".to_string()))?;
+
+            chunk_idx += 1;
+            Ok(())
+        }).await
+            .map_err(|e| ServiceError::Internal(format!("Multi-chunk streaming failed: {}", e)))?;
+
+        info!("✅ Completed streaming {} chunks", output_count);
+    } else {
+        // Regular node - single output
+        use crate::data::convert_runtime_to_proto_data;
+
+        let output = node.process_async(input_data).await
+            .map_err(|e| ServiceError::Internal(format!("Node execution failed: {}", e)))?;
+
+        let output_buffer = convert_runtime_to_proto_data(output);
+        let mut data_outputs = HashMap::new();
+        data_outputs.insert(chunk.node_id.clone(), output_buffer);
+
+        let total_items = {
+            let mut sess = session.lock().await;
+            sess.record_chunk_metrics(0.0, item_count, 0, &data_type);
+            sess.total_items
+        };
+
+        let chunk_result = ChunkResult {
+            sequence: chunk.sequence,
+            data_outputs,
+            processing_time_ms: 0.0,
+            total_items_processed: total_items,
+        };
+
+        let response = StreamResponse {
+            response: Some(StreamResponseType::Result(chunk_result)),
+        };
+        tx.send(Ok(response)).await.map_err(|_| {
+            ServiceError::Internal("Failed to send ChunkResult".to_string())
+        })?;
+
+        output_count = 1;
+    }
+
+    let processing_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+    info!("Total processing time: {:.2}ms for {} chunks", processing_time_ms, output_count);
+
+    Ok(output_count)
 }
 
 /// Handle StreamControl message

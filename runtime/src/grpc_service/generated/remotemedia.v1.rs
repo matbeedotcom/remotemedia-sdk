@@ -5,14 +5,13 @@
 /// Exactly one variant must be set.
 ///
 /// Usage:
-///    DataBuffer audio_buf = {
-///      audio: { samples: ..., sample_rate: 16000, ... }
-///    };
+/// DataBuffer audio_buf = {
+/// audio: { samples: ..., sample_rate: 16000, ... }
+/// };
 ///
-///    DataBuffer json_buf = {
-///      json: { json_payload: "{\"operation\": \"add\"}", ... }
-///    };
-#[allow(clippy::derive_partial_eq_without_eq)]
+/// DataBuffer json_buf = {
+/// json: { json_payload: "{"operation": "add"}", ... }
+/// };
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DataBuffer {
     /// Optional metadata for extensibility
@@ -30,8 +29,7 @@ pub struct DataBuffer {
 /// Nested message and enum types in `DataBuffer`.
 pub mod data_buffer {
     /// Data type discriminator (exactly one must be set)
-    #[allow(clippy::derive_partial_eq_without_eq)]
-    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum DataType {
         #[prost(message, tag = "1")]
         Audio(super::AudioBuffer),
@@ -53,8 +51,7 @@ pub mod data_buffer {
 /// For stereo: \[L0, R0, L1, R1, L2, R2, ...\]
 ///
 /// This type is unchanged from Feature 003 to maintain backward compatibility.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AudioBuffer {
     /// Raw audio samples (interleaved, little-endian)
     /// Size = num_samples * channels * format.bytes_per_sample()
@@ -81,9 +78,8 @@ pub struct AudioBuffer {
 /// Codec support (H.264, H.265) is out of scope - nodes handle encoding if needed.
 ///
 /// Validation:
-///    pixel_data.len() == width * height * format.bytes_per_pixel()
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+/// pixel_data.len() == width * height * format.bytes_per_pixel()
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct VideoFrame {
     /// Raw pixel data (format specified by format field)
     /// Layout determined by PixelFormat
@@ -111,16 +107,15 @@ pub struct VideoFrame {
 /// Data stored in row-major layout by default.
 ///
 /// Validation:
-///    data.len() == shape.product() * dtype.bytes_per_element()
+/// data.len() == shape.product() * dtype.bytes_per_element()
 ///
 /// Example (512-dim embedding, F32):
-///    TensorBuffer {
-///      data: <2048 bytes>,
-///      shape: \[512\],
-///      dtype: TENSOR_DTYPE_F32
-///    }
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+/// TensorBuffer {
+/// data: \<2048 bytes>,
+/// shape: \[512\],
+/// dtype: TENSOR_DTYPE_F32
+/// }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TensorBuffer {
     /// Raw tensor data (row-major layout by default)
     /// Must match calculated size from shape and dtype
@@ -145,12 +140,11 @@ pub struct TensorBuffer {
 /// Nodes work with structured data (easier than string manipulation).
 ///
 /// Example (Calculator request):
-///    JsonData {
-///      json_payload: "{\"operation\": \"add\", \"operands\": \[10, 20\]}",
-///      schema_type: "CalculatorRequest"
-///    }
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+/// JsonData {
+/// json_payload: "{"operation": "add", "operands": \[10, 20\]}",
+/// schema_type: "CalculatorRequest"
+/// }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct JsonData {
     /// JSON payload as string (required, must be valid JSON)
     #[prost(string, tag = "1")]
@@ -166,13 +160,12 @@ pub struct JsonData {
 /// Validation: Server validates UTF-8 correctness
 ///
 /// Example:
-///    TextBuffer {
-///      text_data: "Hello, world!",  // UTF-8 bytes
-///      encoding: "utf-8",
-///      language: "en"
-///    }
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+/// TextBuffer {
+/// text_data: "Hello, world!",  // UTF-8 bytes
+/// encoding: "utf-8",
+/// language: "en"
+/// }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TextBuffer {
     /// Text data as UTF-8 encoded bytes
     /// Server validates UTF-8 correctness
@@ -193,12 +186,11 @@ pub struct TextBuffer {
 /// MIME type accuracy is client responsibility (not validated by protocol).
 ///
 /// Example (PNG image):
-///    BinaryBuffer {
-///      data: <PNG file bytes>,
-///      mime_type: "image/png"
-///    }
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+/// BinaryBuffer {
+/// data: <PNG file bytes>,
+/// mime_type: "image/png"
+/// }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BinaryBuffer {
     /// Raw binary data
     #[prost(bytes = "vec", tag = "1")]
@@ -212,18 +204,17 @@ pub struct BinaryBuffer {
 /// Performance metrics for pipeline execution
 ///
 /// UPDATED: Added serialization_time_ms and data_type_breakdown
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ExecutionMetrics {
     /// Wall-clock time from request receipt to response ready (milliseconds)
-    /// Target: <5ms for simple operations (SC-001)
+    /// Target: \<5ms for simple operations (SC-001)
     #[prost(double, tag = "1")]
     pub wall_time_ms: f64,
     /// Total CPU time consumed by all threads (milliseconds)
     #[prost(double, tag = "2")]
     pub cpu_time_ms: f64,
     /// Peak memory usage during execution (bytes)
-    /// Target: <10MB per concurrent execution (SC-008)
+    /// Target: \<10MB per concurrent execution (SC-008)
     #[prost(uint64, tag = "3")]
     pub memory_used_bytes: u64,
     /// Per-node execution statistics (keyed by node ID)
@@ -233,7 +224,7 @@ pub struct ExecutionMetrics {
         NodeMetrics,
     >,
     /// Time spent serializing/deserializing protobuf messages (milliseconds)
-    /// Target: <10% of wall_time_ms (SC-003)
+    /// Target: \<10% of wall_time_ms (SC-003)
     #[prost(double, tag = "5")]
     pub serialization_time_ms: f64,
     /// NEW: Proto ↔ Runtime conversion overhead
@@ -252,7 +243,6 @@ pub struct ExecutionMetrics {
     >,
 }
 /// Performance metrics for a single node execution
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct NodeMetrics {
     /// Time spent executing this node's process() method (milliseconds)
@@ -273,8 +263,7 @@ pub struct NodeMetrics {
 /// Structured error information for debugging and diagnostics
 ///
 /// UPDATED: Added ERROR_TYPE_TYPE_VALIDATION for generic type errors
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ErrorResponse {
     /// Error category for programmatic handling
     #[prost(enumeration = "ErrorType", tag = "1")]
@@ -296,8 +285,7 @@ pub struct ErrorResponse {
 /// Service version and protocol compatibility information
 ///
 /// Returned by GetVersion() RPC to enable client compatibility checks.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct VersionInfo {
     /// Current protocol version (e.g., "v1")
     #[prost(string, tag = "1")]
@@ -322,8 +310,7 @@ pub struct VersionInfo {
 ///
 /// Clients can request custom limits within service-defined maximums.
 /// Service applies defaults if not specified.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResourceLimits {
     /// Maximum memory allocation (bytes)
     /// Default: 100MB, Max: 1GB (configurable per service)
@@ -340,8 +327,7 @@ pub struct ResourceLimits {
     pub max_audio_samples: u64,
 }
 /// Execution details for a single node
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct NodeResult {
     /// Node ID from manifest
     #[prost(string, tag = "1")]
@@ -379,10 +365,10 @@ impl AudioFormat {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            AudioFormat::Unspecified => "AUDIO_FORMAT_UNSPECIFIED",
-            AudioFormat::F32 => "AUDIO_FORMAT_F32",
-            AudioFormat::I16 => "AUDIO_FORMAT_I16",
-            AudioFormat::I32 => "AUDIO_FORMAT_I32",
+            Self::Unspecified => "AUDIO_FORMAT_UNSPECIFIED",
+            Self::F32 => "AUDIO_FORMAT_F32",
+            Self::I16 => "AUDIO_FORMAT_I16",
+            Self::I32 => "AUDIO_FORMAT_I32",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -420,11 +406,11 @@ impl PixelFormat {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            PixelFormat::Unspecified => "PIXEL_FORMAT_UNSPECIFIED",
-            PixelFormat::Rgb24 => "PIXEL_FORMAT_RGB24",
-            PixelFormat::Rgba32 => "PIXEL_FORMAT_RGBA32",
-            PixelFormat::Yuv420p => "PIXEL_FORMAT_YUV420P",
-            PixelFormat::Gray8 => "PIXEL_FORMAT_GRAY8",
+            Self::Unspecified => "PIXEL_FORMAT_UNSPECIFIED",
+            Self::Rgb24 => "PIXEL_FORMAT_RGB24",
+            Self::Rgba32 => "PIXEL_FORMAT_RGBA32",
+            Self::Yuv420p => "PIXEL_FORMAT_YUV420P",
+            Self::Gray8 => "PIXEL_FORMAT_GRAY8",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -462,12 +448,12 @@ impl TensorDtype {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            TensorDtype::Unspecified => "TENSOR_DTYPE_UNSPECIFIED",
-            TensorDtype::F32 => "TENSOR_DTYPE_F32",
-            TensorDtype::F16 => "TENSOR_DTYPE_F16",
-            TensorDtype::I32 => "TENSOR_DTYPE_I32",
-            TensorDtype::I8 => "TENSOR_DTYPE_I8",
-            TensorDtype::U8 => "TENSOR_DTYPE_U8",
+            Self::Unspecified => "TENSOR_DTYPE_UNSPECIFIED",
+            Self::F32 => "TENSOR_DTYPE_F32",
+            Self::F16 => "TENSOR_DTYPE_F16",
+            Self::I32 => "TENSOR_DTYPE_I32",
+            Self::I8 => "TENSOR_DTYPE_I8",
+            Self::U8 => "TENSOR_DTYPE_U8",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -487,17 +473,18 @@ impl TensorDtype {
 ///
 /// Used in NodeManifest to declare expected input/output types.
 /// Enables three-layer validation:
-///    1. Compile-time: TypeScript/Python type checking
-///    2. Manifest validation: Connection type compatibility at StreamInit
-///    3. Runtime: Chunk type validation per chunk
+///
+/// 1. Compile-time: TypeScript/Python type checking
+/// 1. Manifest validation: Connection type compatibility at StreamInit
+/// 1. Runtime: Chunk type validation per chunk
 ///
 /// Example (VAD node: audio in, JSON out):
-///    NodeManifest {
-///      id: "vad",
-///      node_type: "RustVADNode",
-///      input_types: \[DATA_TYPE_HINT_AUDIO\],
-///      output_types: \[DATA_TYPE_HINT_JSON\]
-///    }
+/// NodeManifest {
+/// id: "vad",
+/// node_type: "RustVADNode",
+/// input_types: \[DATA_TYPE_HINT_AUDIO\],
+/// output_types: \[DATA_TYPE_HINT_JSON\]
+/// }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum DataTypeHint {
@@ -519,14 +506,14 @@ impl DataTypeHint {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            DataTypeHint::Unspecified => "DATA_TYPE_HINT_UNSPECIFIED",
-            DataTypeHint::Audio => "DATA_TYPE_HINT_AUDIO",
-            DataTypeHint::Video => "DATA_TYPE_HINT_VIDEO",
-            DataTypeHint::Tensor => "DATA_TYPE_HINT_TENSOR",
-            DataTypeHint::Json => "DATA_TYPE_HINT_JSON",
-            DataTypeHint::Text => "DATA_TYPE_HINT_TEXT",
-            DataTypeHint::Binary => "DATA_TYPE_HINT_BINARY",
-            DataTypeHint::Any => "DATA_TYPE_HINT_ANY",
+            Self::Unspecified => "DATA_TYPE_HINT_UNSPECIFIED",
+            Self::Audio => "DATA_TYPE_HINT_AUDIO",
+            Self::Video => "DATA_TYPE_HINT_VIDEO",
+            Self::Tensor => "DATA_TYPE_HINT_TENSOR",
+            Self::Json => "DATA_TYPE_HINT_JSON",
+            Self::Text => "DATA_TYPE_HINT_TEXT",
+            Self::Binary => "DATA_TYPE_HINT_BINARY",
+            Self::Any => "DATA_TYPE_HINT_ANY",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -581,14 +568,14 @@ impl ErrorType {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            ErrorType::Unspecified => "ERROR_TYPE_UNSPECIFIED",
-            ErrorType::Validation => "ERROR_TYPE_VALIDATION",
-            ErrorType::NodeExecution => "ERROR_TYPE_NODE_EXECUTION",
-            ErrorType::ResourceLimit => "ERROR_TYPE_RESOURCE_LIMIT",
-            ErrorType::Authentication => "ERROR_TYPE_AUTHENTICATION",
-            ErrorType::VersionMismatch => "ERROR_TYPE_VERSION_MISMATCH",
-            ErrorType::Internal => "ERROR_TYPE_INTERNAL",
-            ErrorType::TypeValidation => "ERROR_TYPE_TYPE_VALIDATION",
+            Self::Unspecified => "ERROR_TYPE_UNSPECIFIED",
+            Self::Validation => "ERROR_TYPE_VALIDATION",
+            Self::NodeExecution => "ERROR_TYPE_NODE_EXECUTION",
+            Self::ResourceLimit => "ERROR_TYPE_RESOURCE_LIMIT",
+            Self::Authentication => "ERROR_TYPE_AUTHENTICATION",
+            Self::VersionMismatch => "ERROR_TYPE_VERSION_MISMATCH",
+            Self::Internal => "ERROR_TYPE_INTERNAL",
+            Self::TypeValidation => "ERROR_TYPE_TYPE_VALIDATION",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -626,10 +613,10 @@ impl ExecutionStatus {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            ExecutionStatus::Unspecified => "EXECUTION_STATUS_UNSPECIFIED",
-            ExecutionStatus::Success => "EXECUTION_STATUS_SUCCESS",
-            ExecutionStatus::PartialSuccess => "EXECUTION_STATUS_PARTIAL_SUCCESS",
-            ExecutionStatus::Failed => "EXECUTION_STATUS_FAILED",
+            Self::Unspecified => "EXECUTION_STATUS_UNSPECIFIED",
+            Self::Success => "EXECUTION_STATUS_SUCCESS",
+            Self::PartialSuccess => "EXECUTION_STATUS_PARTIAL_SUCCESS",
+            Self::Failed => "EXECUTION_STATUS_FAILED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -662,10 +649,10 @@ impl NodeStatus {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            NodeStatus::Unspecified => "NODE_STATUS_UNSPECIFIED",
-            NodeStatus::Success => "NODE_STATUS_SUCCESS",
-            NodeStatus::Skipped => "NODE_STATUS_SKIPPED",
-            NodeStatus::Failed => "NODE_STATUS_FAILED",
+            Self::Unspecified => "NODE_STATUS_UNSPECIFIED",
+            Self::Success => "NODE_STATUS_SUCCESS",
+            Self::Skipped => "NODE_STATUS_SKIPPED",
+            Self::Failed => "NODE_STATUS_FAILED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -682,7 +669,6 @@ impl NodeStatus {
 /// Request to execute a pipeline
 ///
 /// UPDATED: Uses generic data_inputs map
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ExecuteRequest {
     /// Pipeline manifest
@@ -692,15 +678,15 @@ pub struct ExecuteRequest {
     /// Replaces separate audio_inputs and string data_inputs from Feature 003
     ///
     /// Example (audio processing):
-    ///    data_inputs: {
-    ///      "resample": DataBuffer { audio: { ... } }
-    ///    }
+    /// data_inputs: {
+    /// "resample": DataBuffer { audio: { ... } }
+    /// }
     ///
     /// Example (mixed types):
-    ///    data_inputs: {
-    ///      "vad": DataBuffer { audio: { ... } },
-    ///      "config": DataBuffer { json: { threshold: 0.5 } }
-    ///    }
+    /// data_inputs: {
+    /// "vad": DataBuffer { audio: { ... } },
+    /// "config": DataBuffer { json: { threshold: 0.5 } }
+    /// }
     ///
     /// Node IDs must match nodes in manifest that require input
     #[prost(map = "string, message", tag = "2")]
@@ -718,7 +704,6 @@ pub struct ExecuteRequest {
     pub client_version: ::prost::alloc::string::String,
 }
 /// Response from pipeline execution (unchanged from Feature 003)
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ExecuteResponse {
     /// Either result or error (mutually exclusive)
@@ -728,7 +713,6 @@ pub struct ExecuteResponse {
 /// Nested message and enum types in `ExecuteResponse`.
 pub mod execute_response {
     /// Either result or error (mutually exclusive)
-    #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Outcome {
         /// Execution result (if successful)
@@ -742,7 +726,6 @@ pub mod execute_response {
 /// Pipeline manifest structure (v1)
 ///
 /// UPDATED: NodeManifest adds input_types and output_types for type validation
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PipelineManifest {
     /// Schema version (e.g., "v1")
@@ -763,8 +746,7 @@ pub struct PipelineManifest {
     pub connections: ::prost::alloc::vec::Vec<Connection>,
 }
 /// Pipeline metadata (unchanged from Feature 003)
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ManifestMetadata {
     /// Pipeline name (required)
     /// Used in logs and metrics
@@ -781,7 +763,6 @@ pub struct ManifestMetadata {
 /// Node manifest entry
 ///
 /// UPDATED: Added input_types and output_types for type validation
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct NodeManifest {
     /// Unique node ID within pipeline
@@ -794,7 +775,7 @@ pub struct NodeManifest {
     pub node_type: ::prost::alloc::string::String,
     /// Node-specific parameters (JSON encoded)
     /// Service deserializes into serde_json::Value
-    /// Example: "{\"target_sample_rate\": 16000}"
+    /// Example: "{"target_sample_rate": 16000}"
     #[prost(string, tag = "3")]
     pub params: ::prost::alloc::string::String,
     /// Whether node uses streaming (async generator)
@@ -812,21 +793,22 @@ pub struct NodeManifest {
     pub runtime_hint: i32,
     /// NEW: Declare expected input types
     /// Used for three-layer validation:
-    ///    1. Compile-time: Client type checking
-    ///    2. Manifest validation: Connection type compatibility at StreamInit/ExecuteRequest
-    ///    3. Runtime: Chunk type validation
+    ///
+    /// 1. Compile-time: Client type checking
+    /// 1. Manifest validation: Connection type compatibility at StreamInit/ExecuteRequest
+    /// 1. Runtime: Chunk type validation
     ///
     /// Empty list = accept any type (untyped node, backward compatible)
     /// Contains DATA_TYPE_HINT_ANY = accept any type (polymorphic node)
     ///
     /// Example (VAD node: audio only):
-    ///    input_types: \[DATA_TYPE_HINT_AUDIO\]
+    /// input_types: \[DATA_TYPE_HINT_AUDIO\]
     ///
     /// Example (Multi-input filter: audio + JSON):
-    ///    input_types: \[DATA_TYPE_HINT_AUDIO, DATA_TYPE_HINT_JSON\]
+    /// input_types: \[DATA_TYPE_HINT_AUDIO, DATA_TYPE_HINT_JSON\]
     ///
     /// Example (Polymorphic logger: any type):
-    ///    input_types: \[DATA_TYPE_HINT_ANY\]
+    /// input_types: \[DATA_TYPE_HINT_ANY\]
     #[prost(enumeration = "DataTypeHint", repeated, tag = "8")]
     pub input_types: ::prost::alloc::vec::Vec<i32>,
     /// NEW: Declare expected output types
@@ -835,16 +817,15 @@ pub struct NodeManifest {
     /// Empty list = produces any type (untyped node, backward compatible)
     ///
     /// Example (VAD node: JSON output):
-    ///    output_types: \[DATA_TYPE_HINT_JSON\]
+    /// output_types: \[DATA_TYPE_HINT_JSON\]
     ///
     /// Example (Audio filter: audio output):
-    ///    output_types: \[DATA_TYPE_HINT_AUDIO\]
+    /// output_types: \[DATA_TYPE_HINT_AUDIO\]
     #[prost(enumeration = "DataTypeHint", repeated, tag = "9")]
     pub output_types: ::prost::alloc::vec::Vec<i32>,
 }
 /// Connection between nodes (unchanged from Feature 003)
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Connection {
     /// Source node ID (produces output)
     #[prost(string, tag = "1")]
@@ -854,7 +835,6 @@ pub struct Connection {
     pub to: ::prost::alloc::string::String,
 }
 /// Hardware/resource requirements for node execution
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CapabilityRequirements {
     /// GPU requirements
@@ -868,7 +848,6 @@ pub struct CapabilityRequirements {
     pub memory_gb: f64,
 }
 /// GPU hardware requirements
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GpuRequirement {
     /// GPU type: "cuda", "rocm", "metal"
@@ -882,8 +861,7 @@ pub struct GpuRequirement {
     pub required: bool,
 }
 /// CPU requirements
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CpuRequirement {
     /// Minimum number of cores
     #[prost(uint32, tag = "1")]
@@ -896,7 +874,6 @@ pub struct CpuRequirement {
 /// Result of successful pipeline execution
 ///
 /// UPDATED: Uses generic data_outputs map
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ExecutionResult {
     /// UPDATED: Generic data outputs (keyed by node ID)
@@ -904,15 +881,15 @@ pub struct ExecutionResult {
     /// All output types now use DataBuffer
     ///
     /// Example (audio processing):
-    ///    data_outputs: {
-    ///      "resample": DataBuffer { audio: { ... } }
-    ///    }
+    /// data_outputs: {
+    /// "resample": DataBuffer { audio: { ... } }
+    /// }
     ///
     /// Example (VAD with audio and JSON outputs):
-    ///    data_outputs: {
-    ///      "vad_audio": DataBuffer { audio: { ... } },
-    ///      "vad_result": DataBuffer { json: { has_speech: true } }
-    ///    }
+    /// data_outputs: {
+    /// "vad_audio": DataBuffer { audio: { ... } },
+    /// "vad_result": DataBuffer { json: { has_speech: true } }
+    /// }
     ///
     /// Empty map for pipelines with no outputs
     #[prost(map = "string, message", tag = "1")]
@@ -931,16 +908,14 @@ pub struct ExecutionResult {
     pub status: i32,
 }
 /// Request for version information
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct VersionRequest {
     /// Client version for compatibility check (e.g., "v1", "v1.2.0")
     #[prost(string, tag = "1")]
     pub client_version: ::prost::alloc::string::String,
 }
 /// Response with version and compatibility information
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct VersionResponse {
     /// Service version details
     #[prost(message, optional, tag = "1")]
@@ -974,11 +949,11 @@ impl RuntimeHint {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            RuntimeHint::Unspecified => "RUNTIME_HINT_UNSPECIFIED",
-            RuntimeHint::Rustpython => "RUNTIME_HINT_RUSTPYTHON",
-            RuntimeHint::Cpython => "RUNTIME_HINT_CPYTHON",
-            RuntimeHint::CpythonWasm => "RUNTIME_HINT_CPYTHON_WASM",
-            RuntimeHint::Auto => "RUNTIME_HINT_AUTO",
+            Self::Unspecified => "RUNTIME_HINT_UNSPECIFIED",
+            Self::Rustpython => "RUNTIME_HINT_RUSTPYTHON",
+            Self::Cpython => "RUNTIME_HINT_CPYTHON",
+            Self::CpythonWasm => "RUNTIME_HINT_CPYTHON_WASM",
+            Self::Auto => "RUNTIME_HINT_AUTO",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -995,7 +970,13 @@ impl RuntimeHint {
 }
 /// Generated client implementations.
 pub mod pipeline_execution_service_client {
-    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
     use tonic::codegen::*;
     use tonic::codegen::http::Uri;
     #[derive(Debug, Clone)]
@@ -1015,10 +996,10 @@ pub mod pipeline_execution_service_client {
     }
     impl<T> PipelineExecutionServiceClient<T>
     where
-        T: tonic::client::GrpcService<tonic::body::BoxBody>,
+        T: tonic::client::GrpcService<tonic::body::Body>,
         T::Error: Into<StdError>,
-        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
-        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
     {
         pub fn new(inner: T) -> Self {
             let inner = tonic::client::Grpc::new(inner);
@@ -1036,14 +1017,14 @@ pub mod pipeline_execution_service_client {
             F: tonic::service::Interceptor,
             T::ResponseBody: Default,
             T: tonic::codegen::Service<
-                http::Request<tonic::body::BoxBody>,
+                http::Request<tonic::body::Body>,
                 Response = http::Response<
-                    <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
+                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
                 >,
             >,
             <T as tonic::codegen::Service<
-                http::Request<tonic::body::BoxBody>,
-            >>::Error: Into<StdError> + Send + Sync,
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             PipelineExecutionServiceClient::new(
                 InterceptedService::new(inner, interceptor),
@@ -1086,10 +1067,11 @@ pub mod pipeline_execution_service_client {
         /// Suitable for batch processing and non-streaming use cases.
         ///
         /// Performance targets:
-        /// - <5ms latency for simple operations (SC-001)
-        /// - <10% serialization overhead (SC-003)
-        /// - 10x faster than Python-based remote execution (SC-004)
-        /// - <5% overhead vs audio-only protocol for audio pipelines (SC-008)
+        ///
+        /// * \<5ms latency for simple operations (SC-001)
+        /// * \<10% serialization overhead (SC-003)
+        /// * 10x faster than Python-based remote execution (SC-004)
+        /// * \<5% overhead vs audio-only protocol for audio pipelines (SC-008)
         pub async fn execute_pipeline(
             &mut self,
             request: impl tonic::IntoRequest<super::ExecuteRequest>,
@@ -1101,12 +1083,11 @@ pub mod pipeline_execution_service_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/remotemedia.v1.PipelineExecutionService/ExecutePipeline",
             );
@@ -1134,12 +1115,11 @@ pub mod pipeline_execution_service_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/remotemedia.v1.PipelineExecutionService/GetVersion",
             );
@@ -1157,21 +1137,28 @@ pub mod pipeline_execution_service_client {
 }
 /// Generated server implementations.
 pub mod pipeline_execution_service_server {
-    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
     use tonic::codegen::*;
     /// Generated trait containing gRPC methods that should be implemented for use with PipelineExecutionServiceServer.
     #[async_trait]
-    pub trait PipelineExecutionService: Send + Sync + 'static {
+    pub trait PipelineExecutionService: std::marker::Send + std::marker::Sync + 'static {
         /// Execute a pipeline with complete data input(s) and return all results
         ///
         /// This is a unary RPC: client sends one request, server sends one response.
         /// Suitable for batch processing and non-streaming use cases.
         ///
         /// Performance targets:
-        /// - <5ms latency for simple operations (SC-001)
-        /// - <10% serialization overhead (SC-003)
-        /// - 10x faster than Python-based remote execution (SC-004)
-        /// - <5% overhead vs audio-only protocol for audio pipelines (SC-008)
+        ///
+        /// * \<5ms latency for simple operations (SC-001)
+        /// * \<10% serialization overhead (SC-003)
+        /// * 10x faster than Python-based remote execution (SC-004)
+        /// * \<5% overhead vs audio-only protocol for audio pipelines (SC-008)
         async fn execute_pipeline(
             &self,
             request: tonic::Request<super::ExecuteRequest>,
@@ -1185,20 +1172,18 @@ pub mod pipeline_execution_service_server {
         ) -> std::result::Result<tonic::Response<super::VersionResponse>, tonic::Status>;
     }
     #[derive(Debug)]
-    pub struct PipelineExecutionServiceServer<T: PipelineExecutionService> {
-        inner: _Inner<T>,
+    pub struct PipelineExecutionServiceServer<T> {
+        inner: Arc<T>,
         accept_compression_encodings: EnabledCompressionEncodings,
         send_compression_encodings: EnabledCompressionEncodings,
         max_decoding_message_size: Option<usize>,
         max_encoding_message_size: Option<usize>,
     }
-    struct _Inner<T>(Arc<T>);
-    impl<T: PipelineExecutionService> PipelineExecutionServiceServer<T> {
+    impl<T> PipelineExecutionServiceServer<T> {
         pub fn new(inner: T) -> Self {
             Self::from_arc(Arc::new(inner))
         }
         pub fn from_arc(inner: Arc<T>) -> Self {
-            let inner = _Inner(inner);
             Self {
                 inner,
                 accept_compression_encodings: Default::default(),
@@ -1249,10 +1234,10 @@ pub mod pipeline_execution_service_server {
     for PipelineExecutionServiceServer<T>
     where
         T: PipelineExecutionService,
-        B: Body + Send + 'static,
-        B::Error: Into<StdError> + Send + 'static,
+        B: Body + std::marker::Send + 'static,
+        B::Error: Into<StdError> + std::marker::Send + 'static,
     {
-        type Response = http::Response<tonic::body::BoxBody>;
+        type Response = http::Response<tonic::body::Body>;
         type Error = std::convert::Infallible;
         type Future = BoxFuture<Self::Response, Self::Error>;
         fn poll_ready(
@@ -1262,7 +1247,6 @@ pub mod pipeline_execution_service_server {
             Poll::Ready(Ok(()))
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
-            let inner = self.inner.clone();
             match req.uri().path() {
                 "/remotemedia.v1.PipelineExecutionService/ExecutePipeline" => {
                     #[allow(non_camel_case_types)]
@@ -1297,9 +1281,8 @@ pub mod pipeline_execution_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let inner = inner.0;
                         let method = ExecutePipelineSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -1347,9 +1330,8 @@ pub mod pipeline_execution_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let inner = inner.0;
                         let method = GetVersionSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -1366,20 +1348,27 @@ pub mod pipeline_execution_service_server {
                 }
                 _ => {
                     Box::pin(async move {
-                        Ok(
-                            http::Response::builder()
-                                .status(200)
-                                .header("grpc-status", "12")
-                                .header("content-type", "application/grpc")
-                                .body(empty_body())
-                                .unwrap(),
-                        )
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
                     })
                 }
             }
         }
     }
-    impl<T: PipelineExecutionService> Clone for PipelineExecutionServiceServer<T> {
+    impl<T> Clone for PipelineExecutionServiceServer<T> {
         fn clone(&self) -> Self {
             let inner = self.inner.clone();
             Self {
@@ -1391,25 +1380,15 @@ pub mod pipeline_execution_service_server {
             }
         }
     }
-    impl<T: PipelineExecutionService> Clone for _Inner<T> {
-        fn clone(&self) -> Self {
-            Self(Arc::clone(&self.0))
-        }
-    }
-    impl<T: std::fmt::Debug> std::fmt::Debug for _Inner<T> {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{:?}", self.0)
-        }
-    }
-    impl<T: PipelineExecutionService> tonic::server::NamedService
-    for PipelineExecutionServiceServer<T> {
-        const NAME: &'static str = "remotemedia.v1.PipelineExecutionService";
+    /// Generated gRPC service name
+    pub const SERVICE_NAME: &str = "remotemedia.v1.PipelineExecutionService";
+    impl<T> tonic::server::NamedService for PipelineExecutionServiceServer<T> {
+        const NAME: &'static str = SERVICE_NAME;
     }
 }
 /// Client streaming request
 ///
 /// UPDATED: Now supports both generic DataChunk and legacy AudioChunk
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StreamRequest {
     /// Request type (only one field set per message)
@@ -1419,7 +1398,6 @@ pub struct StreamRequest {
 /// Nested message and enum types in `StreamRequest`.
 pub mod stream_request {
     /// Request type (only one field set per message)
-    #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Request {
         /// First message: pipeline initialization
@@ -1442,7 +1420,6 @@ pub mod stream_request {
     }
 }
 /// Initialize streaming pipeline (first message)
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StreamInit {
     /// Pipeline manifest
@@ -1476,29 +1453,29 @@ pub struct StreamInit {
 /// Usage patterns:
 ///
 /// Pattern 1: Single-input node (audio VAD)
-///    DataChunk {
-///      node_id: "vad",
-///      buffer: DataBuffer { audio: { ... } },
-///      sequence: 42,
-///      timestamp_ms: 1000
-///    }
+/// DataChunk {
+/// node_id: "vad",
+/// buffer: DataBuffer { audio: { ... } },
+/// sequence: 42,
+/// timestamp_ms: 1000
+/// }
 ///
 /// Pattern 2: Multi-input node (audio + JSON control)
-///    DataChunk {
-///      node_id: "dynamic_filter",
-///      named_buffers: {
-///        "audio": DataBuffer { audio: { ... } },
-///        "control": DataBuffer { json: { gain: 0.8 } }
-///      },
-///      sequence: 42,
-///      timestamp_ms: 1000
-///    }
+/// DataChunk {
+/// node_id: "dynamic_filter",
+/// named_buffers: {
+/// "audio": DataBuffer { audio: { ... } },
+/// "control": DataBuffer { json: { gain: 0.8 } }
+/// },
+/// sequence: 42,
+/// timestamp_ms: 1000
+/// }
 ///
 /// Validation:
-/// - Exactly one of buffer OR named_buffers must be set (not both, not neither)
-/// - Sequence numbers must be strictly monotonic increasing
-/// - Timestamps should be non-decreasing (warnings for inversions)
-#[allow(clippy::derive_partial_eq_without_eq)]
+///
+/// * Exactly one of buffer OR named_buffers must be set (not both, not neither)
+/// * Sequence numbers must be strictly monotonic increasing
+/// * Timestamps should be non-decreasing (warnings for inversions)
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DataChunk {
     /// Target node ID (must match manifest node)
@@ -1534,19 +1511,19 @@ pub struct DataChunk {
 /// Timeline: Will be removed after 6+ months deprecation period
 ///
 /// Server implementation:
-///    - Automatically converts AudioChunk → DataChunk at protocol boundary
-///    - All internal logic uses generic DataChunk
-///    - Zero logic duplication (single code path after conversion)
+///
+/// * Automatically converts AudioChunk → DataChunk at protocol boundary
+/// * All internal logic uses generic DataChunk
+/// * Zero logic duplication (single code path after conversion)
 ///
 /// Conversion:
-///    DataChunk {
-///      node_id: AudioChunk.node_id,
-///      buffer: DataBuffer { audio: AudioChunk.buffer },
-///      sequence: AudioChunk.sequence,
-///      timestamp_ms: AudioChunk.timestamp_ms
-///    }
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+/// DataChunk {
+/// node_id: AudioChunk.node_id,
+/// buffer: DataBuffer { audio: AudioChunk.buffer },
+/// sequence: AudioChunk.sequence,
+/// timestamp_ms: AudioChunk.timestamp_ms
+/// }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AudioChunk {
     /// Node ID to send this chunk to
     /// Must match a node in the manifest that accepts streaming input
@@ -1566,8 +1543,7 @@ pub struct AudioChunk {
     pub timestamp_ms: u64,
 }
 /// Stream control commands (unchanged from Feature 003)
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StreamControl {
     /// Control command type
     #[prost(enumeration = "stream_control::Command", tag = "1")]
@@ -1602,9 +1578,9 @@ pub mod stream_control {
         /// (if the ProtoBuf definition does not change) and safe for programmatic use.
         pub fn as_str_name(&self) -> &'static str {
             match self {
-                Command::Unspecified => "COMMAND_UNSPECIFIED",
-                Command::Close => "COMMAND_CLOSE",
-                Command::Cancel => "COMMAND_CANCEL",
+                Self::Unspecified => "COMMAND_UNSPECIFIED",
+                Self::Close => "COMMAND_CLOSE",
+                Self::Cancel => "COMMAND_CANCEL",
             }
         }
         /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1621,7 +1597,6 @@ pub mod stream_control {
 /// Server streaming response
 ///
 /// UPDATED: ChunkResult now uses generic data outputs
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StreamResponse {
     /// Response type (only one field set per message)
@@ -1631,7 +1606,6 @@ pub struct StreamResponse {
 /// Nested message and enum types in `StreamResponse`.
 pub mod stream_response {
     /// Response type (only one field set per message)
-    #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Response {
         /// First response: pipeline ready to receive chunks
@@ -1652,8 +1626,7 @@ pub mod stream_response {
     }
 }
 /// Pipeline initialized and ready to receive chunks
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StreamReady {
     /// Unique session ID for this stream
     /// Client can use for correlation in logs
@@ -1671,7 +1644,6 @@ pub struct StreamReady {
 /// Result from processing a single chunk
 ///
 /// UPDATED: Uses generic data_outputs map (replaces audio_outputs + string data_outputs)
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ChunkResult {
     /// Sequence number (matches input DataChunk.sequence)
@@ -1682,14 +1654,14 @@ pub struct ChunkResult {
     /// All output types now use DataBuffer
     ///
     /// Example (audio VAD):
-    ///    data_outputs: {
-    ///      "vad": DataBuffer { json: { has_speech: true, confidence: 0.87 } }
-    ///    }
+    /// data_outputs: {
+    /// "vad": DataBuffer { json: { has_speech: true, confidence: 0.87 } }
+    /// }
     ///
     /// Example (audio filter):
-    ///    data_outputs: {
-    ///      "filter": DataBuffer { audio: { ... } }
-    ///    }
+    /// data_outputs: {
+    /// "filter": DataBuffer { audio: { ... } }
+    /// }
     #[prost(map = "string, message", tag = "2")]
     pub data_outputs: ::std::collections::HashMap<
         ::prost::alloc::string::String,
@@ -1711,7 +1683,6 @@ pub struct ChunkResult {
 /// real-time visibility into stream health.
 ///
 /// UPDATED: Uses generic item counting and type breakdown
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StreamMetrics {
     /// Session ID
@@ -1744,10 +1715,10 @@ pub struct StreamMetrics {
     /// Values: Count of chunks processed per type
     ///
     /// Example:
-    ///    data_type_breakdown: {
-    ///      "audio": 80,  // 80 audio chunks
-    ///      "json": 20    // 20 JSON chunks (control parameters)
-    ///    }
+    /// data_type_breakdown: {
+    /// "audio": 80,  // 80 audio chunks
+    /// "json": 20    // 20 JSON chunks (control parameters)
+    /// }
     #[prost(map = "string, uint64", tag = "8")]
     pub data_type_breakdown: ::std::collections::HashMap<
         ::prost::alloc::string::String,
@@ -1755,7 +1726,6 @@ pub struct StreamMetrics {
     >,
 }
 /// Stream closed gracefully (unchanged from Feature 003)
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StreamClosed {
     /// Session ID
@@ -1769,8 +1739,7 @@ pub struct StreamClosed {
     pub reason: ::prost::alloc::string::String,
 }
 /// Extended error response for streaming (unchanged from Feature 003)
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StreamErrorResponse {
     /// Base error information
     #[prost(message, optional, tag = "1")]
@@ -1810,17 +1779,13 @@ impl StreamErrorType {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            StreamErrorType::StreamErrorUnspecified => "STREAM_ERROR_UNSPECIFIED",
-            StreamErrorType::StreamErrorInitRequired => "STREAM_ERROR_INIT_REQUIRED",
-            StreamErrorType::StreamErrorInvalidSequence => {
-                "STREAM_ERROR_INVALID_SEQUENCE"
-            }
-            StreamErrorType::StreamErrorBufferOverflow => "STREAM_ERROR_BUFFER_OVERFLOW",
-            StreamErrorType::StreamErrorTimeout => "STREAM_ERROR_TIMEOUT",
-            StreamErrorType::StreamErrorClientDisconnect => {
-                "STREAM_ERROR_CLIENT_DISCONNECT"
-            }
-            StreamErrorType::StreamErrorExecution => "STREAM_ERROR_EXECUTION",
+            Self::StreamErrorUnspecified => "STREAM_ERROR_UNSPECIFIED",
+            Self::StreamErrorInitRequired => "STREAM_ERROR_INIT_REQUIRED",
+            Self::StreamErrorInvalidSequence => "STREAM_ERROR_INVALID_SEQUENCE",
+            Self::StreamErrorBufferOverflow => "STREAM_ERROR_BUFFER_OVERFLOW",
+            Self::StreamErrorTimeout => "STREAM_ERROR_TIMEOUT",
+            Self::StreamErrorClientDisconnect => "STREAM_ERROR_CLIENT_DISCONNECT",
+            Self::StreamErrorExecution => "STREAM_ERROR_EXECUTION",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1839,7 +1804,13 @@ impl StreamErrorType {
 }
 /// Generated client implementations.
 pub mod streaming_pipeline_service_client {
-    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
     use tonic::codegen::*;
     use tonic::codegen::http::Uri;
     #[derive(Debug, Clone)]
@@ -1859,10 +1830,10 @@ pub mod streaming_pipeline_service_client {
     }
     impl<T> StreamingPipelineServiceClient<T>
     where
-        T: tonic::client::GrpcService<tonic::body::BoxBody>,
+        T: tonic::client::GrpcService<tonic::body::Body>,
         T::Error: Into<StdError>,
-        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
-        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
     {
         pub fn new(inner: T) -> Self {
             let inner = tonic::client::Grpc::new(inner);
@@ -1880,14 +1851,14 @@ pub mod streaming_pipeline_service_client {
             F: tonic::service::Interceptor,
             T::ResponseBody: Default,
             T: tonic::codegen::Service<
-                http::Request<tonic::body::BoxBody>,
+                http::Request<tonic::body::Body>,
                 Response = http::Response<
-                    <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
+                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
                 >,
             >,
             <T as tonic::codegen::Service<
-                http::Request<tonic::body::BoxBody>,
-            >>::Error: Into<StdError> + Send + Sync,
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             StreamingPipelineServiceClient::new(
                 InterceptedService::new(inner, interceptor),
@@ -1927,18 +1898,21 @@ pub mod streaming_pipeline_service_client {
         /// Execute a pipeline with streaming data input/output
         ///
         /// This is a bidirectional streaming RPC:
-        /// - Client sends: pipeline manifest (first message), then data chunks
-        /// - Server sends: ready confirmation, then processing results per chunk
+        ///
+        /// * Client sends: pipeline manifest (first message), then data chunks
+        /// * Server sends: ready confirmation, then processing results per chunk
         ///
         /// Connection lifecycle:
+        ///
         /// 1. Client sends manifest → Server validates and responds with StreamReady
-        /// 2. Client sends data chunks → Server processes and responds with results
-        /// 3. Client sends StreamControl::CLOSE → Server sends final metrics and closes
+        /// 1. Client sends data chunks → Server processes and responds with results
+        /// 1. Client sends StreamControl::CLOSE → Server sends final metrics and closes
         ///
         /// Performance targets:
-        /// - <50ms average latency per chunk (User Story 3)
-        /// - Support 1000+ concurrent streaming sessions (SC-002)
-        /// - <5% overhead vs audio-only protocol for audio pipelines (SC-008)
+        ///
+        /// * \<50ms average latency per chunk (User Story 3)
+        /// * Support 1000+ concurrent streaming sessions (SC-002)
+        /// * \<5% overhead vs audio-only protocol for audio pipelines (SC-008)
         pub async fn stream_pipeline(
             &mut self,
             request: impl tonic::IntoStreamingRequest<Message = super::StreamRequest>,
@@ -1950,12 +1924,11 @@ pub mod streaming_pipeline_service_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/remotemedia.v1.StreamingPipelineService/StreamPipeline",
             );
@@ -1973,32 +1946,41 @@ pub mod streaming_pipeline_service_client {
 }
 /// Generated server implementations.
 pub mod streaming_pipeline_service_server {
-    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
     use tonic::codegen::*;
     /// Generated trait containing gRPC methods that should be implemented for use with StreamingPipelineServiceServer.
     #[async_trait]
-    pub trait StreamingPipelineService: Send + Sync + 'static {
+    pub trait StreamingPipelineService: std::marker::Send + std::marker::Sync + 'static {
         /// Server streaming response type for the StreamPipeline method.
         type StreamPipelineStream: tonic::codegen::tokio_stream::Stream<
                 Item = std::result::Result<super::StreamResponse, tonic::Status>,
             >
-            + Send
+            + std::marker::Send
             + 'static;
         /// Execute a pipeline with streaming data input/output
         ///
         /// This is a bidirectional streaming RPC:
-        /// - Client sends: pipeline manifest (first message), then data chunks
-        /// - Server sends: ready confirmation, then processing results per chunk
+        ///
+        /// * Client sends: pipeline manifest (first message), then data chunks
+        /// * Server sends: ready confirmation, then processing results per chunk
         ///
         /// Connection lifecycle:
+        ///
         /// 1. Client sends manifest → Server validates and responds with StreamReady
-        /// 2. Client sends data chunks → Server processes and responds with results
-        /// 3. Client sends StreamControl::CLOSE → Server sends final metrics and closes
+        /// 1. Client sends data chunks → Server processes and responds with results
+        /// 1. Client sends StreamControl::CLOSE → Server sends final metrics and closes
         ///
         /// Performance targets:
-        /// - <50ms average latency per chunk (User Story 3)
-        /// - Support 1000+ concurrent streaming sessions (SC-002)
-        /// - <5% overhead vs audio-only protocol for audio pipelines (SC-008)
+        ///
+        /// * \<50ms average latency per chunk (User Story 3)
+        /// * Support 1000+ concurrent streaming sessions (SC-002)
+        /// * \<5% overhead vs audio-only protocol for audio pipelines (SC-008)
         async fn stream_pipeline(
             &self,
             request: tonic::Request<tonic::Streaming<super::StreamRequest>>,
@@ -2008,20 +1990,18 @@ pub mod streaming_pipeline_service_server {
         >;
     }
     #[derive(Debug)]
-    pub struct StreamingPipelineServiceServer<T: StreamingPipelineService> {
-        inner: _Inner<T>,
+    pub struct StreamingPipelineServiceServer<T> {
+        inner: Arc<T>,
         accept_compression_encodings: EnabledCompressionEncodings,
         send_compression_encodings: EnabledCompressionEncodings,
         max_decoding_message_size: Option<usize>,
         max_encoding_message_size: Option<usize>,
     }
-    struct _Inner<T>(Arc<T>);
-    impl<T: StreamingPipelineService> StreamingPipelineServiceServer<T> {
+    impl<T> StreamingPipelineServiceServer<T> {
         pub fn new(inner: T) -> Self {
             Self::from_arc(Arc::new(inner))
         }
         pub fn from_arc(inner: Arc<T>) -> Self {
-            let inner = _Inner(inner);
             Self {
                 inner,
                 accept_compression_encodings: Default::default(),
@@ -2072,10 +2052,10 @@ pub mod streaming_pipeline_service_server {
     for StreamingPipelineServiceServer<T>
     where
         T: StreamingPipelineService,
-        B: Body + Send + 'static,
-        B::Error: Into<StdError> + Send + 'static,
+        B: Body + std::marker::Send + 'static,
+        B::Error: Into<StdError> + std::marker::Send + 'static,
     {
-        type Response = http::Response<tonic::body::BoxBody>;
+        type Response = http::Response<tonic::body::Body>;
         type Error = std::convert::Infallible;
         type Future = BoxFuture<Self::Response, Self::Error>;
         fn poll_ready(
@@ -2085,7 +2065,6 @@ pub mod streaming_pipeline_service_server {
             Poll::Ready(Ok(()))
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
-            let inner = self.inner.clone();
             match req.uri().path() {
                 "/remotemedia.v1.StreamingPipelineService/StreamPipeline" => {
                     #[allow(non_camel_case_types)]
@@ -2123,9 +2102,8 @@ pub mod streaming_pipeline_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let inner = inner.0;
                         let method = StreamPipelineSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -2142,20 +2120,27 @@ pub mod streaming_pipeline_service_server {
                 }
                 _ => {
                     Box::pin(async move {
-                        Ok(
-                            http::Response::builder()
-                                .status(200)
-                                .header("grpc-status", "12")
-                                .header("content-type", "application/grpc")
-                                .body(empty_body())
-                                .unwrap(),
-                        )
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
                     })
                 }
             }
         }
     }
-    impl<T: StreamingPipelineService> Clone for StreamingPipelineServiceServer<T> {
+    impl<T> Clone for StreamingPipelineServiceServer<T> {
         fn clone(&self) -> Self {
             let inner = self.inner.clone();
             Self {
@@ -2167,18 +2152,9 @@ pub mod streaming_pipeline_service_server {
             }
         }
     }
-    impl<T: StreamingPipelineService> Clone for _Inner<T> {
-        fn clone(&self) -> Self {
-            Self(Arc::clone(&self.0))
-        }
-    }
-    impl<T: std::fmt::Debug> std::fmt::Debug for _Inner<T> {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{:?}", self.0)
-        }
-    }
-    impl<T: StreamingPipelineService> tonic::server::NamedService
-    for StreamingPipelineServiceServer<T> {
-        const NAME: &'static str = "remotemedia.v1.StreamingPipelineService";
+    /// Generated gRPC service name
+    pub const SERVICE_NAME: &str = "remotemedia.v1.StreamingPipelineService";
+    impl<T> tonic::server::NamedService for StreamingPipelineServiceServer<T> {
+        const NAME: &'static str = SERVICE_NAME;
     }
 }

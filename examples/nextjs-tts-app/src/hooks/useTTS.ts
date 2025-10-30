@@ -14,9 +14,7 @@ import type {
   VoiceConfig,
 } from '@/types/tts';
 import { DEFAULT_VOICE_CONFIG, validateTTSText } from '@/types/tts';
-import { TTSGRPCClient } from '@/lib/grpc-client';
-import { StreamHandler, StreamHandlerEvent } from '@/lib/stream-handler';
-import { AudioPlayer } from '@/lib/audio-player';
+import { streamTTS } from '@/lib/streaming-api-client';
 
 export interface UseTTSOptions {
   /** Initial voice configuration */
@@ -72,94 +70,46 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
   const [voiceConfig, setVoiceConfig] = useState<VoiceConfig>(initialVoiceConfig);
 
   // Refs for maintaining instances
-  const grpcClientRef = useRef<TTSGRPCClient | null>(null);
-  const audioPlayerRef = useRef<AudioPlayer | null>(null);
-  const streamHandlerRef = useRef<StreamHandler | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastRequestTextRef = useRef<string>('');
 
-  // Initialize gRPC client and audio player on mount
+  // Initialize audio element on mount
   useEffect(() => {
-    // Create gRPC client
-    if (!grpcClientRef.current) {
-      grpcClientRef.current = new TTSGRPCClient();
-    }
-
-    // Create audio player
-    if (!audioPlayerRef.current) {
-      audioPlayerRef.current = new AudioPlayer();
-    }
-
-    // Create stream handler
-    if (!streamHandlerRef.current && grpcClientRef.current && audioPlayerRef.current) {
-      streamHandlerRef.current = new StreamHandler(
-        grpcClientRef.current,
-        audioPlayerRef.current
-      );
-
-      // Set up event listeners
-      streamHandlerRef.current.on(StreamHandlerEvent.Ready, ({ requestId }) => {
-        console.log('[useTTS] Stream ready:', requestId);
-        setStatus('streaming');
-      });
-
-      streamHandlerRef.current.on(StreamHandlerEvent.ChunkReceived, (data) => {
-        console.log('[useTTS] Chunk received:', data.sequenceNumber);
-        // Update status is already streaming
-      });
-
-      streamHandlerRef.current.on(StreamHandlerEvent.PlaybackStarted, ({ requestId }) => {
-        console.log('[useTTS] Playback started:', requestId);
+    // Create HTML audio element for playback
+    if (!audioRef.current) {
+      audioRef.current = new Audio();
+      audioRef.current.addEventListener('play', () => {
+        console.log('[useTTS] Playback started');
         setStatus('playing');
       });
-
-      streamHandlerRef.current.on(StreamHandlerEvent.Completed, ({ requestId }) => {
-        console.log('[useTTS] Stream completed:', requestId);
+      audioRef.current.addEventListener('ended', () => {
+        console.log('[useTTS] Playback ended');
         setStatus('completed');
-        setCurrentRequest(prev => prev ? { ...prev, status: 'completed', updatedAt: new Date() } : null);
-        onComplete?.(requestId);
+        setCurrentRequest(prev =>
+          prev ? { ...prev, status: 'completed', updatedAt: new Date() } : null
+        );
       });
-
-      streamHandlerRef.current.on(StreamHandlerEvent.Error, ({ requestId, error: streamError }) => {
-        console.error('[useTTS] Stream error:', streamError);
-        const ttsError: TTSError = {
-          code: 'TTS_STREAM_ERROR',
-          message: streamError.message || 'An error occurred during synthesis',
+      audioRef.current.addEventListener('error', (e) => {
+        console.error('[useTTS] Playback error:', e);
+        const playbackError: TTSError = {
+          code: 'PLAYBACK_ERROR',
+          message: 'Audio playback failed',
           timestamp: new Date(),
-          details: {
-            requestId,
-            originalError: streamError.toString(),
-          },
         };
-        setError(ttsError);
+        setError(playbackError);
         setStatus('failed');
-        setCurrentRequest(prev =>
-          prev ? { ...prev, status: 'failed', error: ttsError, updatedAt: new Date() } : null
-        );
-        onError?.(ttsError);
-      });
-
-      streamHandlerRef.current.on(StreamHandlerEvent.Cancelled, ({ requestId }) => {
-        console.log('[useTTS] Stream cancelled:', requestId);
-        setStatus('cancelled');
-        setCurrentRequest(prev =>
-          prev ? { ...prev, status: 'cancelled', updatedAt: new Date() } : null
-        );
       });
     }
 
     // Cleanup on unmount
     return () => {
-      if (streamHandlerRef.current) {
-        streamHandlerRef.current.reset();
-      }
-      if (audioPlayerRef.current) {
-        audioPlayerRef.current.dispose();
-      }
-      if (grpcClientRef.current) {
-        grpcClientRef.current.disconnect();
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+        audioRef.current = null;
       }
     };
-  }, [onComplete, onError]);
+  }, []);
 
   /**
    * Start TTS synthesis
@@ -202,17 +152,57 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
         // Call start callback
         onStart?.(requestId);
 
-        // Connect to gRPC service if not connected
-        if (grpcClientRef.current && !grpcClientRef.current.isConnected()) {
-          await grpcClientRef.current.connect();
+        // Stream TTS audio from API
+        console.log('[useTTS] Starting TTS stream for request:', requestId);
+        setStatus('streaming');
+
+        const audioUrl = await streamTTS(
+          {
+            text,
+            language: voiceConfig.language,
+            voice: voiceConfig.voice,
+            speed: voiceConfig.speed,
+          },
+          {
+            onStart: () => {
+              console.log('[useTTS] Stream started');
+            },
+            onProgress: (bytesReceived) => {
+              console.log('[useTTS] Bytes received:', bytesReceived);
+            },
+            onComplete: () => {
+              console.log('[useTTS] Stream completed');
+              // Audio will start playing automatically via audio element
+            },
+            onError: (streamError) => {
+              console.error('[useTTS] Stream error:', streamError);
+              const ttsError: TTSError = {
+                code: 'TTS_STREAM_ERROR',
+                message: streamError.message || 'An error occurred during synthesis',
+                timestamp: new Date(),
+                details: {
+                  requestId,
+                  originalError: streamError.toString(),
+                },
+              };
+              setError(ttsError);
+              setStatus('failed');
+              setCurrentRequest(prev =>
+                prev ? { ...prev, status: 'failed', error: ttsError, updatedAt: new Date() } : null
+              );
+              onError?.(ttsError);
+            },
+          }
+        );
+
+        // Set audio source and play if autoPlay is enabled
+        if (audioRef.current) {
+          audioRef.current.src = audioUrl;
+          if (autoPlay) {
+            await audioRef.current.play();
+          }
         }
 
-        // Start streaming
-        if (streamHandlerRef.current) {
-          await streamHandlerRef.current.start(request, autoPlay);
-        } else {
-          throw new Error('Stream handler not initialized');
-        }
       } catch (err) {
         console.error('[useTTS] Synthesis error:', err);
         const synthesisError: TTSError = {
@@ -232,15 +222,16 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
         onError?.(synthesisError);
       }
     },
-    [voiceConfig, autoPlay, onStart, onError]
+    [voiceConfig, autoPlay, onStart, onComplete, onError]
   );
 
   /**
    * Cancel ongoing synthesis
    */
   const cancel = useCallback(() => {
-    if (streamHandlerRef.current) {
-      streamHandlerRef.current.cancel();
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = '';
     }
     setStatus('cancelled');
     setCurrentRequest(prev =>

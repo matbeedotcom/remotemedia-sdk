@@ -4,7 +4,7 @@
 //! the streaming pipeline infrastructure.
 
 use crate::data::RuntimeData;
-use crate::nodes::StreamingNode;
+use crate::nodes::SyncStreamingNode;
 use crate::Error;
 
 /// PassThroughNode that returns input unchanged
@@ -16,18 +16,14 @@ impl PassThroughNode {
     pub fn new(id: String, _params: &str) -> Result<Self, Error> {
         Ok(Self { id })
     }
-
-    pub fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
-        Ok(data)
-    }
 }
 
-impl StreamingNode for PassThroughNode {
+impl SyncStreamingNode for PassThroughNode {
     fn node_type(&self) -> &str {
         "PassThrough"
     }
 
     fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
-        PassThroughNode::process(self, data)
+        Ok(data)
     }
 }

@@ -11,6 +11,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { DataBuffer } from './data-types';
 
 // ES module compatibility: resolve __dirname
 // In ES modules, we need to derive __dirname from import.meta.url
@@ -135,16 +136,29 @@ export class RemoteMediaClient {
     const possibleProtoPaths = [
       path.join(__dirname_resolved, '../protos'),
       path.join(__dirname_resolved, '../../protos'),
+      path.join(__dirname_resolved, '../../runtime/protos'),
       path.join(process.cwd(), 'nodejs-client/protos'),
       path.join(process.cwd(), 'runtime/protos'),
+      path.join(process.cwd(), '../../runtime/protos'),
+      path.join(process.cwd(), '../../../runtime/protos'),
     ];
 
     let PROTO_PATH = possibleProtoPaths[0];
     for (const tryPath of possibleProtoPaths) {
       if (fs.existsSync(path.join(tryPath, 'common.proto'))) {
         PROTO_PATH = tryPath;
+        console.log(`[RemoteMediaClient] Found protos at: ${PROTO_PATH}`);
         break;
       }
+    }
+
+    // Final check - if still not found, throw helpful error
+    if (!fs.existsSync(path.join(PROTO_PATH, 'common.proto'))) {
+      throw new Error(
+        `Proto files not found. Tried paths:\n${possibleProtoPaths.map(p => `  - ${p}`).join('\n')}\n` +
+        `Current working directory: ${process.cwd()}\n` +
+        `Resolved __dirname: ${__dirname_resolved}`
+      );
     }
     
     const packageDefinition = protoLoader.loadSync(
@@ -337,7 +351,7 @@ export class RemoteMediaClient {
 
   async *streamPipeline(
     manifest: PipelineManifest,
-    audioChunks: AsyncGenerator<[string, AudioBuffer, number]>
+    dataChunks: AsyncGenerator<[string, DataBuffer, number]>
   ): AsyncGenerator<ChunkResult> {
     if (!this.connected) {
       await this.connect();
@@ -380,26 +394,37 @@ export class RemoteMediaClient {
     // Handle incoming responses
     stream.on('data', (response: any) => {
       if (response.result) {
-        const hasAudioOutput = response.result.audio_outputs && Object.keys(response.result.audio_outputs).length > 0;
+        const hasDataOutput = response.result.data_outputs && Object.keys(response.result.data_outputs).length > 0;
 
         const chunkResult: ChunkResult = {
           sequence: response.result.sequence,
           processingTimeMs: response.result.processing_time_ms,
-          totalSamplesProcessed: response.result.total_samples_processed,
-          hasAudioOutput: hasAudioOutput,
+          totalSamplesProcessed: response.result.total_items_processed || response.result.total_samples_processed || 0,
+          hasAudioOutput: hasDataOutput,
         };
 
-        if (hasAudioOutput) {
-          // Get the first audio output (assuming single node for now)
-          const firstOutput = Object.values(response.result.audio_outputs)[0] as any;
-          if (firstOutput) {
+        if (hasDataOutput) {
+          // Get the first data output (assuming single node for now)
+          const firstOutput = Object.values(response.result.data_outputs)[0] as any;
+          console.log('[gRPC Client] Processing data output with type:', firstOutput?.data_type);
+
+          // The protobuf oneof field puts the variant directly on the object
+          // Structure: { metadata, audio/video/text/etc, data_type: "audio/video/text/etc" }
+          if (firstOutput?.audio) {
+            const audioData = firstOutput.audio;
+            console.log('[gRPC Client] Found audio:', audioData.num_samples, 'samples,', audioData.sample_rate, 'Hz');
             chunkResult.audioOutput = {
-              samples: Buffer.from(firstOutput.samples),
-              sampleRate: firstOutput.sample_rate,
-              channels: firstOutput.channels,
-              format: firstOutput.format as AudioFormat,
-              numSamples: firstOutput.num_samples,
+              samples: Buffer.from(audioData.samples),
+              sampleRate: audioData.sample_rate,
+              channels: audioData.channels,
+              format: audioData.format as AudioFormat,
+              numSamples: parseInt(audioData.num_samples) || audioData.num_samples,
             };
+          } else if (firstOutput?.text) {
+            console.log('[gRPC Client] Found text data');
+            // Could add text handling here if needed
+          } else {
+            console.log('[gRPC Client] Unknown data type:', firstOutput?.data_type);
           }
         }
 
@@ -445,19 +470,80 @@ export class RemoteMediaClient {
       }
     });
 
-    // Send audio chunks in background
+    // Send data chunks in background
     (async () => {
       try {
-        for await (const [nodeId, audio, sequence] of audioChunks) {
+        for await (const [nodeId, dataBuffer, sequence] of dataChunks) {
+          // Convert DataBuffer to protobuf format
+          let protoDataType: any;
+
+          switch (dataBuffer.type) {
+            case 'audio':
+              protoDataType = {
+                audio: {
+                  samples: dataBuffer.data.samples,
+                  sample_rate: dataBuffer.data.sampleRate,
+                  channels: dataBuffer.data.channels,
+                  format: dataBuffer.data.format,
+                  num_samples: dataBuffer.data.numSamples,
+                },
+              };
+              break;
+            case 'video':
+              protoDataType = {
+                video: {
+                  pixel_data: dataBuffer.data.pixelData,
+                  width: dataBuffer.data.width,
+                  height: dataBuffer.data.height,
+                  format: dataBuffer.data.format,
+                  frame_number: dataBuffer.data.frameNumber,
+                  timestamp_us: dataBuffer.data.timestampUs,
+                },
+              };
+              break;
+            case 'tensor':
+              protoDataType = {
+                tensor: {
+                  data: dataBuffer.data.data,
+                  shape: dataBuffer.data.shape,
+                  dtype: dataBuffer.data.dtype,
+                  layout: dataBuffer.data.layout || '',
+                },
+              };
+              break;
+            case 'json':
+              protoDataType = {
+                json: {
+                  json_payload: dataBuffer.data.jsonPayload,
+                  schema_type: dataBuffer.data.schemaType || '',
+                },
+              };
+              break;
+            case 'text':
+              protoDataType = {
+                text: {
+                  text_data: dataBuffer.data.textData,
+                  encoding: dataBuffer.data.encoding || 'utf-8',
+                  language: dataBuffer.data.language || '',
+                },
+              };
+              break;
+            case 'binary':
+              protoDataType = {
+                binary: {
+                  data: dataBuffer.data.data,
+                  mime_type: dataBuffer.data.mimeType || 'application/octet-stream',
+                },
+              };
+              break;
+          }
+
           stream.write({
-            audio_chunk: {
+            data_chunk: {
               node_id: nodeId,
               buffer: {
-                samples: audio.samples,
-                sample_rate: audio.sampleRate,
-                channels: audio.channels,
-                format: audio.format,
-                num_samples: audio.numSamples,
+                ...protoDataType,
+                metadata: dataBuffer.metadata || {},
               },
               sequence,
             },
