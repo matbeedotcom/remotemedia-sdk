@@ -68,7 +68,7 @@ struct KokoroTTSNodeFactory;
 impl StreamingNodeFactory for KokoroTTSNodeFactory {
     fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
         let node = PythonStreamingNode::new(node_id, "KokoroTTSNode", params)?;
-        Ok(Box::new(AsyncNodeWrapper(node)))
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
     fn node_type(&self) -> &str {
@@ -80,7 +80,7 @@ struct SimplePyTorchNodeFactory;
 impl StreamingNodeFactory for SimplePyTorchNodeFactory {
     fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
         let node = PythonStreamingNode::new(node_id, "SimplePyTorchNode", params)?;
-        Ok(Box::new(AsyncNodeWrapper(node)))
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
     fn node_type(&self) -> &str {

@@ -29,6 +29,16 @@ impl PythonStreamingNode {
         })
     }
 
+    /// Create from an existing executor (to reuse cached Python instances)
+    pub fn from_executor(node_id: String, node_type: &str, params: &Value, executor: Box<dyn NodeExecutor>) -> Result<Self, Error> {
+        Ok(Self {
+            node_id,
+            node_type: node_type.to_string(),
+            params: params.clone(),
+            executor: Mutex::new(Some(executor)),
+        })
+    }
+
     async fn ensure_initialized(&self) -> Result<(), Error> {
         let mut executor_guard = self.executor.lock().await;
         if executor_guard.is_none() {

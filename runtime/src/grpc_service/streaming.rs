@@ -48,8 +48,22 @@ const MAX_BUFFER_CHUNKS: usize = 10;
 /// Maximum session idle time before timeout (seconds)
 const SESSION_TIMEOUT_SECS: u64 = 300; // 5 minutes
 
+/// Global node cache TTL (seconds) - how long to keep cached nodes after last use
+const GLOBAL_NODE_CACHE_TTL_SECS: u64 = 600; // 10 minutes
+
+/// Interval for cache cleanup checks (seconds)
+const CACHE_CLEANUP_INTERVAL_SECS: u64 = 60; // 1 minute
+
 /// Frequency of metrics updates (every N chunks)
 const METRICS_UPDATE_INTERVAL: u64 = 10;
+
+/// Node cache entry with timestamp for TTL management
+struct CachedNode {
+    node: Arc<Box<dyn crate::nodes::StreamingNode>>,
+    /// For Python streaming nodes, store the unwrapped instance to access process_streaming()
+    py_streaming_node: Option<Arc<crate::nodes::python_streaming::PythonStreamingNode>>,
+    last_used: Instant,
+}
 
 /// Streaming pipeline service implementation
 pub struct StreamingServiceImpl {
@@ -67,6 +81,10 @@ pub struct StreamingServiceImpl {
 
     /// Streaming node registry
     streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
+
+    /// Global node cache (shared across all sessions)
+    /// Key: "{node_type}:{json_params_hash}", Value: cached node with timestamp
+    global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>>,
 }
 
 impl StreamingServiceImpl {
@@ -75,12 +93,45 @@ impl StreamingServiceImpl {
         // Create default streaming node registry
         let streaming_registry = Arc::new(crate::nodes::streaming_registry::create_default_streaming_registry());
 
+        let global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>> = Arc::new(RwLock::new(HashMap::new()));
+
+        // Spawn background task to periodically clean up expired cache entries
+        let cache_for_cleanup = global_node_cache.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(
+                std::time::Duration::from_secs(CACHE_CLEANUP_INTERVAL_SECS)
+            );
+
+            loop {
+                interval.tick().await;
+
+                // Clean up expired cache entries
+                let mut cache = cache_for_cleanup.write().await;
+                let before_count = cache.len();
+
+                cache.retain(|key, cached_node| {
+                    let age_secs = cached_node.last_used.elapsed().as_secs();
+                    let keep = age_secs < GLOBAL_NODE_CACHE_TTL_SECS;
+                    if !keep {
+                        info!("🗑️ Expired cached node '{}' (idle for {}s)", key, age_secs);
+                    }
+                    keep
+                });
+
+                let removed_count = before_count - cache.len();
+                if removed_count > 0 {
+                    info!("🧹 Cache cleanup: removed {} expired nodes ({} remaining)", removed_count, cache.len());
+                }
+            }
+        });
+
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             config,
             executor,
             metrics,
             streaming_registry,
+            global_node_cache,
         }
     }
 
@@ -294,12 +345,13 @@ impl crate::grpc_service::StreamingPipelineService for StreamingServiceImpl {
         let executor = self.executor.clone();
         let metrics = self.metrics.clone();
 
-        // Clone registry for the async task
+        // Clone registry and global cache for the async task
         let streaming_registry = self.streaming_registry.clone();
+        let global_node_cache = self.global_node_cache.clone();
 
         // Spawn async task to handle bidirectional streaming
         tokio::spawn(async move {
-            let result = handle_stream(&mut stream, tx.clone(), sessions, executor, metrics, streaming_registry).await;
+            let result = handle_stream(&mut stream, tx.clone(), sessions, executor, metrics, streaming_registry, global_node_cache).await;
             
             if let Err(e) = result {
                 error!(error = %e, "Stream handling error");
@@ -329,6 +381,7 @@ async fn handle_stream(
     executor: Arc<Executor>,
     metrics: Arc<ServiceMetrics>,
     streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
+    global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>>,
 ) -> Result<(), ServiceError> {
     let mut session: Option<Arc<Mutex<StreamSession>>> = None;
     let mut session_id = String::new();
@@ -439,7 +492,8 @@ async fn handle_stream(
                     data_chunk,
                     sess.clone(),
                     streaming_registry.clone(),
-                    tx.clone()
+                    tx.clone(),
+                    global_node_cache.clone()
                 ).await;
 
                 match result {
@@ -803,44 +857,94 @@ async fn handle_data_chunk_multi(
     session: Arc<Mutex<StreamSession>>,
     streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
     tx: tokio::sync::mpsc::Sender<Result<StreamResponse, Status>>,
+    global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>>,
 ) -> Result<usize, ServiceError> {
     let start_time = Instant::now();
 
-    // Get or create node from cache
-    let node: Arc<Box<dyn crate::nodes::StreamingNode>> = {
+    // Get or create node from cache (global cache with TTL)
+    let (node, py_streaming_node): (Arc<Box<dyn crate::nodes::StreamingNode>>, Option<Arc<crate::nodes::python_streaming::PythonStreamingNode>>) = {
         let mut sess = session.lock().await;
         sess.validate_sequence(chunk.sequence)?;
 
-        // Check if node is already cached
-        if let Some(cached_node) = sess.node_cache.get(&chunk.node_id) {
-            info!("♻️ Reusing cached node: {}", chunk.node_id);
-            Arc::clone(cached_node)
+        // Get node info from manifest
+        let node_spec = sess.manifest.nodes.iter()
+            .find(|n| n.id == chunk.node_id)
+            .ok_or_else(|| ServiceError::Validation(
+                format!("Node '{}' not found in manifest", chunk.node_id)
+            ))?;
+
+        let node_type = node_spec.node_type.clone();
+        let params = node_spec.params.clone();
+
+        // Create cache key: "{node_type}:{params_hash}"
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        params.hash(&mut hasher);
+        let cache_key = format!("{}:{:x}", node_type, hasher.finish());
+
+        // Check global cache first (read lock)
+        let cache_entry = {
+            let global_cache = global_node_cache.read().await;
+            global_cache.get(&cache_key).map(|cached| {
+                info!("♻️ Reusing globally cached node: {} (key: {})", chunk.node_id, cache_key);
+                (Arc::clone(&cached.node), cached.py_streaming_node.clone())
+            })
+        };
+
+        let (node, py_streaming_node) = if let Some((cached_node, cached_py_node)) = cache_entry {
+            // Update timestamp in global cache (write lock)
+            let mut global_cache = global_node_cache.write().await;
+            if let Some(cached) = global_cache.get_mut(&cache_key) {
+                cached.last_used = Instant::now();
+            }
+
+            // Also store in session cache for quick lookup
+            sess.node_cache.insert(chunk.node_id.clone(), Arc::clone(&cached_node));
+            (cached_node, cached_py_node)
         } else {
             // Node not cached - create new instance
-            info!("🆕 Creating new node: {}", chunk.node_id);
+            info!("🆕 Creating new node: {} (type: {}, key: {})", chunk.node_id, node_type, cache_key);
 
-            // Get node info from manifest
-            let node_spec = sess.manifest.nodes.iter()
-                .find(|n| n.id == chunk.node_id)
-                .ok_or_else(|| ServiceError::Validation(
-                    format!("Node '{}' not found in manifest", chunk.node_id)
-                ))?;
+            // For Python streaming nodes (like TTS), create the PythonStreamingNode directly
+            // so we can cache it separately for process_streaming() access
+            let (new_node, py_streaming_node) = if node_type == "KokoroTTSNode" || node_type.contains("TTS") || node_type.contains("PyTorch") {
+                use crate::nodes::{python_streaming::PythonStreamingNode, AsyncNodeWrapper};
 
-            let node_type = node_spec.node_type.clone();
-            let params = node_spec.params.clone();
+                let py_node = PythonStreamingNode::new(chunk.node_id.clone(), &node_type, &params)
+                    .map_err(|e| ServiceError::Internal(format!("Failed to create Python streaming node: {}", e)))?;
 
-            // Create the streaming node dynamically using the registry
-            let new_node = streaming_registry
-                .create_node(&node_type, chunk.node_id.clone(), &params)
-                .map_err(|e| ServiceError::Internal(format!("Failed to create node: {}", e)))?;
+                let py_node_arc = Arc::new(py_node);
+                let wrapped: Box<dyn crate::nodes::StreamingNode> = Box::new(AsyncNodeWrapper(Arc::clone(&py_node_arc)));
 
-            // Wrap in Arc and cache it
+                (wrapped, Some(py_node_arc))
+            } else {
+                // Regular nodes - use registry
+                let node = streaming_registry
+                    .create_node(&node_type, chunk.node_id.clone(), &params)
+                    .map_err(|e| ServiceError::Internal(format!("Failed to create node: {}", e)))?;
+                (node, None)
+            };
+
+            // Wrap in Arc
             let arc_node = Arc::new(new_node);
+
+            // Store in global cache with timestamp
+            let mut global_cache = global_node_cache.write().await;
+            global_cache.insert(cache_key.clone(), CachedNode {
+                node: Arc::clone(&arc_node),
+                py_streaming_node: py_streaming_node.clone(),
+                last_used: Instant::now(),
+            });
+
+            // Also store in session cache for quick lookup
             sess.node_cache.insert(chunk.node_id.clone(), Arc::clone(&arc_node));
 
-            info!("💾 Cached node '{}' (type: {})", chunk.node_id, node_type);
-            arc_node
-        }
+            info!("💾 Globally cached node '{}' (type: {}, key: {})", chunk.node_id, node_type, cache_key);
+            (arc_node, py_streaming_node)
+        };
+
+        (node, py_streaming_node)
     };
 
     // Convert DataBuffer(s) to RuntimeData
@@ -900,23 +1004,11 @@ async fn handle_data_chunk_multi(
         // Multi-yield Python streaming node - use callback for incremental sending
         info!("🎙️ Detected multi-yield node '{}', using streaming iteration", node_type);
 
-        use crate::nodes::python_streaming::PythonStreamingNode;
         use crate::data::convert_runtime_to_proto_data;
 
-        // Get node info from session
-        let (params, node_id) = {
-            let sess = session.lock().await;
-            let node_spec = sess.manifest.nodes.iter()
-                .find(|n| n.id == chunk.node_id)
-                .ok_or_else(|| ServiceError::Validation(
-                    format!("Node '{}' not found in manifest", chunk.node_id)
-                ))?;
-            (node_spec.params.clone(), chunk.node_id.clone())
-        };
-
-        // Create a temporary PythonStreamingNode instance for multi-chunk processing
-        let py_node = PythonStreamingNode::new(node_id, node_type, &params)
-            .map_err(|e| ServiceError::Internal(format!("Failed to create Python node: {}", e)))?;
+        // USE THE CACHED NODE instead of creating a new one!
+        // The 'node' variable already contains our globally cached instance
+        // which preserves the Python object and the loaded Kokoro model
 
         // Create a channel for chunks from Python -> Rust async world
         let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel::<RuntimeData>();
@@ -972,14 +1064,19 @@ async fn handle_data_chunk_multi(
         });
 
         // Process streaming with callback that just enqueues chunks
-        let chunk_tx_clone = chunk_tx.clone();
-        py_node.process_streaming(input_data, move |output_data| {
-            // Non-blocking send to channel
-            chunk_tx_clone.send(output_data)
-                .map_err(|_| crate::Error::Execution("Failed to enqueue chunk".to_string()))?;
-            Ok(())
-        }).await
-            .map_err(|e| ServiceError::Internal(format!("Multi-chunk streaming failed: {}", e)))?;
+        // Use the CACHED Python streaming node to preserve the loaded Kokoro model!
+        if let Some(py_node) = &py_streaming_node {
+            let chunk_tx_clone = chunk_tx.clone();
+            py_node.process_streaming(input_data, move |output_data| {
+                // Non-blocking send to channel
+                chunk_tx_clone.send(output_data)
+                    .map_err(|_| crate::Error::Execution("Failed to enqueue chunk".to_string()))?;
+                Ok(())
+            }).await
+                .map_err(|e| ServiceError::Internal(format!("Multi-chunk streaming failed: {}", e)))?;
+        } else {
+            return Err(ServiceError::Internal("Python streaming node not available for TTS".to_string()));
+        }
 
         // Close the channel to signal completion
         drop(chunk_tx);
