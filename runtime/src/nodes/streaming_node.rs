@@ -1,6 +1,6 @@
 //! Streaming node trait for generic data processing
 //!
-//! This module defines the trait for nodes that can participate in
+//! This module defines the traits for nodes that can participate in
 //! real-time streaming pipelines with generic data types.
 
 use crate::data::RuntimeData;
@@ -9,27 +9,17 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Trait for nodes that can process generic streaming data
+/// Synchronous streaming node trait
 ///
-/// This trait is specifically designed for streaming RPC contexts
-/// where nodes process chunks of data in real-time.
-pub trait StreamingNode: Send + Sync {
+/// Implement this for Rust nodes that can process data synchronously.
+pub trait SyncStreamingNode: Send + Sync {
     /// Get the node type name
     fn node_type(&self) -> &str;
 
     /// Process single-input data
-    ///
-    /// For nodes that accept a single input stream.
-    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
-        Err(Error::Execution(format!(
-            "Node {} does not support single-input processing",
-            self.node_type()
-        )))
-    }
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error>;
 
-    /// Process multi-input data
-    ///
-    /// For nodes that require multiple named inputs (e.g., audio + video sync).
+    /// Process multi-input data (for nodes that require multiple named inputs)
     fn process_multi(&self, inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, Error> {
         // Default: extract first input and process
         if let Some((_name, data)) = inputs.into_iter().next() {
@@ -42,6 +32,96 @@ pub trait StreamingNode: Send + Sync {
     /// Check if this node requires multiple inputs
     fn is_multi_input(&self) -> bool {
         false
+    }
+}
+
+/// Asynchronous streaming node trait
+///
+/// Implement this for nodes that require async processing (e.g., Python nodes, I/O-bound operations).
+#[async_trait::async_trait]
+pub trait AsyncStreamingNode: Send + Sync {
+    /// Get the node type name
+    fn node_type(&self) -> &str;
+
+    /// Process single-input data asynchronously
+    async fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error>;
+
+    /// Process multi-input data asynchronously
+    async fn process_multi(&self, inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, Error> {
+        // Default: extract first input and process
+        if let Some((_name, data)) = inputs.into_iter().next() {
+            self.process(data).await
+        } else {
+            Err(Error::Execution("No input data provided".into()))
+        }
+    }
+
+    /// Check if this node requires multiple inputs
+    fn is_multi_input(&self) -> bool {
+        false
+    }
+}
+
+/// Unified streaming node trait that can handle both sync and async nodes
+///
+/// This is the trait used by the registry and pipeline executor.
+/// It's automatically implemented for both SyncStreamingNode and AsyncStreamingNode.
+#[async_trait::async_trait]
+pub trait StreamingNode: Send + Sync {
+    /// Get the node type name
+    fn node_type(&self) -> &str;
+
+    /// Process single-input data asynchronously
+    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error>;
+
+    /// Process multi-input data asynchronously
+    async fn process_multi_async(&self, inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, Error>;
+
+    /// Check if this node requires multiple inputs
+    fn is_multi_input(&self) -> bool;
+}
+
+/// Wrapper that makes a SyncStreamingNode into a StreamingNode
+pub struct SyncNodeWrapper<T: SyncStreamingNode>(pub T);
+
+#[async_trait::async_trait]
+impl<T: SyncStreamingNode + 'static> StreamingNode for SyncNodeWrapper<T> {
+    fn node_type(&self) -> &str {
+        self.0.node_type()
+    }
+
+    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+        self.0.process(data)
+    }
+
+    async fn process_multi_async(&self, inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, Error> {
+        self.0.process_multi(inputs)
+    }
+
+    fn is_multi_input(&self) -> bool {
+        self.0.is_multi_input()
+    }
+}
+
+/// Wrapper that makes an AsyncStreamingNode into a StreamingNode
+pub struct AsyncNodeWrapper<T: AsyncStreamingNode>(pub T);
+
+#[async_trait::async_trait]
+impl<T: AsyncStreamingNode + 'static> StreamingNode for AsyncNodeWrapper<T> {
+    fn node_type(&self) -> &str {
+        self.0.node_type()
+    }
+
+    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+        self.0.process(data).await
+    }
+
+    async fn process_multi_async(&self, inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, Error> {
+        self.0.process_multi(inputs).await
+    }
+
+    fn is_multi_input(&self) -> bool {
+        self.0.is_multi_input()
     }
 }
 

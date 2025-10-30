@@ -14,6 +14,7 @@
 //! - Loads Python SDK nodes from remotemedia.nodes module
 //! - Manages GIL-protected node instances
 
+use crate::data::RuntimeData;
 use crate::executor::PyObjectCache;
 use crate::nodes::{NodeContext, NodeExecutor};
 use crate::python::marshal::{
@@ -23,6 +24,7 @@ use crate::{Error, Result};
 use async_trait::async_trait;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3::{PyRef, PyRefMut};
 use serde_json::Value;
 
 /// CPython-based node executor
@@ -145,15 +147,76 @@ impl CPythonNodeExecutor {
         Ok(instance)
     }
 
-    /// Call the initialize() method if it exists
-    fn call_initialize(&self, py: Python, instance: &Bound<'_, PyAny>) -> PyResult<()> {
+    /// Call the initialize() method if it exists (supports both sync and async)
+    fn call_initialize(&mut self, py: Python, instance: &Bound<'_, PyAny>) -> PyResult<()> {
         // Check if the node has an initialize method
         if instance.hasattr("initialize")? {
             tracing::info!("Calling initialize() on CPython node: {}", self.node_type);
 
-            // As of Phase 1 WASM compatibility update, initialize() is now synchronous
-            // This eliminates asyncio dependency which is not fully supported in WASM
-            instance.call_method0("initialize")?;
+            let result = instance.call_method0("initialize")?;
+
+            // Check if the result is a coroutine (async method)
+            let inspect = py.import("inspect")?;
+            let is_coroutine = inspect.call_method1("iscoroutine", (&result,))?.extract::<bool>()?;
+
+            if is_coroutine {
+                tracing::info!("Initialize method is async, awaiting it...");
+                // Create a new event loop for this thread and run the coroutine
+                let asyncio = py.import("asyncio")?;
+
+                // On Windows, use SelectorEventLoop instead of ProactorEventLoop
+                // ProactorEventLoop has issues with reuse and can cause heap corruption
+                #[cfg(target_os = "windows")]
+                let new_loop = {
+                    tracing::info!("Windows detected: using SelectorEventLoop to avoid ProactorEventLoop issues");
+                    py.run(&std::ffi::CString::new(
+                        "import asyncio; selector_loop = asyncio.SelectorEventLoop()"
+                    ).unwrap(), None, None)?;
+                    let locals = py.eval(&std::ffi::CString::new("locals()").unwrap(), None, None)?;
+                    locals.get_item("selector_loop")?
+                };
+
+                #[cfg(not(target_os = "windows"))]
+                let new_loop = asyncio.call_method0("new_event_loop")?;
+
+                asyncio.call_method1("set_event_loop", (&new_loop,))?;
+
+                // Store the event loop for later use
+                self.event_loop = Some(new_loop.clone().unbind().into());
+                let loop_type = new_loop.get_type().name().map(|s| s.to_string()).unwrap_or_else(|_| "unknown".to_string());
+                tracing::info!("Stored event loop for future use (type: {})", loop_type);
+
+                // Run the coroutine and handle all exceptions including SystemExit
+                // We need to catch SystemExit because some Python libraries (like spaCy) call sys.exit()
+                // which would otherwise kill the entire Rust process
+                match new_loop.call_method1("run_until_complete", (result,)) {
+                    Ok(_) => {
+                        tracing::info!("Async initialize completed successfully");
+                    }
+                    Err(e) => {
+                        // Check if this is a SystemExit exception
+                        let is_system_exit = e.is_instance_of::<pyo3::exceptions::PySystemExit>(py);
+
+                        if is_system_exit {
+                            tracing::error!("Python code called sys.exit() during initialization - converting to error: {}", e);
+                            // Clean up the event loop
+                            let _ = new_loop.call_method0("close");
+                            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                                format!("Initialize failed: Python code called sys.exit(). This usually means a dependency failed to install or initialize. Error: {}", e)
+                            ).into());
+                        } else {
+                            tracing::error!("Async initialize failed: {:?}", e);
+                            // Clean up the event loop before propagating error
+                            let _ = new_loop.call_method0("close");
+                            return Err(e);
+                        }
+                    }
+                }
+
+                // DON'T close the event loop here - we need it for later processing!
+                // The event loop will be reused for process_runtime_data() calls
+                tracing::info!("Keeping event loop alive for future use");
+            }
 
             tracing::info!("CPython node {} initialized", self.node_type);
         } else {
@@ -600,6 +663,666 @@ def _converter(item):
         // Use cache-aware conversion if cache is available
         python_to_json_with_cache(py, py_obj, self.py_cache.as_ref())
     }
+
+    /// Process RuntimeData through the CPython node (returns single RuntimeData, not Vec)
+    ///
+    /// This is a simplified interface for nodes that work with RuntimeData directly.
+    /// It calls the Python node's process() method with RuntimeData and expects
+    /// an async generator that yields RuntimeData objects.
+    pub async fn process_runtime_data(&mut self, input: RuntimeData) -> Result<RuntimeData> {
+        tracing::info!("========================================");
+        tracing::info!("process_runtime_data called for node: {}", self.node_type);
+        tracing::info!("Input data type: {}", input.type_name());
+
+        if !self.initialized {
+            tracing::error!("Node {} not initialized, returning error", self.node_type);
+            return Err(Error::Execution(format!(
+                "CPython node {} not initialized",
+                self.node_type
+            )));
+        }
+
+        tracing::info!("Node is initialized, acquiring GIL for process_runtime_data");
+        Python::with_gil(|py| -> Result<RuntimeData> {
+            tracing::info!("GIL acquired, getting instance reference");
+            let instance = self.instance.as_ref()
+                .ok_or_else(|| {
+                    tracing::error!("Python node instance is None");
+                    Error::Execution("Python node not initialized".to_string())
+                })?
+                .bind(py);
+            tracing::info!("Got instance reference");
+
+            // Convert RuntimeData to Python (must be done within GIL)
+            tracing::info!("Converting RuntimeData to Python, data type: {}", input.type_name());
+            use crate::python::{runtime_data_to_py, PyRuntimeData};
+
+            tracing::info!("Calling runtime_data_to_py()");
+            let py_runtime_data_struct = runtime_data_to_py(input);
+            tracing::info!("runtime_data_to_py() returned successfully");
+
+            // Convert the Rust struct to a Python object
+            tracing::info!("Creating Python RuntimeData object with Py::new()");
+            let py_runtime_data = match pyo3::Py::new(py, py_runtime_data_struct) {
+                Ok(data) => {
+                    tracing::info!("Successfully created Python RuntimeData object");
+                    data
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create Python RuntimeData: {}", e);
+                    return Err(Error::Execution(format!("Failed to create Python RuntimeData: {}", e)));
+                }
+            };
+
+            // DIFFERENT APPROACH: Create the event loop BEFORE calling process()
+            // This way the async generator is created within the event loop context
+            tracing::info!("Creating event loop before calling process()");
+
+            let asyncio = py.import("asyncio")
+                .map_err(|e| Error::Execution(format!("Failed to import asyncio: {}", e)))?;
+
+            // Create SelectorEventLoop on Windows
+            #[cfg(target_os = "windows")]
+            let event_loop = {
+                tracing::info!("Windows: creating SelectorEventLoop");
+                py.run(&std::ffi::CString::new(
+                    "import asyncio; _proc_loop = asyncio.SelectorEventLoop(); asyncio.set_event_loop(_proc_loop)"
+                ).unwrap(), None, None)
+                    .map_err(|e| Error::Execution(format!("Failed to create SelectorEventLoop: {}", e)))?;
+                let locals = py.eval(&std::ffi::CString::new("locals()").unwrap(), None, None)
+                    .map_err(|e| Error::Execution(format!("Failed to get locals: {}", e)))?;
+                locals.get_item("_proc_loop")
+                    .map_err(|e| Error::Execution(format!("Failed to get loop: {}", e)))?
+            };
+
+            #[cfg(not(target_os = "windows"))]
+            let event_loop = {
+                let loop_obj = asyncio.call_method0("new_event_loop")
+                    .map_err(|e| Error::Execution(format!("Failed to create event loop: {}", e)))?;
+                asyncio.call_method1("set_event_loop", (&loop_obj,))
+                    .map_err(|e| Error::Execution(format!("Failed to set event loop: {}", e)))?;
+                loop_obj
+            };
+
+            tracing::info!("Event loop created and set as current");
+
+            // NOW call process() - the async generator will be created in this loop's context
+            tracing::info!("About to call Python node's process() method");
+            let process_result = match instance.call_method1("process", (py_runtime_data,)) {
+                Ok(result) => {
+                    tracing::info!("process() method returned successfully");
+                    result
+                }
+                Err(e) => {
+                    tracing::error!("Failed to call process(): {}", e);
+                    tracing::error!("Python error details: {:?}", e);
+                    let _ = event_loop.call_method0("close");
+                    return Err(Error::Execution(format!("Failed to call process(): {}", e)));
+                }
+            };
+
+            // Check if it's an async generator
+            tracing::info!("Checking if result is async generator");
+            let inspect = py.import("inspect")
+                .map_err(|e| Error::Execution(format!("Failed to import inspect: {}", e)))?;
+            let is_async_gen = inspect.call_method1("isasyncgen", (&process_result,))
+                .and_then(|v| v.extract::<bool>())
+                .map_err(|e| {
+                    let _ = event_loop.call_method0("close");
+                    Error::Execution(format!("Failed to check if async gen: {}", e))
+                })?;
+
+            if !is_async_gen {
+                let _ = event_loop.call_method0("close");
+                return Err(Error::Execution(
+                    "Python node process() must return an async generator".to_string()
+                ));
+            }
+            tracing::info!("Confirmed result is async generator");
+
+            // Now iterate it using the SAME event loop
+            tracing::info!("Getting first item from async generator using the same event loop");
+
+            // Use the EXISTING event loop that we just set as current
+            let code = std::ffi::CString::new(
+                r#"
+import asyncio
+import logging
+import sys
+
+logger = logging.getLogger(__name__)
+
+async def _get_first_item_async(agen):
+    """Get the first item from async generator."""
+    logger.info("_get_first_item_async: Starting")
+    logger.info(f"_get_first_item_async: agen type: {type(agen).__name__}")
+
+    try:
+        logger.info("_get_first_item_async: Calling anext(agen)")
+        result = await anext(agen)
+        logger.info(f"_get_first_item_async: Got result type: {type(result).__name__}")
+        return result
+    except StopAsyncIteration:
+        logger.error("_get_first_item_async: Async generator was empty")
+        raise
+    except Exception as e:
+        logger.error(f"_get_first_item_async: Error: {type(e).__name__}: {e}")
+        logger.error("_get_first_item_async: Traceback:", exc_info=True)
+        raise
+
+def _run_anext_in_thread(agen):
+    """Run anext() in a separate thread to isolate from async context.
+
+    CRITICAL WORKAROUND: PyTorch and other libraries cause heap corruption when
+    their operations execute within an async event loop context on Windows.
+    Running anext() in a thread pool completely isolates the node's code from
+    the event loop, preventing the corruption.
+    """
+    import asyncio
+
+    # Create a new event loop for this thread
+    new_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(new_loop)
+
+    try:
+        # Run the async generator iteration in this thread's event loop
+        async def get_next():
+            return await anext(agen)
+
+        result = new_loop.run_until_complete(get_next())
+        return result
+    finally:
+        # Clean up the thread's event loop
+        new_loop.close()
+
+def _run_with_existing_loop(agen, loop):
+    """Use the existing event loop to iterate the async generator.
+
+    GLOBAL THREAD POOL ISOLATION: To prevent heap corruption with PyTorch and
+    other libraries on Windows, we run the actual anext() call in a separate
+    thread using asyncio.to_thread().
+    """
+    try:
+        # Flush all Python I/O streams before event loop operations
+        sys.stdout.flush()
+        sys.stderr.flush()
+
+        # WORKAROUND: Explicitly garbage collect before event loop to ensure clean state
+        import gc
+        gc.collect()
+
+        # CRITICAL: Run anext() in a thread pool to isolate from async context
+        # This prevents heap corruption with PyTorch and other libraries
+        import asyncio
+        result = loop.run_until_complete(
+            asyncio.to_thread(_run_anext_in_thread, agen)
+        )
+        return result
+
+    except Exception as e:
+        raise
+"#,
+            ).unwrap();
+
+            tracing::info!("Defining Python helper functions for anext()");
+            py.run(&code, None, None)
+                .map_err(|e| Error::Execution(format!("Failed to define helper: {}", e)))?;
+            tracing::info!("Python helper functions defined successfully");
+
+            let locals_code = std::ffi::CString::new("locals()").unwrap();
+            let locals = py.eval(&locals_code, None, None)
+                .map_err(|e| Error::Execution(format!("Failed to get locals: {}", e)))?;
+            tracing::info!("Got locals dict");
+
+            let existing_loop_fn = locals.get_item("_run_with_existing_loop")
+                .map_err(|e| {
+                    let _ = event_loop.call_method0("close");
+                    Error::Execution(format!("Failed to get existing loop wrapper: {}", e))
+                })?;
+            tracing::info!("Got _run_with_existing_loop function reference");
+
+            tracing::info!("About to call _run_with_existing_loop - generator and loop from same context");
+            tracing::info!("Parameters: process_result type={:?}, event_loop type={:?}",
+                process_result.get_type().name(),
+                event_loop.get_type().name());
+
+            let anext_result = match existing_loop_fn.call1((process_result, &event_loop)) {
+                Ok(result) => {
+                    tracing::info!("Successfully called _run_with_existing_loop, got result");
+                    result
+                }
+                Err(e) => {
+                    tracing::error!("Failed to get first item from async generator: {}", e);
+                    tracing::error!("Python traceback: {:?}", e);
+                    let _ = event_loop.call_method0("close");
+                    return Err(Error::Execution(format!("Failed to get first item: {}", e)));
+                }
+            };
+            tracing::info!("Got first item from async generator, about to extract RuntimeData");
+
+            // IMPORTANT: Do NOT close the event loop!
+            // Closing the event loop after PyTorch operations causes heap corruption on Windows
+            // The event loop will be garbage collected by Python when no longer referenced
+            tracing::info!("Skipping event loop close (PyTorch heap corruption workaround)");
+            // let _ = event_loop.call_method0("close");  // DISABLED - causes crash with PyTorch
+
+            // Extract RuntimeData from the Python result
+            tracing::info!("Extracting RuntimeData from Python result");
+            tracing::info!("Python result type: {:?}", anext_result.get_type().name());
+
+            // Try to get some debug info about the object
+            if let Ok(repr) = anext_result.repr() {
+                if let Ok(repr_str) = repr.extract::<String>() {
+                    // Truncate to avoid flooding logs
+                    let truncated = if repr_str.len() > 200 {
+                        format!("{}...", &repr_str[..200])
+                    } else {
+                        repr_str
+                    };
+                    tracing::info!("Python result repr (truncated): {}", truncated);
+                }
+            }
+
+            // Check if this is a dict with "_audio_numpy" key (from TTS node workaround)
+            // This avoids calling numpy_to_audio() inside the event loop which causes heap corruption
+            if anext_result.is_instance_of::<pyo3::types::PyDict>() {
+                tracing::info!("Result is a dict, checking for _audio_numpy key");
+                let result_dict = anext_result.downcast::<pyo3::types::PyDict>()
+                    .map_err(|e| Error::Execution(format!("Failed to downcast to PyDict: {}", e)))?;
+
+                if let Ok(audio_numpy) = result_dict.get_item("_audio_numpy") {
+                    if let Some(audio_numpy) = audio_numpy {
+                        tracing::info!("Found _audio_numpy in dict, converting to RuntimeData.Audio AFTER event loop");
+
+                        // Get sample_rate and channels
+                        let sample_rate = result_dict.get_item("_sample_rate")
+                            .ok().flatten()
+                            .and_then(|v| v.extract::<u32>().ok())
+                            .ok_or_else(|| Error::Execution("Missing _sample_rate in audio dict".to_string()))?;
+
+                        let channels = result_dict.get_item("_channels")
+                            .ok().flatten()
+                            .and_then(|v| v.extract::<u32>().ok())
+                            .ok_or_else(|| Error::Execution("Missing _channels in audio dict".to_string()))?;
+
+                        // NOW call numpy_to_audio - this is AFTER the event loop is closed
+                        tracing::info!("Calling numpy_to_audio() with sample_rate={}, channels={}", sample_rate, channels);
+                        use crate::python::runtime_data_py::PyRuntimeData;
+                        let numpy_to_audio_fn = py.import("remotemedia_runtime.runtime_data")
+                            .and_then(|m| m.getattr("numpy_to_audio"))
+                            .map_err(|e| Error::Execution(format!("Failed to import numpy_to_audio: {}", e)))?;
+
+                        let py_runtime_data_obj = numpy_to_audio_fn.call1((audio_numpy, sample_rate, channels))
+                            .map_err(|e| Error::Execution(format!("Failed to call numpy_to_audio: {}", e)))?;
+
+                        let py_runtime_data = py_runtime_data_obj.extract::<PyRuntimeData>()
+                            .map_err(|e| Error::Execution(format!("Failed to extract PyRuntimeData from numpy_to_audio result: {}", e)))?;
+
+                        tracing::info!("Successfully converted dict to RuntimeData.Audio");
+                        let result = py_runtime_data.inner;
+                        tracing::info!("Returning from Python::with_gil closure");
+                        return Ok(result);
+                    }
+                }
+            }
+
+            // Otherwise, try to extract as PyRuntimeData (normal case)
+            tracing::info!("About to extract PyRuntimeData from Python object");
+
+            // WORKAROUND: PyO3 extraction is failing due to type mismatch
+            // Instead, manually access the inner RuntimeData by calling methods
+            let py_runtime_data = match anext_result.call_method0("data_type") {
+                Ok(data_type_obj) => {
+                    let data_type: String = data_type_obj.extract()
+                        .map_err(|e| Error::Execution(format!("Failed to extract data_type: {}", e)))?;
+                    tracing::info!("RuntimeData.data_type() = {}", data_type);
+
+                    // Reconstruct RuntimeData based on type
+                    match data_type.as_str() {
+                        "text" => {
+                            // Get text content - as_text() returns Option<String>
+                            let text_obj = anext_result.call_method0("as_text")
+                                .map_err(|e| Error::Execution(format!("Failed to call as_text(): {}", e)))?;
+                            let text_opt: Option<String> = text_obj.extract()
+                                .map_err(|e| Error::Execution(format!("Failed to extract text: {}", e)))?;
+                            let text = text_opt.ok_or_else(|| Error::Execution("as_text() returned None".to_string()))?;
+                            tracing::info!("Successfully extracted text: {} chars", text.len());
+                            RuntimeData::Text(text)
+                        }
+                        "audio" => {
+                            // Get audio buffer components using as_audio() method
+                            // as_audio() returns Option<(PyObject, u32, u32, String, u64)>
+                            // which is (samples_bytes, sample_rate, channels, format_str, num_samples)
+                            // Note: as_audio() takes py: Python in Rust, but that's injected by PyO3, so call_method0
+                            let audio_tuple_opt = anext_result.call_method0("as_audio")
+                                .map_err(|e| Error::Execution(format!("Failed to call as_audio(): {}", e)))?;
+
+                            // as_audio() returns Option, so we need to check if it's None
+                            if audio_tuple_opt.is_none() {
+                                return Err(Error::Execution("as_audio() returned None".to_string()));
+                            }
+
+                            // Extract as a tuple directly (as_audio returns Option<tuple>)
+                            let audio_tuple_opt: Option<(Vec<u8>, u32, u32, String, u64)> = audio_tuple_opt.extract()
+                                .map_err(|e| Error::Execution(format!("Failed to extract audio tuple: {}", e)))?;
+
+                            let (samples, sample_rate, channels, format_str, num_samples) = audio_tuple_opt
+                                .ok_or_else(|| Error::Execution("as_audio() returned None".to_string()))?;
+
+                            // Convert format string to i32
+                            let format = match format_str.as_str() {
+                                "f32" => 0,
+                                "i16" => 1,
+                                "i32" => 2,
+                                _ => 0, // Default to f32
+                            };
+
+                            tracing::info!("Successfully extracted audio: {} samples, {}Hz, {} channels, format={}", num_samples, sample_rate, channels, format_str);
+                            RuntimeData::Audio(crate::grpc_service::generated::AudioBuffer {
+                                samples,
+                                sample_rate,
+                                channels,
+                                format,
+                                num_samples,
+                            })
+                        }
+                        "json" => {
+                            // For JSON, we need to access the inner field and convert it
+                            // Get the inner RuntimeData's JSON value as a string
+                            let inner = anext_result.getattr("inner")
+                                .map_err(|e| Error::Execution(format!("Failed to get inner: {}", e)))?;
+
+                            // Convert inner to JSON string using Python's json module
+                            let json_module = py.import("json")
+                                .map_err(|e| Error::Execution(format!("Failed to import json module: {}", e)))?;
+                            let json_str: String = json_module.call_method1("dumps", (inner,))
+                                .map_err(|e| Error::Execution(format!("Failed to call json.dumps(): {}", e)))?
+                                .extract()
+                                .map_err(|e| Error::Execution(format!("Failed to extract JSON string: {}", e)))?;
+                            let json_value: serde_json::Value = serde_json::from_str(&json_str)?;
+                            tracing::info!("Successfully extracted JSON");
+                            RuntimeData::Json(json_value)
+                        }
+                        "binary" => {
+                            // For binary, access the inner Bytes directly
+                            let inner = anext_result.getattr("inner")
+                                .map_err(|e| Error::Execution(format!("Failed to get inner: {}", e)))?;
+                            let bytes: Vec<u8> = inner.extract()
+                                .map_err(|e| Error::Execution(format!("Failed to extract bytes from inner: {}", e)))?;
+                            tracing::info!("Successfully extracted binary: {} bytes", bytes.len());
+                            RuntimeData::Binary(prost::bytes::Bytes::from(bytes))
+                        }
+                        _ => {
+                            return Err(Error::Execution(format!("Unsupported RuntimeData type: {}", data_type)));
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to call data_type() method: {}", e);
+                    return Err(Error::Execution(format!("Failed to extract RuntimeData via methods: {}", e)));
+                }
+            };
+
+            tracing::info!("Successfully extracted RuntimeData, type: {}", py_runtime_data.type_name());
+            tracing::info!("About to return RuntimeData from process_runtime_data");
+            tracing::info!("Returning from Python::with_gil closure");
+            Ok(py_runtime_data)
+        }).map(|data| {
+            tracing::info!("process_runtime_data completed successfully for node: {}", self.node_type);
+            tracing::info!("Returned data type: {}", data.type_name());
+            tracing::info!("========================================");
+            data
+        }).map_err(|e| {
+            tracing::error!("process_runtime_data failed for node {}: {}", self.node_type, e);
+            tracing::error!("========================================");
+            e
+        })
+    }
+
+    /// Process input and iterate Python async generator, calling callback for each chunk
+    ///
+    /// This method enables true streaming: one input can produce multiple outputs.
+    /// It creates the generator and calls the callback for each yielded chunk as it arrives.
+    pub async fn process_runtime_data_streaming<F>(&mut self, input: RuntimeData, mut callback: F) -> Result<usize>
+    where
+        F: FnMut(RuntimeData) -> Result<()>,
+    {
+        tracing::info!("========================================");
+        tracing::info!("process_runtime_data_all_chunks called for node: {}", self.node_type);
+        tracing::info!("Input data type: {}", input.type_name());
+
+        if !self.initialized {
+            tracing::error!("Node {} not initialized", self.node_type);
+            return Err(Error::Execution(format!(
+                "CPython node {} not initialized",
+                self.node_type
+            )));
+        }
+
+        Python::with_gil(|py| -> Result<usize> {
+            let instance = self.instance.as_ref()
+                .ok_or_else(|| Error::Execution("Python node not initialized".to_string()))?
+                .bind(py);
+
+            // Convert RuntimeData to Python
+            use crate::python::{runtime_data_to_py, PyRuntimeData};
+            let py_runtime_data_struct = runtime_data_to_py(input);
+            let py_runtime_data = pyo3::Py::new(py, py_runtime_data_struct)
+                .map_err(|e| Error::Execution(format!("Failed to create Python RuntimeData: {}", e)))?;
+
+            // Create event loop
+            let asyncio = py.import("asyncio")
+                .map_err(|e| Error::Execution(format!("Failed to import asyncio: {}", e)))?;
+
+            #[cfg(target_os = "windows")]
+            let event_loop = {
+                tracing::info!("Windows: creating SelectorEventLoop");
+                py.run(&std::ffi::CString::new(
+                    "import asyncio; _proc_loop = asyncio.SelectorEventLoop(); asyncio.set_event_loop(_proc_loop)"
+                ).unwrap(), None, None)
+                    .map_err(|e| Error::Execution(format!("Failed to create SelectorEventLoop: {}", e)))?;
+                let locals = py.eval(&std::ffi::CString::new("locals()").unwrap(), None, None)
+                    .map_err(|e| Error::Execution(format!("Failed to get locals: {}", e)))?;
+                locals.get_item("_proc_loop")
+                    .map_err(|e| Error::Execution(format!("Failed to get loop: {}", e)))?
+            };
+
+            #[cfg(not(target_os = "windows"))]
+            let event_loop = {
+                let loop_obj = asyncio.call_method0("new_event_loop")
+                    .map_err(|e| Error::Execution(format!("Failed to create event loop: {}", e)))?;
+                asyncio.call_method1("set_event_loop", (&loop_obj,))
+                    .map_err(|e| Error::Execution(format!("Failed to set event loop: {}", e)))?;
+                loop_obj
+            };
+
+            tracing::info!("Event loop created, calling process() method");
+
+            // Call process() to get the async generator
+            let process_result = instance.call_method1("process", (py_runtime_data,))
+                .map_err(|e| {
+                    let _ = event_loop.call_method0("close");
+                    Error::Execution(format!("Failed to call process(): {}", e))
+                })?;
+
+            // Verify it's an async generator
+            let inspect = py.import("inspect")
+                .map_err(|e| Error::Execution(format!("Failed to import inspect: {}", e)))?;
+            let is_async_gen = inspect.call_method1("isasyncgen", (&process_result,))
+                .and_then(|v| v.extract::<bool>())
+                .map_err(|e| {
+                    let _ = event_loop.call_method0("close");
+                    Error::Execution(format!("Failed to check if async gen: {}", e))
+                })?;
+
+            if !is_async_gen {
+                let _ = event_loop.call_method0("close");
+                return Err(Error::Execution(
+                    "Python node process() must return an async generator".to_string()
+                ));
+            }
+
+            tracing::info!("Confirmed async generator, now iterating ALL yields");
+
+            // Define helper to get next item from generator (one at a time)
+            let code = std::ffi::CString::new(
+                r#"
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
+def _run_anext_in_thread(agen):
+    """Run anext() in a separate thread to isolate from async context."""
+    import asyncio
+    new_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(new_loop)
+    try:
+        async def get_next():
+            return await anext(agen)
+        result = new_loop.run_until_complete(get_next())
+        return result
+    finally:
+        new_loop.close()
+
+async def _get_next_async(agen):
+    """Get next item from async generator."""
+    try:
+        # Run in thread pool for PyTorch safety
+        item = await asyncio.to_thread(_run_anext_in_thread, agen)
+        return (True, item)
+    except StopAsyncIteration:
+        return (False, None)
+
+def _get_next_with_loop(agen, loop):
+    """Use event loop to get next item from generator."""
+    import sys
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+    result = loop.run_until_complete(_get_next_async(agen))
+    return result
+"#,
+            ).unwrap();
+
+            py.run(&code, None, None)
+                .map_err(|e| {
+                    let _ = event_loop.call_method0("close");
+                    Error::Execution(format!("Failed to define helper: {}", e))
+                })?;
+
+            let locals = py.eval(&std::ffi::CString::new("locals()").unwrap(), None, None)
+                .map_err(|e| {
+                    let _ = event_loop.call_method0("close");
+                    Error::Execution(format!("Failed to get locals: {}", e))
+                })?;
+
+            let get_next_fn = locals.get_item("_get_next_with_loop")
+                .map_err(|e| {
+                    let _ = event_loop.call_method0("close");
+                    Error::Execution(format!("Failed to get next function: {}", e))
+                })?;
+
+            tracing::info!("Iterating generator and calling callback for each chunk");
+
+            let mut chunk_count = 0;
+
+            // Iterate generator, calling callback for each chunk as it arrives
+            loop {
+                let result_tuple = get_next_fn.call1((process_result.clone(), &event_loop))
+                    .map_err(|e| {
+                        tracing::error!("Failed to get next item: {}", e);
+                        let _ = event_loop.call_method0("close");
+                        Error::Execution(format!("Failed to get next item: {}", e))
+                    })?;
+
+                // Extract (has_value, item) tuple
+                let has_value: bool = result_tuple.get_item(0)
+                    .and_then(|v| v.extract())
+                    .map_err(|e| {
+                        let _ = event_loop.call_method0("close");
+                        Error::Execution(format!("Failed to extract has_value: {}", e))
+                    })?;
+
+                if !has_value {
+                    tracing::info!("Generator exhausted after {} chunks", chunk_count);
+                    break;
+                }
+
+                chunk_count += 1;
+                let py_item = result_tuple.get_item(1)
+                    .map_err(|e| {
+                        let _ = event_loop.call_method0("close");
+                        Error::Execution(format!("Failed to get item: {}", e))
+                    })?;
+
+                tracing::info!("Processing chunk {} from generator", chunk_count);
+
+                // Extract RuntimeData using same logic as process_runtime_data
+                let data_type: String = py_item.call_method0("data_type")
+                    .and_then(|v| v.extract())
+                    .map_err(|e| {
+                        let _ = event_loop.call_method0("close");
+                        Error::Execution(format!("Chunk {}: failed to get data_type: {}", chunk_count, e))
+                    })?;
+
+                let runtime_data = match data_type.as_str() {
+                    "audio" => {
+                        let audio_tuple_opt = py_item.call_method0("as_audio")
+                            .map_err(|e| Error::Execution(format!("Chunk {}: failed to call as_audio(): {}", chunk_count, e)))?;
+
+                        let audio_tuple_opt: Option<(Vec<u8>, u32, u32, String, u64)> = audio_tuple_opt.extract()
+                            .map_err(|e| Error::Execution(format!("Chunk {}: failed to extract audio tuple: {}", chunk_count, e)))?;
+
+                        let (samples, sample_rate, channels, format_str, num_samples) = audio_tuple_opt
+                            .ok_or_else(|| Error::Execution(format!("Chunk {}: as_audio() returned None", chunk_count)))?;
+
+                        let format = match format_str.as_str() {
+                            "f32" => 0,
+                            "i16" => 1,
+                            "i32" => 2,
+                            _ => 0,
+                        };
+
+                        tracing::info!("Chunk {}: audio with {} samples, {}Hz, {} channels",
+                            chunk_count, num_samples, sample_rate, channels);
+
+                        RuntimeData::Audio(crate::grpc_service::generated::AudioBuffer {
+                            samples,
+                            sample_rate,
+                            channels,
+                            format,
+                            num_samples,
+                        })
+                    }
+                    "text" => {
+                        let text_opt: Option<String> = py_item.call_method0("as_text")
+                            .and_then(|v| v.extract())
+                            .map_err(|e| Error::Execution(format!("Chunk {}: failed to extract text: {}", chunk_count, e)))?;
+
+                        let text = text_opt.ok_or_else(|| Error::Execution(format!("Chunk {}: as_text() returned None", chunk_count)))?;
+                        RuntimeData::Text(text)
+                    }
+                    _ => {
+                        let _ = event_loop.call_method0("close");
+                        return Err(Error::Execution(format!("Chunk {}: unsupported data type: {}", chunk_count, data_type)));
+                    }
+                };
+
+                // Call the callback with this chunk immediately
+                tracing::info!("Calling callback for chunk {}", chunk_count);
+                callback(runtime_data).map_err(|e| {
+                    let _ = event_loop.call_method0("close");
+                    e
+                })?;
+                tracing::info!("Callback completed for chunk {}", chunk_count);
+            }
+
+            tracing::info!("Successfully processed {} chunks via callback", chunk_count);
+            tracing::info!("========================================");
+            Ok(chunk_count)
+        })
+    }
 }
 
 #[async_trait]
@@ -644,8 +1367,18 @@ impl NodeExecutor for CPythonNodeExecutor {
             // Load the class
             let class = self.load_class(py)?;
 
-            // Instantiate with parameters
-            let instance = self.instantiate_node(py, &class, &context.params)?;
+            // Merge node_id into params for Python node instantiation
+            let mut params_with_id = context.params.clone();
+            if let Some(obj) = params_with_id.as_object_mut() {
+                // Add node_id to existing params object
+                obj.insert("node_id".to_string(), serde_json::Value::String(context.node_id.clone()));
+            } else {
+                // Create new params object with just node_id
+                params_with_id = serde_json::json!({"node_id": context.node_id.clone()});
+            }
+
+            // Instantiate with parameters (including node_id)
+            let instance = self.instantiate_node(py, &class, &params_with_id)?;
 
             // Call initialize() if it exists
             self.call_initialize(py, &instance)?;
@@ -895,6 +1628,10 @@ impl NodeExecutor for CPythonNodeExecutor {
 
     fn is_streaming(&self) -> bool {
         self.is_streaming && self.streaming_queue.is_some()
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 
     async fn finish_streaming(&mut self) -> Result<Vec<Value>> {

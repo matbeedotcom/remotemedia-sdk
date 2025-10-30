@@ -85,8 +85,23 @@ pub fn convert_proto_to_runtime_data(proto: DataBuffer) -> Result<RuntimeData, E
 pub fn convert_runtime_to_proto_data(runtime: RuntimeData) -> DataBuffer {
     let start = Instant::now();
 
+    tracing::info!("convert_runtime_to_proto_data: Converting RuntimeData type={}",
+        match &runtime {
+            RuntimeData::Audio(b) => format!("Audio({} samples)", b.num_samples),
+            RuntimeData::Video(_) => "Video".to_string(),
+            RuntimeData::Tensor(_) => "Tensor".to_string(),
+            RuntimeData::Json(_) => "Json".to_string(),
+            RuntimeData::Text(s) => format!("Text({} chars)", s.len()),
+            RuntimeData::Binary(b) => format!("Binary({} bytes)", b.len()),
+        }
+    );
+
     let data_type = Some(match runtime {
-        RuntimeData::Audio(buf) => data_buffer::DataType::Audio(buf),
+        RuntimeData::Audio(buf) => {
+            tracing::info!("convert_runtime_to_proto_data: Audio buffer: samples={} bytes, sample_rate={}, channels={}, format={}, num_samples={}",
+                buf.samples.len(), buf.sample_rate, buf.channels, buf.format, buf.num_samples);
+            data_buffer::DataType::Audio(buf)
+        },
         RuntimeData::Video(frame) => data_buffer::DataType::Video(frame),
         RuntimeData::Tensor(tensor) => data_buffer::DataType::Tensor(tensor),
         RuntimeData::Json(value) => data_buffer::DataType::Json(JsonData {
@@ -112,6 +127,38 @@ pub fn convert_runtime_to_proto_data(runtime: RuntimeData) -> DataBuffer {
         metadata: Default::default(),
     }
 }
+
+// TODO: These functions require protobuf types to implement Serialize/Deserialize
+// which they don't by default. Commenting out for now as they're unused.
+/*
+/// Convert RuntimeData to serde_json::Value for Python node processing
+///
+/// This serializes the RuntimeData into a JSON format that Python nodes can consume.
+pub fn convert_runtime_to_value(runtime: RuntimeData) -> Result<serde_json::Value, Error> {
+    // Convert to proto first, then serialize to JSON
+    let proto = convert_runtime_to_proto_data(runtime);
+
+    // Serialize the proto message to JSON
+    serde_json::to_value(&proto).map_err(|e| Error::Execution(format!(
+        "Failed to serialize RuntimeData to JSON: {}",
+        e
+    )))
+}
+
+/// Convert serde_json::Value from Python node output back to RuntimeData
+///
+/// This deserializes the JSON output from Python nodes back into RuntimeData.
+pub fn convert_value_to_runtime(value: serde_json::Value) -> Result<RuntimeData, Error> {
+    // Deserialize JSON to DataBuffer proto
+    let proto: DataBuffer = serde_json::from_value(value).map_err(|e| Error::Execution(format!(
+        "Failed to deserialize JSON to DataBuffer: {}",
+        e
+    )))?;
+
+    // Convert proto to RuntimeData
+    convert_proto_to_runtime_data(proto)
+}
+*/
 
 #[cfg(test)]
 mod tests {

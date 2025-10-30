@@ -11,7 +11,7 @@
 //!   { "result": number, "operation": string }
 
 use crate::data::RuntimeData;
-use crate::nodes::StreamingNode;
+use crate::nodes::SyncStreamingNode;
 use crate::Error;
 use serde_json::{json, Value};
 
@@ -28,7 +28,7 @@ impl CalculatorNode {
     }
 
     /// Process JSON calculator request
-    pub fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+    fn process_internal(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         // Extract JSON data
         let json_value = match data {
             RuntimeData::Json(value) => value,
@@ -113,20 +113,20 @@ impl CalculatorNode {
     }
 }
 
-impl StreamingNode for CalculatorNode {
+impl SyncStreamingNode for CalculatorNode {
     fn node_type(&self) -> &str {
         "CalculatorNode"
     }
 
     fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
-        // Delegate to the existing process method
-        CalculatorNode::process(self, data)
+        self.process_internal(data)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nodes::SyncStreamingNode;
     use serde_json::json;
 
     #[test]
@@ -137,7 +137,7 @@ mod tests {
             "operands": [10, 20]
         }));
 
-        let result = node.process(input).unwrap();
+        let result = SyncStreamingNode::process(&node, input).unwrap();
         match result {
             RuntimeData::Json(value) => {
                 assert_eq!(value["result"], 30.0);
@@ -155,7 +155,7 @@ mod tests {
             "operands": [5, 7]
         }));
 
-        let result = node.process(input).unwrap();
+        let result = SyncStreamingNode::process(&node, input).unwrap();
         match result {
             RuntimeData::Json(value) => {
                 assert_eq!(value["result"], 35.0);
@@ -172,7 +172,7 @@ mod tests {
             "operands": [100, 4]
         }));
 
-        let result = node.process(input).unwrap();
+        let result = SyncStreamingNode::process(&node, input).unwrap();
         match result {
             RuntimeData::Json(value) => {
                 assert_eq!(value["result"], 25.0);
@@ -189,7 +189,7 @@ mod tests {
             "operands": [10, 0]
         }));
 
-        let result = node.process(input);
+        let result = SyncStreamingNode::process(&node, input);
         assert!(result.is_err());
     }
 
@@ -201,7 +201,7 @@ mod tests {
             "operands": [2, 3]
         }));
 
-        let result = node.process(input);
+        let result = SyncStreamingNode::process(&node, input);
         assert!(result.is_err());
     }
 
@@ -210,7 +210,7 @@ mod tests {
         let node = CalculatorNode::new("calc".to_string(), "").unwrap();
         let input = RuntimeData::Text("not json".to_string());
 
-        let result = node.process(input);
+        let result = SyncStreamingNode::process(&node, input);
         assert!(result.is_err());
     }
 }

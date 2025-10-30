@@ -260,6 +260,11 @@ pub fn register_runtime_data_module(py: Python, parent_module: &Bound<'_, PyModu
 
     parent_module.add_submodule(&runtime_data_module)?;
 
+    // Also register in sys.modules so it can be imported as "from remotemedia_runtime.runtime_data import ..."
+    let sys = py.import("sys")?;
+    let sys_modules = sys.getattr("modules")?;
+    sys_modules.set_item("remotemedia_runtime.runtime_data", runtime_data_module)?;
+
     Ok(())
 }
 

@@ -20,10 +20,12 @@ from .grpc_source import * # noqa: F401, F403
 from .simple_math import * # noqa: F401, F403
 from .transcription import * # noqa: F401, F403
 from .tts import * # noqa: F401, F403
+from .simple_pytorch_test import * # noqa: F401, F403
 from remotemedia.core.node import Node
 from .audio import AudioTransform, AudioBuffer, AudioResampler, VoiceActivityDetector
 from .transcription import WhisperXTranscriber, RustWhisperTranscriber
 from .tts import KokoroTTSNode
+from .simple_pytorch_test import SimplePyTorchNode
 from .text_processor import TextProcessorNode
 from .transform import DataTransform
 from .video import VideoTransform, VideoBuffer, VideoResizer
@@ -78,4 +80,6 @@ __all__ = [
     "RustWhisperTranscriber",
     # TTS nodes
     "KokoroTTSNode",
+    # Test nodes
+    "SimplePyTorchNode",
 ] 

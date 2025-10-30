@@ -17,7 +17,7 @@
 
 use crate::data::RuntimeData;
 use crate::error::{Error, Result};
-use crate::nodes::StreamingNode;
+use crate::nodes::SyncStreamingNode;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -45,8 +45,7 @@ impl SynchronizedAudioVideoNode {
         })
     }
 
-    /// Process multiple inputs (audio + video) and return sync status
-    pub fn process_multi(&self, inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData> {
+    fn process_multi_internal(&self, inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData> {
         // Extract audio and video from named inputs
         let audio_data = inputs.get("audio").ok_or_else(|| Error::InvalidInput {
             message: "Missing 'audio' input".to_string(),
@@ -148,27 +147,23 @@ impl SynchronizedAudioVideoNode {
         Ok(RuntimeData::Json(sync_report))
     }
 
-    /// Single-input fallback (for backward compatibility)
-    pub fn process(&self, _input: RuntimeData) -> Result<RuntimeData> {
+}
+
+impl SyncStreamingNode for SynchronizedAudioVideoNode {
+    fn node_type(&self) -> &str {
+        "SynchronizedAudioVideoNode"
+    }
+
+    fn process(&self, _input: RuntimeData) -> Result<RuntimeData> {
         Err(Error::InvalidInput {
             message: "SynchronizedAudioVideoNode requires multi-input via named_buffers".to_string(),
             node_id: self.node_id.clone(),
             context: "Use process_multi() method with both audio and video inputs".to_string(),
         })
     }
-}
-
-impl StreamingNode for SynchronizedAudioVideoNode {
-    fn node_type(&self) -> &str {
-        "SynchronizedAudioVideoNode"
-    }
-
-    fn process(&self, data: RuntimeData) -> Result<RuntimeData> {
-        SynchronizedAudioVideoNode::process(self, data)
-    }
 
     fn process_multi(&self, inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData> {
-        SynchronizedAudioVideoNode::process_multi(self, inputs)
+        self.process_multi_internal(inputs)
     }
 
     fn is_multi_input(&self) -> bool {

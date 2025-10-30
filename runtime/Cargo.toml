@@ -41,11 +41,13 @@ wasmtime-wasi = { version = "15.0", optional = true }
 webrtc = { version = "0.9", optional = true }
 
 # gRPC (existing transport) - not available for WASM
-tonic = { version = "0.10", optional = true, features = ["transport", "tls"] }
-tonic-web = { version = "0.10", optional = true }
-prost = { version = "0.12", optional = true }
-prost-types = { version = "0.12", optional = true }
+tonic = { version = "0.14", optional = true, features = ["transport", "tls-ring"] }
+tonic-web = { version = "0.14.1", optional = true }
+tonic-prost = { version = "0.14", optional = true }
+prost = { version = "0.14", optional = true }
+prost-types = { version = "0.14", optional = true }
 tower = { version = "0.4", optional = true }
+tower-http = { version = "0.5", optional = true, features = ["cors"] }
 hyper = { version = "1.1", optional = true }
 
 # Python FFI (using PyO3 per recommendation)
@@ -101,8 +103,9 @@ chrono = "0.4"
 windows-sys = { version = "0.52", features = ["Win32_System_ProcessStatus", "Win32_Foundation"] }
 
 [build-dependencies]
-prost-build = "0.12"
-tonic-build = "0.10"
+prost-build = "0.14"
+tonic-build = "0.14"
+tonic-prost-build = "0.14"
 # wlr-libpy needs to be a regular build-dependency since build.rs runs on host
 # It will only be used when building for WASM target (checked in build.rs)
 wlr-libpy = { git = "https://github.com/vmware-labs/webassembly-language-runtimes.git", default-features = false, features = ["build", "py312"] }
@@ -110,7 +113,7 @@ wlr-libpy = { git = "https://github.com/vmware-labs/webassembly-language-runtime
 [features]
 default = ["webrtc-transport", "wasmtime-runtime", "grpc-transport", "python-async", "native-numpy"]
 webrtc-transport = ["webrtc"]
-grpc-transport = ["tonic", "tonic-web", "prost", "prost-types", "tower", "hyper", "prometheus", "tokio-stream"]
+grpc-transport = ["tonic", "tonic-web", "tonic-prost", "prost", "prost-types", "tower", "tower-http", "hyper", "prometheus", "tokio-stream"]
 python-async = ["pyo3-async-runtimes"]
 native-numpy = ["numpy"]
 whisper = ["rwhisper", "rodio"]

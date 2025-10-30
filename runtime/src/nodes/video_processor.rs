@@ -10,7 +10,7 @@
 
 use crate::data::RuntimeData;
 use crate::grpc_service::generated::VideoFrame;
-use crate::nodes::StreamingNode;
+use crate::nodes::SyncStreamingNode;
 use crate::Error;
 use serde_json::json;
 
@@ -41,7 +41,7 @@ impl VideoProcessorNode {
     }
 
     /// Process video frame and return detection results
-    pub fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+    fn process_internal(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         // Extract video frame
         let video_frame = match data {
             RuntimeData::Video(frame) => frame,
@@ -106,13 +106,13 @@ impl VideoProcessorNode {
     }
 }
 
-impl StreamingNode for VideoProcessorNode {
+impl SyncStreamingNode for VideoProcessorNode {
     fn node_type(&self) -> &str {
         "VideoProcessorNode"
     }
 
     fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
-        VideoProcessorNode::process(self, data)
+        self.process_internal(data)
     }
 }
 
@@ -120,6 +120,7 @@ impl StreamingNode for VideoProcessorNode {
 mod tests {
     use super::*;
     use crate::grpc_service::generated::PixelFormat;
+    use crate::nodes::SyncStreamingNode;
 
     fn create_test_frame(frame_number: u64) -> VideoFrame {
         VideoFrame {
@@ -138,7 +139,7 @@ mod tests {
         let frame = create_test_frame(0);
         let input = RuntimeData::Video(frame);
 
-        let result = node.process(input).unwrap();
+        let result = SyncStreamingNode::process(&node, input).unwrap();
         match result {
             RuntimeData::Json(value) => {
                 assert_eq!(value["frame_number"], 0);
@@ -158,7 +159,7 @@ mod tests {
         let frame = create_test_frame(5);
         let input = RuntimeData::Video(frame);
 
-        let result = node.process(input).unwrap();
+        let result = SyncStreamingNode::process(&node, input).unwrap();
         match result {
             RuntimeData::Json(value) => {
                 let detections = value["detections"].as_array().unwrap();
@@ -178,7 +179,7 @@ mod tests {
             let frame = create_test_frame(i);
             let input = RuntimeData::Video(frame);
 
-            let result = node.process(input).unwrap();
+            let result = SyncStreamingNode::process(&node, input).unwrap();
             match result {
                 RuntimeData::Json(value) => {
                     assert_eq!(value["frame_number"], i);
@@ -194,7 +195,7 @@ mod tests {
         let node = VideoProcessorNode::new("video".to_string(), "{}").unwrap();
         let input = RuntimeData::Text("not a video frame".to_string());
 
-        let result = node.process(input);
+        let result = SyncStreamingNode::process(&node, input);
         assert!(result.is_err());
     }
 }
