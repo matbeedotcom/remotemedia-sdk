@@ -884,6 +884,12 @@ async fn handle_data_chunk_multi(
 ) -> Result<usize, ServiceError> {
     let start_time = Instant::now();
 
+    // Extract session_id for passing to Python nodes
+    let session_id = {
+        let sess = session.lock().await;
+        sess.session_id.clone()
+    };
+
     // Get or create node from cache (global cache with TTL)
     let (node, py_streaming_node): (Arc<Box<dyn crate::nodes::StreamingNode>>, Option<Arc<crate::nodes::python_streaming::PythonStreamingNode>>) = {
         let mut sess = session.lock().await;
@@ -1113,7 +1119,7 @@ async fn handle_data_chunk_multi(
         // Use the CACHED Python streaming node to preserve the loaded Kokoro model!
         if let Some(py_node) = &py_streaming_node {
             let chunk_tx_clone = chunk_tx.clone();
-            py_node.process_streaming(input_data, move |output_data| {
+            py_node.process_streaming(input_data, Some(session_id.clone()), move |output_data| {
                 // Non-blocking send to channel
                 chunk_tx_clone.send(output_data)
                     .map_err(|_| crate::Error::Execution("Failed to enqueue chunk".to_string()))?;

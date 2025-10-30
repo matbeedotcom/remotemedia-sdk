@@ -1136,12 +1136,12 @@ def _run_with_existing_loop(agen, loop):
     ///
     /// This method enables true streaming: one input can produce multiple outputs.
     /// It creates the generator and calls the callback for each yielded chunk as it arrives.
-    pub async fn process_runtime_data_streaming<F>(&mut self, input: RuntimeData, mut callback: F) -> Result<usize>
+    pub async fn process_runtime_data_streaming<F>(&mut self, input: RuntimeData, session_id: Option<String>, mut callback: F) -> Result<usize>
     where
         F: FnMut(RuntimeData) -> Result<()> + Send,
     {
         tracing::info!("========================================");
-        tracing::info!("process_runtime_data_all_chunks called for node: {}", self.node_type);
+        tracing::info!("process_runtime_data_all_chunks called for node: {} with session_id: {:?}", self.node_type, session_id);
         tracing::info!("Input data type: {}", input.type_name());
 
         if !self.initialized {
@@ -1158,9 +1158,9 @@ def _run_with_existing_loop(agen, loop):
                 .ok_or_else(|| Error::Execution("Python node not initialized".to_string()))?
                 .bind(py);
 
-            // Convert RuntimeData to Python
-            use crate::python::{runtime_data_to_py, PyRuntimeData};
-            let py_runtime_data_struct = runtime_data_to_py(input);
+            // Convert RuntimeData to Python with session_id
+            use crate::python::{runtime_data_to_py_with_session, PyRuntimeData};
+            let py_runtime_data_struct = runtime_data_to_py_with_session(input, session_id.clone());
             let py_runtime_data = pyo3::Py::new(py, py_runtime_data_struct)
                 .map_err(|e| Error::Execution(format!("Failed to create Python RuntimeData: {}", e)))?;
 

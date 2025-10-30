@@ -378,11 +378,10 @@ class LFM2AudioNode:
         audio_array = np.frombuffer(samples_bytes, dtype=np.float32)
         logger.info(f"Received audio: {len(audio_array)} samples, {sample_rate}Hz, {channels} channels")
 
-        # Extract session_id and metadata from RuntimeData
-        # For now, use a default session_id since metadata extraction isn't available yet
-        # TODO: When RuntimeData supports metadata, extract session_id from there
-        session_id = "default"  # Will be extracted from data.metadata() when available
-        metadata = {}  # Will be extracted from data.metadata() when available
+        # Extract session_id from RuntimeData
+        session_id = data.session_id if hasattr(data, 'session_id') and data.session_id else "default"
+        logger.info(f"Using session_id from RuntimeData: {session_id}")
+        metadata = {}  # Reserved for future use
 
         # Handle metadata commands
         if metadata:

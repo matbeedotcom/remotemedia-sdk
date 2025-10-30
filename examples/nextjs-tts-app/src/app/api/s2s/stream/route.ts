@@ -11,6 +11,7 @@
  */
 
 import clientPool from '@/lib/grpc-client-pool';
+import sessionManager from '@/lib/grpc-session-manager';
 import { createSimpleS2SPipeline } from '@/lib/pipeline-builder';
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -60,6 +61,7 @@ export async function POST(request: NextRequest) {
     async start(controller) {
       // Get persistent client from pool
       let client;
+      let session;
       try {
         client = await clientPool.getClient();
         console.log(`[S2S API] Using persistent gRPC client for session ${actualSessionId}`);
@@ -67,8 +69,8 @@ export async function POST(request: NextRequest) {
         // Handle session reset
         if (reset) {
           console.log(`[S2S API] Resetting session ${actualSessionId}`);
-          // Send metadata to reset the session
-          // The LFM2AudioNode will clear conversation history
+          // Close existing session to reset conversation history
+          await sessionManager.closeSession(actualSessionId);
         }
 
         // Create pipeline manifest using pipeline builder
@@ -82,40 +84,44 @@ export async function POST(request: NextRequest) {
           maxNewTokens: 512,
         });
 
-        console.log(`[S2S API] Starting speech-to-speech pipeline for session ${actualSessionId}...`);
+        console.log(`[S2S API] Getting or creating persistent session: ${actualSessionId}...`);
+
+        // Get or create persistent streaming session
+        session = await sessionManager.getOrCreateSession(actualSessionId, client, manifest);
 
         // Decode base64 audio to buffer
         const audioBuffer = Buffer.from(audio, 'base64');
         const numSamples = audioBuffer.length / 4; // float32 = 4 bytes per sample
 
-        // Create audio data generator
-        async function* audioDataGenerator() {
-          // Yield audio data for the LFM2-Audio node to process
-          yield [
-            'lfm2_audio',
-            {
-              type: 'audio' as const,
-              data: {
-                samples: audioBuffer,
-                sampleRate: sampleRate || 24000,
-                numChannels: 1,
-                numSamples: numSamples,
-                format: 'float32le',
-              },
-              metadata: {
-                sessionId: actualSessionId,
-                reset: reset || false,
-              },
+        console.log(`[S2S API] Sending audio chunk to session: ${actualSessionId}`);
+
+        // Send audio chunk to persistent stream
+        await session.stream.sendChunk(
+          'lfm2_audio',
+          {
+            type: 'audio' as const,
+            data: {
+              samples: audioBuffer,
+              sampleRate: sampleRate || 24000,
+              numChannels: 1,
+              numSamples: numSamples,
+              format: 'float32le',
             },
-            0,
-          ] as const;
-        }
+          },
+          {
+            sessionId: actualSessionId,
+            reset: reset ? 'true' : 'false',
+          }
+        );
 
         let sequenceNum = 0;
+        let receivedResults = false;
 
-        // Stream the pipeline and process responses
-        for await (const chunk of client.streamPipeline(manifest, audioDataGenerator())) {
+        // Process responses from persistent stream until we get all outputs for this turn
+        // We continue until we get text or audio output, indicating the turn is complete
+        for await (const chunk of session.stream.getResults()) {
           console.log(`[S2S API] Chunk ${sequenceNum} keys:`, Object.keys(chunk));
+          receivedResults = true;
 
           // Handle metrics
           if (chunk.metrics) {
@@ -171,10 +177,14 @@ export async function POST(request: NextRequest) {
             console.log(
               `[S2S API] Sent audio chunk (${chunk.audioOutput.numSamples} samples)`,
             );
+
+            // For now, break after receiving audio output (TTS completed)
+            // This keeps the session alive for the next request
+            break;
           }
         }
 
-        console.log(`[S2S API] S2S streaming completed for session ${actualSessionId}`);
+        console.log(`[S2S API] S2S streaming completed for session ${actualSessionId}, keeping session alive`);
 
         // Send completion marker
         const completeData = JSON.stringify({
@@ -184,10 +194,21 @@ export async function POST(request: NextRequest) {
         });
         controller.enqueue(new TextEncoder().encode(completeData + '\n'));
 
-        // Keep connection alive for node caching
+        // Close HTTP response (but keep gRPC session alive)
         controller.close();
       } catch (error) {
         console.error('[S2S API] Speech-to-speech streaming error:', error);
+
+        // On critical error, close the session so it can be recreated
+        if (session) {
+          try {
+            await sessionManager.closeSession(actualSessionId);
+            console.log(`[S2S API] Closed session due to error: ${actualSessionId}`);
+          } catch (closeError) {
+            console.error('[S2S API] Error closing session:', closeError);
+          }
+        }
+
         // Try to send error to client
         try {
           const errorData = JSON.stringify({
@@ -199,8 +220,6 @@ export async function POST(request: NextRequest) {
         } catch (e) {
           // Ignore if controller is already closed
         }
-        // On error, try to reconnect for next request
-        await clientPool.reconnect();
         controller.error(error);
       }
     },

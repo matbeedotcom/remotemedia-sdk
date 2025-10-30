@@ -18,6 +18,8 @@ use std::collections::HashMap;
 #[derive(Clone)]
 pub struct PyRuntimeData {
     pub inner: RuntimeData,
+    #[pyo3(get, set)]
+    pub session_id: Option<String>,
 }
 
 #[pymethods]
@@ -27,6 +29,7 @@ impl PyRuntimeData {
     fn text(text: String) -> Self {
         PyRuntimeData {
             inner: RuntimeData::Text(text),
+            session_id: None,
         }
     }
 
@@ -43,6 +46,7 @@ impl PyRuntimeData {
 
         Ok(PyRuntimeData {
             inner: RuntimeData::Json(json_value),
+            session_id: None,
         })
     }
 
@@ -51,6 +55,7 @@ impl PyRuntimeData {
     fn binary(data: Bound<'_, PyBytes>) -> Self {
         PyRuntimeData {
             inner: RuntimeData::Binary(Bytes::copy_from_slice(data.as_bytes())),
+            session_id: None,
         }
     }
 
@@ -78,6 +83,7 @@ impl PyRuntimeData {
                 format: audio_format,
                 num_samples,
             }),
+            session_id: None,
         }
     }
 
@@ -207,6 +213,7 @@ fn numpy_to_audio(
             format: 0, // F32
             num_samples,
         }),
+        session_id: None,
     })
 }
 
@@ -270,7 +277,18 @@ pub fn register_runtime_data_module(py: Python, parent_module: &Bound<'_, PyModu
 
 /// Helper function to convert Rust RuntimeData to Python PyRuntimeData
 pub fn runtime_data_to_py(data: RuntimeData) -> PyRuntimeData {
-    PyRuntimeData { inner: data }
+    PyRuntimeData {
+        inner: data,
+        session_id: None,
+    }
+}
+
+/// Helper function to convert Rust RuntimeData to Python PyRuntimeData with session_id
+pub fn runtime_data_to_py_with_session(data: RuntimeData, session_id: Option<String>) -> PyRuntimeData {
+    PyRuntimeData {
+        inner: data,
+        session_id,
+    }
 }
 
 /// Helper function to extract Rust RuntimeData from Python PyRuntimeData

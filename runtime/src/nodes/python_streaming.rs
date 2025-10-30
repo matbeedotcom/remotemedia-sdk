@@ -94,7 +94,7 @@ impl PythonStreamingNode {
     ///
     /// This method is used for true streaming where one input can produce multiple outputs.
     /// It iterates the Python async generator and calls the callback for each chunk as it arrives.
-    pub async fn process_streaming<F>(&self, data: RuntimeData, callback: F) -> Result<usize, Error>
+    pub async fn process_streaming<F>(&self, data: RuntimeData, session_id: Option<String>, callback: F) -> Result<usize, Error>
     where
         F: FnMut(RuntimeData) -> Result<(), Error> + Send,
     {
@@ -111,7 +111,7 @@ impl PythonStreamingNode {
             .downcast_mut::<crate::python::CPythonNodeExecutor>()
             .ok_or_else(|| Error::Execution("Failed to downcast to CPythonNodeExecutor".to_string()))?;
 
-        // Call the new streaming method with callback
-        py_executor.process_runtime_data_streaming(data, callback).await
+        // Call the new streaming method with callback and session_id
+        py_executor.process_runtime_data_streaming(data, session_id, callback).await
     }
 }
