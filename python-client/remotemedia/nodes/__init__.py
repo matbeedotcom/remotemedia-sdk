@@ -21,6 +21,7 @@ from .simple_math import * # noqa: F401, F403
 from .transcription import * # noqa: F401, F403
 from .tts import * # noqa: F401, F403
 from .simple_pytorch_test import * # noqa: F401, F403
+from .test_nodes import * # noqa: F401, F403
 from remotemedia.core.node import Node
 from .audio import AudioTransform, AudioBuffer, AudioResampler, VoiceActivityDetector
 from .transcription import WhisperXTranscriber, RustWhisperTranscriber
@@ -36,6 +37,17 @@ from .custom import StatefulCounter
 from .io_nodes import DataSourceNode, DataSinkNode, BidirectionalNode, JavaScriptBridgeNode
 from .grpc_source import GRPCStreamSource, GRPCStreamManager, get_grpc_stream_manager
 from .simple_math import MultiplyNode, AddNode
+from .test_nodes import (
+    ExpanderNode,
+    FilterNode,
+    BatcherNode,
+    RangeGeneratorNode,
+    TransformAndExpandNode,
+    CounterNode,
+    ConditionalExpanderNode,
+    ChainedTransformNode,
+    ErrorProneNode,
+)
 
 __all__ = [
     # Base
@@ -85,4 +97,14 @@ __all__ = [
     "SimplePyTorchNode",
     # ML nodes
     "LFM2AudioNode",
+    # Integration test nodes
+    "ExpanderNode",
+    "FilterNode",
+    "BatcherNode",
+    "RangeGeneratorNode",
+    "TransformAndExpandNode",
+    "CounterNode",
+    "ConditionalExpanderNode",
+    "ChainedTransformNode",
+    "ErrorProneNode",
 ] 

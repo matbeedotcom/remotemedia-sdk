@@ -218,6 +218,10 @@ fn test_stream_metrics_construction() {
         chunks_dropped: 0,
         peak_memory_bytes: 1048576,
         data_type_breakdown: std::collections::HashMap::new(),
+        cache_hits: 0,
+        cache_misses: 0,
+        cached_nodes_count: 0,
+        cache_hit_rate: 0.0,
     };
 
     let response = StreamResponse {

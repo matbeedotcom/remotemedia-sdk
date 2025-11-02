@@ -183,19 +183,27 @@ mod tests {
         let mut inputs = HashMap::new();
 
         // Create audio buffer
-        let audio = RuntimeData::Audio(AudioData {
-            samples: vec![0.0; 1600],
+        use crate::grpc_service::generated::{AudioBuffer, AudioFormat};
+        let samples_f32 = vec![0.0f32; 1600];
+        let samples_bytes: Vec<u8> = samples_f32.iter()
+            .flat_map(|&f| f.to_le_bytes())
+            .collect();
+
+        let audio = RuntimeData::Audio(AudioBuffer {
+            samples: samples_bytes,
             sample_rate: 16000,
             channels: 1,
+            format: AudioFormat::F32 as i32,
             num_samples: 1600,
         });
 
         // Create video frame with matching timestamp
-        let video = RuntimeData::Video(crate::data::VideoData {
+        use crate::grpc_service::generated::{VideoFrame, PixelFormat};
+        let video = RuntimeData::Video(VideoFrame {
             pixel_data: vec![0u8; 320 * 240 * 3],
             width: 320,
             height: 240,
-            format: crate::data::PixelFormat::Rgb24,
+            format: PixelFormat::Rgb24 as i32,
             frame_number: 0,
             timestamp_us: 0, // Perfect sync with audio
         });
@@ -216,23 +224,31 @@ mod tests {
 
     #[test]
     fn test_sync_av_drift() {
+        use crate::grpc_service::generated::{AudioBuffer, AudioFormat, VideoFrame, PixelFormat};
+
         let node = SynchronizedAudioVideoNode::new("sync1".to_string(), "{}").unwrap();
 
         let mut inputs = HashMap::new();
 
-        let audio = RuntimeData::Audio(AudioData {
-            samples: vec![0.0; 1600],
+        let samples_f32 = vec![0.0f32; 1600];
+        let samples_bytes: Vec<u8> = samples_f32.iter()
+            .flat_map(|&f| f.to_le_bytes())
+            .collect();
+
+        let audio = RuntimeData::Audio(AudioBuffer {
+            samples: samples_bytes,
             sample_rate: 16000,
             channels: 1,
+            format: AudioFormat::F32 as i32,
             num_samples: 1600,
         });
 
         // Video is 15ms ahead (within 20ms tolerance = good)
-        let video = RuntimeData::Video(crate::data::VideoData {
+        let video = RuntimeData::Video(VideoFrame {
             pixel_data: vec![0u8; 320 * 240 * 3],
             width: 320,
             height: 240,
-            format: crate::data::PixelFormat::Rgb24,
+            format: PixelFormat::Rgb24 as i32,
             frame_number: 0,
             timestamp_us: 15_000, // 15ms ahead
         });

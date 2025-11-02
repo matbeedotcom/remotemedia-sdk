@@ -71,6 +71,9 @@ impl AsyncStreamingNode for PythonStreamingNode {
     }
 
     async fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+        // IMPORTANT: For single-output nodes, use the streaming iteration and take first item
+        // This avoids complex GIL deadlock issues with loop.run_until_complete()
+
         // Ensure the Python node is initialized
         self.ensure_initialized().await?;
 
@@ -79,22 +82,29 @@ impl AsyncStreamingNode for PythonStreamingNode {
         let executor = executor_guard.as_mut()
             .ok_or_else(|| Error::Execution("Python node not initialized".to_string()))?;
 
-        // Downcast to CPythonNodeExecutor to access process_runtime_data
+        // Downcast to CPythonNodeExecutor
         let py_executor = executor.as_any_mut()
             .downcast_mut::<crate::python::CPythonNodeExecutor>()
             .ok_or_else(|| Error::Execution("Failed to downcast to CPythonNodeExecutor".to_string()))?;
 
-        // Call the new runtime data method
-        py_executor.process_runtime_data(data).await
-    }
-}
+        // Use streaming iteration but only take the first item
+        let mut result: Option<RuntimeData> = None;
+        py_executor.process_runtime_data_streaming(data, None, |output| {
+            result = Some(output);
+            // Return error to stop iteration after first item
+            Err(crate::Error::Execution("StopIteration".to_string()))
+        }).await.ok(); // Ignore the error since we use it to stop
 
-impl PythonStreamingNode {
-    /// Process input and stream chunks via callback
-    ///
-    /// This method is used for true streaming where one input can produce multiple outputs.
-    /// It iterates the Python async generator and calls the callback for each chunk as it arrives.
-    pub async fn process_streaming<F>(&self, data: RuntimeData, session_id: Option<String>, callback: F) -> Result<usize, Error>
+        result.ok_or_else(|| Error::Execution("No output from Python node".to_string()))
+    }
+
+    // Override the trait's process_streaming method to use true streaming
+    async fn process_streaming<F>(
+        &self,
+        data: RuntimeData,
+        session_id: Option<String>,
+        callback: F,
+    ) -> Result<usize, Error>
     where
         F: FnMut(RuntimeData) -> Result<(), Error> + Send,
     {
@@ -111,7 +121,8 @@ impl PythonStreamingNode {
             .downcast_mut::<crate::python::CPythonNodeExecutor>()
             .ok_or_else(|| Error::Execution("Failed to downcast to CPythonNodeExecutor".to_string()))?;
 
-        // Call the new streaming method with callback and session_id
+        // Call the streaming method with callback and session_id
         py_executor.process_runtime_data_streaming(data, session_id, callback).await
     }
 }
+

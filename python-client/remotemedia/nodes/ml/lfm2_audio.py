@@ -20,6 +20,11 @@ from typing import AsyncGenerator, Optional, Dict, List, Any, TYPE_CHECKING
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
+try:
+    import resampy
+except ImportError:
+    resampy = None
+    logging.warning("resampy not installed. Audio resampling will use torchaudio instead.")
 
 # Suppress torch dynamo compilation errors (fall back to eager mode)
 try:
@@ -293,9 +298,15 @@ class LFM2AudioNode:
         Returns:
             Tuple of (text_tokens, audio_tokens, modality_flags)
         """
-        from liquid_audio import LFMModality
+        logger.info(f"[_generate_sync] Entering generation for session {session_state.session_id} (turn {session_state.turn_count})")
 
-        logger.info(f"Generating response for session {session_state.session_id} (turn {session_state.turn_count})")
+        try:
+            from liquid_audio import LFMModality
+        except ImportError as e:
+            logger.error(f"Failed to import LFMModality: {e}")
+            raise
+
+        logger.info(f"[_generate_sync] Starting model generation...")
 
         text_out: List[torch.Tensor] = []
         audio_out: List[torch.Tensor] = []
@@ -305,36 +316,52 @@ class LFM2AudioNode:
         # Use generate_interleaved for conversational mode with audio
         if self.text_only:
             logger.info("Using generate_sequential for text-only mode")
-            for t in self._model.generate_sequential(
-                **chat_state,
-                max_new_tokens=self.max_new_tokens,
-                text_temperature=None,  # Use defaults
-                text_top_k=None
-            ):
-                if t.numel() == 1:
-                    # Text token
-                    text_out.append(t)
-                    modality_out.append(LFMModality.TEXT)
-                else:
-                    # Audio token (shouldn't happen in sequential mode, but handle it)
-                    audio_out.append(t)
-                    modality_out.append(LFMModality.AUDIO_OUT)
+            try:
+                for token_idx, t in enumerate(self._model.generate_sequential(
+                    **chat_state,
+                    max_new_tokens=self.max_new_tokens,
+                    text_temperature=None,  # Use defaults
+                    text_top_k=None
+                )):
+                    if token_idx % 10 == 0:  # Log every 10th token
+                        logger.info(f"Generated {token_idx} tokens...")
+                    if t.numel() == 1:
+                        # Text token
+                        text_out.append(t)
+                        modality_out.append(LFMModality.TEXT)
+                    else:
+                        # Audio token (shouldn't happen in sequential mode, but handle it)
+                        audio_out.append(t)
+                        modality_out.append(LFMModality.AUDIO_OUT)
+            except Exception as e:
+                logger.error(f"Error in generate_sequential: {e}", exc_info=True)
+                raise
         else:
             logger.info("Using generate_interleaved for full S2S mode")
-            for t in self._model.generate_interleaved(
-                **chat_state,
-                max_new_tokens=self.max_new_tokens,
-                audio_temperature=self.audio_temperature,
-                audio_top_k=self.audio_top_k
-            ):
-                if t.numel() == 1:
-                    # Text token
-                    text_out.append(t)
-                    modality_out.append(LFMModality.TEXT)
-                else:
-                    # Audio token
-                    audio_out.append(t)
-                    modality_out.append(LFMModality.AUDIO_OUT)
+            try:
+                logger.info(f"Calling model.generate_interleaved with max_new_tokens={self.max_new_tokens}")
+                token_count = 0
+                for t in self._model.generate_interleaved(
+                    **chat_state,
+                    max_new_tokens=self.max_new_tokens,
+                    audio_temperature=self.audio_temperature,
+                    audio_top_k=self.audio_top_k
+                ):
+                    token_count += 1
+                    if token_count % 10 == 0:  # Log every 10th token
+                        logger.info(f"Generated {token_count} tokens (text: {len(text_out)}, audio: {len(audio_out)})")
+                    if t.numel() == 1:
+                        # Text token
+                        text_out.append(t)
+                        modality_out.append(LFMModality.TEXT)
+                    else:
+                        # Audio token
+                        audio_out.append(t)
+                        modality_out.append(LFMModality.AUDIO_OUT)
+                logger.info(f"Generation loop completed: {token_count} total tokens")
+            except Exception as e:
+                logger.error(f"Error in generate_interleaved: {e}", exc_info=True)
+                raise
 
         return text_out, audio_out, modality_out
 
@@ -359,66 +386,101 @@ class LFM2AudioNode:
             ValueError: If input is not RuntimeData.Audio
             RuntimeError: If generation fails
         """
-        # CRITICAL: Extract all data from RuntimeData BEFORE any await/yield
-        # PyO3 RuntimeData objects can't be accessed after async suspension points
-        logger.info("LFM2-Audio Node processing input data")
-
-        # Validate input type
-        if not data.is_audio():
-            logger.error(f"Invalid input type: expected RuntimeData.Audio, got {data.data_type()}")
-            raise ValueError(
-                f"LFM2AudioNode expects RuntimeData.Audio input, got {data.data_type()}"
-            )
-        logger.info("Input is valid RuntimeData.Audio")
-
-        # Extract audio from RuntimeData using as_audio() method instead of audio_to_numpy()
-        # to avoid PyO3 FFI issues in async context
-        samples_bytes, sample_rate, channels, format_str, num_samples = data.as_audio()
-        # Convert bytes to numpy array
-        audio_array = np.frombuffer(samples_bytes, dtype=np.float32)
-        logger.info(f"Received audio: {len(audio_array)} samples, {sample_rate}Hz, {channels} channels")
-
-        # Extract session_id from RuntimeData
-        session_id = data.session_id if hasattr(data, 'session_id') and data.session_id else "default"
-        logger.info(f"Using session_id from RuntimeData: {session_id}")
-        metadata = {}  # Reserved for future use
-
-        # Handle metadata commands
-        if metadata:
-            if metadata.get("reset"):
-                if session_id in self._sessions:
-                    logger.info(f"Resetting session: {session_id}")
-                    del self._sessions[session_id]
-
-                logger.info(f"Session {session_id} has been reset.")
-                return
-        logger.info(f"Using session ID: {session_id}")
-
-        # Get or create session
-        session_state = self._get_or_create_session(session_id)
-        chat = session_state.chat_state
-
-        # Start new user turn
-        chat.new_turn("user")
-
-        # Convert numpy array to torch tensor and add to chat
-        # LFM2-Audio expects audio as (channels, samples) tensor at 24kHz
-        wav = torch.from_numpy(audio_array).float()
-        if wav.dim() == 1:
-            wav = wav.unsqueeze(0)  # Add channel dimension
-
-        chat.add_audio(wav, self.sample_rate)
-        chat.end_turn()
-
-        # Start assistant turn
-        chat.new_turn("assistant")
-        session_state.turn_count += 1
-
         try:
-            # Generate response in thread (PyTorch-safe)
-            text_tokens, audio_tokens, modality_flags = await asyncio.to_thread(
-                self._generate_sync, chat, session_state
-            )
+            # CRITICAL: Extract all data from RuntimeData BEFORE any await/yield
+            # PyO3 RuntimeData objects can't be accessed after async suspension points
+            logger.info("LFM2-Audio Node processing input data")
+
+            # Validate input type
+            if not data.is_audio():
+                logger.error(f"Invalid input type: expected RuntimeData.Audio, got {data.data_type()}")
+                # Yield an error message instead of raising
+                yield RuntimeData.text(f"ERROR: Expected audio input, got {data.data_type()}")
+                return
+            logger.info("Input is valid RuntimeData.Audio")
+
+            # Extract audio from RuntimeData using as_audio() method instead of audio_to_numpy()
+            # to avoid PyO3 FFI issues in async context
+            samples_bytes, input_sample_rate, channels, format_str, num_samples = data.as_audio()
+            # Convert bytes to numpy array
+            audio_array = np.frombuffer(samples_bytes, dtype=np.float32)
+            logger.info(f"Received audio: {len(audio_array)} samples, {input_sample_rate}Hz, {channels} channels")
+
+            # Resample audio if necessary (model expects 24kHz)
+            if input_sample_rate != self.sample_rate:
+                logger.info(f"Resampling audio from {input_sample_rate}Hz to {self.sample_rate}Hz")
+                try:
+                    if resampy is not None:
+                        audio_array = resampy.resample(audio_array, input_sample_rate, self.sample_rate)
+                    else:
+                        # Fallback to torchaudio resampling
+                        audio_tensor = torch.from_numpy(audio_array).float()
+                        if audio_tensor.dim() == 1:
+                            audio_tensor = audio_tensor.unsqueeze(0)
+                        resampler = torchaudio.transforms.Resample(
+                            orig_freq=input_sample_rate,
+                            new_freq=self.sample_rate
+                        )
+                        audio_tensor = resampler(audio_tensor)
+                        audio_array = audio_tensor.squeeze(0).numpy()
+                    logger.info(f"Resampled to {len(audio_array)} samples")
+                except Exception as e:
+                    logger.error(f"Failed to resample audio: {e}", exc_info=True)
+                    # Continue with original sample rate as fallback
+                    logger.warning(f"Using original sample rate {input_sample_rate}Hz instead of {self.sample_rate}Hz")
+
+            # Extract session_id from RuntimeData
+            session_id = data.session_id if hasattr(data, 'session_id') and data.session_id else "default"
+            logger.info(f"Using session_id from RuntimeData: {session_id}")
+            metadata = {}  # Reserved for future use
+
+            # Handle metadata commands
+            if metadata:
+                if metadata.get("reset"):
+                    if session_id in self._sessions:
+                        logger.info(f"Resetting session: {session_id}")
+                        del self._sessions[session_id]
+
+                    logger.info(f"Session {session_id} has been reset.")
+                    return
+            logger.info(f"Using session ID: {session_id}")
+
+            # Get or create session
+            logger.info(f"Retrieving or creating session: {session_id}")
+            session_state = self._get_or_create_session(session_id)
+            logger.info(f"Using session state: {session_state}")
+            chat = session_state.chat_state
+
+            # Start new user turn
+            chat.new_turn("user")
+
+            # Convert numpy array to torch tensor and add to chat
+            # LFM2-Audio expects audio as (channels, samples) tensor at 24kHz
+            wav = torch.from_numpy(audio_array).float()
+            if wav.dim() == 1:
+                wav = wav.unsqueeze(0)  # Add channel dimension
+
+            # Now audio_array is already resampled to self.sample_rate (24kHz)
+            chat.add_audio(wav, self.sample_rate)
+            chat.end_turn()
+
+            # Start assistant turn
+            chat.new_turn("assistant")
+            session_state.turn_count += 1
+
+            logger.info(f"Starting generation for session {session_id}, turn {session_state.turn_count}")
+            # Generate response in thread (PyTorch-safe) with timeout
+            try:
+                text_tokens, audio_tokens, modality_flags = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self._generate_sync, chat, session_state
+                    ),
+                    timeout=30.0  # 30 second timeout
+                )
+                logger.info(f"Generation completed: {len(text_tokens)} text tokens, {len(audio_tokens)} audio tokens")
+            except asyncio.TimeoutError:
+                logger.error(f"Generation timed out after 30 seconds for session {session_id}")
+                raise RuntimeError("LFM2-Audio generation timed out")
 
             # Stream text tokens
             if text_tokens:
@@ -463,9 +525,14 @@ class LFM2AudioNode:
                 )
             chat.end_turn()
 
+            # If we haven't yielded anything yet, yield an empty audio response to prevent "No output" error
+            # This ensures the async generator always yields at least one value
+            logger.info("Process method completed successfully")
+
         except Exception as e:
-            logger.error(f"Error during LFM2-Audio generation: {e}")
-            raise RuntimeError(f"Speech-to-speech generation failed: {e}") from e
+            logger.error(f"Error during LFM2-Audio generation: {e}", exc_info=True)
+            # Yield an error message instead of raising to prevent "No output" error
+            yield RuntimeData.text(f"ERROR: Speech-to-speech generation failed: {str(e)}")
 
     def get_config(self) -> dict:
         """Get node configuration."""

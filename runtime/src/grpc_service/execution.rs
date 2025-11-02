@@ -346,53 +346,30 @@ impl PipelineExecutionService for ExecutionServiceImpl {
             return Ok(Response::new(response));
         }
 
-        // Convert data inputs (generic)
-        let mut audio_inputs = HashMap::new();
-        for (node_id, data_buffer) in &req.data_inputs {
-            // For now, only handle audio data (Phase 3 will add other types)
-            let proto_buffer = match &data_buffer.data_type {
-                Some(crate::grpc_service::generated::data_buffer::DataType::Audio(audio)) => audio,
-                _ => {
-                    self.metrics.record_request_end("ExecutePipeline", "error", start_time);
-                    self.metrics.record_error("validation");
-
-                    let error_response = ErrorResponse {
-                        error_type: ErrorType::Validation as i32,
-                        message: format!("Non-audio data types not yet supported for node '{}'", node_id),
-                        failing_node_id: node_id.clone(),
-                        context: "Only audio input supported in Phase 2".to_string(),
-                        stack_trace: String::new(),
-                    };
-
-                    let response = ExecuteResponse {
-                        outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
-                    };
-
-                    return Ok(Response::new(response));
-                }
-            };
-            match self.convert_audio_buffer(proto_buffer) {
-                Ok(buffer) => {
-                    audio_inputs.insert(node_id.clone(), buffer);
+        // Convert data inputs to RuntimeData (supports all types: audio, video, tensor, json, text, binary)
+        let mut runtime_inputs = HashMap::new();
+        for (node_id, data_buffer) in req.data_inputs {
+            match crate::data::convert_proto_to_runtime_data(data_buffer) {
+                Ok(runtime_data) => {
+                    runtime_inputs.insert(node_id.clone(), runtime_data);
                 }
                 Err(e) => {
                     self.metrics
                         .record_request_end("ExecutePipeline", "error", start_time);
                     self.metrics.record_error("validation");
-                    
-                    // T038: Return audio input conversion errors as Error outcome
+
                     let error_response = ErrorResponse {
                         error_type: ErrorType::Validation as i32,
-                        message: format!("Audio input conversion failed for node '{}': {}", node_id, e),
+                        message: format!("Input data conversion failed for node '{}': {}", node_id, e),
                         failing_node_id: node_id.clone(),
-                        context: "Audio buffer conversion failed".to_string(),
+                        context: "Data buffer conversion failed".to_string(),
                         stack_trace: String::new(),
                     };
-                    
+
                     let response = ExecuteResponse {
                         outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
                     };
-                    
+
                     return Ok(Response::new(response));
                 }
             }
@@ -409,9 +386,8 @@ impl PipelineExecutionService for ExecutionServiceImpl {
         // T038: Spawn each pipeline execution in its own tokio task
         // This enables true concurrent execution across CPU cores
         let execution_task = tokio::spawn(async move {
-            // Fast path: Pass AudioBuffer directly to executor (no JSON serialization)
-            // 10-15x performance improvement for FastAudioNode implementations
-            executor.execute_fast_pipeline(&manifest, audio_inputs).await
+            // Execute with RuntimeData - supports all data types (Audio, Video, Tensor, JSON, Text, Binary)
+            executor.execute_with_runtime_data(&manifest, runtime_inputs).await
         });
 
         // Execute pipeline
@@ -467,21 +443,16 @@ impl PipelineExecutionService for ExecutionServiceImpl {
             }
         };
 
-        // Serialize outputs to protobuf format (wrap audio in DataBuffer)
+        // Serialize outputs to protobuf format (convert RuntimeData to DataBuffer)
         let mut data_outputs = HashMap::new();
-        for (node_id, buffer) in result_buffers {
-            let proto_buffer = self.serialize_audio_buffer(&buffer);
-            // Wrap audio buffer in DataBuffer
-            let data_buffer = crate::grpc_service::generated::DataBuffer {
-                data_type: Some(crate::grpc_service::generated::data_buffer::DataType::Audio(proto_buffer)),
-                metadata: HashMap::new(),
-            };
+        for (node_id, runtime_data) in result_buffers {
+            let data_buffer = crate::data::convert_runtime_to_proto_data(runtime_data);
             data_outputs.insert(node_id, data_buffer);
         }
 
         info!(
             outputs = data_outputs.len(),
-            "Fast pipeline execution completed"
+            "Pipeline execution completed with RuntimeData"
         );
 
         // Collect metrics
@@ -501,13 +472,6 @@ impl PipelineExecutionService for ExecutionServiceImpl {
         self.metrics
             .record_request_end("ExecutePipeline", "success", start_time);
 
-        info!(
-            outputs = if let Some(crate::grpc_service::generated::execute_response::Outcome::Result(ref r)) = response.outcome {
-                r.data_outputs.len()
-            } else { 0 },
-            "Pipeline execution completed"
-        );
-
         Ok(Response::new(response))
     }
 
@@ -524,3 +488,13 @@ impl PipelineExecutionService for ExecutionServiceImpl {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_placeholder() {
+        // Placeholder test - gRPC integration tests are in tests/grpc_integration/
+        assert!(true);
+    }
+}

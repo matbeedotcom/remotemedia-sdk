@@ -39,7 +39,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{Mutex, RwLock};
 use tonic::{Request, Response, Status, Streaming};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 /// Maximum number of chunks buffered before backpressure
@@ -524,7 +524,7 @@ async fn handle_stream(
                             metrics.record_chunk_processed(&session_id, latency / chunk_count as f64);
                         }
 
-                        info!("Processed DataChunk and sent {} output chunks", chunk_count);
+                        debug!("Processed DataChunk and sent {} output chunks", chunk_count);
 
                         // Send periodic metrics
                         let sess_lock = sess.lock().await;
@@ -829,9 +829,9 @@ async fn handle_data_chunk(
     let mut data_outputs = HashMap::new();
 
     // Log output data details before conversion
-    info!("Converting RuntimeData to proto: type={}, items={}", output_data.type_name(), output_data.item_count());
+    trace!("Converting RuntimeData to proto: type={}, items={}", output_data.type_name(), output_data.item_count());
     if let crate::data::RuntimeData::Audio(ref audio_buf) = output_data {
-        info!("Audio RuntimeData details: samples={} bytes, sample_rate={}Hz, channels={}, format={}, num_samples={}",
+        trace!("Audio RuntimeData details: samples={} bytes, sample_rate={}Hz, channels={}, format={}, num_samples={}",
             audio_buf.samples.len(), audio_buf.sample_rate, audio_buf.channels, audio_buf.format, audio_buf.num_samples);
     }
 
@@ -841,14 +841,14 @@ async fn handle_data_chunk(
     use crate::grpc_service::generated::data_buffer::DataType;
     match &output_buffer.data_type {
         Some(DataType::Audio(audio)) => {
-            info!("Proto AudioBuffer: samples={} bytes, sample_rate={}Hz, channels={}, format={}, num_samples={}",
+            trace!("Proto AudioBuffer: samples={} bytes, sample_rate={}Hz, channels={}, format={}, num_samples={}",
                 audio.samples.len(), audio.sample_rate, audio.channels, audio.format, audio.num_samples);
         },
         Some(DataType::Text(text)) => {
-            info!("Proto TextBuffer: {} bytes", text.text_data.len());
+            trace!("Proto TextBuffer: {} bytes", text.text_data.len());
         },
         _ => {
-            info!("Proto DataBuffer: non-audio/text type");
+            trace!("Proto DataBuffer: non-audio/text type");
         }
     }
 
@@ -871,6 +871,145 @@ async fn handle_data_chunk(
     };
 
     Ok(result)
+}
+
+/// Recursively route output data through the pipeline
+async fn route_to_downstream(
+    output_data: RuntimeData,
+    from_node_id: String,
+    session: Arc<Mutex<StreamSession>>,
+    streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
+    tx: tokio::sync::mpsc::Sender<Result<StreamResponse, Status>>,
+    session_id: String,
+    base_sequence: u64,
+) -> Result<(), ServiceError> {
+    // Check if there's a downstream node - split into two phases to avoid borrow conflicts
+    let next_node_id = {
+        let sess = session.lock().await;
+        sess.manifest.connections.iter()
+            .find(|conn| conn.from == from_node_id)
+            .map(|conn| conn.to.clone())
+    };
+
+    let downstream_info = if let Some(next_id) = next_node_id {
+        let mut sess = session.lock().await;
+        // Get or create the node
+        if let Some(cached) = sess.node_cache.get(&next_id).cloned() {
+            sess.cache_hits += 1;
+            Some((next_id.clone(), cached))
+        } else {
+            sess.cache_misses += 1;
+            let spec = sess.manifest.nodes.iter().find(|n| n.id == next_id).cloned();
+            match spec {
+                Some(s) => {
+                    match streaming_registry.create_node(&s.node_type, next_id.clone(), &s.params) {
+                        Ok(node) => {
+                            let arc = Arc::new(node);
+                            sess.node_cache.insert(next_id.clone(), arc.clone());
+                            Some((next_id, arc))
+                        }
+                        Err(e) => {
+                            error!("Failed to create node '{}': {}", next_id, e);
+                            None
+                        }
+                    }
+                }
+                None => {
+                    error!("Node spec not found for '{}'", next_id);
+                    None
+                }
+            }
+        }
+    } else {
+        None
+    };
+
+    if let Some((next_node_id, next_node)) = downstream_info {
+        // info!("🔀 Routing: '{}' → '{}'", from_node_id, next_node_id);
+
+        // Check if downstream node is streaming
+        let is_streaming = streaming_registry.is_multi_output_streaming(&next_node.node_type());
+
+        if is_streaming {
+            // Streaming node - process and recursively route each output
+            let (output_tx, mut output_rx) = tokio::sync::mpsc::unbounded_channel();
+
+            let result = next_node.process_streaming_async(
+                output_data,
+                Some(session_id.clone()),
+                Box::new(move |out| {
+                    output_tx.send(out).map_err(|_| crate::Error::Execution("Channel send failed".into()))?;
+                    Ok(())
+                })
+            ).await;
+
+            if let Err(e) = result {
+                error!("Streaming node '{}' failed: {}", next_node_id, e);
+                return Err(ServiceError::Internal(format!("Node '{}' failed: {}", next_node_id, e)));
+            }
+
+            // Recursively route each output
+            while let Some(downstream_output) = output_rx.recv().await {
+                Box::pin(route_to_downstream(
+                    downstream_output,
+                    next_node_id.clone(),
+                    session.clone(),
+                    streaming_registry.clone(),
+                    tx.clone(),
+                    session_id.clone(),
+                    base_sequence,
+                )).await?;
+            }
+        } else {
+            // Non-streaming node - process once and recursively route
+            match next_node.process_async(output_data).await {
+                Ok(downstream_output) => {
+                    Box::pin(route_to_downstream(
+                        downstream_output,
+                        next_node_id,
+                        session.clone(),
+                        streaming_registry.clone(),
+                        tx.clone(),
+                        session_id.clone(),
+                        base_sequence,
+                    )).await?;
+                }
+                Err(e) => {
+                    error!("Non-streaming node '{}' failed: {}", next_node_id, e);
+                    return Err(ServiceError::Internal(format!("Node '{}' failed: {}", next_node_id, e)));
+                }
+            }
+        }
+    } else {
+        // No downstream node - this is a terminal node, send to client
+        info!("📤 Terminal node '{}' - sending to client (type: {})", from_node_id, output_data.type_name());
+        use crate::data::convert_runtime_to_proto_data;
+
+        debug!("Converting RuntimeData to proto...");
+        let output_buffer = convert_runtime_to_proto_data(output_data);
+        debug!("Conversion complete");
+
+        let mut data_outputs = HashMap::new();
+        data_outputs.insert(from_node_id, output_buffer);
+
+        let chunk_result = ChunkResult {
+            sequence: base_sequence,
+            data_outputs,
+            processing_time_ms: 0.0,
+            total_items_processed: 0,
+        };
+
+        let response = StreamResponse {
+            response: Some(StreamResponseType::Result(chunk_result)),
+        };
+
+        debug!("Sending response to client...");
+        tx.send(Ok(response)).await
+            .map_err(|_| ServiceError::Internal("Failed to send result".into()))?;
+        debug!("Response sent successfully");
+    }
+
+    Ok(())
 }
 
 /// Handle DataChunk message with multi-output support (for streaming generators)
@@ -1047,14 +1186,17 @@ async fn handle_data_chunk_multi(
         .ok_or_else(|| ServiceError::Validation("No input data provided".to_string()))?
         .clone();
 
-    // Check if this is a PythonStreamingNode - if so, use streaming with callback
+    // Check if this is a streaming node (Python or Rust)
     let node_type = node.node_type();
     let output_count: usize;
 
-    // Use streaming path for all Python nodes that have the unwrapped py_streaming_node
-    if py_streaming_node.is_some() {
-        // Multi-yield Python streaming node - use callback for incremental sending
-        info!("🎙️ Detected multi-yield Python streaming node '{}', using streaming iteration", node_type);
+    // Check if this is a multi-output streaming node
+    let is_streaming = streaming_registry.is_multi_output_streaming(&node_type);
+
+    // Use streaming path for multi-output streaming nodes (both Python and Rust)
+    if is_streaming {
+        // Multi-yield streaming node - use callback for incremental sending
+        info!("🎙️ Detected multi-yield streaming node '{}', using streaming iteration", node_type);
 
         use crate::data::convert_runtime_to_proto_data;
 
@@ -1068,45 +1210,29 @@ async fn handle_data_chunk_multi(
         // Spawn async task to send chunks as they arrive from the channel
         let tx_clone = tx.clone();
         let session_clone = session.clone();
+        let streaming_registry_clone = streaming_registry.clone();
         let chunk_node_id = chunk.node_id.clone();
         let base_sequence = chunk.sequence;
         let data_type_clone = data_type.clone();
+        let session_id_clone = session_id.clone();
 
         let send_task = tokio::spawn(async move {
             let mut chunk_idx = 0u64;
 
             while let Some(output_data) = chunk_rx.recv().await {
-                info!("🎯 Received chunk {} from Python generator", chunk_idx + 1);
-                info!("Converting to proto: type={}, items={}", output_data.type_name(), output_data.item_count());
+                debug!("🎯 Received chunk {} from streaming node '{}'", chunk_idx + 1, chunk_node_id);
 
-                let output_buffer = convert_runtime_to_proto_data(output_data);
-                let mut data_outputs = HashMap::new();
-                data_outputs.insert(chunk_node_id.clone(), output_buffer);
-
-                // Record metrics for this chunk
-                let total_items = {
-                    let mut sess = session_clone.lock().await;
-                    sess.record_chunk_metrics(0.0, item_count, 0, &data_type_clone);
-                    sess.total_items
-                };
-
-                let chunk_result = ChunkResult {
-                    sequence: base_sequence + chunk_idx,
-                    data_outputs,
-                    processing_time_ms: 0.0,
-                    total_items_processed: total_items,
-                };
-
-                info!("📤 Sending ChunkResult {}: sequence={}", chunk_idx + 1, chunk_result.sequence);
-
-                // Send the ChunkResult immediately (non-blocking await)
-                let response = StreamResponse {
-                    response: Some(StreamResponseType::Result(chunk_result)),
-                };
-
-                if let Err(e) = tx_clone.send(Ok(response)).await {
-                    error!("Failed to send ChunkResult: {:?}", e);
-                    break;
+                // Use recursive routing
+                if let Err(e) = route_to_downstream(
+                    output_data,
+                    chunk_node_id.clone(),
+                    session_clone.clone(),
+                    streaming_registry_clone.clone(),
+                    tx_clone.clone(),
+                    session_id_clone.clone(),
+                    base_sequence + chunk_idx,
+                ).await {
+                    error!("Routing failed: {}", e);
                 }
 
                 chunk_idx += 1;
@@ -1116,19 +1242,14 @@ async fn handle_data_chunk_multi(
         });
 
         // Process streaming with callback that just enqueues chunks
-        // Use the CACHED Python streaming node to preserve the loaded Kokoro model!
-        if let Some(py_node) = &py_streaming_node {
-            let chunk_tx_clone = chunk_tx.clone();
-            py_node.process_streaming(input_data, Some(session_id.clone()), move |output_data| {
-                // Non-blocking send to channel
-                chunk_tx_clone.send(output_data)
-                    .map_err(|_| crate::Error::Execution("Failed to enqueue chunk".to_string()))?;
-                Ok(())
-            }).await
-                .map_err(|e| ServiceError::Internal(format!("Multi-chunk streaming failed: {}", e)))?;
-        } else {
-            return Err(ServiceError::Internal("Python streaming node not available for TTS".to_string()));
-        }
+        // Use the unified trait method for both Python and Rust nodes
+        let chunk_tx_clone = chunk_tx.clone();
+        node.process_streaming_async(input_data, Some(session_id.clone()), Box::new(move |output_data| {
+            chunk_tx_clone.send(output_data)
+                .map_err(|_| crate::Error::Execution("Failed to enqueue chunk".to_string()))?;
+            Ok(())
+        })).await
+            .map_err(|e| ServiceError::Internal(format!("Multi-chunk streaming failed: {}", e)))?;
 
         // Close the channel to signal completion
         drop(chunk_tx);
@@ -1137,7 +1258,7 @@ async fn handle_data_chunk_multi(
         output_count = send_task.await
             .map_err(|e| ServiceError::Internal(format!("Send task failed: {}", e)))? as usize;
 
-        info!("✅ Completed streaming {} chunks", output_count);
+        debug!("✅ Completed streaming {} chunks", output_count);
     } else {
         // Regular node - single output
         use crate::data::convert_runtime_to_proto_data;
@@ -1173,7 +1294,7 @@ async fn handle_data_chunk_multi(
     }
 
     let processing_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
-    info!("Total processing time: {:.2}ms for {} chunks", processing_time_ms, output_count);
+    debug!("Total processing time: {:.2}ms for {} chunks", processing_time_ms, output_count);
 
     Ok(output_count)
 }

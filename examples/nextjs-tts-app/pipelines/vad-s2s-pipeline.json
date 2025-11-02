@@ -2,84 +2,101 @@
   "version": "v1",
   "metadata": {
     "name": "vad-s2s-streaming",
-    "description": "VAD-based continuous speech-to-speech pipeline with LFM2-Audio",
+    "description": "VAD-based real-time speech-to-speech: AudioChunker → Silero VAD → AudioBuffer → LFM2 (ASR) → Kokoro TTS",
     "author": "RemoteMedia SDK",
     "createdAt": "2025-01-30T00:00:00Z"
   },
   "nodes": [
     {
-      "id": "audio_transform",
-      "nodeType": "AudioTransform",
+      "id": "audio_chunker",
+      "nodeType": "AudioChunkerNode",
       "params": {
-        "output_sample_rate": 24000,
-        "output_channels": 1
+        "chunkSize": 512
       },
       "isStreaming": true,
-      "description": "Resample and convert audio to 24kHz mono"
+      "description": "Split audio into 512-sample chunks for VAD"
     },
     {
-      "id": "vad",
-      "nodeType": "VoiceActivityDetector",
+      "id": "silero_vad",
+      "nodeType": "SileroVADNode",
       "params": {
-        "frame_duration_ms": 30,
-        "energy_threshold": 0.02,
-        "speech_threshold": 0.3,
-        "filter_mode": false,
-        "include_metadata": true
+        "threshold": 0.5,
+        "samplingRate": 16000,
+        "minSpeechDurationMs": 250,
+        "minSilenceDurationMs": 500,
+        "speechPadMs": 30
       },
       "isStreaming": true,
-      "description": "Detect speech segments in audio stream"
+      "description": "High-accuracy VAD using Silero ONNX model"
     },
     {
-      "id": "vad_buffer",
-      "nodeType": "VADTriggeredBuffer",
+      "id": "audio_buffer",
+      "nodeType": "AudioBufferAccumulatorNode",
       "params": {
-        "min_speech_duration_s": 0.8,
-        "max_speech_duration_s": 10.0,
-        "silence_duration_s": 1.0,
-        "sample_rate": 24000
+        "minUtteranceDurationMs": 500,
+        "maxUtteranceDurationMs": 30000
       },
       "isStreaming": true,
-      "description": "Buffer complete speech utterances"
+      "description": "Accumulate audio chunks into complete utterances"
     },
     {
       "id": "lfm2_audio",
       "nodeType": "LFM2AudioNode",
       "params": {
-        "node_id": "lfm2_audio",
-        "hf_repo": "LiquidAI/LFM2-Audio-1.5B",
+        "hf_repo": "liquidai/LFM2-Audio-1.5B",
+        "device": "cuda",
         "system_prompt": "You are a helpful AI assistant. Respond naturally and conversationally.",
-        "audio_temperature": 1.0,
-        "audio_top_k": 4,
-        "max_new_tokens": 512,
-        "sample_rate": 24000,
-        "session_timeout_minutes": 30
+        "text_only": true,
+        "text_temperature": 0.7,
+        "text_top_k": 50,
+        "max_new_tokens": 512
       },
       "isStreaming": true,
-      "description": "Generate conversational responses with text and audio"
+      "description": "ASR and conversational AI"
+    },
+    {
+      "id": "kokoro_tts",
+      "nodeType": "KokoroTTSNode",
+      "params": {
+        "model_id": "kokoro-v0_19",
+        "voice": "af_bella",
+        "speed": 1.0,
+        "device": "cuda"
+      },
+      "isStreaming": true,
+      "description": "Text-to-speech synthesis"
     }
   ],
   "connections": [
     {
-      "from": "audio_transform",
-      "to": "vad",
-      "description": "Resampled audio to VAD"
+      "from": "audio_chunker",
+      "to": "silero_vad",
+      "type": "audio",
+      "description": "512-sample chunks to VAD"
     },
     {
-      "from": "vad",
-      "to": "vad_buffer",
-      "description": "VAD-annotated audio to buffer"
+      "from": "silero_vad",
+      "to": "audio_buffer",
+      "type": "json",
+      "description": "VAD events control buffering"
     },
     {
-      "from": "vad_buffer",
+      "from": "audio_buffer",
       "to": "lfm2_audio",
-      "description": "Complete speech segments to LFM2-Audio"
+      "type": "audio",
+      "description": "Complete utterances sent to LFM2"
+    },
+    {
+      "from": "lfm2_audio",
+      "to": "kokoro_tts",
+      "type": "text",
+      "description": "Text response to TTS"
     }
   ],
   "config": {
     "execution_mode": "streaming",
     "enable_caching": true,
-    "cache_ttl_seconds": 600,
+    "cache_ttl_seconds": 1800,
     "max_concurrent_sessions": 100
   }
 }

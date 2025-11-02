@@ -60,6 +60,25 @@ pub trait AsyncStreamingNode: Send + Sync {
     fn is_multi_input(&self) -> bool {
         false
     }
+
+    /// Process input and stream multiple outputs via callback
+    ///
+    /// This method allows nodes to produce multiple outputs from a single input (e.g., VAD events + pass-through audio).
+    /// Nodes that produce multiple outputs should override this method.
+    /// The default implementation just calls process() and invokes the callback once.
+    async fn process_streaming<F>(
+        &self,
+        data: RuntimeData,
+        _session_id: Option<String>,
+        mut callback: F,
+    ) -> Result<usize, Error>
+    where
+        F: FnMut(RuntimeData) -> Result<(), Error> + Send,
+    {
+        let output = self.process(data).await?;
+        callback(output)?;
+        Ok(1)
+    }
 }
 
 /// Unified streaming node trait that can handle both sync and async nodes
@@ -79,6 +98,20 @@ pub trait StreamingNode: Send + Sync {
 
     /// Check if this node requires multiple inputs
     fn is_multi_input(&self) -> bool;
+
+    /// Process data with streaming callback (for multi-output nodes)
+    /// Default implementation falls back to process_async
+    async fn process_streaming_async(
+        &self,
+        data: RuntimeData,
+        _session_id: Option<String>,
+        callback: Box<dyn FnMut(RuntimeData) -> Result<(), Error> + Send>,
+    ) -> Result<usize, Error> {
+        let mut callback = callback;
+        let output = self.process_async(data).await?;
+        callback(output)?;
+        Ok(1)
+    }
 }
 
 /// Wrapper that makes a SyncStreamingNode into a StreamingNode
@@ -106,6 +139,7 @@ impl<T: SyncStreamingNode + 'static> StreamingNode for SyncNodeWrapper<T> {
 /// Wrapper that makes an AsyncStreamingNode into a StreamingNode
 pub struct AsyncNodeWrapper<T: AsyncStreamingNode>(pub Arc<T>);
 
+
 #[async_trait::async_trait]
 impl<T: AsyncStreamingNode + 'static> StreamingNode for AsyncNodeWrapper<T> {
     fn node_type(&self) -> &str {
@@ -123,6 +157,18 @@ impl<T: AsyncStreamingNode + 'static> StreamingNode for AsyncNodeWrapper<T> {
     fn is_multi_input(&self) -> bool {
         self.0.is_multi_input()
     }
+
+    async fn process_streaming_async(
+        &self,
+        data: RuntimeData,
+        session_id: Option<String>,
+        mut callback: Box<dyn FnMut(RuntimeData) -> Result<(), Error> + Send>,
+    ) -> Result<usize, Error> {
+        // Create an adapter closure that calls the boxed callback
+        self.0.process_streaming(data, session_id, move |output_data| {
+            callback(output_data)
+        }).await
+    }
 }
 
 /// Factory trait for creating streaming node instances
@@ -137,6 +183,12 @@ pub trait StreamingNodeFactory: Send + Sync {
     /// Python nodes need special handling for caching the unwrapped instance
     fn is_python_node(&self) -> bool {
         false // Default: not a Python node
+    }
+
+    /// Check if this factory creates multi-output streaming nodes
+    /// Multi-output nodes produce multiple outputs per input (e.g., VAD produces events + pass-through audio)
+    fn is_multi_output_streaming(&self) -> bool {
+        false // Default: single output
     }
 }
 
@@ -187,6 +239,14 @@ impl StreamingNodeRegistry {
         self.factories
             .get(node_type)
             .map(|factory| factory.is_python_node())
+            .unwrap_or(false)
+    }
+
+    /// Check if a node type is a multi-output streaming node
+    pub fn is_multi_output_streaming(&self, node_type: &str) -> bool {
+        self.factories
+            .get(node_type)
+            .map(|factory| factory.is_multi_output_streaming())
             .unwrap_or(false)
     }
 

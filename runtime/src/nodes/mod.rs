@@ -30,6 +30,17 @@ mod whisper;
 #[cfg(feature = "whisper")]
 pub use whisper::RustWhisperNode;
 
+#[cfg(feature = "silero-vad")]
+pub mod silero_vad;
+#[cfg(feature = "silero-vad")]
+pub use silero_vad::SileroVADNode;
+
+pub mod audio_buffer_accumulator;
+pub use audio_buffer_accumulator::AudioBufferAccumulatorNode;
+
+pub mod audio_chunker;
+pub use audio_chunker::AudioChunkerNode;
+
 pub use registry::{NodeFactory as NodeFactoryTrait, RuntimeHint, CompositeRegistry};
 pub use streaming_node::{
     AsyncNodeWrapper, AsyncStreamingNode, StreamingNode, StreamingNodeFactory,

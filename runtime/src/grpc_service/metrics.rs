@@ -335,9 +335,9 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(10));
         metrics.record_request_end("ExecutePipeline", "success", start);
 
-        // Verify counter incremented
-        let samples = metrics.requests_total.collect();
-        assert!(!samples.is_empty());
+        // Verify counter incremented by checking the metric value
+        let counter = metrics.requests_total.with_label_values(&["ExecutePipeline", "success"]);
+        assert!(counter.get() > 0.0);
     }
 
     #[test]
@@ -347,8 +347,9 @@ mod tests {
         metrics.record_error("validation");
         metrics.record_error("execution");
 
-        let samples = metrics.execution_errors_total.collect();
-        assert!(!samples.is_empty());
+        // Verify error counters incremented
+        let validation_errors = metrics.execution_errors_total.with_label_values(&["validation"]);
+        assert!(validation_errors.get() > 0.0);
     }
 
     #[test]
@@ -358,8 +359,9 @@ mod tests {
         metrics.record_samples_processed("AudioResample", 44100);
         metrics.record_samples_processed("VAD", 16000);
 
-        let samples = metrics.audio_samples_processed.collect();
-        assert!(!samples.is_empty());
+        // Verify samples counter incremented
+        let resample_samples = metrics.audio_samples_processed.with_label_values(&["AudioResample"]);
+        assert!(resample_samples.get() >= 44100.0);
     }
 
     #[test]
@@ -368,10 +370,12 @@ mod tests {
 
         metrics.set_execution_memory("exec-123", 10_000_000); // 10MB
         metrics.set_execution_memory("exec-456", 5_000_000); // 5MB
-        metrics.clear_execution_memory("exec-123");
 
-        let samples = metrics.execution_memory_bytes.collect();
-        assert!(!samples.is_empty());
+        // Verify memory gauge set correctly
+        let exec_456_mem = metrics.execution_memory_bytes.with_label_values(&["exec-456"]);
+        assert_eq!(exec_456_mem.get(), 5_000_000);
+
+        metrics.clear_execution_memory("exec-123");
     }
 
     #[test]
