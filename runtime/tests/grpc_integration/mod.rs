@@ -27,5 +27,8 @@ mod test_streaming_lifecycle;
 // Phase 3: Generic streaming tests (Feature 004)
 mod test_generic_streaming;
 
+// Mixed Rust + Python pipeline tests
+mod test_python_rust_mixed_pipeline;
+
 // Test helpers
 mod test_helpers;

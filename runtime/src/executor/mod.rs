@@ -558,6 +558,143 @@ impl Executor {
         }
     }
 
+    /// Execute pipeline with RuntimeData inputs (supports all data types)
+    ///
+    /// This method accepts RuntimeData inputs directly, supporting all data types:
+    /// Audio, Video, Tensor, JSON, Text, Binary. It uses the streaming node registry
+    /// to create nodes and executes them in topological order.
+    ///
+    /// Supports streaming execution where outputs are immediately fed to downstream nodes.
+    pub async fn execute_with_runtime_data(
+        &self,
+        manifest: &Manifest,
+        runtime_inputs: HashMap<String, crate::data::RuntimeData>,
+    ) -> Result<HashMap<String, crate::data::RuntimeData>> {
+        use crate::nodes::streaming_registry::create_default_streaming_registry;
+
+        tracing::info!(
+            "Executing streaming pipeline: {} with {} runtime inputs",
+            manifest.metadata.name,
+            runtime_inputs.len()
+        );
+
+        // Build graph and validate
+        let graph = PipelineGraph::from_manifest(manifest)?;
+        crate::manifest::validate(manifest)?;
+
+        // Create streaming registry and nodes
+        let streaming_registry = create_default_streaming_registry();
+        let nodes: HashMap<String, Box<dyn crate::nodes::StreamingNode>> = {
+            let mut n = HashMap::new();
+            for node_spec in &manifest.nodes {
+                tracing::debug!("Creating node: {} (type: {})", node_spec.id, node_spec.node_type);
+                let node = streaming_registry.create_node(
+                    &node_spec.node_type,
+                    node_spec.id.clone(),
+                    &node_spec.params,
+                )?;
+                n.insert(node_spec.id.clone(), node);
+            }
+            n
+        };
+
+        // Use pre-computed execution order from graph
+        tracing::debug!("Execution order: {:?}", graph.execution_order);
+
+        // Track outputs from each node: HashMap<node_id, Vec<RuntimeData>>
+        // Multiple outputs per node for streaming nodes
+        let mut all_node_outputs: HashMap<String, Vec<crate::data::RuntimeData>> = HashMap::new();
+
+        // Initialize with provided inputs
+        for (node_id, data) in runtime_inputs {
+            all_node_outputs.insert(node_id, vec![data]);
+        }
+
+        // Process nodes in topological order
+        for node_id in &graph.execution_order {
+            let node = nodes.get(node_id.as_str())
+                .ok_or_else(|| Error::Execution(format!("Node not found: {}", node_id)))?;
+
+            // Collect inputs for this node
+            let input_data_list: Vec<crate::data::RuntimeData> = if all_node_outputs.contains_key(node_id.as_str()) {
+                // This node has direct inputs (source node)
+                all_node_outputs.get(node_id.as_str()).unwrap().clone()
+            } else {
+                // Get inputs from predecessor nodes via connections
+                let mut inputs = Vec::new();
+                for conn in manifest.connections.iter().filter(|c| c.to == *node_id) {
+                    if let Some(predecessor_outputs) = all_node_outputs.get(&conn.from) {
+                        inputs.extend(predecessor_outputs.clone());
+                    }
+                }
+
+                if inputs.is_empty() {
+                    return Err(Error::Execution(
+                        format!("No inputs for node {}", node_id)
+                    ));
+                }
+
+                inputs
+            };
+
+            tracing::debug!("Node {} processing {} input(s)", node_id, input_data_list.len());
+
+            // Collect all outputs from this node
+            let collected_outputs = Arc::new(Mutex::new(Vec::new()));
+
+            // Process each input through the node
+            for (idx, input_data) in input_data_list.iter().enumerate() {
+                tracing::debug!("  Processing input {}/{}", idx + 1, input_data_list.len());
+
+                let collected_outputs_clone = collected_outputs.clone();
+                let callback = Box::new(move |output: crate::data::RuntimeData| -> Result<()> {
+                    collected_outputs_clone.lock().unwrap().push(output);
+                    Ok(())
+                });
+
+                node.process_streaming_async(input_data.clone(), None, callback).await?;
+            }
+
+            let outputs = {
+                let guard = collected_outputs.lock().unwrap();
+                guard.clone()
+            };
+
+            if outputs.is_empty() {
+                return Err(Error::Execution(
+                    format!("No output from node {}", node_id)
+                ));
+            }
+
+            tracing::debug!("Node {} total outputs: {}", node_id, outputs.len());
+            all_node_outputs.insert(node_id.clone(), outputs);
+        }
+
+        // Return only the outputs from leaf nodes (nodes with no outgoing connections)
+        let leaf_nodes: Vec<String> = graph.execution_order.iter()
+            .filter(|node_id| {
+                !manifest.connections.iter().any(|c| &c.from == *node_id)
+            })
+            .cloned()
+            .collect();
+
+        let mut result = HashMap::new();
+        for node_id in leaf_nodes {
+            if let Some(outputs) = all_node_outputs.get(&node_id) {
+                // Return the last output from each leaf node
+                if let Some(last_output) = outputs.last() {
+                    result.insert(node_id, last_output.clone());
+                }
+            }
+        }
+
+        if result.is_empty() {
+            return Err(Error::Execution("No output from pipeline".to_string()));
+        }
+
+        Ok(result)
+    }
+
     /// Execute pipeline with fast nodes (no JSON serialization)
     ///
     /// This method is optimized for FastAudioNode implementations.

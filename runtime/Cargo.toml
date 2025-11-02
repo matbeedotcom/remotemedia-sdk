@@ -31,6 +31,8 @@ async-trait = "0.1"
 rubato = "0.15"      # High-quality audio resampling
 rustfft = "6.2"      # FFT for VAD (Voice Activity Detection)
 bytemuck = "1.14"    # Zero-copy format conversion
+ort = { version = "2.0.0-rc.10", features = ["half", "download-binaries"], optional = true }  # ONNX Runtime for Silero VAD
+ndarray = "0.15"     # N-dimensional arrays for tensor operations
 
 # WASM runtime (Wasmtime chosen per design decisions)
 # Note: Only needed for native builds that run WASM nodes, not when compiling TO wasm
@@ -76,6 +78,7 @@ sha2 = "0.10"
 hex = "0.4"
 base64 = "0.21"
 num_cpus = "1.16"  # For T036: Multi-threaded runtime configuration
+reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }  # For model downloading
 
 # Whisper transcription
 rwhisper = { version = "0.4", optional = true }
@@ -111,7 +114,7 @@ tonic-prost-build = "0.14"
 wlr-libpy = { git = "https://github.com/vmware-labs/webassembly-language-runtimes.git", default-features = false, features = ["build", "py312"] }
 
 [features]
-default = ["webrtc-transport", "wasmtime-runtime", "grpc-transport", "python-async", "native-numpy"]
+default = ["webrtc-transport", "wasmtime-runtime", "grpc-transport", "python-async", "native-numpy", "silero-vad"]
 webrtc-transport = ["webrtc"]
 grpc-transport = ["tonic", "tonic-web", "tonic-prost", "prost", "prost-types", "tower", "tower-http", "hyper", "prometheus", "tokio-stream"]
 python-async = ["pyo3-async-runtimes"]
@@ -119,6 +122,7 @@ native-numpy = ["numpy"]
 whisper = ["rwhisper", "rodio"]
 whisper-wasm = ["whisper-rs"]
 wasmtime-runtime = ["wasmtime", "wasmtime-wasi"]
+silero-vad = ["ort"]  # Silero VAD using ONNX Runtime
 wasm = []  # Enable WASM-specific code paths (no wasmtime, no webrtc, no grpc, no async python, no numpy)
 
 # WASM binary target

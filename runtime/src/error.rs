@@ -58,3 +58,10 @@ impl From<anyhow::Error> for Error {
         Error::Other(err.to_string())
     }
 }
+
+#[cfg(feature = "silero-vad")]
+impl From<ort::Error> for Error {
+    fn from(err: ort::Error) -> Self {
+        Error::Execution(format!("ONNX Runtime error: {}", err))
+    }
+}

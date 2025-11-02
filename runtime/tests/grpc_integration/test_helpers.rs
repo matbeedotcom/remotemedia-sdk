@@ -6,7 +6,8 @@
 #![cfg(feature = "grpc-transport")]
 
 use remotemedia_runtime::executor::Executor;
-use remotemedia_runtime::grpc_service::{server::GrpcServer, ServiceConfig};
+use remotemedia_runtime::grpc_service::{server::GrpcServer, ServiceConfig, version::VersionManager};
+use remotemedia_runtime::nodes::streaming_registry::create_default_streaming_registry;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
@@ -19,22 +20,29 @@ use tokio::time::{sleep, Duration};
 /// - Permissive resource limits
 /// - Structured logging disabled for cleaner test output
 pub async fn start_test_server() -> String {
+    // Create streaming registry with all test nodes
+    let streaming_registry = create_default_streaming_registry();
+    let node_types = streaming_registry.list_types();
+
     // Create test configuration
     let mut config = ServiceConfig::default();
-    
+
     // Bind to random port on localhost
     config.bind_address = "[::1]:0".to_string();
-    
+
     // Disable auth for tests
     config.auth.require_auth = false;
-    
+
     // Permissive limits for tests
     config.limits.max_memory_bytes = 500_000_000; // 500MB
     config.limits.max_timeout = Duration::from_secs(30);
-    
+
     // Disable JSON logging for cleaner test output
     config.json_logging = false;
-    
+
+    // Register all node types in the version manager
+    config.version = VersionManager::from_node_types(node_types.clone());
+
     // Create executor
     let executor = Arc::new(Executor::new());
     
@@ -54,6 +62,10 @@ pub async fn start_test_server() -> String {
     let server_addr_clone = server_addr_str.clone();
     
     tokio::spawn(async move {
+        // Create streaming registry with all test nodes
+        let streaming_registry = create_default_streaming_registry();
+        let node_types = streaming_registry.list_types();
+
         // Update config with actual bound address
         let mut config = ServiceConfig::default();
         config.bind_address = server_addr_clone;
@@ -61,7 +73,10 @@ pub async fn start_test_server() -> String {
         config.limits.max_memory_bytes = 500_000_000;
         config.limits.max_timeout = Duration::from_secs(30);
         config.json_logging = false;
-        
+
+        // Register all node types in the version manager
+        config.version = VersionManager::from_node_types(node_types);
+
         let executor = Arc::new(Executor::new());
         let server = GrpcServer::new(config, executor).expect("Failed to create server");
         

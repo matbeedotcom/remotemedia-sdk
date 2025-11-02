@@ -225,6 +225,7 @@ mod tests {
             node_id: "test_node".to_string(),
             node_type: "test".to_string(),
             params: serde_json::json!({"multiplier": 3}),
+            session_id: None,
             metadata: HashMap::new(),
         };
 

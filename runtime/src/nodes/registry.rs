@@ -357,6 +357,7 @@ mod tests {
             node_id: "test".to_string(),
             node_type: "test_node".to_string(),
             params: Value::Null,
+            session_id: None,
             metadata: HashMap::new(),
         };
         assert!(node.initialize(&ctx).await.is_ok());
@@ -388,6 +389,7 @@ mod tests {
             node_id: "test".to_string(),
             node_type: "test_node".to_string(),
             params: Value::Null,
+            session_id: None,
             metadata: HashMap::new(),
         };
         assert!(node.initialize(&ctx).await.is_ok());
