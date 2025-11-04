@@ -15,7 +15,7 @@ use std::ffi::CString;
 fn setup_python_environment() {
     pyo3::prepare_freethreaded_python();
 
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         // Add the python-client directory to sys.path
         let sys = py.import("sys").unwrap();
         let path = sys.getattr("path").unwrap();
@@ -94,7 +94,7 @@ async fn test_vad_with_real_audio() {
     });
 
     // Generate test audio: alternating speech and silence
-    let input_audio = pyo3::Python::with_gil(|py| {
+    let input_audio = pyo3::Python::attach(|py| {
         let code = CString::new(
             r#"
 import numpy as np
@@ -379,7 +379,7 @@ async fn test_vad_node_with_async_generator_streaming() {
     let executor = Executor::new();
 
     // Generate test audio with speech and silence patterns
-    let test_audio = pyo3::Python::with_gil(|py| {
+    let test_audio = pyo3::Python::attach(|py| {
         let code = CString::new(
             r#"
 import numpy as np

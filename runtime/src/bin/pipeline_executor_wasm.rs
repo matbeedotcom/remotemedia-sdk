@@ -46,7 +46,7 @@ fn main() {
 
 /// Get Python version from embedded CPython
 fn get_python_version() -> PyResult<String> {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let sys = py.import("sys")?;
         let version: String = sys.getattr("version")?.extract()?;
         Ok(version)

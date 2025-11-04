@@ -70,6 +70,11 @@ impl AsyncStreamingNode for PythonStreamingNode {
         &self.node_type
     }
 
+    async fn initialize(&self) -> Result<(), Error> {
+        // Delegate to ensure_initialized which loads the Python node
+        self.ensure_initialized().await
+    }
+
     async fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         // IMPORTANT: For single-output nodes, use the streaming iteration and take first item
         // This avoids complex GIL deadlock issues with loop.run_until_complete()

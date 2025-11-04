@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn test_inputs_to_pydict() {
         pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let mut inputs = std::collections::HashMap::new();
             inputs.insert("key1".to_string(), Value::String("value1".to_string()));
             inputs.insert("key2".to_string(), Value::Number(42.into()));
@@ -168,7 +168,7 @@ mod tests {
     #[test]
     fn test_pydict_to_outputs() {
         pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let dict = PyDict::new(py);
             dict.set_item("result", "test_value").unwrap();
             dict.set_item("count", 123).unwrap();
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn test_inputs_outputs_roundtrip() {
         pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             // Create inputs
             let mut inputs = std::collections::HashMap::new();
             inputs.insert("data".to_string(), Value::Array(vec![

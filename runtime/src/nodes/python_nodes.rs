@@ -28,6 +28,25 @@ impl NodeFactory for KokoroTTSNodeFactory {
     }
 }
 
+/// Factory for VibeVoiceTTSNode (Python TTS engine)
+pub struct VibeVoiceTTSNodeFactory;
+
+impl NodeFactory for VibeVoiceTTSNodeFactory {
+    fn create(&self, _params: Value) -> Result<Box<dyn NodeExecutor>> {
+        // Use PythonNodeExecutor wrapper which properly implements NodeExecutor trait
+        let executor = PythonNodeExecutor::new("VibeVoiceTTSNode");
+        Ok(Box::new(executor))
+    }
+
+    fn node_type(&self) -> &str {
+        "VibeVoiceTTSNode"
+    }
+
+    fn is_rust_native(&self) -> bool {
+        false // Python implementation
+    }
+}
+
 /// Factory for SimplePyTorchNode (minimal PyTorch test)
 pub struct SimplePyTorchNodeFactory;
 
@@ -73,6 +92,9 @@ pub fn create_python_tts_registry() -> NodeRegistry {
 
     // Register KokoroTTSNode as Python implementation
     registry.register_python(Arc::new(KokoroTTSNodeFactory));
+
+    // Register VibeVoiceTTSNode as Python implementation
+    registry.register_python(Arc::new(VibeVoiceTTSNodeFactory));
 
     registry.register_python(Arc::new(LFM2AudioNodeFactory));
 

@@ -35,10 +35,47 @@
 
 use remotemedia_runtime::executor::Executor;
 use remotemedia_runtime::grpc_service::{init_tracing, server::GrpcServer, ServiceConfig};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::{error, info};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Set up Ctrl+C handler at the very start
+    // This ensures it's registered before any blocking operations
+    let shutdown_flag = Arc::new(AtomicBool::new(false));
+    let shutdown_flag_handler = Arc::clone(&shutdown_flag);
+    
+    ctrlc::set_handler(move || {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        eprintln!("\n🛑 [{}] Ctrl+C received! Setting shutdown flag...", timestamp);
+        eprintln!("   [SIGNAL] Handler executing in thread: {:?}", std::thread::current().id());
+        
+        let was_already_set = shutdown_flag_handler.swap(true, Ordering::SeqCst);
+        if was_already_set {
+            eprintln!("   [SIGNAL] ⚠️  Shutdown already in progress, forcing immediate exit");
+            std::process::exit(0);
+        }
+        
+        eprintln!("   [SIGNAL] Shutdown flag set successfully");
+        eprintln!("   [SIGNAL] Spawning watchdog thread for force-exit after 1s...");
+        
+        // Give it a brief moment, then force exit if graceful shutdown fails
+        // Use 1 second timeout to ensure responsiveness even with blocking operations
+        std::thread::spawn(move || {
+            for i in 1..=10 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                eprintln!("   [WATCHDOG] Waiting for graceful shutdown... {}00ms", i);
+            }
+            eprintln!("⚠️  [WATCHDOG] Graceful shutdown timeout (1s), forcing exit");
+            eprintln!("   [WATCHDOG] Likely blocked by: active gRPC requests, Python GIL, or node processing");
+            std::process::exit(0);  // Exit with 0 for clean shutdown
+        });
+    })
+    .expect("Failed to set Ctrl+C handler");
+
     // T036: Configure multi-threaded tokio runtime for concurrent client support
     // Use all available CPU cores for handling concurrent requests
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -47,10 +84,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .enable_all()
         .build()?;
 
-    runtime.block_on(async_main())
+    runtime.block_on(async_main(shutdown_flag))
 }
 
-async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
+async fn async_main(shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
     // Load configuration from environment
     let config = ServiceConfig::from_env();
 
@@ -112,7 +149,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Server initialized, starting listener...");
 
     // Run server (will block until shutdown signal)
-    match server.serve().await {
+    match server.serve_with_shutdown_flag(shutdown_flag).await {
         Ok(_) => {
             info!("Server shut down gracefully");
             Ok(())
