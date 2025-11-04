@@ -63,6 +63,7 @@ class KokoroTTSNode:
         split_pattern: str = r'[.!?,;:\n]+',
         sample_rate: int = 24000,
         stream_chunks: bool = True,
+        skip_tokens: list = None,
         **kwargs
     ):
         """
@@ -78,6 +79,7 @@ class KokoroTTSNode:
             split_pattern: Regex pattern for splitting text (default: r'\n+')
             sample_rate: Output sample rate (default: 24000)
             stream_chunks: Whether to stream audio chunks as they're generated (default: True)
+            skip_tokens: List of token patterns to skip (e.g., ['<|text_end|>', '<|audio_end|>'])
         """
         self.node_id = node_id
         self.lang_code = lang_code
@@ -86,6 +88,7 @@ class KokoroTTSNode:
         self.split_pattern = split_pattern
         self.sample_rate = sample_rate
         self.stream_chunks = stream_chunks
+        self.skip_tokens = skip_tokens or ['<|text_end|>', '<|audio_end|>', '<|im_end|>', '<|im_start|>']
         self.is_streaming = stream_chunks
 
         self._pipeline = None
@@ -187,9 +190,8 @@ class KokoroTTSNode:
 
         # Validate input type
         if not data.is_text():
-            raise ValueError(
-                f"KokoroTTSNode expects RuntimeData.Text input, got {data.data_type()}"
-            )
+            # ignore
+            yield data
 
         # Extract text from RuntimeData
         text = data.as_text()
@@ -198,41 +200,76 @@ class KokoroTTSNode:
             logger.warning("Empty text input, skipping synthesis")
             return
 
+        # Remove special tokens from text
+        for skip_token in self.skip_tokens:
+            text = text.replace(skip_token, '')
+
+        # After removing tokens, check if there's any text left
+        text = text.strip()
+        if not text:
+            logger.info("🎙️ Kokoro TTS: Skipping - only special tokens in input")
+            return
+
+        # Sanitize text to remove problematic characters that can cause CUDA errors
+        text = text.replace('`', "'")  # Replace backticks with single quotes
+        text = text.replace('\t', ' ')  # Replace tabs with spaces
+
         logger.info(f"🎙️ Kokoro TTS: Starting synthesis for: '{text[:100]}{'...' if len(text) > 100 else ''}'")
 
-        # Create the Kokoro generator (this is safe, doesn't run PyTorch yet)
-        generator = self._create_generator(text)
+        try:
+            # Create the Kokoro generator (this is safe, doesn't run PyTorch yet)
+            generator = self._create_generator(text)
 
-        # Now iterate the generator, running EACH next() call in a thread
-        import asyncio
-        chunk_idx = 0
-        total_samples = 0
+            # Now iterate the generator, running EACH next() call in a thread
+            import asyncio
+            chunk_idx = 0
+            total_samples = 0
 
-        while True:
-            # Get next chunk from generator in thread (PyTorch-safe)
-            chunk_data = await asyncio.to_thread(self._synthesize_chunk_sync, generator)
+            while True:
+                # Get next chunk from generator in thread (PyTorch-safe)
+                chunk_data = await asyncio.to_thread(self._synthesize_chunk_sync, generator)
 
-            if chunk_data is None:
-                # Generator exhausted
-                break
+                if chunk_data is None:
+                    # Generator exhausted
+                    break
 
-            chunk_idx += 1
-            graphemes, phonemes, audio = chunk_data
+                chunk_idx += 1
+                graphemes, phonemes, audio = chunk_data
 
-            # Convert to RuntimeData.Audio
-            audio_runtime_data = numpy_to_audio(audio, self.sample_rate, channels=1)
+                # Convert to RuntimeData.Audio
+                audio_runtime_data = numpy_to_audio(audio, self.sample_rate, channels=1)
 
-            total_samples += len(audio)
-            chunk_duration = len(audio) / self.sample_rate
-            total_duration = total_samples / self.sample_rate
+                total_samples += len(audio)
+                chunk_duration = len(audio) / self.sample_rate
+                total_duration = total_samples / self.sample_rate
 
-            logger.info(
-                f"🎙️ Kokoro TTS: Yielding chunk {chunk_idx} "
-                f"({chunk_duration:.2f}s) | Total: {total_duration:.2f}s"
-            )
+                logger.info(
+                    f"🎙️ Kokoro TTS: Yielding chunk {chunk_idx} "
+                    f"({chunk_duration:.2f}s) | Total: {total_duration:.2f}s"
+                )
 
-            # Yield immediately!
-            yield audio_runtime_data
+                yield audio_runtime_data
+
+        except RuntimeError as e:
+            if "CUDA error" in str(e):
+                logger.error(f"🎙️ Kokoro TTS: CUDA error during synthesis for text: '{text[:100]}'")
+                logger.error(f"CUDA error details: {e}")
+
+                # Reinitialize the pipeline to recover from CUDA error
+                logger.warning("🎙️ Kokoro TTS: Reinitializing pipeline after CUDA error...")
+                self._initialized = False
+                self._pipeline = None
+
+                try:
+                    await self.initialize()
+                    logger.info("🎙️ Kokoro TTS: Reinitialization successful")
+                except Exception as reinit_error:
+                    logger.error(f"🎙️ Kokoro TTS: Reinitialization failed: {reinit_error}")
+
+                # Skip this problematic text
+                return
+            else:
+                raise
 
         logger.info(f"🎙️ Kokoro TTS: Streaming complete - {chunk_idx} chunks, {total_samples} samples ({total_duration:.2f}s)")
 

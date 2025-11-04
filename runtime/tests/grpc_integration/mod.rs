@@ -23,12 +23,19 @@ mod test_streaming_vad;
 mod test_streaming_latency;
 mod test_streaming_backpressure;
 mod test_streaming_lifecycle;
+mod test_streaming_timing;
 
 // Phase 3: Generic streaming tests (Feature 004)
 mod test_generic_streaming;
 
 // Mixed Rust + Python pipeline tests
 mod test_python_rust_mixed_pipeline;
+
+// LFM2-Audio node tests
+mod test_lfm2_audio;
+mod test_lfm2_audio_real;
+mod test_lfm2_audio_grpc_simple;
+// mod test_lfm2_audio_grpc_e2e; // TODO: Fix client import issues
 
 // Test helpers
 mod test_helpers;

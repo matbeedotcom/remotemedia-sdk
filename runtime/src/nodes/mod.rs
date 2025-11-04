@@ -41,6 +41,12 @@ pub use audio_buffer_accumulator::AudioBufferAccumulatorNode;
 pub mod audio_chunker;
 pub use audio_chunker::AudioChunkerNode;
 
+pub mod audio_resample_streaming;
+pub use audio_resample_streaming::ResampleStreamingNode;
+
+pub mod text_collector;
+pub use text_collector::TextCollectorNode;
+
 pub use registry::{NodeFactory as NodeFactoryTrait, RuntimeHint, CompositeRegistry};
 pub use streaming_node::{
     AsyncNodeWrapper, AsyncStreamingNode, StreamingNode, StreamingNodeFactory,

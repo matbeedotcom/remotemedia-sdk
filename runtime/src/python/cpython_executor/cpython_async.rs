@@ -3,10 +3,6 @@
 //! This module encapsulates all asyncio/event loop complexity.
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
-use serde_json::Value;
-
-use crate::{Error, Result};
 
 /// Event loop manager for async Python operations
 pub struct EventLoopManager {

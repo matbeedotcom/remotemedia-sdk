@@ -18,6 +18,7 @@ import clientPool from '@/lib/grpc-client-pool';
 import sessionManager from '@/lib/grpc-session-manager';
 import { createVADS2SPipeline } from '@/lib/pipeline-builder';
 import { NextRequest, NextResponse } from 'next/server';
+import { AudioFormat } from '../../../../../../../nodejs-client/dist/src/data-types.js';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -85,15 +86,15 @@ export async function POST(request: NextRequest) {
           const numSamples = audioBuffer.length / 4;
           // console.log(`[VAD S2S API] [Client->Server] Sending audio chunk to session ${actualSessionId}: ${numSamples} samples at ${sampleRate || 16000} Hz`);
           await session.stream.sendChunk(
-            'audio_chunker', // First node in VAD pipeline (splits into 512-sample chunks)
+            'input_chunker', // First node in VAD pipeline (chunks for resampler)
             {
               type: 'audio' as const,
               data: {
                 samples: audioBuffer,
                 sampleRate: sampleRate || 16000,
-                numChannels: 1,
+                channels: 1,
                 numSamples: numSamples,
-                format: 'float32le',
+                format: AudioFormat.F32,
               },
             },
             {
@@ -119,8 +120,8 @@ export async function POST(request: NextRequest) {
           sessionId: actualSessionId,
           systemPrompt:
             systemPrompt ||
-            'You are a helpful AI assistant. Respond naturally and conversationally.',
-          maxNewTokens: 512,
+            'Respond with interleaved text and audio.',
+          maxNewTokens: 4096,
         });
 
         console.log('[VAD S2S API] Created pipeline manifest:', JSON.stringify(manifest, null, 2));
@@ -133,18 +134,11 @@ export async function POST(request: NextRequest) {
 
         // Get or create persistent streaming session
         const session = await sessionManager.getOrCreateSession(actualSessionId, client, manifest);
-        console.log(`[VAD S2S API] Session ready: ${actualSessionId}`);
+        console.log(`[VAD S2S API] Session created and stored: ${actualSessionId}`);
 
-        // Start background result listener (only starts if not already active)
-        await sessionManager.startResultListener(
-          actualSessionId,
-          (result) => {
-            console.log(`[VAD S2S API] [Server->Client] Result received for session ${actualSessionId}:`, result);
-          },
-          (error) => {
-            console.error(`[VAD S2S API] [Server->Client] Result listener error for session ${actualSessionId}:`, error);
-          }
-        );
+        // Verify session is stored
+        const verifySession = sessionManager.getSession(actualSessionId);
+        console.log(`[VAD S2S API] Session verification: ${verifySession ? 'FOUND' : 'NOT FOUND'}`);
 
         // Send ready event
         sendSSE({
@@ -153,21 +147,64 @@ export async function POST(request: NextRequest) {
           message: 'VAD-based streaming pipeline ready. Send audio chunks to process.',
         });
 
-        /*
-         * Implementation:
-         * Client should use this endpoint to establish a session, then use a separate
-         * endpoint or WebSocket to send continuous audio chunks.
-         *
-         * For now, this establishes the session and keeps it alive.
-         * The client can use POST /api/s2s/stream with the same sessionId to send audio chunks.
-         */
+        // Start result listener and stream results through this SSE connection
+        console.log(`[VAD S2S API] Starting result listener for session ${actualSessionId}`);
 
-        sendSSE({
-          type: 'complete',
-          sessionId: actualSessionId,
-        });
+        // Keep the SSE connection open and stream results
+        await sessionManager.startResultListener(
+          actualSessionId,
+          (result) => {
+            try {
+              console.log('[VAD S2S API] Received result:', result);
 
-        controller.close();
+              // Send text output
+              if (result.textOutput) {
+                sendSSE({
+                  type: 'text',
+                  content: result.textOutput,
+                  timestamp: Date.now(),
+                });
+              }
+
+              // Send audio output
+              if (result.audioOutput) {
+                sendSSE({
+                  type: 'audio',
+                  content: result.audioOutput.samples.toString('base64'),
+                  sampleRate: result.audioOutput.sampleRate,
+                  channels: result.audioOutput.channels,
+                  format: result.audioOutput.format,
+                  timestamp: Date.now(),
+                });
+              }
+
+              // Send JSON output
+              if (result.jsonOutput) {
+                sendSSE({
+                  type: 'json',
+                  content: result.jsonOutput,
+                  timestamp: Date.now(),
+                });
+              }
+            } catch (error) {
+              console.error('[VAD S2S API] Error processing result:', error);
+              sendSSE({
+                type: 'error',
+                content: error instanceof Error ? error.message : 'Unknown error',
+              });
+            }
+          },
+          (error) => {
+            console.error('[VAD S2S API] Result listener error:', error);
+            sendSSE({
+              type: 'error',
+              content: error instanceof Error ? error.message : 'Unknown error',
+            });
+            controller.close();
+          }
+        );
+
+        // Keep connection open - don't close it here
       } catch (error) {
         console.error('[VAD S2S API] Error:', error);
         sendSSE({

@@ -42,7 +42,7 @@ class StreamingQueue:
                 yield item
 
             if not self.finished:
-                await asyncio.sleep(0.001)
+                await asyncio.sleep(0)
 
 _StreamingQueue = StreamingQueue
 "#,

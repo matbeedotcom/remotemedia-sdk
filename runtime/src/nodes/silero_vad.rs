@@ -252,7 +252,7 @@ impl AsyncStreamingNode for SileroVADNode {
 
             // Convert audio bytes to f32 samples
             let samples: Vec<f32> = match audio_buf.format {
-                0 => {
+                1 => {
                     // F32 format
                     let sample_count = audio_buf.samples.len() / 4;
                     (0..sample_count)

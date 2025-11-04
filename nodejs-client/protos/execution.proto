@@ -1,14 +1,21 @@
-// Unary pipeline execution RPC
-// Feature: 003-rust-grpc-service
-// 
-// This file defines the ExecutePipeline RPC for single-shot pipeline execution.
-// Client sends complete pipeline manifest and audio inputs, server executes
-// pipeline and returns all results in a single response.
+// Unary pipeline execution RPC (Generic Streaming Protocol)
+// Feature: 004-generic-streaming
+//
+// This file extends Feature 003's execution.proto to support universal data types.
+// Key changes:
+// - UPDATED: ExecuteRequest uses generic data_inputs map (replaces audio_inputs)
+// - UPDATED: ExecutionResult uses generic data_outputs map (replaces audio_outputs + string data_outputs)
+// - UPDATED: NodeManifest adds input_types and output_types for type validation
 //
 // Use this RPC for:
-// - Batch audio processing (complete files)
-// - Non-streaming transformations (resample, format conversion)
+// - Batch processing of any data type (audio, video, tensors, JSON, text, binary)
+// - Non-streaming transformations
 // - Pipelines with known input sizes
+//
+// Backward compatibility:
+// - All Feature 003 types maintained (PipelineManifest, CapabilityRequirements, etc.)
+// - Breaking change: audio_inputs removed (use data_inputs with audio variant)
+// - Migration: Update client code to use DataBuffer for all inputs/outputs
 
 syntax = "proto3";
 
@@ -21,7 +28,7 @@ import "common.proto";
 // ============================================================================
 
 service PipelineExecutionService {
-  // Execute a pipeline with complete audio input(s) and return all results
+  // Execute a pipeline with complete data input(s) and return all results
   //
   // This is a unary RPC: client sends one request, server sends one response.
   // Suitable for batch processing and non-streaming use cases.
@@ -30,6 +37,7 @@ service PipelineExecutionService {
   // - <5ms latency for simple operations (SC-001)
   // - <10% serialization overhead (SC-003)
   // - 10x faster than Python-based remote execution (SC-004)
+  // - <5% overhead vs audio-only protocol for audio pipelines (SC-008)
   rpc ExecutePipeline(ExecuteRequest) returns (ExecuteResponse);
 
   // Get service version and compatibility information
@@ -43,32 +51,39 @@ service PipelineExecutionService {
 // ============================================================================
 
 // Request to execute a pipeline
+//
+// UPDATED: Uses generic data_inputs map
 message ExecuteRequest {
-  // Pipeline manifest (JSON specification)
+  // Pipeline manifest
   PipelineManifest manifest = 1;
 
-  // Input audio buffers (keyed by node ID)
-  // 
-  // Example: {"audio_source": <AudioBuffer>}
-  // Node IDs must match nodes in the manifest that require audio input
-  map<string, AudioBuffer> audio_inputs = 2;
-
-  // Non-audio inputs (JSON encoded, keyed by node ID)
-  // 
-  // Example: {"text_input": "{\"text\": \"Hello world\"}"}
-  // Used for text, embeddings, or other non-audio data
-  map<string, string> data_inputs = 3;
+  // UPDATED: Generic data inputs (keyed by node ID)
+  // Replaces separate audio_inputs and string data_inputs from Feature 003
+  //
+  // Example (audio processing):
+  //   data_inputs: {
+  //     "resample": DataBuffer { audio: { ... } }
+  //   }
+  //
+  // Example (mixed types):
+  //   data_inputs: {
+  //     "vad": DataBuffer { audio: { ... } },
+  //     "config": DataBuffer { json: { threshold: 0.5 } }
+  //   }
+  //
+  // Node IDs must match nodes in manifest that require input
+  map<string, DataBuffer> data_inputs = 2;
 
   // Optional resource limits for this execution
   // If not specified, service applies default limits
-  ResourceLimits resource_limits = 4;
+  ResourceLimits resource_limits = 3;
 
   // Client protocol version (e.g., "v1")
   // Service validates compatibility and returns ERROR_TYPE_VERSION_MISMATCH if incompatible
-  string client_version = 5;
+  string client_version = 4;
 }
 
-// Response from pipeline execution
+// Response from pipeline execution (unchanged from Feature 003)
 message ExecuteResponse {
   // Either result or error (mutually exclusive)
   oneof outcome {
@@ -81,13 +96,12 @@ message ExecuteResponse {
 }
 
 // ============================================================================
-// Pipeline Manifest Types
+// Pipeline Manifest Types (UPDATED)
 // ============================================================================
 
 // Pipeline manifest structure (v1)
 //
-// Defines the processing graph: nodes (processing units) and
-// connections (data flow edges). Compatible with Rust runtime v0.2.1.
+// UPDATED: NodeManifest adds input_types and output_types for type validation
 message PipelineManifest {
   // Schema version (e.g., "v1")
   // Service validates this matches supported versions
@@ -106,7 +120,7 @@ message PipelineManifest {
   repeated Connection connections = 4;
 }
 
-// Pipeline metadata
+// Pipeline metadata (unchanged from Feature 003)
 message ManifestMetadata {
   // Pipeline name (required)
   // Used in logs and metrics
@@ -121,6 +135,8 @@ message ManifestMetadata {
 }
 
 // Node manifest entry
+//
+// UPDATED: Added input_types and output_types for type validation
 message NodeManifest {
   // Unique node ID within pipeline
   string id = 1;
@@ -147,9 +163,40 @@ message NodeManifest {
 
   // Optional runtime hint for Python nodes
   RuntimeHint runtime_hint = 7;
+
+  // NEW: Declare expected input types
+  // Used for three-layer validation:
+  //   1. Compile-time: Client type checking
+  //   2. Manifest validation: Connection type compatibility at StreamInit/ExecuteRequest
+  //   3. Runtime: Chunk type validation
+  //
+  // Empty list = accept any type (untyped node, backward compatible)
+  // Contains DATA_TYPE_HINT_ANY = accept any type (polymorphic node)
+  //
+  // Example (VAD node: audio only):
+  //   input_types: [DATA_TYPE_HINT_AUDIO]
+  //
+  // Example (Multi-input filter: audio + JSON):
+  //   input_types: [DATA_TYPE_HINT_AUDIO, DATA_TYPE_HINT_JSON]
+  //
+  // Example (Polymorphic logger: any type):
+  //   input_types: [DATA_TYPE_HINT_ANY]
+  repeated DataTypeHint input_types = 8;
+
+  // NEW: Declare expected output types
+  // Used for manifest validation (connection type compatibility)
+  //
+  // Empty list = produces any type (untyped node, backward compatible)
+  //
+  // Example (VAD node: JSON output):
+  //   output_types: [DATA_TYPE_HINT_JSON]
+  //
+  // Example (Audio filter: audio output):
+  //   output_types: [DATA_TYPE_HINT_AUDIO]
+  repeated DataTypeHint output_types = 9;
 }
 
-// Connection between nodes
+// Connection between nodes (unchanged from Feature 003)
 message Connection {
   // Source node ID (produces output)
   string from = 1;
@@ -159,7 +206,7 @@ message Connection {
 }
 
 // ============================================================================
-// Capability Types
+// Capability Types (Unchanged from Feature 003)
 // ============================================================================
 
 // Hardware/resource requirements for node execution
@@ -199,46 +246,58 @@ message CpuRequirement {
 // Runtime hint for Python node execution
 enum RuntimeHint {
   RUNTIME_HINT_UNSPECIFIED = 0;
-  
+
   // Use RustPython embedded interpreter (pure Rust, limited stdlib)
   RUNTIME_HINT_RUSTPYTHON = 1;
-  
+
   // Use CPython via PyO3 in-process (full Python ecosystem, C-extensions)
   RUNTIME_HINT_CPYTHON = 2;
-  
+
   // Use CPython compiled to WASM (sandboxed, Phase 3)
   RUNTIME_HINT_CPYTHON_WASM = 3;
-  
+
   // Automatically select runtime based on node requirements
   RUNTIME_HINT_AUTO = 4;
 }
 
 // ============================================================================
-// Result Types
+// Result Types (UPDATED)
 // ============================================================================
 
 // Result of successful pipeline execution
+//
+// UPDATED: Uses generic data_outputs map
 message ExecutionResult {
-  // Processed audio outputs (keyed by node ID)
-  // Empty map for pipelines with no audio outputs
-  map<string, AudioBuffer> audio_outputs = 1;
-
-  // Non-audio outputs (JSON encoded, keyed by node ID)
-  // Example: {"transcribe": "{\"text\": \"Hello world\", \"confidence\": 0.95}"}
-  map<string, string> data_outputs = 2;
+  // UPDATED: Generic data outputs (keyed by node ID)
+  // Replaces separate audio_outputs and string data_outputs from Feature 003
+  // All output types now use DataBuffer
+  //
+  // Example (audio processing):
+  //   data_outputs: {
+  //     "resample": DataBuffer { audio: { ... } }
+  //   }
+  //
+  // Example (VAD with audio and JSON outputs):
+  //   data_outputs: {
+  //     "vad_audio": DataBuffer { audio: { ... } },
+  //     "vad_result": DataBuffer { json: { has_speech: true } }
+  //   }
+  //
+  // Empty map for pipelines with no outputs
+  map<string, DataBuffer> data_outputs = 1;
 
   // Execution performance metrics
-  ExecutionMetrics metrics = 3;
+  ExecutionMetrics metrics = 2;
 
   // Per-node execution results
-  repeated NodeResult node_results = 4;
+  repeated NodeResult node_results = 3;
 
   // Overall execution status
-  ExecutionStatus status = 5;
+  ExecutionStatus status = 4;
 }
 
 // ============================================================================
-// Version Types
+// Version Types (Unchanged from Feature 003)
 // ============================================================================
 
 // Request for version information

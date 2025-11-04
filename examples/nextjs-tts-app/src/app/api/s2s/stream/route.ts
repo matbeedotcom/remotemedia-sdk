@@ -14,6 +14,7 @@ import clientPool from '@/lib/grpc-client-pool';
 import sessionManager from '@/lib/grpc-session-manager';
 import { createSimpleS2SPipeline } from '@/lib/pipeline-builder';
 import { NextRequest, NextResponse } from 'next/server';
+import { AudioFormat } from '../../../../../../../nodejs-client/dist/src/data-types.js';
 
 export const runtime = 'nodejs'; // Use Node.js runtime for gRPC
 export const dynamic = 'force-dynamic';
@@ -78,10 +79,10 @@ export async function POST(request: NextRequest) {
           sessionId: actualSessionId,
           systemPrompt:
             systemPrompt ||
-            'You are a helpful AI assistant. Respond naturally and conversationally.',
+            'Respond with interleaved text and audio.',
           audioTemperature: 1.0,
           audioTopK: 4,
-          maxNewTokens: 512,
+          maxNewTokens: 4096,
         });
 
         console.log(`[S2S API] Getting or creating persistent session: ${actualSessionId}...`);
@@ -103,9 +104,9 @@ export async function POST(request: NextRequest) {
             data: {
               samples: audioBuffer,
               sampleRate: sampleRate || 24000,
-              numChannels: 1,
+              channels: 1,
               numSamples: numSamples,
-              format: 'float32le',
+              format: AudioFormat.F32,
             },
           },
           {

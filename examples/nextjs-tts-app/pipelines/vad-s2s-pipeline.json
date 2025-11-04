@@ -45,7 +45,7 @@
       "params": {
         "hf_repo": "liquidai/LFM2-Audio-1.5B",
         "device": "cuda",
-        "system_prompt": "You are a helpful AI assistant. Respond naturally and conversationally.",
+        "system_prompt": "Respond with interleaved text and audio.",
         "text_only": true,
         "text_temperature": 0.7,
         "text_top_k": 50,

@@ -6,12 +6,14 @@
  */
 
 /**
- * Audio sample format enum
+ * Audio sample format enum (matches protobuf enum values)
+ * Note: Using numeric values to match Rust protobuf expectations
  */
 export enum AudioFormat {
-  F32 = 'F32',
-  I16 = 'I16',
-  I32 = 'I32',
+  UNSPECIFIED = 0,
+  F32 = 1,
+  I16 = 2,
+  I32 = 3,
 }
 
 /**

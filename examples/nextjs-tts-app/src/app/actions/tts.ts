@@ -8,7 +8,7 @@
 
 'use server';
 
-import { RemoteMediaClient } from '../../../../../nodejs-client/src/grpc-client';
+import { RemoteMediaClient } from '../../../../../nodejs-client/dist/src/grpc-client.js';
 
 /**
  * TTS request parameters

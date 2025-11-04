@@ -5,7 +5,6 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use remotemedia_runtime::audio::buffer::{AudioBuffer, AudioData, AudioFormat};
 use remotemedia_runtime::executor::node_executor::{NodeContext, NodeExecutor};
 use remotemedia_runtime::nodes::audio::fast::FastAudioNode;
-use remotemedia_runtime::nodes::audio::format_converter::RustFormatConverterNode;
 use remotemedia_runtime::nodes::audio::format_converter_fast::FastFormatConverter;
 use std::collections::HashMap;
 use tokio::runtime::Runtime;
@@ -31,6 +30,7 @@ fn create_context() -> NodeContext {
         node_type: "audio_node".to_string(),
         params: serde_json::json!({}),
         metadata: HashMap::new(),
+        session_id: None,
     }
 }
 
@@ -53,27 +53,27 @@ fn bench_format_conversion_comparison(c: &mut Criterion) {
         });
     });
 
-    // JSON path: Standard node processing
-    group.bench_function("json_path_standard_node", |b| {
-        b.to_async(&rt).iter(|| {
-            let audio = audio_f32.clone();
-            async move {
-                let mut node =
-                    RustFormatConverterNode::new(remotemedia_runtime::audio::AudioFormat::I16);
-                let ctx = create_context();
-                node.initialize(&ctx).await.unwrap();
+    // // JSON path: Standard node processing
+    // group.bench_function("json_path_standard_node", |b| {
+    //     b.to_async(&rt).iter(|| {
+    //         let audio = audio_f32.clone();
+    //         async move {
+    //             let mut node =
+    //                 RustFormatConverterNode::new(remotemedia_runtime::audio::AudioFormat::I16);
+    //             let ctx = create_context();
+    //             node.initialize(&ctx).await.unwrap();
 
-                let input = serde_json::json!({
-                    "data": audio,
-                    "format": "f32",
-                    "channels": num_channels,
-                    "sample_rate": 44100
-                });
+    //             let input = serde_json::json!({
+    //                 "data": audio,
+    //                 "format": "f32",
+    //                 "channels": num_channels,
+    //                 "sample_rate": 44100
+    //             });
 
-                black_box(node.process(input).await.unwrap())
-            }
-        });
-    });
+    //             black_box(node.process(input).await.unwrap())
+    //         }
+    //     });
+    // });
 
     // Pure conversion (baseline)
     group.bench_function("pure_conversion_baseline", |b| {
