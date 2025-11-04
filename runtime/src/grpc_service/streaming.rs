@@ -200,6 +200,9 @@ pub(crate) struct StreamSession {
 
     /// Router task handle
     pub(crate) router_task: Option<JoinHandle<()>>,
+
+    /// Router shutdown signal sender
+    pub(crate) router_shutdown: Option<tokio::sync::mpsc::Sender<()>>,
 }
 
 impl StreamSession {
@@ -225,6 +228,7 @@ impl StreamSession {
             cache_misses: 0,
             router_input: None,
             router_task: None,
+            router_shutdown: None,
         }
     }
 
@@ -250,6 +254,38 @@ impl StreamSession {
         if count > 0 {
             info!("🗑️ Cleared {} cached nodes for session {}", count, self.session_id);
         }
+    }
+
+    /// Shutdown the router and all node processing
+    async fn shutdown_router(&mut self) {
+        info!("[ROUTER-SHUTDOWN] Starting shutdown for session '{}'", self.session_id);
+
+        // Drop the input sender to close the router's input channel
+        info!("[ROUTER-SHUTDOWN] Dropping router input channel...");
+        self.router_input.take();
+
+        // Send shutdown signal to router
+        if let Some(shutdown_tx) = self.router_shutdown.take() {
+            info!("[ROUTER-SHUTDOWN] Sending shutdown signal to router...");
+            let _ = shutdown_tx.send(()).await;
+            info!("[ROUTER-SHUTDOWN] Shutdown signal sent");
+        } else {
+            info!("[ROUTER-SHUTDOWN] No shutdown channel available");
+        }
+
+        // Wait for router task to complete
+        if let Some(task) = self.router_task.take() {
+            info!("[ROUTER-SHUTDOWN] Waiting for router task to complete...");
+            match tokio::time::timeout(std::time::Duration::from_millis(500), task).await {
+                Ok(Ok(_)) => info!("[ROUTER-SHUTDOWN] ✅ Router task completed for session '{}'", self.session_id),
+                Ok(Err(e)) => error!("[ROUTER-SHUTDOWN] Router task failed for session '{}': {}", self.session_id, e),
+                Err(_) => warn!("[ROUTER-SHUTDOWN] ⏱️ Router task timeout for session '{}', continuing anyway", self.session_id),
+            }
+        } else {
+            info!("[ROUTER-SHUTDOWN] No router task to wait for");
+        }
+        
+        info!("[ROUTER-SHUTDOWN] Shutdown complete for session '{}'", self.session_id);
     }
 
     /// Validate sequence number (detect gaps or out-of-order)
@@ -434,27 +470,43 @@ async fn handle_stream(
                 session = Some(sessions.read().await.get(&session_id).unwrap().clone());
 
                 // Create and start the SessionRouter for this session
+                let sess = session.as_ref().unwrap();
+
+                // Create the session router (without holding lock)
+                let (mut router, shutdown_tx) = SessionRouter::new(
+                    session_id.clone(),
+                    streaming_registry.clone(),
+                    sess.clone(),
+                    tx.clone(),
+                );
+
+                // 🔥 Pre-initialize all nodes before streaming starts
+                // CRITICAL: Do this WITHOUT holding the session lock to avoid deadlock
+                // (get_or_create_node needs to acquire the lock)
+                info!("🔥 Pre-initializing nodes for session '{}'", session_id);
+                router.pre_initialize_all_nodes().await
+                    .map_err(|e| {
+                        error!("Failed to pre-initialize nodes: {}", e);
+                        ServiceError::Internal(format!("Node pre-initialization failed: {}", e))
+                    })?;
+                info!("✅ All nodes ready, starting router");
+
+                // Get the input sender before starting
+                let input_sender = router.get_input_sender();
+
+                // Start the router task
+                let task = router.start();
+
+                // Now acquire lock to store router state
                 {
-                    let sess = session.as_ref().unwrap();
                     let mut sess_guard = sess.lock().await;
-
-                    // Create the session router
-                    let mut router = SessionRouter::new(
-                        session_id.clone(),
-                        streaming_registry.clone(),
-                        sess.clone(),
-                        tx.clone(),
-                    );
-
-                    // Get the input sender before starting
-                    let input_sender = router.get_input_sender();
-
-                    // Start the router task
-                    let task = router.start();
                     sess_guard.router_task = Some(task);
 
                     // Store the input sender for feeding chunks
                     sess_guard.router_input = Some(input_sender);
+
+                    // Store the shutdown sender for cleanup
+                    sess_guard.router_shutdown = Some(shutdown_tx);
 
                     info!("🚀 SessionRouter started for session '{}'", session_id);
                 }
@@ -624,8 +676,10 @@ async fn handle_stream(
 
                 // Cleanup session and metrics
                 if let Some(session_arc) = sessions.write().await.remove(&session_id) {
-                    // Clear node cache before dropping session
-                    session_arc.lock().await.clear_node_cache();
+                    // Shutdown router and all node processing
+                    let mut sess_guard = session_arc.lock().await;
+                    sess_guard.shutdown_router().await;
+                    sess_guard.clear_node_cache();
                 }
                 metrics.record_stream_end();
                 info!(session_id = %session_id, "Session closed");
@@ -641,8 +695,10 @@ async fn handle_stream(
     // If we exit loop without explicit close, cleanup
     if !session_id.is_empty() {
         if let Some(session_arc) = sessions.write().await.remove(&session_id) {
-            // Clear node cache before dropping session
-            session_arc.lock().await.clear_node_cache();
+            // Shutdown router and all node processing
+            let mut sess_guard = session_arc.lock().await;
+            sess_guard.shutdown_router().await;
+            sess_guard.clear_node_cache();
         }
         metrics.record_stream_end();
         info!(session_id = %session_id, "Session disconnected");

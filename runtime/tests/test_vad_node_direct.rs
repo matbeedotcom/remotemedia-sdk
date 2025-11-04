@@ -12,7 +12,7 @@ use std::ffi::CString;
 async fn test_vad_node_direct_instantiation() {
     pyo3::prepare_freethreaded_python();
 
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         // Add python-client to path
         let python_client_path = std::env::current_dir()
             .unwrap()
@@ -130,7 +130,7 @@ async fn test_vad_node_with_cpython_executor_single_chunk() {
     pyo3::prepare_freethreaded_python();
 
     // Set up Python path
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let python_client_path = std::env::current_dir()
             .unwrap()
             .parent()
@@ -171,7 +171,7 @@ async fn test_vad_node_with_cpython_executor_single_chunk() {
     };
 
     // Create the synchronous wrapper node in Python
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let wrapper_code = CString::new(
             r#"
 from remotemedia.nodes.audio import VoiceActivityDetector

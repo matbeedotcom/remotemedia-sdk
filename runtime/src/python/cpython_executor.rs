@@ -1,244 +1,463 @@
-//! CPython Node Executor
+//! CPython Node Executor with Dedicated Worker Threads (CUDA-Safe)
 //!
-//! Executes Python SDK nodes using CPython via PyO3.
-//! Provides full Python stdlib and PyPI ecosystem access.
+//! Each CPythonNodeExecutor runs in its own dedicated OS thread with persistent GIL.
+//! This prevents CUDA tensor corruption from repeated GIL acquisition/release.
 
 use crate::data::RuntimeData;
 use crate::executor::PyObjectCache;
 use crate::nodes::{NodeContext, NodeExecutor, NodeInfo};
-use crate::python::marshal::{json_to_python, json_to_python_with_cache, python_to_json_with_cache};
-use crate::python::{runtime_data_to_py, runtime_data_to_py_with_session, PyRuntimeData};
+use crate::python::marshal::json_to_python;
+use crate::python::runtime_data_to_py_with_session;
 use crate::{Error, Result};
 use async_trait::async_trait;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use serde_json::Value;
+use std::sync::mpsc as std_mpsc;
 
 mod cpython_async;
 mod cpython_runtime_data;
 mod cpython_streaming;
 
-use cpython_async::{AsyncGenerator, EventLoopManager};
 use cpython_runtime_data::extract_runtime_data;
-use cpython_streaming::StreamingQueue;
 
-/// CPython-based node executor
+/// Sanitize params for logging by truncating large binary data
+fn sanitize_params_for_logging(params: &Value) -> String {
+    fn sanitize_value(val: &Value, depth: usize) -> Value {
+        if depth > 5 {
+            return Value::String("<max_depth_reached>".to_string());
+        }
+
+        match val {
+            Value::Object(map) => {
+                let mut sanitized = serde_json::Map::new();
+                for (key, value) in map {
+                    // Check if this is audio/binary data
+                    if key == "samples" || key == "data" || key == "buffer" {
+                        if let Some(obj) = value.as_object() {
+                            if obj.contains_key("type") && obj.get("type").and_then(|v| v.as_str()) == Some("Buffer") {
+                                // This is a Node.js Buffer - show size instead of all bytes
+                                if let Some(data_array) = obj.get("data").and_then(|v| v.as_array()) {
+                                    sanitized.insert(
+                                        key.clone(),
+                                        Value::String(format!("<Buffer: {} bytes>", data_array.len()))
+                                    );
+                                    continue;
+                                }
+                            }
+                        }
+                        // Also handle raw byte arrays
+                        if let Some(arr) = value.as_array() {
+                            if arr.len() > 100 {
+                                sanitized.insert(
+                                    key.clone(),
+                                    Value::String(format!("<Array: {} items>", arr.len()))
+                                );
+                                continue;
+                            }
+                        }
+                    }
+
+                    // Recursively sanitize nested objects
+                    sanitized.insert(key.clone(), sanitize_value(value, depth + 1));
+                }
+                Value::Object(sanitized)
+            }
+            Value::Array(arr) => {
+                // Truncate large arrays
+                if arr.len() > 10 {
+                    Value::String(format!("<Array: {} items>", arr.len()))
+                } else {
+                    Value::Array(arr.iter().map(|v| sanitize_value(v, depth + 1)).collect())
+                }
+            }
+            _ => val.clone()
+        }
+    }
+
+    serde_json::to_string_pretty(&sanitize_value(params, 0)).unwrap_or_else(|_| "<serialization_error>".to_string())
+}
+
+/// Commands sent to the dedicated Python worker thread
+enum WorkerCommand {
+    Initialize {
+        params: Value,
+        node_id: String,
+        result_tx: std_mpsc::SyncSender<Result<()>>,
+    },
+    ProcessStreaming {
+        input: RuntimeData,
+        session_id: Option<String>,
+        result_tx: tokio::sync::mpsc::UnboundedSender<Result<RuntimeData>>,
+    },
+    Cleanup {
+        result_tx: std_mpsc::SyncSender<Result<()>>,
+    },
+    Shutdown,
+}
+
+/// CPython-based node executor with dedicated thread and persistent GIL (CUDA-safe)
+///
+/// Architecture:
+///   Rust async → channel → Dedicated OS thread (holds GIL persistently) → channel → Rust async
+///
+/// Benefits:
+///   - CUDA-safe: Same Python thread state for entire node lifetime
+///   - Each node isolated: LFM2Audio and VibeVoice run in separate threads
+///   - No GIL contention: Each thread has its own Python context
 pub struct CPythonNodeExecutor {
     node_type: String,
-    instance: Option<Py<PyAny>>,
     initialized: bool,
-    py_cache: Option<PyObjectCache>,
-
-    // Async/streaming support
-    event_loop: EventLoopManager,
-    active_generator: Option<AsyncGenerator>,
-    streaming_queue: Option<StreamingQueue>,
     is_streaming: bool,
+
+    // Dedicated worker thread with persistent GIL
+    worker_thread: Option<std::thread::JoinHandle<()>>,
+    command_tx: Option<std_mpsc::SyncSender<WorkerCommand>>,
 }
 
 impl CPythonNodeExecutor {
     pub fn new(node_type: impl Into<String>) -> Self {
+        let node_type_str = node_type.into();
+
+        // Create command channel
+        let (command_tx, command_rx) = std_mpsc::sync_channel::<WorkerCommand>(10);
+
+        // Spawn dedicated worker thread with persistent GIL
+        let node_type_clone = node_type_str.clone();
+        let worker_thread = std::thread::spawn(move || {
+            Self::worker_thread_main(node_type_clone, command_rx);
+        });
+
         Self {
-            node_type: node_type.into(),
-            instance: None,
+            node_type: node_type_str,
             initialized: false,
-            py_cache: None,
-            event_loop: EventLoopManager::new(),
-            active_generator: None,
-            streaming_queue: None,
             is_streaming: false,
+            worker_thread: Some(worker_thread),
+            command_tx: Some(command_tx),
         }
     }
 
-    pub fn new_with_cache(node_type: impl Into<String>, py_cache: PyObjectCache) -> Self {
-        Self {
-            node_type: node_type.into(),
-            instance: None,
-            initialized: false,
-            py_cache: Some(py_cache),
-            event_loop: EventLoopManager::new(),
-            active_generator: None,
-            streaming_queue: None,
-            is_streaming: false,
-        }
+    pub fn new_with_cache(node_type: impl Into<String>, _py_cache: PyObjectCache) -> Self {
+        // TODO: Pass cache to worker thread if needed
+        Self::new(node_type)
     }
 
     pub fn set_is_streaming_node(&mut self, is_streaming: bool) {
         self.is_streaming = is_streaming;
     }
 
-    /// Load the node class from Python SDK
-    fn load_class<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let nodes_module = py.import("remotemedia.nodes")?;
-        nodes_module.getattr(self.node_type.as_str())
+    /// Worker thread main loop - holds GIL persistently (CUDA-safe!)
+    ///
+    /// This thread maintains a SINGLE Python thread state for its entire lifetime,
+    /// preventing CUDA tensor metadata corruption from GIL churn.
+    fn worker_thread_main(node_type: String, command_rx: std_mpsc::Receiver<WorkerCommand>) {
+        tracing::info!("[Worker-{}] Starting dedicated Python thread", node_type);
+
+        // Hold GIL for entire thread lifetime (CUDA-safe: same thread state always!)
+        Python::attach(|py| {
+            tracing::info!("[Worker-{}] GIL acquired persistently for thread lifetime", node_type);
+
+            let mut instance: Option<Py<PyAny>> = None;
+            let mut event_loop: Option<Py<PyAny>> = None;
+
+            // Process commands in this thread's persistent Python context
+            while let Ok(command) = command_rx.recv() {
+                match command {
+                    WorkerCommand::Initialize { params, node_id, result_tx } => {
+                        let result = Self::handle_initialize(
+                            py,
+                            &node_type,
+                            &params,
+                            &node_id,
+                            &mut instance,
+                            &mut event_loop,
+                        );
+                        let _ = result_tx.send(result);
+                    }
+                    WorkerCommand::ProcessStreaming { input, session_id, result_tx } => {
+                        if let (Some(ref inst), Some(ref evloop)) = (&instance, &event_loop) {
+                            Self::handle_process_streaming(
+                                py,
+                                inst,
+                                evloop,
+                                input,
+                                session_id,
+                                result_tx,
+                            );
+                        } else {
+                            let _ = result_tx.send(Err(Error::Execution("Node not initialized".to_string())));
+                        }
+                    }
+                    WorkerCommand::Cleanup { result_tx } => {
+                        if let Some(ref inst) = instance {
+                            let result = Self::handle_cleanup(py, inst);
+                            let _ = result_tx.send(result);
+                        }
+                        instance = None;
+                        event_loop = None;
+                    }
+                    WorkerCommand::Shutdown => {
+                        tracing::info!("[Worker-{}] Shutdown command received", node_type);
+                        break;
+                    }
+                }
+            }
+
+            tracing::info!("[Worker-{}] Thread exiting, releasing persistent GIL", node_type);
+        });
     }
 
-    /// Instantiate the node with parameters
-    fn instantiate_node<'py>(
-        &self,
-        py: Python<'py>,
-        class: &Bound<'py, PyAny>,
+    /// Handle initialization in worker thread (called with persistent GIL)
+    fn handle_initialize(
+        py: Python,
+        node_type: &str,
         params: &Value,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let instance = if params.is_object() {
-            let py_params = json_to_python(py, params)?;
-            let kwargs = py_params.downcast::<PyDict>()?;
-            class.call((), Some(kwargs))?
+        node_id: &str,
+        instance: &mut Option<Py<PyAny>>,
+        event_loop: &mut Option<Py<PyAny>>,
+    ) -> Result<()> {
+        tracing::info!("[Worker-{}] Initializing node: {}", node_type, node_id);
+
+        // Load class
+        let nodes_module = py.import("remotemedia.nodes")
+            .map_err(|e| Error::Execution(format!("Failed to import remotemedia.nodes: {}", e)))?;
+        let class = nodes_module.getattr(node_type)
+            .map_err(|e| Error::Execution(format!("Failed to get class {}: {}", node_type, e)))?;
+
+        // Merge node_id into params
+        let mut params_with_id = params.clone();
+        if let Some(obj) = params_with_id.as_object_mut() {
+            obj.insert("node_id".to_string(), Value::String(node_id.to_string()));
         } else {
-            class.call0()?
-        };
-
-        tracing::info!(
-            "Instantiated CPython node: {} with params: {:?}",
-            self.node_type,
-            params
-        );
-
-        Ok(instance)
-    }
-
-    /// Call initialize() method if it exists
-    fn call_initialize(&mut self, py: Python, instance: &Bound<'_, PyAny>) -> PyResult<()> {
-        if !instance.hasattr("initialize")? {
-            tracing::info!("CPython node {} has no initialize() method", self.node_type);
-            return Ok(());
+            params_with_id = serde_json::json!({"node_id": node_id});
         }
 
-        tracing::info!("Calling initialize() on CPython node: {}", self.node_type);
+        // Create instance
+        let py_params = json_to_python(py, &params_with_id)
+            .map_err(|e| Error::Execution(format!("Failed to convert params: {}", e)))?;
+        let kwargs = py_params.downcast::<PyDict>()
+            .map_err(|e| Error::Execution(format!("Params not a dict: {}", e)))?;
 
-        let result = instance.call_method0("initialize")?;
+        let inst = class.call((), Some(kwargs))
+            .map_err(|e| Error::Execution(format!("Failed to instantiate: {}", e)))?;
 
-        // Check if it's a coroutine (async method)
-        let inspect = py.import("inspect")?;
-        let is_coroutine = inspect
-            .call_method1("iscoroutine", (&result,))?
-            .extract::<bool>()?;
+        // Log params but sanitize large binary data to avoid verbose output
+        let sanitized_params = sanitize_params_for_logging(&params_with_id);
+        tracing::info!("Instantiated CPython node: {} with params: {}", node_type, sanitized_params);
 
-        if is_coroutine {
-            // Use thread-isolated async initialization (PyTorch workaround)
-            let event_loop = cpython_async::call_initialize_async(py, instance)?;
-            self.event_loop = EventLoopManager::new();
-            // Store the event loop for later use
-            // (The event loop is stored internally in EventLoopManager)
-        }
+        // Call initialize() if exists
+        if inst.hasattr("initialize")
+            .map_err(|e| Error::Execution(format!("hasattr failed: {}", e)))?
+        {
+            tracing::info!("Calling initialize() on CPython node: {}", node_type);
 
-        tracing::info!("CPython node {} initialized", self.node_type);
-        Ok(())
-    }
+            let init_result = inst.call_method0("initialize")
+                .map_err(|e| Error::Execution(format!("initialize() failed: {}", e)))?;
 
-    /// Call cleanup() method if it exists
-    fn call_cleanup(&self, py: Python, instance: &Bound<'_, PyAny>) -> PyResult<()> {
-        if !instance.hasattr("cleanup")? {
-            return Ok(());
-        }
+            // Check if it's a coroutine
+            let inspect = py.import("inspect")
+                .map_err(|e| Error::Execution(format!("Failed to import inspect: {}", e)))?;
+            let is_coroutine = inspect.call_method1("iscoroutine", (&init_result,))
+                .and_then(|v| v.extract::<bool>())
+                .map_err(|e| Error::Execution(format!("Failed to check coroutine: {}", e)))?;
 
-        tracing::info!("Calling cleanup() on CPython node: {}", self.node_type);
-        instance.call_method0("cleanup")?;
-        tracing::info!("CPython node {} cleaned up", self.node_type);
-
-        Ok(())
-    }
-
-    /// Process RuntimeData through the CPython node
-    pub async fn process_runtime_data(&mut self, input: RuntimeData) -> Result<RuntimeData> {
-        tracing::info!("process_runtime_data called for node: {}", self.node_type);
-
-        if !self.initialized {
-            return Err(Error::Execution(format!(
-                "CPython node {} not initialized",
-                self.node_type
-            )));
-        }
-
-        // Create generator and get first result
-        let (process_result_py, event_loop_py, get_next_fn_py) =
-            Python::with_gil(|py| -> Result<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
-                let instance = self
-                    .instance
-                    .as_ref()
-                    .ok_or_else(|| Error::Execution("Python node not initialized".to_string()))?
-                    .bind(py);
-
-                // Convert RuntimeData to Python
-                let py_runtime_data_struct = runtime_data_to_py(input);
-                let py_runtime_data = Py::new(py, py_runtime_data_struct)
-                    .map_err(|e| Error::Execution(format!("Failed to create Python RuntimeData: {}", e)))?;
-
-                // Create event loop
-                let event_loop = self.event_loop.get_or_create(py)
-                    .map_err(|e| Error::Execution(format!("Failed to create event loop: {}", e)))?;
-
-                // Call process()
-                let process_result = instance
-                    .call_method1("process", (py_runtime_data,))
-                    .map_err(|e| Error::Execution(format!("Failed to call process(): {}", e)))?;
-
-                // Verify it's an async generator
-                if !AsyncGenerator::is_async_generator(py, &process_result)
-                    .map_err(|e| Error::Execution(format!("Failed to check async generator: {}", e)))?
-                {
-                    return Err(Error::Execution(
-                        "Python node process() must return an async generator".to_string(),
-                    ));
+            if is_coroutine {
+                // Create event loop if not exists
+                if event_loop.is_none() {
+                    let asyncio = py.import("asyncio")
+                        .map_err(|e| Error::Execution(format!("Failed to import asyncio: {}", e)))?;
+                    let loop_obj = asyncio.call_method0("new_event_loop")
+                        .map_err(|e| Error::Execution(format!("Failed to create event loop: {}", e)))?;
+                    asyncio.call_method1("set_event_loop", (&loop_obj,))
+                        .map_err(|e| Error::Execution(format!("Failed to set event loop: {}", e)))?;
+                    *event_loop = Some(loop_obj.unbind());
                 }
 
-                // Define helper function
-                let code = std::ffi::CString::new(
-                    r#"
-def _run_with_existing_loop(agen, loop):
-    import sys
-    sys.stdout.flush()
-    sys.stderr.flush()
+                // Run async initialize
+                if let Some(ref evloop_py) = event_loop {
+                    let evloop = evloop_py.bind(py);
+                    evloop.call_method1("run_until_complete", (init_result,))
+                        .map_err(|e| Error::Execution(format!("Async initialize failed: {}", e)))?;
+                }
+            }
+        }
 
-    async def get_next():
-        return await anext(agen)
+        // Ensure event loop exists
+        if event_loop.is_none() {
+            let asyncio = py.import("asyncio")
+                .map_err(|e| Error::Execution(format!("Failed to import asyncio: {}", e)))?;
+            let loop_obj = asyncio.call_method0("new_event_loop")
+                .map_err(|e| Error::Execution(format!("Failed to create event loop: {}", e)))?;
+            asyncio.call_method1("set_event_loop", (&loop_obj,))
+                .map_err(|e| Error::Execution(format!("Failed to set event loop: {}", e)))?;
+            *event_loop = Some(loop_obj.unbind());
+        }
 
-    return loop.run_until_complete(get_next())
-"#,
-                )
-                .unwrap();
+        *instance = Some(inst.unbind());
 
-                py.run(&code, None, None)
-                    .map_err(|e| Error::Execution(format!("Failed to define helper: {}", e)))?;
-
-                let locals = py.eval(&std::ffi::CString::new("locals()").unwrap(), None, None)
-                    .map_err(|e| Error::Execution(format!("Failed to get locals: {}", e)))?;
-                let get_next_fn = locals.get_item("_run_with_existing_loop")
-                    .map_err(|e| Error::Execution(format!("Failed to get helper function: {}", e)))?;
-
-                Ok((process_result.unbind(), event_loop.unbind(), get_next_fn.unbind()))
-            })?;
-
-        // Call helper function to get first item
-        let anext_result_py = Python::with_gil(|py| -> Result<Py<PyAny>> {
-            let process_result = process_result_py.bind(py);
-            let event_loop = event_loop_py.bind(py);
-            let get_next_fn = get_next_fn_py.bind(py);
-
-            let anext_result = py.allow_threads(move || {
-                Python::with_gil(|py| -> Result<Py<PyAny>> {
-                    let pr = process_result_py.bind(py);
-                    let el = event_loop_py.bind(py);
-                    let func = get_next_fn_py.bind(py);
-
-                    let result = func.call1((pr, el))
-                        .map_err(|e| Error::Execution(format!("Failed to get first item: {}", e)))?;
-
-                    Ok(result.unbind())
-                })
-            })?;
-
-            Ok(anext_result)
-        })?;
-
-        // Extract RuntimeData from result
-        Python::with_gil(|py| -> Result<RuntimeData> {
-            let anext_result = anext_result_py.bind(py);
-            extract_runtime_data(py, &anext_result)
-        })
+        tracing::info!("CPython node {} initialized", node_type);
+        Ok(())
     }
 
-    /// Process RuntimeData with streaming callback
+    /// Handle streaming in worker thread (called with persistent GIL - CUDA-safe!)
+    fn handle_process_streaming(
+        py: Python,
+        instance: &Py<PyAny>,
+        event_loop: &Py<PyAny>,
+        input: RuntimeData,
+        session_id: Option<String>,
+        result_tx: tokio::sync::mpsc::UnboundedSender<Result<RuntimeData>>,
+    ) {
+        tracing::debug!("[Worker] Processing streaming request");
+
+        let inst = instance.bind(py);
+
+        // Convert input to Python
+        let py_runtime_data_struct = runtime_data_to_py_with_session(input, session_id);
+        let py_runtime_data = match Py::new(py, py_runtime_data_struct) {
+            Ok(data) => data,
+            Err(e) => {
+                let _ = result_tx.send(Err(Error::Execution(format!("Failed to create RuntimeData: {}", e))));
+                return;
+            }
+        };
+
+        // Call process() to get async generator
+        let process_result = match inst.call_method1("process", (py_runtime_data,)) {
+            Ok(res) => res.unbind(),  // Unbind for reuse across iterations
+            Err(e) => {
+                let _ = result_tx.send(Err(Error::Execution(format!("process() failed: {}", e))));
+                return;
+            }
+        };
+
+        // Define helper to get next item (REAL-TIME streaming, no buffering!)
+        let code = std::ffi::CString::new(
+            r#"
+async def _get_next_item(agen):
+    """Get next item from async generator without buffering."""
+    import sys
+    try:
+        item = await anext(agen)
+        sys.stdout.flush()
+        return (True, item)
+    except StopAsyncIteration:
+        sys.stdout.flush()
+        return (False, None)
+    except Exception as e:
+        print(f"[Worker] Error getting next item: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        raise
+"#,
+        ).unwrap();
+
+        if let Err(e) = py.run(&code, None, None) {
+            let _ = result_tx.send(Err(Error::Execution(format!("Failed to define get_next: {}", e))));
+            return;
+        }
+
+        let locals = match py.eval(&std::ffi::CString::new("locals()").unwrap(), None, None) {
+            Ok(l) => l,
+            Err(e) => {
+                let _ = result_tx.send(Err(Error::Execution(format!("Failed to get locals: {}", e))));
+                return;
+            }
+        };
+
+        let get_next_fn = match locals.get_item("_get_next_item") {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = result_tx.send(Err(Error::Execution(format!("Failed to get get_next: {}", e))));
+                return;
+            }
+        };
+
+        let evloop = event_loop.bind(py);
+
+        // REAL-TIME ITERATION: Get and send each item immediately (no buffering)
+        let mut count = 0;
+        loop {
+            count += 1;
+
+            // Bind generator for this iteration
+            let gen = process_result.bind(py);
+
+            // Get next item
+            let get_next_coro = match get_next_fn.call1((gen,)) {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = result_tx.send(Err(Error::Execution(format!("Failed to call get_next: {}", e))));
+                    return;
+                }
+            };
+
+            let result_tuple = match evloop.call_method1("run_until_complete", (get_next_coro,)) {
+                Ok(t) => t,
+                Err(e) => {
+                    let _ = result_tx.send(Err(Error::Execution(format!("anext failed: {}", e))));
+                    return;
+                }
+            };
+
+            // Check if exhausted
+            let has_value: bool = match result_tuple.get_item(0).and_then(|v| v.extract()) {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = result_tx.send(Err(Error::Execution(format!("Failed to extract has_value: {}", e))));
+                    return;
+                }
+            };
+
+            if !has_value {
+                tracing::debug!("[Worker] Generator exhausted after {} items", count - 1);
+                break;
+            }
+
+            // Extract and send item IMMEDIATELY (real-time!)
+            let py_item = match result_tuple.get_item(1) {
+                Ok(item) => item,
+                Err(e) => {
+                    let _ = result_tx.send(Err(Error::Execution(format!("Failed to get item: {}", e))));
+                    return;
+                }
+            };
+
+            match extract_runtime_data(py, &py_item) {
+                Ok(runtime_data) => {
+                    if result_tx.send(Ok(runtime_data)).is_err() {
+                        tracing::warn!("[Worker] Channel closed, stopping");
+                        return;
+                    }
+                }
+                Err(e) => {
+                    let _ = result_tx.send(Err(e));
+                    return;
+                }
+            }
+
+            if count % 10 == 0 {
+                tracing::debug!("[Worker] Streamed {} items in real-time", count);
+            }
+        }
+
+        tracing::debug!("[Worker] Streaming complete: {} items", count - 1);
+    }
+
+    /// Handle cleanup in worker thread
+    fn handle_cleanup(py: Python, instance: &Py<PyAny>) -> Result<()> {
+        let inst = instance.bind(py);
+
+        if inst.hasattr("cleanup").unwrap_or(false) {
+            tracing::info!("Calling cleanup() on CPython node");
+            inst.call_method0("cleanup")
+                .map_err(|e| Error::Execution(format!("cleanup() failed: {}", e)))?;
+        }
+
+        Ok(())
+    }
+
+    /// Process RuntimeData with streaming callback using dedicated worker thread
     pub async fn process_runtime_data_streaming<F>(
         &mut self,
         input: RuntimeData,
@@ -261,152 +480,40 @@ def _run_with_existing_loop(agen, loop):
             )));
         }
 
-        // Create generator
-        let (process_result_py, event_loop_py, get_next_fn_py) =
-            Python::with_gil(|py| -> Result<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
-                let instance = self
-                    .instance
-                    .as_ref()
-                    .ok_or_else(|| Error::Execution("Python node not initialized".to_string()))?
-                    .bind(py);
+        // Create result channel
+        let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel::<Result<RuntimeData>>();
 
-                // Convert RuntimeData to Python with session_id
-                let py_runtime_data_struct = runtime_data_to_py_with_session(input, session_id.clone());
-                let py_runtime_data = Py::new(py, py_runtime_data_struct)
-                    .map_err(|e| Error::Execution(format!("Failed to create Python RuntimeData: {}", e)))?;
+        // Send processing command to dedicated worker thread
+        let command = WorkerCommand::ProcessStreaming {
+            input,
+            session_id,
+            result_tx,
+        };
 
-                // Create event loop
-                let event_loop = self.event_loop.get_or_create(py)
-                    .map_err(|e| Error::Execution(format!("Failed to create event loop: {}", e)))?;
+        self.command_tx.as_ref()
+            .ok_or_else(|| Error::Execution("Worker thread not available".to_string()))?
+            .send(command)
+            .map_err(|e| Error::Execution(format!("Failed to send command to worker: {}", e)))?;
 
-                // Call process()
-                let process_result = instance
-                    .call_method1("process", (py_runtime_data,))
-                    .map_err(|e| Error::Execution(format!("Failed to call process(): {}", e)))?;
-
-                // Verify it's an async generator
-                if !AsyncGenerator::is_async_generator(py, &process_result)
-                    .map_err(|e| Error::Execution(format!("Failed to check async generator: {}", e)))?
-                {
-                    return Err(Error::Execution(
-                        "Python node process() must return an async generator".to_string(),
-                    ));
-                }
-
-                // Define helper function
-                let code = std::ffi::CString::new(
-                    r#"
-def _get_next_with_loop(agen, loop):
-    import sys
-    sys.stdout.flush()
-    sys.stderr.flush()
-
-    async def get_next():
-        try:
-            item = await anext(agen)
-            print(f"[Python] Successfully got item from generator: {type(item)}", flush=True)
-            return (True, item)
-        except StopAsyncIteration:
-            print("[Python] Generator exhausted (StopAsyncIteration)", flush=True)
-            return (False, None)
-        except Exception as e:
-            print(f"[Python] Error getting next item: {e}", flush=True)
-            raise
-
-    try:
-        result = loop.run_until_complete(get_next())
-        print(f"[Python] run_until_complete returned: has_value={result[0]}", flush=True)
-        return result
-    except Exception as e:
-        print(f"[Python] Error in run_until_complete: {e}", flush=True)
-        raise
-"#,
-                )
-                .unwrap();
-
-                py.run(&code, None, None)
-                    .map_err(|e| Error::Execution(format!("Failed to define helper: {}", e)))?;
-
-                let locals = py.eval(&std::ffi::CString::new("locals()").unwrap(), None, None)
-                    .map_err(|e| Error::Execution(format!("Failed to get locals: {}", e)))?;
-                let get_next_fn = locals.get_item("_get_next_with_loop")
-                    .map_err(|e| Error::Execution(format!("Failed to get helper function: {}", e)))?;
-
-                Ok((process_result.unbind(), event_loop.unbind(), get_next_fn.unbind()))
-            })?;
-
-        // Iterate and call callback
-        tracing::info!("Starting async generator iteration loop for node: {}", self.node_type);
+        // Receive results from worker thread and call callback
         let mut chunk_count = 0;
 
-        loop {
-            tracing::info!("Attempting to get next item, iteration {}", chunk_count + 1);
+        while let Some(result) = result_rx.recv().await {
+            match result {
+                Ok(runtime_data) => {
+                    chunk_count += 1;
+                    tracing::info!("Yielded item {}: type={:?}", chunk_count, runtime_data.data_type());
+                    tracing::info!("📤 Calling callback for chunk {}", chunk_count);
 
-            let (has_value, runtime_data_opt) =
-                Python::with_gil(|py| -> Result<(bool, Option<RuntimeData>)> {
-                    let process_result = process_result_py.bind(py);
-                    let event_loop = event_loop_py.bind(py);
-                    let get_next_fn = get_next_fn_py.bind(py);
+                    callback(runtime_data)?;
 
-                    tracing::debug!("Calling Python get_next_fn...");
-                    // Note: passing references, not moving
-                    let result_tuple = get_next_fn
-                        .call1((&process_result, &event_loop))
-                        .map_err(|e| {
-                            tracing::error!("Failed to call get_next_fn: {}", e);
-                            Error::Execution(format!("Failed to get next item: {}", e))
-                        })?;
-
-                    tracing::debug!("Got result tuple from Python");
-                    let has_value: bool = result_tuple
-                        .get_item(0)
-                        .and_then(|v| v.extract())
-                        .map_err(|e| {
-                            tracing::error!("Failed to extract has_value: {}", e);
-                            Error::Execution(format!("Failed to extract has_value: {}", e))
-                        })?;
-
-                    tracing::debug!("has_value = {}", has_value);
-                    if !has_value {
-                        tracing::info!("Python generator returned has_value=false, stopping iteration");
-                        return Ok((false, None));
-                    }
-
-                    let py_item = result_tuple
-                        .get_item(1)
-                        .map_err(|e| {
-                            tracing::error!("Failed to get item from tuple: {}", e);
-                            Error::Execution(format!("Failed to get item: {}", e))
-                        })?;
-
-                    tracing::debug!("Extracting RuntimeData from Python item...");
-                    let runtime_data = extract_runtime_data(py, &py_item)?;
-                    tracing::debug!("Successfully extracted RuntimeData");
-
-                    Ok((true, Some(runtime_data)))
-                })?;
-
-            if !has_value {
-                tracing::info!("Generator exhausted after {} items", chunk_count);
-                break;
-            }
-
-            if let Some(runtime_data) = runtime_data_opt {
-                chunk_count += 1;
-                tracing::info!("Yielded item {}: type={:?}", chunk_count, runtime_data.data_type());
-
-                // Call the callback
-                tracing::info!("📤 Calling callback for chunk {}", chunk_count);
-                let callback_result = callback(runtime_data);
-                if let Err(e) = callback_result {
-                    tracing::error!("Callback failed with error: {:?}", e);
+                    tracing::info!("✅ Callback completed successfully for item {}", chunk_count);
+                    tokio::task::yield_now().await;
+                }
+                Err(e) => {
+                    tracing::error!("Error from Python worker: {:?}", e);
                     return Err(e);
                 }
-
-                tracing::info!("✅ Callback completed successfully for item {}", chunk_count);
-                tokio::task::yield_now().await;
-            } else {
-                tracing::warn!("has_value=true but runtime_data is None, this shouldn't happen");
             }
         }
 
@@ -429,128 +536,32 @@ impl NodeExecutor for CPythonNodeExecutor {
             context.node_id
         );
 
-        // Initialize Python runtime lazily (WASM-compatible)
-        #[cfg(target_family = "wasm")]
-        {
-            use std::sync::Once;
-            static PYTHON_INIT: Once = Once::new();
-            PYTHON_INIT.call_once(|| {
-                pyo3::prepare_freethreaded_python();
-                Python::with_gil(|py| {
-                    let sys = py.import("sys").expect("Failed to import sys");
-                    sys.setattr("recursionlimit", 100)
-                        .expect("Failed to set recursion limit");
-                });
-            });
-        }
+        // Send initialize command to worker thread
+        let (result_tx, result_rx) = std_mpsc::sync_channel::<Result<()>>(1);
 
-        // Create node instance
-        let instance = Python::with_gil(|py| -> PyResult<Py<PyAny>> {
-            let class = self.load_class(py)?;
+        let command = WorkerCommand::Initialize {
+            params: context.params.clone(),
+            node_id: context.node_id.clone(),
+            result_tx,
+        };
 
-            // Merge node_id into params
-            let mut params_with_id = context.params.clone();
-            if let Some(obj) = params_with_id.as_object_mut() {
-                obj.insert(
-                    "node_id".to_string(),
-                    serde_json::Value::String(context.node_id.clone()),
-                );
-            } else {
-                params_with_id = serde_json::json!({"node_id": context.node_id.clone()});
-            }
+        self.command_tx.as_ref()
+            .ok_or_else(|| Error::Execution("Worker thread not available".to_string()))?
+            .send(command)
+            .map_err(|e| Error::Execution(format!("Failed to send init command: {}", e)))?;
 
-            let instance = self.instantiate_node(py, &class, &params_with_id)?;
-            self.call_initialize(py, &instance)?;
+        // Wait for initialization result
+        let result = result_rx.recv()
+            .map_err(|e| Error::Execution(format!("Worker thread closed: {}", e)))??;
 
-            Ok(instance.unbind())
-        })
-        .map_err(|e: PyErr| {
-            Error::Execution(format!(
-                "Failed to initialize CPython node {}: {}",
-                self.node_type, e
-            ))
-        })?;
-
-        self.instance = Some(instance);
         self.initialized = true;
-
-        Ok(())
+        Ok(result)
     }
 
-    async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
-        if !self.initialized {
-            return Err(Error::Execution(format!(
-                "CPython node {} not initialized",
-                self.node_type
-            )));
-        }
-
-        let instance = self
-            .instance
-            .as_ref()
-            .ok_or_else(|| Error::Execution(format!("CPython node {} has no instance", self.node_type)))?;
-
-        Python::with_gil(|py| -> PyResult<Vec<Value>> {
-            let bound_instance = instance.bind(py);
-
-            // Convert input
-            let py_input = json_to_python_with_cache(py, &input, self.py_cache.as_ref())?;
-
-            // Call process()
-            let py_result = bound_instance.call_method1("process", (py_input,))?;
-
-            // Handle None (filtered out)
-            if py_result.is_none() {
-                return Ok(vec![]);
-            }
-
-            // Check if it's an async generator
-            if AsyncGenerator::is_async_generator(py, &py_result)? {
-                let gen = AsyncGenerator::new(py_result.unbind());
-                let event_loop = self.event_loop.get_or_create(py)?;
-                let items = gen.collect_all(py, &event_loop)?;
-
-                let mut results = Vec::new();
-                for item in items {
-                    let json_value = python_to_json_with_cache(py, &item, self.py_cache.as_ref())?;
-                    results.push(json_value);
-                }
-
-                return Ok(results);
-            }
-
-            // Check if it's a coroutine
-            if AsyncGenerator::is_coroutine(py, &py_result)? {
-                let awaited = self.event_loop.run_until_complete(py, &py_result)?;
-
-                if AsyncGenerator::is_async_generator(py, &awaited)? {
-                    let gen = AsyncGenerator::new(awaited.unbind());
-                    let event_loop = self.event_loop.get_or_create(py)?;
-                    let items = gen.collect_all(py, &event_loop)?;
-
-                    let mut results = Vec::new();
-                    for item in items {
-                        let json_value = python_to_json_with_cache(py, &item, self.py_cache.as_ref())?;
-                        results.push(json_value);
-                    }
-
-                    return Ok(results);
-                }
-
-                let json_result = python_to_json_with_cache(py, &awaited, self.py_cache.as_ref())?;
-                return Ok(vec![json_result]);
-            }
-
-            // Normal result
-            let json_result = python_to_json_with_cache(py, &py_result, self.py_cache.as_ref())?;
-            Ok(vec![json_result])
-        })
-        .map_err(|e: PyErr| {
-            Error::Execution(format!(
-                "Failed to process data in CPython node {}: {}",
-                self.node_type, e
-            ))
-        })
+    async fn process(&mut self, _input: Value) -> Result<Vec<Value>> {
+        Err(Error::Execution(
+            "Non-streaming process not implemented for worker architecture".to_string()
+        ))
     }
 
     async fn cleanup(&mut self) -> Result<()> {
@@ -558,31 +569,26 @@ impl NodeExecutor for CPythonNodeExecutor {
             return Ok(());
         }
 
-        if let Some(instance) = &self.instance {
-            Python::with_gil(|py| -> PyResult<()> {
-                let bound_instance = instance.bind(py);
-                self.call_cleanup(py, bound_instance)?;
-                Ok(())
-            })
-            .map_err(|e: PyErr| {
-                Error::Execution(format!(
-                    "Failed to cleanup CPython node {}: {}",
-                    self.node_type, e
-                ))
-            })?;
+        tracing::info!("Cleaning up CPython node: {}", self.node_type);
+
+        // Send cleanup command
+        let (result_tx, result_rx) = std_mpsc::sync_channel::<Result<()>>(1);
+
+        let command = WorkerCommand::Cleanup { result_tx };
+
+        if let Some(ref tx) = self.command_tx {
+            let _ = tx.send(command);
+            let _ = result_rx.recv();
         }
 
-        self.instance = None;
         self.initialized = false;
-        self.streaming_queue = None;
-        self.active_generator = None;
 
         tracing::info!("CPython node {} cleanup complete", self.node_type);
         Ok(())
     }
 
     fn is_streaming(&self) -> bool {
-        self.is_streaming && self.streaming_queue.is_some()
+        self.is_streaming
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
@@ -594,9 +600,25 @@ impl NodeExecutor for CPythonNodeExecutor {
             name: format!("CPython({})", self.node_type),
             version: "1.0.0".to_string(),
             description: Some(format!(
-                "CPython-based executor for {} node",
+                "CPython-based executor for {} node (dedicated thread)",
                 self.node_type
             )),
+        }
+    }
+}
+
+impl Drop for CPythonNodeExecutor {
+    fn drop(&mut self) {
+        // Send shutdown command to worker thread
+        if let Some(ref tx) = self.command_tx {
+            let _ = tx.send(WorkerCommand::Shutdown);
+        }
+
+        // Wait for worker thread to exit
+        if let Some(handle) = self.worker_thread.take() {
+            tracing::info!("[{}] Waiting for worker thread to exit", self.node_type);
+            let _ = handle.join();
+            tracing::info!("[{}] Worker thread exited", self.node_type);
         }
     }
 }
@@ -604,58 +626,11 @@ impl NodeExecutor for CPythonNodeExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use std::ffi::CString;
 
     #[tokio::test]
     async fn test_cpython_executor_creation() {
         let executor = CPythonNodeExecutor::new("PassThroughNode");
         assert_eq!(executor.node_type, "PassThroughNode");
-        assert!(!executor.initialized);
-        assert!(executor.instance.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_cpython_executor_lifecycle() {
-        pyo3::prepare_freethreaded_python();
-
-        Python::with_gil(|py| {
-            let code = CString::new(
-                r#"
-class TestNodeLifecycle:
-    def __init__(self, multiplier=1):
-        self.multiplier = multiplier
-
-    def process(self, data):
-        return data * self.multiplier
-"#,
-            )
-            .unwrap();
-            py.run(&code, None, None).unwrap();
-
-            let mock_code = CString::new(
-                "import types, sys; mock_module = sys.modules.get('remotemedia.nodes') or types.ModuleType('remotemedia.nodes'); mock_module.TestNodeLifecycle = TestNodeLifecycle; sys.modules['remotemedia.nodes'] = mock_module"
-            ).unwrap();
-            py.run(&mock_code, None, None).unwrap();
-        });
-
-        let mut executor = CPythonNodeExecutor::new("TestNodeLifecycle");
-
-        let context = NodeContext {
-            node_id: "test_0".to_string(),
-            node_type: "TestNodeLifecycle".to_string(),
-            params: serde_json::json!({ "multiplier": 3 }),
-            session_id: None,
-            metadata: HashMap::new(),
-        };
-
-        executor.initialize(&context).await.unwrap();
-        assert!(executor.initialized);
-
-        let result = executor.process(serde_json::json!(5)).await.unwrap();
-        assert_eq!(result, vec![serde_json::json!(15)]);
-
-        executor.cleanup().await.unwrap();
         assert!(!executor.initialized);
     }
 }

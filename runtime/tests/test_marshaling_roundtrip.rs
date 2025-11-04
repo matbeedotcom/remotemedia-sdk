@@ -29,7 +29,7 @@ fn test_roundtrip_primitives() {
         ("string_unicode", json!("こんにちは")),
     ];
 
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         for (name, original) in test_cases {
             // Rust → Python
             let py_obj = marshal::json_to_python(py, &original)
@@ -65,7 +65,7 @@ fn test_roundtrip_collections() {
         ),
     ];
 
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         for (name, original) in test_cases {
             let py_obj = marshal::json_to_python(py, &original)
                 .unwrap_or_else(|e| panic!("{}: Failed to convert to Python: {:?}", name, e));
@@ -112,7 +112,7 @@ fn test_roundtrip_nested() {
         }
     });
 
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         let py_obj = marshal::json_to_python(py, &deep_structure).unwrap();
         let result = marshal::python_to_json(py, &py_obj).unwrap();
         assert_eq!(deep_structure, result);
@@ -150,7 +150,7 @@ test_data
 /// Test edge cases and special values
 #[test]
 fn test_roundtrip_edge_cases() {
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         // Empty string
         let empty_str = json!("");
         let py_obj = marshal::json_to_python(py, &empty_str).unwrap();
@@ -174,7 +174,7 @@ fn test_roundtrip_edge_cases() {
 /// Test special float values (NaN, Inf)
 #[test]
 fn test_special_floats() {
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         use pyo3::types::PyFloat;
 
         // NaN converts to null
@@ -192,7 +192,7 @@ fn test_special_floats() {
 /// Test type preservation through round-trip
 #[test]
 fn test_type_preservation() {
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         // Ensure int stays int, not converted to float
         let int_val = json!(42);
         let py_obj = marshal::json_to_python(py, &int_val).unwrap();
@@ -210,7 +210,7 @@ fn test_type_preservation() {
 /// Test error handling for unsupported types
 #[test]
 fn test_unsupported_types() {
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         use pyo3::types::PyBytes;
 
         // Bytes should fail with unsupported type error
@@ -274,7 +274,7 @@ fn test_large_data_roundtrip() {
         }
     });
 
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         let start = std::time::Instant::now();
 
         // Rust → Python
@@ -299,7 +299,7 @@ fn test_large_data_roundtrip() {
 #[test]
 fn test_tuple_support() {
     use std::ffi::CString;
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         use pyo3::types::PyTuple;
 
         // Create a Python tuple

@@ -19,7 +19,7 @@ use std::ffi::CString;
 fn setup_python_environment() {
     pyo3::prepare_freethreaded_python();
 
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         let sys = py.import("sys").unwrap();
         let path = sys.getattr("path").unwrap();
 
@@ -48,7 +48,7 @@ async fn test_sequential_data_passing_linear() {
     setup_python_environment();
 
     // Create test nodes in Python
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         let code = CString::new(
             r#"
 import sys, types
@@ -151,7 +151,7 @@ sys.modules['remotemedia.nodes'].AddNode = AddNode
 async fn test_streaming_async_generator() {
     setup_python_environment();
 
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         let code = CString::new(
             r#"
 import sys, types
@@ -264,7 +264,7 @@ sys.modules['remotemedia.nodes'].StreamingGeneratorNode = StreamingGeneratorNode
 async fn test_backpressure_handling() {
     setup_python_environment();
 
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         let code = CString::new(
             r#"
 import sys, types
@@ -345,7 +345,7 @@ sys.modules['remotemedia.nodes'].SlowProcessorNode = SlowProcessorNode
 async fn test_branching_dag() {
     setup_python_environment();
 
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         let code = CString::new(
             r#"
 import sys, types
@@ -462,7 +462,7 @@ sys.modules['remotemedia.nodes'].BranchB = BranchB
 async fn test_merging_dag() {
     setup_python_environment();
 
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         let code = CString::new(
             r#"
 import sys, types
@@ -570,7 +570,7 @@ sys.modules['remotemedia.nodes'].MergeNode = MergeNode
 async fn test_complex_diamond_topology() {
     setup_python_environment();
 
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         let code = CString::new(
             r#"
 import sys, types
@@ -701,7 +701,7 @@ sys.modules['remotemedia.nodes'].CombinerNode = CombinerNode
 async fn test_multilevel_dag() {
     setup_python_environment();
 
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         let code = CString::new(
             r#"
 import sys, types

@@ -19,7 +19,7 @@ async fn test_cpython_with_numpy_array() {
     pyo3::prepare_freethreaded_python();
 
     // Create a simple numpy processing node in Python
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         let code = std::ffi::CString::new(
             r#"
 import numpy as np
@@ -152,7 +152,7 @@ async fn test_runtime_auto_detection_for_numpy() {
     pyo3::prepare_freethreaded_python();
 
     // Setup Python node
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         let code = std::ffi::CString::new(
             r#"
 import numpy as np
@@ -238,7 +238,7 @@ async fn test_cpython_with_2d_numpy_array() {
     pyo3::prepare_freethreaded_python();
 
     // Create node that handles 2D arrays
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         let code = std::ffi::CString::new(
             r#"
 import numpy as np

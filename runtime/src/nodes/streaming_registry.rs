@@ -84,6 +84,26 @@ impl StreamingNodeFactory for KokoroTTSNodeFactory {
     }
 }
 
+struct VibeVoiceTTSNodeFactory;
+impl StreamingNodeFactory for VibeVoiceTTSNodeFactory {
+    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = PythonStreamingNode::new(node_id, "VibeVoiceTTSNode", params)?;
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "VibeVoiceTTSNode"
+    }
+
+    fn is_python_node(&self) -> bool {
+        true
+    }
+
+    fn is_multi_output_streaming(&self) -> bool {
+        true // VibeVoice yields multiple audio chunks per text input
+    }
+}
+
 struct SimplePyTorchNodeFactory;
 impl StreamingNodeFactory for SimplePyTorchNodeFactory {
     fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
@@ -419,6 +439,7 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
 
     // Register Python TTS nodes
     registry.register(Arc::new(KokoroTTSNodeFactory));
+    registry.register(Arc::new(VibeVoiceTTSNodeFactory));
 
     // Register Python speech-to-speech nodes
     registry.register(Arc::new(LFM2AudioNodeFactory));

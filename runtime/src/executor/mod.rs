@@ -67,7 +67,7 @@ impl PyObjectCache {
     /// Retrieve a Python object by ID
     pub fn get(&self, id: &str) -> Option<Py<PyAny>> {
         let objects = self.objects.lock().unwrap();
-        Python::with_gil(|py| objects.get(id).map(|obj| obj.clone_ref(py)))
+        Python::attach(|py| objects.get(id).map(|obj| obj.clone_ref(py)))
     }
 
     /// Check if an ID exists in the cache

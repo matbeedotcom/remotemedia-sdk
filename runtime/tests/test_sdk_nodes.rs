@@ -15,7 +15,7 @@ use std::ffi::CString;
 fn setup_python_sdk_path() {
     pyo3::prepare_freethreaded_python();
 
-    pyo3::Python::with_gil(|py| {
+    pyo3::Python::attach(|py| {
         // Add the python-client directory to sys.path
         let python_client_path = std::env::current_dir()
             .unwrap()

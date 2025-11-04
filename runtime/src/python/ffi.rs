@@ -51,8 +51,8 @@ pub fn execute_pipeline(
         })?;
 
         // Convert outputs to Python
-        // With auto-initialize, Python::with_gil is available in async contexts
-        Python::with_gil(|py| {
+        // With auto-initialize, Python::attach is available in async contexts
+        Python::attach(|py| {
             let outputs_py = json_to_python(py, &result.outputs)?;
 
             // Include metrics if requested
@@ -125,8 +125,8 @@ pub fn execute_pipeline_with_input<'py>(
             })?;
 
         // Convert outputs back to Python
-        // With auto-initialize, Python::with_gil is available in async contexts
-        Python::with_gil(|py| {
+        // With auto-initialize, Python::attach is available in async contexts
+        Python::attach(|py| {
             let outputs_py = json_to_python(py, &result.outputs)?;
 
             // Include metrics if requested

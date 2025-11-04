@@ -141,6 +141,112 @@ impl GrpcServer {
         Ok(())
     }
 
+    /// Build and run the server with external shutdown flag (for robust Ctrl+C handling)
+    pub async fn serve_with_shutdown_flag(
+        self,
+        shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let addr: std::net::SocketAddr = self.config.bind_address.parse()?;
+        
+        info!(
+            %addr,
+            auth_required = self.config.auth.require_auth,
+            max_memory_mb = self.config.limits.max_memory_bytes / 1_000_000,
+            "Starting gRPC server"
+        );
+
+        // Create service implementations
+        let execution_service = ExecutionServiceImpl::new(
+            self.config.auth.clone(),
+            self.config.limits.clone(),
+            self.config.version.clone(),
+            Arc::clone(&self.metrics),
+            Arc::clone(&self.executor),
+        );
+
+        // Phase 5: Streaming service (T058)
+        let streaming_service = StreamingServiceImpl::new(
+            self.config.clone(),
+            Arc::clone(&self.executor),
+            Arc::clone(&self.metrics),
+        );
+
+        // Wrap services with gRPC-Web and CORS support using tower ServiceBuilder
+        let execution_service = tower::ServiceBuilder::new()
+            .layer(tower_http::cors::CorsLayer::permissive())
+            .layer(tonic_web::GrpcWebLayer::new())
+            .into_inner()
+            .named_layer(
+                PipelineExecutionServiceServer::new(execution_service)
+                    .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
+                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+            );
+
+        let streaming_service = tower::ServiceBuilder::new()
+            .layer(tower_http::cors::CorsLayer::permissive())
+            .layer(tonic_web::GrpcWebLayer::new())
+            .into_inner()
+            .named_layer(
+                StreamingPipelineServiceServer::new(streaming_service)
+                    .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
+                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+            );
+
+        // T037: Configure connection pooling and HTTP/2 keepalive for concurrent clients
+        let server = Server::builder()
+            // Allow many concurrent requests per connection
+            .concurrency_limit_per_connection(256)
+            // TCP keepalive to detect dead connections
+            .tcp_keepalive(Some(std::time::Duration::from_secs(60)))
+            .tcp_nodelay(true)
+            // HTTP/2 keepalive ping to keep connections alive
+            .http2_keepalive_interval(Some(std::time::Duration::from_secs(30)))
+            .http2_keepalive_timeout(Some(std::time::Duration::from_secs(10)))
+            // Connection timeouts
+            .timeout(std::time::Duration::from_secs(60))
+            // Enable HTTP/1.1 for gRPC-Web
+            .accept_http1(true)
+            // Tracing
+            .trace_fn(|_| tracing::info_span!("grpc_request"))
+            .add_service(execution_service)
+            .add_service(streaming_service)
+            ;
+
+        info!("gRPC server listening on {}", addr);
+        
+        // Monitor shutdown flag and trigger graceful shutdown
+        // Poll frequently (10ms) to ensure responsive shutdown
+        let shutdown_future = async move {
+            let mut check_count = 0u64;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                check_count += 1;
+                
+                if shutdown_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    info!("[SHUTDOWN] Flag detected after {} checks ({}ms)", check_count, check_count * 10);
+                    info!("[SHUTDOWN] Initiating graceful shutdown of gRPC server...");
+                    break;
+                }
+                
+                // Log periodically to show we're still checking
+                if check_count % 6000 == 0 {  // Every minute
+                    info!("[HEALTH] Server running, checked shutdown flag {} times", check_count);
+                }
+            }
+            info!("[SHUTDOWN] Shutdown future completed, server will now close connections");
+        };
+        
+        info!("[SERVER] Calling serve_with_shutdown, will block until shutdown signal...");
+        let serve_result = server.serve_with_shutdown(addr, shutdown_future).await;
+        info!("[SERVER] serve_with_shutdown returned: {:?}", serve_result.is_ok());
+        
+        serve_result?;
+
+        info!("[SHUTDOWN] gRPC server shutdown complete");
+
+        Ok(())
+    }
+
     /// Expose Prometheus metrics as HTTP endpoint
     ///
     /// Returns metrics text for /metrics endpoint

@@ -26,6 +26,7 @@ from remotemedia.core.node import Node
 from .audio import AudioTransform, AudioBuffer, AudioResampler, VoiceActivityDetector
 from .transcription import WhisperXTranscriber, RustWhisperTranscriber
 from .tts import KokoroTTSNode
+from .tts_vibevoice import VibeVoiceTTSNode
 from .simple_pytorch_test import SimplePyTorchNode
 from .ml import LFM2AudioNode
 from .text_processor import TextProcessorNode
@@ -93,6 +94,7 @@ __all__ = [
     "RustWhisperTranscriber",
     # TTS nodes
     "KokoroTTSNode",
+    "VibeVoiceTTSNode",
     # Test nodes
     "SimplePyTorchNode",
     # ML nodes

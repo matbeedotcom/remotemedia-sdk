@@ -51,6 +51,12 @@ pub struct SessionRouter {
     /// Channel to send new chunks to the router
     input_tx: mpsc::UnboundedSender<DataPacket>,
 
+    /// Channel to receive shutdown signal
+    shutdown_rx: mpsc::Receiver<()>,
+
+    /// Channel to send shutdown signal (held externally)
+    _shutdown_tx: mpsc::Sender<()>,
+
     /// Active node tasks
     node_tasks: HashMap<String, JoinHandle<()>>,
 
@@ -63,30 +69,186 @@ pub struct SessionRouter {
 
 impl SessionRouter {
     /// Create a new session router
+    /// Returns (router, shutdown_sender) - the shutdown_sender should be stored to trigger shutdown
     pub fn new(
         session_id: String,
         registry: Arc<crate::nodes::StreamingNodeRegistry>,
         session: Arc<Mutex<StreamSession>>,
         client_tx: mpsc::Sender<Result<StreamResponse, Status>>,
-    ) -> Self {
+    ) -> (Self, mpsc::Sender<()>) {
         let (input_tx, input_rx) = mpsc::unbounded_channel();
+        let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+        let shutdown_tx_clone = shutdown_tx.clone();
 
-        Self {
+        let router = Self {
             session_id,
             registry,
             session,
             client_tx,
             input_rx,
             input_tx,
+            shutdown_rx,
+            _shutdown_tx: shutdown_tx,
             node_tasks: HashMap::new(),
             node_inputs: HashMap::new(),
             running: false,
-        }
+        };
+
+        (router, shutdown_tx_clone)
     }
 
     /// Get the input sender for feeding chunks from the client
     pub fn get_input_sender(&self) -> mpsc::UnboundedSender<DataPacket> {
         self.input_tx.clone()
+    }
+
+    /// Pre-initialize all nodes in the manifest before streaming starts
+    ///
+    /// This eliminates cold-start latency by loading all models upfront.
+    /// Any initialization errors are caught early before streaming begins.
+    ///
+    /// Sends real-time status updates to the client during initialization.
+    pub async fn pre_initialize_all_nodes(&mut self) -> Result<(), Status> {
+        let node_specs: Vec<(String, String)> = {
+            let session = self.session.lock().await;
+            session.manifest.nodes.iter()
+                .map(|n| (n.id.clone(), n.node_type.clone()))
+                .collect()
+        };
+
+        let total_nodes = node_specs.len();
+        info!("🔥 Pre-initializing {} nodes for session '{}'...", total_nodes, self.session_id);
+        info!("   Node list: {:?}", node_specs.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>());
+
+        // Send initialization start message to client (non-blocking fire-and-forget)
+        let _ = self.client_tx.try_send(Ok({
+            use crate::data::RuntimeData;
+            use crate::grpc_service::generated::{StreamResponse, stream_response::Response as StreamResponseType};
+
+            let status_text = format!("[_system] status=initializing message=Initializing {} nodes...", total_nodes);
+            let status_data = RuntimeData::Text(status_text);
+            let proto_data = convert_runtime_to_proto_data(status_data);
+
+            let mut data_outputs = HashMap::new();
+            data_outputs.insert("_status".to_string(), proto_data);
+
+            StreamResponse {
+                response: Some(StreamResponseType::Result(ChunkResult {
+                    sequence: 0,
+                    data_outputs,
+                    processing_time_ms: 0.0,
+                    total_items_processed: 0,
+                })),
+            }
+        }));
+
+        for (idx, (node_id, node_type)) in node_specs.iter().enumerate() {
+            let progress = ((idx + 1) * 100) / total_nodes;
+
+            info!("   📦 [{}/{}] Initializing {} (type: {})...",
+                  idx + 1, total_nodes, node_id, node_type);
+
+            // Send "initializing" status to client
+            self.send_status_update(
+                &node_id,
+                "initializing",
+                &format!("Loading {} ({}/{})", node_type, idx + 1, total_nodes)
+            );
+
+            match self.get_or_create_node(&node_id).await {
+                Ok(node) => {
+                    info!("   📦 [{}/{}] Node created, calling initialize()...",
+                          idx + 1, total_nodes);
+
+                    // 🔥 Actually call initialize() to load models
+                    match node.initialize().await {
+                        Ok(_) => {
+                            info!("   ✅ [{}/{}] {} initialized successfully ({}% complete)",
+                                  idx + 1, total_nodes, node_id, progress);
+
+                            // Query node status
+                            let status = node.get_status();
+
+                            // Send "ready" status to client
+                            self.send_status_update(
+                                &node_id,
+                                status.as_str(),
+                                &format!("{} ready ({}/{})", node_type, idx + 1, total_nodes)
+                            );
+                        }
+                        Err(init_err) => {
+                            error!("   ❌ [{}/{}] Failed to initialize {}: {}",
+                                   idx + 1, total_nodes, node_id, init_err);
+
+                            // Send "error" status to client
+                            self.send_status_update(
+                                &node_id,
+                                "error",
+                                &format!("Initialization failed: {}", init_err)
+                            );
+
+                            return Err(Status::internal(
+                                format!("Failed to initialize node '{}': {}", node_id, init_err)
+                            ));
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("   ❌ [{}/{}] Failed to initialize {}: {}",
+                           idx + 1, total_nodes, node_id, e);
+
+                    // Send "error" status to client
+                    self.send_status_update(
+                        &node_id,
+                        "error",
+                        &format!("Failed to initialize {}: {}", node_type, e)
+                    );
+
+                    return Err(Status::internal(
+                        format!("Failed to pre-initialize node '{}': {}", node_id, e)
+                    ));
+                }
+            }
+        }
+
+        info!("✅ All {} nodes pre-initialized and ready for streaming", total_nodes);
+
+        // Send completion message to client
+        self.send_status_update("_system", "ready",
+            &format!("All {} nodes ready for streaming", total_nodes));
+
+        Ok(())
+    }
+
+    /// Send a status update message to the client (non-blocking)
+    fn send_status_update(&self, node_id: &str, status: &str, message: &str) {
+        use crate::data::RuntimeData;
+        use crate::grpc_service::generated::{StreamResponse, stream_response::Response as StreamResponseType};
+
+        // Create status message as text
+        let status_text = format!("[{}] status={} message={}", node_id, status, message);
+        let status_data = RuntimeData::Text(status_text);
+
+        // Convert to proto
+        let proto_data = convert_runtime_to_proto_data(status_data);
+
+        // Create ChunkResult with status info
+        let mut data_outputs = HashMap::new();
+        data_outputs.insert("_status".to_string(), proto_data);
+
+        let chunk_result = ChunkResult {
+            sequence: 0, // Status updates use sequence 0
+            data_outputs,
+            processing_time_ms: 0.0,
+            total_items_processed: 0,
+        };
+
+        let response = StreamResponse {
+            response: Some(StreamResponseType::Result(chunk_result)),
+        };
+
+        // Send to client (non-blocking, ignore errors)
+        let _ = self.client_tx.try_send(Ok(response));
     }
 
     /// Start the router - this runs until the session ends
@@ -109,19 +271,33 @@ impl SessionRouter {
     async fn run(&mut self) -> Result<(), Status> {
         info!("📡 Session router running - waiting for chunks from client...");
 
-        // Process incoming packets from the client
-        while let Some(packet) = self.input_rx.recv().await {
-            debug!("📥 Router received packet from '{}' (seq: {})",
-                   packet.from_node, packet.sequence);
+        // Process incoming packets from the client or shutdown signal
+        loop {
+            tokio::select! {
+                packet = self.input_rx.recv() => {
+                    match packet {
+                        Some(packet) => {
+                            debug!("📥 Router received packet from '{}' (seq: {})",
+                                   packet.from_node, packet.sequence);
 
-            // Route the packet through the pipeline
-            if let Err(e) = self.route_packet(packet).await {
-                error!("Failed to route packet: {}", e);
-                // Continue processing other packets even if one fails
+                            // Route the packet through the pipeline
+                            if let Err(e) = self.route_packet(packet).await {
+                                error!("Failed to route packet: {}", e);
+                                // Continue processing other packets even if one fails
+                            }
+                        }
+                        None => {
+                            info!("✅ Session router input channel closed - shutting down");
+                            break;
+                        }
+                    }
+                }
+                _ = self.shutdown_rx.recv() => {
+                    info!("🛑 Session router received shutdown signal - stopping all processing");
+                    break;
+                }
             }
         }
-
-        info!("✅ Session router input channel closed - shutting down");
 
         // Shutdown all node tasks
         self.shutdown_nodes().await;

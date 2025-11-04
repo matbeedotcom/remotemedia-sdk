@@ -8,6 +8,56 @@ use crate::Error;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
+
+/// Node execution status
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum NodeStatus {
+    /// Node created but not initialized
+    Idle = 0,
+    /// Node is currently initializing (loading models, resources, etc.)
+    Initializing = 1,
+    /// Node is initialized and ready to process data
+    Ready = 2,
+    /// Node is currently processing data
+    Processing = 3,
+    /// Node encountered an error
+    Error = 4,
+    /// Node is being cleaned up
+    Stopping = 5,
+    /// Node has been stopped/destroyed
+    Stopped = 6,
+}
+
+impl NodeStatus {
+    /// Convert from u8 (for atomic storage)
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            0 => NodeStatus::Idle,
+            1 => NodeStatus::Initializing,
+            2 => NodeStatus::Ready,
+            3 => NodeStatus::Processing,
+            4 => NodeStatus::Error,
+            5 => NodeStatus::Stopping,
+            6 => NodeStatus::Stopped,
+            _ => NodeStatus::Idle,
+        }
+    }
+
+    /// Convert to string for logging/display
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NodeStatus::Idle => "idle",
+            NodeStatus::Initializing => "initializing",
+            NodeStatus::Ready => "ready",
+            NodeStatus::Processing => "processing",
+            NodeStatus::Error => "error",
+            NodeStatus::Stopping => "stopping",
+            NodeStatus::Stopped => "stopped",
+        }
+    }
+}
 
 /// Synchronous streaming node trait
 ///
@@ -42,6 +92,11 @@ pub trait SyncStreamingNode: Send + Sync {
 pub trait AsyncStreamingNode: Send + Sync {
     /// Get the node type name
     fn node_type(&self) -> &str;
+
+    /// Initialize the node (load models, resources, etc.)
+    async fn initialize(&self) -> Result<(), Error> {
+        Ok(()) // Default: no-op
+    }
 
     /// Process single-input data asynchronously
     async fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error>;
@@ -89,6 +144,22 @@ pub trait AsyncStreamingNode: Send + Sync {
 pub trait StreamingNode: Send + Sync {
     /// Get the node type name
     fn node_type(&self) -> &str;
+
+    /// Get the node ID
+    fn node_id(&self) -> &str {
+        "" // Default implementation - should be overridden by nodes that have IDs
+    }
+
+    /// Get the current execution status
+    fn get_status(&self) -> NodeStatus {
+        NodeStatus::Idle // Default for nodes without status tracking
+    }
+
+    /// Initialize the node (load models, resources, etc.)
+    /// This is called during pre-initialization before streaming starts
+    async fn initialize(&self) -> Result<(), Error> {
+        Ok(()) // Default: no-op for nodes without initialization
+    }
 
     /// Process single-input data asynchronously
     async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error>;
@@ -144,6 +215,10 @@ pub struct AsyncNodeWrapper<T: AsyncStreamingNode>(pub Arc<T>);
 impl<T: AsyncStreamingNode + 'static> StreamingNode for AsyncNodeWrapper<T> {
     fn node_type(&self) -> &str {
         self.0.node_type()
+    }
+
+    async fn initialize(&self) -> Result<(), Error> {
+        self.0.initialize().await
     }
 
     async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
