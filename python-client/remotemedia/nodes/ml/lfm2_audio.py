@@ -17,6 +17,9 @@ import numpy as np
 import torch
 import torchaudio
 from typing import AsyncGenerator, Optional, Dict, List, Any, TYPE_CHECKING
+from liquid_audio import ChatState, LFMModality
+# Import liquid_audio here to avoid import errors if not installed
+from liquid_audio import LFM2AudioModel, LFM2AudioProcessor
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -96,7 +99,7 @@ class LFM2AudioNode:
         device: Optional[str] = None,
         audio_temperature: float = 1.0,
         audio_top_k: int = 4,
-        max_new_tokens: int = 512,
+        max_new_tokens: int = 4096,
         sample_rate: int = 24000,
         session_timeout_minutes: int = 30,
         text_only: bool = False,
@@ -153,8 +156,6 @@ class LFM2AudioNode:
             return
 
         try:
-            # Import liquid_audio here to avoid import errors if not installed
-            from liquid_audio import LFM2AudioModel, LFM2AudioProcessor
 
             logger.info(f"Initializing LFM2-Audio from '{self.hf_repo}' on device '{self.device}'")
 
@@ -191,7 +192,7 @@ class LFM2AudioNode:
                     # Try to use SDPA (scaled_dot_product_attention) instead of flash_attn
                     model = LFM2AudioModel.from_pretrained(
                         self.hf_repo,
-                        attn_implementation="sdpa"
+                        attn_implementation="flash_attn"
                     )
                 except (TypeError, ValueError):
                     # Fallback if parameter not supported
@@ -259,111 +260,54 @@ class LFM2AudioNode:
             except Exception as e:
                 logger.error(f"Error in session cleanup: {e}")
 
-    def _get_or_create_session(self, session_id: str) -> ConversationState:
+    async def _get_or_create_session(self, session_id: str) -> ConversationState:
         """Get existing session or create a new one."""
-        from liquid_audio import ChatState
-
         if session_id not in self._sessions:
             logger.info(f"Creating new conversation session: {session_id}")
-            chat = ChatState(self._processor)
 
-            # Add system prompt
-            chat.new_turn("system")
-            chat.add_text(self.system_prompt)
-            chat.end_turn()
+            try:
+                if self._processor is None:
+                    logger.error("ERROR: Processor not initialized. Call initialize() first.")
+                    raise RuntimeError("Processor not initialized")
 
-            self._sessions[session_id] = ConversationState(
-                session_id=session_id,
-                chat_state=chat
-            )
+                # Create ChatState in a separate thread to avoid GIL issues
+                # This is crucial for thread-safety when called from Rust via PyO3
+                logger.info("Creating ChatState in thread-safe manner...")
+
+                def create_chat_state():
+                    """Create ChatState in an isolated thread context."""
+                    logger.info("Thread: Creating ChatState with processor...")
+                    chat = ChatState(self._processor)
+                    logger.info("Thread: ChatState created successfully")
+
+                    # Add system prompt
+                    logger.info("Thread: Adding system prompt to chat...")
+                    chat.new_turn("system")
+                    chat.add_text(self.system_prompt)
+                    chat.end_turn()
+                    logger.info("Thread: System prompt added")
+
+                    return chat
+
+                # Run in thread to ensure thread-safety with PyO3
+                chat = await asyncio.to_thread(create_chat_state)
+                logger.info("ChatState created successfully via thread")
+
+                logger.info("Creating ConversationState...")
+                self._sessions[session_id] = ConversationState(
+                    session_id=session_id,
+                    chat_state=chat
+                )
+                logger.info(f"Session {session_id} created and stored successfully")
+
+            except Exception as e:
+                logger.error(f"Failed to create session: {e}", exc_info=True)
+                raise
         else:
+            logger.info(f"Using existing session: {session_id}")
             self._sessions[session_id].update_access()
 
         return self._sessions[session_id]
-
-    def _generate_sync(
-        self,
-        chat_state: Any,
-        session_state: ConversationState
-    ) -> tuple[List[torch.Tensor], List[torch.Tensor], List[Any]]:
-        """
-        Synchronously generate text and audio tokens (thread-safe, PyTorch isolated).
-
-        Runs PyTorch operations in a thread to avoid heap corruption issues.
-
-        Args:
-            chat_state: ChatState object
-            session_state: Conversation state
-
-        Returns:
-            Tuple of (text_tokens, audio_tokens, modality_flags)
-        """
-        logger.info(f"[_generate_sync] Entering generation for session {session_state.session_id} (turn {session_state.turn_count})")
-
-        try:
-            from liquid_audio import LFMModality
-        except ImportError as e:
-            logger.error(f"Failed to import LFMModality: {e}")
-            raise
-
-        logger.info(f"[_generate_sync] Starting model generation...")
-
-        text_out: List[torch.Tensor] = []
-        audio_out: List[torch.Tensor] = []
-        modality_out: List[Any] = []
-
-        # Use generate_sequential for text-only mode (ASR)
-        # Use generate_interleaved for conversational mode with audio
-        if self.text_only:
-            logger.info("Using generate_sequential for text-only mode")
-            try:
-                for token_idx, t in enumerate(self._model.generate_sequential(
-                    **chat_state,
-                    max_new_tokens=self.max_new_tokens,
-                    text_temperature=None,  # Use defaults
-                    text_top_k=None
-                )):
-                    if token_idx % 10 == 0:  # Log every 10th token
-                        logger.info(f"Generated {token_idx} tokens...")
-                    if t.numel() == 1:
-                        # Text token
-                        text_out.append(t)
-                        modality_out.append(LFMModality.TEXT)
-                    else:
-                        # Audio token (shouldn't happen in sequential mode, but handle it)
-                        audio_out.append(t)
-                        modality_out.append(LFMModality.AUDIO_OUT)
-            except Exception as e:
-                logger.error(f"Error in generate_sequential: {e}", exc_info=True)
-                raise
-        else:
-            logger.info("Using generate_interleaved for full S2S mode")
-            try:
-                logger.info(f"Calling model.generate_interleaved with max_new_tokens={self.max_new_tokens}")
-                token_count = 0
-                for t in self._model.generate_interleaved(
-                    **chat_state,
-                    max_new_tokens=self.max_new_tokens,
-                    audio_temperature=self.audio_temperature,
-                    audio_top_k=self.audio_top_k
-                ):
-                    token_count += 1
-                    if token_count % 10 == 0:  # Log every 10th token
-                        logger.info(f"Generated {token_count} tokens (text: {len(text_out)}, audio: {len(audio_out)})")
-                    if t.numel() == 1:
-                        # Text token
-                        text_out.append(t)
-                        modality_out.append(LFMModality.TEXT)
-                    else:
-                        # Audio token
-                        audio_out.append(t)
-                        modality_out.append(LFMModality.AUDIO_OUT)
-                logger.info(f"Generation loop completed: {token_count} total tokens")
-            except Exception as e:
-                logger.error(f"Error in generate_interleaved: {e}", exc_info=True)
-                raise
-
-        return text_out, audio_out, modality_out
 
     async def process(
         self,
@@ -390,7 +334,6 @@ class LFM2AudioNode:
             # CRITICAL: Extract all data from RuntimeData BEFORE any await/yield
             # PyO3 RuntimeData objects can't be accessed after async suspension points
             logger.info("LFM2-Audio Node processing input data")
-
             # Validate input type
             if not data.is_audio():
                 logger.error(f"Invalid input type: expected RuntimeData.Audio, got {data.data_type()}")
@@ -402,32 +345,18 @@ class LFM2AudioNode:
             # Extract audio from RuntimeData using as_audio() method instead of audio_to_numpy()
             # to avoid PyO3 FFI issues in async context
             samples_bytes, input_sample_rate, channels, format_str, num_samples = data.as_audio()
+            
+            # audio_array_echo = np.frombuffer(samples_bytes, dtype=np.float32)
+            # audio_runtime_data_echo = numpy_to_audio(audio_array_echo, self.sample_rate, channels=1)
+            # yield audio_runtime_data_echo
             # Convert bytes to numpy array
             audio_array = np.frombuffer(samples_bytes, dtype=np.float32)
+
             logger.info(f"Received audio: {len(audio_array)} samples, {input_sample_rate}Hz, {channels} channels")
 
             # Resample audio if necessary (model expects 24kHz)
             if input_sample_rate != self.sample_rate:
-                logger.info(f"Resampling audio from {input_sample_rate}Hz to {self.sample_rate}Hz")
-                try:
-                    if resampy is not None:
-                        audio_array = resampy.resample(audio_array, input_sample_rate, self.sample_rate)
-                    else:
-                        # Fallback to torchaudio resampling
-                        audio_tensor = torch.from_numpy(audio_array).float()
-                        if audio_tensor.dim() == 1:
-                            audio_tensor = audio_tensor.unsqueeze(0)
-                        resampler = torchaudio.transforms.Resample(
-                            orig_freq=input_sample_rate,
-                            new_freq=self.sample_rate
-                        )
-                        audio_tensor = resampler(audio_tensor)
-                        audio_array = audio_tensor.squeeze(0).numpy()
-                    logger.info(f"Resampled to {len(audio_array)} samples")
-                except Exception as e:
-                    logger.error(f"Failed to resample audio: {e}", exc_info=True)
-                    # Continue with original sample rate as fallback
-                    logger.warning(f"Using original sample rate {input_sample_rate}Hz instead of {self.sample_rate}Hz")
+                raise ValueError(f"Input audio sample rate {input_sample_rate} does not match expected {self.sample_rate}")
 
             # Extract session_id from RuntimeData
             session_id = data.session_id if hasattr(data, 'session_id') and data.session_id else "default"
@@ -447,83 +376,337 @@ class LFM2AudioNode:
 
             # Get or create session
             logger.info(f"Retrieving or creating session: {session_id}")
-            session_state = self._get_or_create_session(session_id)
-            logger.info(f"Using session state: {session_state}")
+            session_state = await self._get_or_create_session(session_id)
+            logger.info(f"Retrieved session state for session_id: {session_id}")
+            logger.info(f"Session turn count: {session_state.turn_count}")
+
+            logger.info("Getting chat_state from session...")
             chat = session_state.chat_state
+            logger.info("Successfully got chat_state")
 
-            # Start new user turn
-            chat.new_turn("user")
+            # Start new user turn - wrap in thread for safety
+            logger.info("Starting new user turn...")
 
-            # Convert numpy array to torch tensor and add to chat
-            # LFM2-Audio expects audio as (channels, samples) tensor at 24kHz
-            wav = torch.from_numpy(audio_array).float()
-            if wav.dim() == 1:
-                wav = wav.unsqueeze(0)  # Add channel dimension
+            def add_user_turn():
+                """Add user turn with audio in thread-safe manner."""
+                logger.info("Thread: Starting user turn")
+                chat.new_turn("user")
+                logger.info("Thread: User turn started")
 
-            # Now audio_array is already resampled to self.sample_rate (24kHz)
-            chat.add_audio(wav, self.sample_rate)
-            chat.end_turn()
+                # Convert numpy array to torch tensor and add to chat
+                # LFM2-Audio expects audio as (channels, samples) tensor at 24kHz
+                wav = torch.from_numpy(audio_array).float()
+                if wav.dim() == 1:
+                    wav = wav.unsqueeze(0)  # Add channel dimension
 
-            # Start assistant turn
-            chat.new_turn("assistant")
+                # Now audio_array is already resampled to self.sample_rate (24kHz)
+                chat.add_audio(wav, self.sample_rate)
+                chat.end_turn()
+
+                # Start assistant turn
+                chat.new_turn("assistant")
+                logger.info("Thread: Assistant turn started")
+
+            # Execute in thread to ensure thread-safety with PyO3
+            await asyncio.to_thread(add_user_turn)
             session_state.turn_count += 1
+            logger.info("User and assistant turns added successfully")
 
-            logger.info(f"Starting generation for session {session_id}, turn {session_state.turn_count}")
-            # Generate response in thread (PyTorch-safe) with timeout
+            logger.info(f"Starting streaming generation for session {session_id}, turn {session_state.turn_count}")
+
+            # Stream tokens as they are generated - fully async
+            from liquid_audio import LFMModality
+            text_tokens_for_history = []
+            audio_tokens_for_history = []
+            modality_flags_for_history = []
+
+            # Create generator for streaming tokens
+            def create_generator():
+                """Create the token generator."""
+                if self.text_only:
+                    logger.info("Generating in text-only mode")
+                    return self._model.generate_sequential(
+                        **chat,
+                        max_new_tokens=self.max_new_tokens,
+                        text_temperature=None,
+                        text_top_k=None
+                    )
+                else:
+                    logger.info(f"Generating in full S2S mode with max_new_tokens={self.max_new_tokens}")
+                    return self._model.generate_interleaved(
+                        **chat,
+                        max_new_tokens=self.max_new_tokens,
+                        audio_temperature=self.audio_temperature,
+                        audio_top_k=self.audio_top_k
+                    )
+
+            # Create generator in thread
+            logger.info("Creating token generator...")
+            token_generator = await asyncio.to_thread(create_generator)
+
+            # Process and yield tokens as they're generated
+            logger.info("Starting to stream tokens...")
+            token_idx = 0
+            audio_token_batch = []  # Batch audio tokens for decoding
+            audio_batch_size = 5  # Decode 5 audio tokens at once for stability
+
+            # Helper to get next token from generator
+            def get_next_token(gen):
+                """Get next token from generator, returns None when exhausted."""
+                try:
+                    return next(gen)
+                except StopIteration:
+                    return None
+
+            while True:
+                # Get next token from generator
+                token = await asyncio.to_thread(get_next_token, token_generator)
+                if token is None:
+                    logger.info(f"Token generation complete: {token_idx} tokens processed")
+                    break
+                token_idx += 1
+                logger.info(f"Processing token {token_idx}, shape: {token.shape}, numel: {token.numel()}")
+
+                # Clone the tensor to ensure it's in the current thread's memory space
+                # This is crucial when tokens are generated in a different thread
+                token = token.clone().detach()
+
+                if token.numel() == 1:
+                    # Text token - flush any pending audio tokens FIRST before yielding text
+                    # This ensures audio tokens are always consecutive in time
+                    if audio_token_batch and len(audio_token_batch) >= 1:
+                        try:
+                            logger.info(f"Flushing {len(audio_token_batch)} pending audio tokens before text token")
+
+                            def decode_audio_batch(tokens):
+                                """Decode batch of audio tokens together."""
+                                # Stack tokens: first stack creates [batch_size, codebook_size]
+                                # Then transpose to get [codebook_size, batch_size]
+                                batch_tensor = torch.stack(tokens, dim=0).T
+                                # Reshape for Mimi: [1, codebook_size, batch_size]
+                                mimi_codes = batch_tensor.unsqueeze(0)
+
+                                with torch.no_grad():
+                                    waveform = self._processor.mimi.decode(mimi_codes)[0]
+                                return waveform.cpu().numpy()
+
+                            # Run decoding in thread
+                            audio_np = await asyncio.to_thread(decode_audio_batch, audio_token_batch)
+                            logger.info(f"Decoded audio batch: shape={audio_np.shape}, dtype={audio_np.dtype}")
+
+                            if audio_np.ndim == 2:
+                                audio_np = audio_np[0]
+
+                            logger.info(f"Yielding audio batch: {len(audio_np)} samples")
+                            # audio_runtime_data = numpy_to_audio(audio_np, self.sample_rate, channels=1)
+                            # yield audio_runtime_data
+                            logger.info(f"Successfully yielded audio batch")
+
+                            audio_token_batch.clear()
+
+                        except RuntimeError as e:
+                            if "CUDA error" in str(e) or "CUBLAS" in str(e):
+                                logger.warning(f"CUDA error decoding audio batch, skipping: {str(e)[:100]}")
+                                audio_token_batch.clear()
+                            else:
+                                logger.error(f"Failed to decode audio batch: {e}", exc_info=True)
+                                raise
+                        except Exception as e:
+                            logger.error(f"Unexpected error decoding audio batch: {e}", exc_info=True)
+                            audio_token_batch.clear()
+
+                    # Now yield the text token
+                    text_tokens_for_history.append(token)
+                    modality_flags_for_history.append(LFMModality.TEXT)
+
+                    decoded_text = self._processor.text.decode(token)
+                    if decoded_text:  # Only yield non-empty text
+                        logger.info(f"Yielding text token {token_idx}: '{decoded_text}'")
+                        yield RuntimeData.text(decoded_text)
+                        logger.info(f"Successfully yielded text token {token_idx}, continuing to next token...")
+                        await asyncio.sleep(0)  # Ensure proper async behavior
+                    else:
+                        logger.info(f"Skipping empty text token {token_idx}")
+                else:
+                    # Audio token - batch for decoding
+                    audio_tokens_for_history.append(token)
+                    modality_flags_for_history.append(LFMModality.AUDIO_OUT)
+                    audio_token_batch.append(token)
+
+                    # Decode batch when we reach batch_size
+                    should_decode_batch = len(audio_token_batch) >= audio_batch_size
+
+                    if should_decode_batch and audio_token_batch:
+                        try:
+                            # Decode regular batch (not final)
+                            tokens_to_decode = audio_token_batch
+                            logger.info(f"Decoding audio batch: {len(tokens_to_decode)} tokens")
+
+                            def decode_audio_batch(tokens):
+                                """Decode batch of audio tokens together."""
+                                if len(tokens) < 1:
+                                    raise ValueError(f"Cannot decode empty token list")
+
+                                # Stack tokens: first stack creates [batch_size, codebook_size]
+                                # Then transpose to get [codebook_size, batch_size]
+                                batch_tensor = torch.stack(tokens, dim=0).T
+                                # Reshape for Mimi: [1, codebook_size, batch_size]
+                                mimi_codes = batch_tensor.unsqueeze(0)
+
+                                with torch.no_grad():
+                                    waveform = self._processor.mimi.decode(mimi_codes)[0]
+                                return waveform.cpu().numpy()
+
+                            # Run decoding in thread
+                            audio_np = await asyncio.to_thread(decode_audio_batch, tokens_to_decode)
+                            logger.info(f"Decoded audio batch: shape={audio_np.shape}, dtype={audio_np.dtype}")
+
+                            if audio_np.ndim == 2:
+                                audio_np = audio_np[0]
+
+                            logger.info(f"Yielding audio batch: {len(audio_np)} samples")
+                            # audio_runtime_data = numpy_to_audio(audio_np, self.sample_rate, channels=1)
+                            # yield audio_runtime_data
+                            logger.info(f"Successfully yielded audio batch")
+
+                            audio_token_batch.clear()
+
+                        except RuntimeError as e:
+                            if "CUDA error" in str(e) or "CUBLAS" in str(e):
+                                logger.warning(f"CUDA error decoding audio batch, skipping: {str(e)[:100]}")
+                                audio_token_batch.clear()
+                                continue
+                            else:
+                                logger.error(f"Failed to decode audio batch: {e}", exc_info=True)
+                                raise
+                        except Exception as e:
+                            logger.error(f"Unexpected error decoding audio batch: {e}", exc_info=True)
+                            audio_token_batch.clear()
+
+            # Handle final audio batch (if any remaining tokens)
+            if audio_token_batch:
+                try:
+                    # The last audio token is an end-of-audio marker and should not be decoded
+                    # According to LiquidAI docs: "Detokenize audio, removing the last 'end-of-audio' codes"
+                    if len(audio_token_batch) == 1:
+                        logger.info(f"Final batch: Skipping decode - only end-of-audio marker")
+                    else:
+                        tokens_to_decode = audio_token_batch[:-1]
+                        logger.info(f"Final batch: Decoding {len(tokens_to_decode)} tokens (removing end-of-audio marker)")
+
+                        def decode_audio_batch(tokens):
+                            """Decode batch of audio tokens together."""
+                            batch_tensor = torch.stack(tokens, dim=0).T
+                            mimi_codes = batch_tensor.unsqueeze(0)
+                            with torch.no_grad():
+                                waveform = self._processor.mimi.decode(mimi_codes)[0]
+                            return waveform.cpu().numpy()
+
+                        # Run decoding in thread
+                        audio_np = await asyncio.to_thread(decode_audio_batch, tokens_to_decode)
+                        logger.info(f"Decoded final audio batch: shape={audio_np.shape}, dtype={audio_np.dtype}")
+
+                        if audio_np.ndim == 2:
+                            audio_np = audio_np[0]
+
+                        logger.info(f"Yielding final audio batch: {len(audio_np)} samples")
+                        # audio_runtime_data = numpy_to_audio(audio_np, self.sample_rate, channels=1)
+                        # yield audio_runtime_data
+                        logger.info(f"Successfully yielded final audio batch")
+
+                    audio_token_batch.clear()
+
+                except RuntimeError as e:
+                    if "CUDA error" in str(e) or "CUBLAS" in str(e):
+                        logger.warning(f"CUDA error decoding final audio batch: {str(e)[:100]}")
+                    else:
+                        logger.error(f"Failed to decode final audio batch: {e}", exc_info=True)
+                        raise
+                except Exception as e:
+                    logger.error(f"Unexpected error decoding final audio batch: {e}", exc_info=True)
+
+            logger.info(f"Generation completed: {len(text_tokens_for_history)} text tokens, {len(audio_tokens_for_history)} audio tokens")
+
+            # Emit completion markers
+            logger.info("Generation complete, yielding <|text_end|> and <|audio_end|>")
+            yield RuntimeData.text("<|text_end|>")
+            yield RuntimeData.text("<|audio_end|>")
+
+            # Append to chat history for context
             try:
-                text_tokens, audio_tokens, modality_flags = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self._generate_sync, chat, session_state
-                    ),
-                    timeout=30.0  # 30 second timeout
-                )
-                logger.info(f"Generation completed: {len(text_tokens)} text tokens, {len(audio_tokens)} audio tokens")
-            except asyncio.TimeoutError:
-                logger.error(f"Generation timed out after 30 seconds for session {session_id}")
-                raise RuntimeError("LFM2-Audio generation timed out")
+                if text_tokens_for_history or audio_tokens_for_history:
+                    # Prepare tensors for chat history
+                    logger.info(f"Preparing {len(text_tokens_for_history)} text tokens and {len(audio_tokens_for_history)} audio tokens for history")
 
-            # Stream text tokens
-            if text_tokens:
-                full_text = ""
-                for token in text_tokens:
-                    decoded = self._processor.text.decode(token)
-                    full_text += decoded
+                    def update_chat_history():
+                        """Update chat history in thread-safe manner."""
+                        # Stack tokens inside the thread to avoid cross-thread tensor issues
+                        if text_tokens_for_history:
+                            logger.info(f"Stacking text tokens...")
+                            text_stack = torch.stack(text_tokens_for_history, 1)
+                            logger.info(f"Stacked text tokens: {text_stack.shape}")
+                        else:
+                            text_stack = None
 
-                logger.info(f"Generated text: {full_text}")
-                yield RuntimeData.text(full_text)
+                        if audio_tokens_for_history:
+                            logger.info(f"Stacking audio tokens...")
+                            audio_stack = torch.stack(audio_tokens_for_history, 1)
+                            logger.info(f"Stacked audio tokens: {audio_stack.shape}")
+                        else:
+                            audio_stack = None
 
-            # Detokenize and stream audio
-            if audio_tokens and len(audio_tokens) > 1:
-                # Remove the last "end-of-audio" code
-                mimi_codes = torch.stack(audio_tokens[:-1], 1).unsqueeze(0)
+                        # Convert modality flags
+                        if modality_flags_for_history:
+                            # Use explicit enum values for modality flags
+                            modality_values = [int(flag.value) for flag in modality_flags_for_history]
+                            modality_tensor = torch.tensor(modality_values, dtype=torch.long).unsqueeze(0)
+                        else:
+                            modality_tensor = None
 
-                with torch.no_grad():
-                    waveform = self._processor.mimi.decode(mimi_codes)[0]
+                        logger.info("Calling chat.append()...")
+                        if self.text_only:
+                            # In text-only mode, `ChatState.append` still requires `audio_out` with
+                            # length equal to the number of codebooks. Provide an empty sequence
+                            # with shape [codebooks, 0] to represent no audio tokens.
+                            codebooks = (
+                                getattr(self._processor, "codebooks", None)
+                                or getattr(getattr(self._processor, "mimi", None), "codebooks", None)
+                            )
+                            if codebooks is None:
+                                # Fallback: infer from audio_stack if available, else default to 8
+                                codebooks = int(audio_stack.size(0)) if isinstance(audio_stack, torch.Tensor) else 8
 
-                # Convert to numpy and yield as RuntimeData
-                audio_np = waveform.cpu().numpy()
+                            # Use a LongTensor to match token id dtype expectations
+                            audio_empty = torch.empty((codebooks, 0), dtype=torch.long)
 
-                # Mimi returns audio at 24kHz
-                # If multi-channel, take first channel
-                if audio_np.ndim == 2:
-                    audio_np = audio_np[0]
+                            chat.append(
+                                text=text_stack,
+                                audio_out=audio_empty,
+                                modality_flag=modality_tensor,
+                            )
+                        else:
+                            chat.append(
+                                text=text_stack,
+                                audio_out=audio_stack,
+                                modality_flag=modality_tensor,
+                            )
+                        chat.end_turn()
+                        logger.info("Chat history updated successfully")
 
-                logger.info(f"Generated audio: {len(audio_np)} samples ({len(audio_np) / 24000:.2f}s)")
-
-                # Convert to RuntimeData.Audio
-                audio_runtime_data = numpy_to_audio(audio_np, 24000, channels=1)
-                logger.info(f"Yielding audio RuntimeData with {len(audio_np)} samples")
-                yield audio_runtime_data
-
-            # Append to chat history
-            if text_tokens or audio_tokens:
-                from liquid_audio import LFMModality
-                chat.append(
-                    text=torch.stack(text_tokens, 1) if text_tokens else None,
-                    audio_out=torch.stack(audio_tokens, 1) if audio_tokens else None,
-                    modality_flag=torch.tensor(modality_flags) if modality_flags else None,
-                )
-            chat.end_turn()
+                    # Run in thread to ensure thread-safety with PyO3
+                    logger.info("Updating chat history in thread...")
+                    await asyncio.to_thread(update_chat_history)
+                    logger.info("Chat history update completed")
+                else:
+                    logger.info("No tokens to append, ending turn...")
+                    chat.end_turn()
+            except Exception as e:
+                logger.error(f"Failed to append to chat history: {e}", exc_info=True)
+                # Even if history append fails, we've already yielded all the data
+                try:
+                    chat.end_turn()
+                except:
+                    pass
 
             # If we haven't yielded anything yet, yield an empty audio response to prevent "No output" error
             # This ensures the async generator always yields at least one value
@@ -585,11 +768,11 @@ async def main():
     # Create speech-to-speech node
     s2s_node = LFM2AudioNode(
         node_id="lfm2_audio_1",
-        system_prompt="You are a helpful AI assistant. Respond naturally to questions.",
+        system_prompt="Respond with interleaved text and audio.",
         device="cpu",  # Use "cuda" if available
         audio_temperature=1.0,
         audio_top_k=4,
-        max_new_tokens=512,
+        max_new_tokens=4096,
         sample_rate=24000,
     )
 

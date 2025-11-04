@@ -1,0 +1,1396 @@
+warning: remotemedia-runtime@0.2.0: Successfully compiled protocol buffers
+warning: unused imports: `Pod` and `Zeroable`
+ --> src\audio\format.rs:8:16
+  |
+8 | use bytemuck::{Pod, Zeroable};
+  |                ^^^  ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `BinaryBuffer`, `JsonData`, and `TextBuffer`
+ --> src\data\runtime_data.rs:4:77
+  |
+4 | use crate::grpc_service::generated::{AudioBuffer, VideoFrame, TensorBuffer, JsonData, TextBuffer, BinaryBuffer, DataTypeHint};
+  |                                                                             ^^^^^^^^  ^^^^^^^^^^  ^^^^^^^^^^^^
+
+warning: unused imports: `AudioBuffer`, `TensorBuffer`, and `VideoFrame`
+ --> src\data\conversions.rs:6:63
+  |
+6 | use crate::grpc_service::generated::{DataBuffer, data_buffer, AudioBuffer, VideoFrame, TensorBuffer, JsonData, TextBuffer, BinaryBuffer};
+  |                                                               ^^^^^^^^^^^  ^^^^^^^^^^  ^^^^^^^^^^^^
+
+warning: unused import: `crate::executor::error::ExecutionErrorExt`
+ --> src\executor\graph.rs:6:5
+  |
+6 | use crate::executor::error::ExecutionErrorExt;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unexpected `cfg` condition value: `python`
+   --> src\executor\node_executor.rs:109:11
+    |
+109 |     #[cfg(feature = "python")]
+    |           ^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `default`, `grpc-transport`, `hyper`, `native-numpy`, `numpy`, `ort`, `prometheus`, `prost`, `prost-types`, `pyo3-async-runtimes`, `python-async`, `rodio`, `rwhisper`, `silero-vad`, `tokio-stream`, `tonic`, `tonic-prost`, `tonic-web`, `tower`, `tower-http`, `wasm`, `wasmtime`, `wasmtime-runtime`, `wasmtime-wasi`, `webrtc`, `webrtc-transport`, `whisper`, `whisper-rs`, and `whisper-wasm`
+    = help: consider adding `python` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+    = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: unexpected `cfg` condition value: `python`
+   --> src\executor\node_executor.rs:118:19
+    |
+118 |             #[cfg(feature = "python")]
+    |                   ^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `default`, `grpc-transport`, `hyper`, `native-numpy`, `numpy`, `ort`, `prometheus`, `prost`, `prost-types`, `pyo3-async-runtimes`, `python-async`, `rodio`, `rwhisper`, `silero-vad`, `tokio-stream`, `tonic`, `tonic-prost`, `tonic-web`, `tower`, `tower-http`, `wasm`, `wasmtime`, `wasmtime-runtime`, `wasmtime-wasi`, `webrtc`, `webrtc-transport`, `whisper`, `whisper-rs`, and `whisper-wasm`
+    = help: consider adding `python` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `python`
+   --> src\executor\node_executor.rs:127:15
+    |
+127 |         #[cfg(feature = "python")]
+    |               ^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `default`, `grpc-transport`, `hyper`, `native-numpy`, `numpy`, `ort`, `prometheus`, `prost`, `prost-types`, `pyo3-async-runtimes`, `python-async`, `rodio`, `rwhisper`, `silero-vad`, `tokio-stream`, `tonic`, `tonic-prost`, `tonic-web`, `tower`, `tower-http`, `wasm`, `wasmtime`, `wasmtime-runtime`, `wasmtime-wasi`, `webrtc`, `webrtc-transport`, `whisper`, `whisper-rs`, and `whisper-wasm`
+    = help: consider adding `python` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `python`
+   --> src\executor\node_executor.rs:135:19
+    |
+135 |         #[cfg(not(feature = "python"))]
+    |                   ^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `default`, `grpc-transport`, `hyper`, `native-numpy`, `numpy`, `ort`, `prometheus`, `prost`, `prost-types`, `pyo3-async-runtimes`, `python-async`, `rodio`, `rwhisper`, `silero-vad`, `tokio-stream`, `tonic`, `tonic-prost`, `tonic-web`, `tower`, `tower-http`, `wasm`, `wasmtime`, `wasmtime-runtime`, `wasmtime-wasi`, `webrtc`, `webrtc-transport`, `whisper`, `whisper-rs`, and `whisper-wasm`
+    = help: consider adding `python` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `python`
+   --> src\executor\node_executor.rs:142:15
+    |
+142 |         #[cfg(feature = "python")]
+    |               ^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `default`, `grpc-transport`, `hyper`, `native-numpy`, `numpy`, `ort`, `prometheus`, `prost`, `prost-types`, `pyo3-async-runtimes`, `python-async`, `rodio`, `rwhisper`, `silero-vad`, `tokio-stream`, `tonic`, `tonic-prost`, `tonic-web`, `tower`, `tower-http`, `wasm`, `wasmtime`, `wasmtime-runtime`, `wasmtime-wasi`, `webrtc`, `webrtc-transport`, `whisper`, `whisper-rs`, and `whisper-wasm`
+    = help: consider adding `python` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `python`
+   --> src\executor\node_executor.rs:151:19
+    |
+151 |         #[cfg(not(feature = "python"))]
+    |                   ^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `default`, `grpc-transport`, `hyper`, `native-numpy`, `numpy`, `ort`, `prometheus`, `prost`, `prost-types`, `pyo3-async-runtimes`, `python-async`, `rodio`, `rwhisper`, `silero-vad`, `tokio-stream`, `tonic`, `tonic-prost`, `tonic-web`, `tower`, `tower-http`, `wasm`, `wasmtime`, `wasmtime-runtime`, `wasmtime-wasi`, `webrtc`, `webrtc-transport`, `whisper`, `whisper-rs`, and `whisper-wasm`
+    = help: consider adding `python` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `python`
+   --> src\executor\node_executor.rs:158:15
+    |
+158 |         #[cfg(feature = "python")]
+    |               ^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `default`, `grpc-transport`, `hyper`, `native-numpy`, `numpy`, `ort`, `prometheus`, `prost`, `prost-types`, `pyo3-async-runtimes`, `python-async`, `rodio`, `rwhisper`, `silero-vad`, `tokio-stream`, `tonic`, `tonic-prost`, `tonic-web`, `tower`, `tower-http`, `wasm`, `wasmtime`, `wasmtime-runtime`, `wasmtime-wasi`, `webrtc`, `webrtc-transport`, `whisper`, `whisper-rs`, and `whisper-wasm`
+    = help: consider adding `python` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `python`
+   --> src\executor\node_executor.rs:167:19
+    |
+167 |         #[cfg(not(feature = "python"))]
+    |                   ^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `default`, `grpc-transport`, `hyper`, `native-numpy`, `numpy`, `ort`, `prometheus`, `prost`, `prost-types`, `pyo3-async-runtimes`, `python-async`, `rodio`, `rwhisper`, `silero-vad`, `tokio-stream`, `tonic`, `tonic-prost`, `tonic-web`, `tower`, `tower-http`, `wasm`, `wasmtime`, `wasmtime-runtime`, `wasmtime-wasi`, `webrtc`, `webrtc-transport`, `whisper`, `whisper-rs`, and `whisper-wasm`
+    = help: consider adding `python` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `python`
+   --> src\executor\node_executor.rs:174:15
+    |
+174 |         #[cfg(feature = "python")]
+    |               ^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `default`, `grpc-transport`, `hyper`, `native-numpy`, `numpy`, `ort`, `prometheus`, `prost`, `prost-types`, `pyo3-async-runtimes`, `python-async`, `rodio`, `rwhisper`, `silero-vad`, `tokio-stream`, `tonic`, `tonic-prost`, `tonic-web`, `tower`, `tower-http`, `wasm`, `wasmtime`, `wasmtime-runtime`, `wasmtime-wasi`, `webrtc`, `webrtc-transport`, `whisper`, `whisper-rs`, and `whisper-wasm`
+    = help: consider adding `python` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `python`
+   --> src\executor\node_executor.rs:182:19
+    |
+182 |         #[cfg(not(feature = "python"))]
+    |                   ^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `default`, `grpc-transport`, `hyper`, `native-numpy`, `numpy`, `ort`, `prometheus`, `prost`, `prost-types`, `pyo3-async-runtimes`, `python-async`, `rodio`, `rwhisper`, `silero-vad`, `tokio-stream`, `tonic`, `tonic-prost`, `tonic-web`, `tower`, `tower-http`, `wasm`, `wasmtime`, `wasmtime-runtime`, `wasmtime-wasi`, `webrtc`, `webrtc-transport`, `whisper`, `whisper-rs`, and `whisper-wasm`
+    = help: consider adding `python` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unused import: `AudioBuffer`
+ --> src\nodes\audio\fast.rs:3:20
+  |
+3 | use crate::audio::{AudioBuffer, AudioData};
+  |                    ^^^^^^^^^^^
+
+warning: unused import: `AudioFormat`
+ --> src\nodes\audio\resample_fast.rs:1:52
+  |
+1 | use crate::audio::buffer::{AudioBuffer, AudioData, AudioFormat};
+  |                                                    ^^^^^^^^^^^
+
+warning: unused imports: `AudioBuffer` and `AudioFormat`
+ --> src\nodes\audio\vad_fast.rs:1:28
+  |
+1 | use crate::audio::buffer::{AudioBuffer, AudioData, AudioFormat};
+  |                            ^^^^^^^^^^^             ^^^^^^^^^^^
+
+warning: unused import: `Value`
+  --> src\nodes\calculator.rs:16:24
+   |
+16 | use serde_json::{json, Value};
+   |                        ^^^^^
+
+warning: unused import: `pyo3::Python`
+ --> src\nodes\python_streaming.rs:9:5
+  |
+9 | use pyo3::Python;
+  |     ^^^^^^^^^^^^
+
+warning: unused import: `NodeContext`
+ --> src\nodes\registry.rs:7:38
+  |
+7 | use crate::executor::node_executor::{NodeContext, NodeExecutor};
+  |                                      ^^^^^^^^^^^
+
+warning: unused imports: `AudioBuffer` and `TensorBuffer`
+  --> src\nodes\silero_vad.rs:15:38
+   |
+15 | use crate::grpc_service::generated::{AudioBuffer, TensorBuffer};
+   |                                      ^^^^^^^^^^^  ^^^^^^^^^^^^
+
+warning: unused imports: `TensorBuffer` and `VideoFrame`
+ --> src\python\runtime_data_py.rs:7:51
+  |
+7 | use crate::grpc_service::generated::{AudioBuffer, VideoFrame, TensorBuffer};
+  |                                                   ^^^^^^^^^^  ^^^^^^^^^^^^
+
+warning: unused imports: `PyDict` and `PyList`
+  --> src\python\runtime_data_py.rs:10:28
+   |
+10 | use pyo3::types::{PyBytes, PyDict, PyList};
+   |                            ^^^^^^  ^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> src\python\runtime_data_py.rs:11:5
+   |
+11 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> src\python\numpy_marshal.rs:22:5
+   |
+22 | use std::sync::Arc;
+   |     ^^^^^^^^^^^^^^
+
+warning: unused import: `PyRuntimeData`
+  --> src\python\cpython_executor.rs:10:74
+   |
+10 | use crate::python::{runtime_data_to_py, runtime_data_to_py_with_session, PyRuntimeData};
+   |                                                                          ^^^^^^^^^^^^^
+
+warning: unused import: `pyo3::types::PyDict`
+ --> src\python\cpython_executor\cpython_async.rs:6:5
+  |
+6 | use pyo3::types::PyDict;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `serde_json::Value`
+ --> src\python\cpython_executor\cpython_async.rs:7:5
+  |
+7 | use serde_json::Value;
+  |     ^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Error` and `Result`
+ --> src\python\cpython_executor\cpython_async.rs:9:13
+  |
+9 | use crate::{Error, Result};
+  |             ^^^^^  ^^^^^^
+
+warning: unused imports: `Connection as ProtoConnection`, `NodeMetrics as ProtoNodeMetrics`, `NodeResult`, and `NodeStatus`
+  --> src\grpc_service\execution.rs:15:9
+   |
+15 |         NodeMetrics as ProtoNodeMetrics, NodeResult, NodeStatus,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^  ^^^^^^^^^^
+16 |         PipelineManifest as ProtoPipelineManifest, Connection as ProtoConnection,
+   |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ExecutorConfig`
+  --> src\grpc_service\execution.rs:26:26
+   |
+26 |     executor::{Executor, ExecutorConfig},
+   |                          ^^^^^^^^^^^^^^
+
+warning: unused import: `warn`
+  --> src\grpc_service\server.rs:22:21
+   |
+22 | use tracing::{info, warn};
+   |                     ^^^^
+
+warning: unused import: `crate::data::convert_runtime_to_proto_data`
+    --> src\grpc_service\streaming.rs:1201:13
+     |
+1201 |         use crate::data::convert_runtime_to_proto_data;
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated function `pyo3::prepare_freethreaded_python`: use `Python::initialize` instead
+   --> src\executor\mod.rs:311:19
+    |
+311 |             pyo3::prepare_freethreaded_python();
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated function `base64::encode`: Use Engine::encode
+   --> src\python\marshal.rs:173:34
+    |
+173 |     let base64_encoded = base64::encode(bytes);
+    |                                  ^^^^^^
+
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> src\python\marshal.rs:285:49
+    |
+285 |                     let pickled_bytes = base64::decode(base64_data).map_err(|e| {
+    |                                                 ^^^^^^
+
+warning: use of deprecated type alias `pyo3::PyObject`: use `Py<PyAny>` instead
+   --> src\python\runtime_data_py.rs:222:65
+    |
+222 | fn audio_to_numpy(py: Python, data: &PyRuntimeData) -> PyResult<PyObject> {
+    |                                                                 ^^^^^^^^
+
+warning: use of deprecated type alias `pyo3::PyObject`: use `Py<PyAny>` instead
+   --> src\python\runtime_data_py.rs:131:54
+    |
+131 |     fn as_json(&self, py: Python) -> PyResult<Option<PyObject>> {
+    |                                                      ^^^^^^^^
+
+warning: use of deprecated type alias `pyo3::PyObject`: use `Py<PyAny>` instead
+   --> src\python\runtime_data_py.rs:146:47
+    |
+146 |     fn as_audio(&self, py: Python) -> Option<(PyObject, u32, u32, String, u64)> {
+    |                                               ^^^^^^^^
+
+warning: use of deprecated type alias `pyo3::PyObject`: use `Py<PyAny>` instead
+   --> src\python\runtime_data_py.rs:169:47
+    |
+169 |     fn as_binary(&self, py: Python) -> Option<PyObject> {
+    |                                               ^^^^^^^^
+
+warning: value assigned to `last_error` is never read
+   --> src\executor\retry.rs:185:13
+    |
+185 |     let mut last_error: Option<Error> = None;
+    |             ^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` on by default
+
+warning: use of deprecated associated function `pyo3::Python::<'_>::with_gil`: use `Python::attach` instead
+   --> src\python\cpython_executor.rs:155:21
+    |
+155 |             Python::with_gil(|py| -> Result<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
+    |                     ^^^^^^^^
+
+warning: use of deprecated associated function `pyo3::Python::<'_>::with_gil`: use `Python::attach` instead
+   --> src\python\cpython_executor.rs:213:39
+    |
+213 |         let anext_result_py = Python::with_gil(|py| -> Result<Py<PyAny>> {
+    |                                       ^^^^^^^^
+
+warning: use of deprecated method `pyo3::Python::<'py>::allow_threads`: use `Python::detach` instead
+   --> src\python\cpython_executor.rs:218:35
+    |
+218 |             let anext_result = py.allow_threads(move || {
+    |                                   ^^^^^^^^^^^^^
+
+warning: use of deprecated associated function `pyo3::Python::<'_>::with_gil`: use `Python::attach` instead
+   --> src\python\cpython_executor.rs:219:25
+    |
+219 |                 Python::with_gil(|py| -> Result<Py<PyAny>> {
+    |                         ^^^^^^^^
+
+warning: use of deprecated associated function `pyo3::Python::<'_>::with_gil`: use `Python::attach` instead
+   --> src\python\cpython_executor.rs:235:17
+    |
+235 |         Python::with_gil(|py| -> Result<RuntimeData> {
+    |                 ^^^^^^^^
+
+warning: unused variable: `process_result`
+   --> src\python\cpython_executor.rs:214:17
+    |
+214 |             let process_result = process_result_py.bind(py);
+    |                 ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_process_result`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `event_loop`
+   --> src\python\cpython_executor.rs:215:17
+    |
+215 |             let event_loop = event_loop_py.bind(py);
+    |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_event_loop`
+
+warning: unused variable: `get_next_fn`
+   --> src\python\cpython_executor.rs:216:17
+    |
+216 |             let get_next_fn = get_next_fn_py.bind(py);
+    |                 ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_get_next_fn`
+
+warning: use of deprecated associated function `pyo3::Python::<'_>::with_gil`: use `Python::attach` instead
+   --> src\python\cpython_executor.rs:266:21
+    |
+266 |             Python::with_gil(|py| -> Result<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
+    |                     ^^^^^^^^
+
+warning: use of deprecated associated function `pyo3::Python::<'_>::with_gil`: use `Python::attach` instead
+   --> src\python\cpython_executor.rs:334:25
+    |
+334 |                 Python::with_gil(|py| -> Result<(bool, Option<RuntimeData>)> {
+    |                         ^^^^^^^^
+
+warning: unused variable: `data_type_clone`
+    --> src\grpc_service\streaming.rs:1216:13
+     |
+1216 |         let data_type_clone = data_type.clone();
+     |             ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_data_type_clone`
+
+warning: use of deprecated associated function `pyo3::Python::<'_>::with_gil`: use `Python::attach` instead
+  --> src\executor\mod.rs:70:17
+   |
+70 |         Python::with_gil(|py| objects.get(id).map(|obj| obj.clone_ref(py)))
+   |                 ^^^^^^^^
+
+warning: use of deprecated associated function `pyo3::Python::<'_>::with_gil`: use `Python::attach` instead
+  --> src\python\ffi.rs:55:17
+   |
+55 |         Python::with_gil(|py| {
+   |                 ^^^^^^^^
+
+warning: use of deprecated associated function `pyo3::Python::<'_>::with_gil`: use `Python::attach` instead
+   --> src\python\ffi.rs:129:17
+    |
+129 |         Python::with_gil(|py| {
+    |                 ^^^^^^^^
+
+warning: use of deprecated associated function `pyo3::Python::<'_>::with_gil`: use `Python::attach` instead
+   --> src\python\cpython_executor.rs:409:32
+    |
+409 |         let instance = Python::with_gil(|py| -> PyResult<Py<PyAny>> {
+    |                                ^^^^^^^^
+
+warning: use of deprecated associated function `pyo3::Python::<'_>::with_gil`: use `Python::attach` instead
+   --> src\python\cpython_executor.rs:454:17
+    |
+454 |         Python::with_gil(|py| -> PyResult<Vec<Value>> {
+    |                 ^^^^^^^^
+
+warning: use of deprecated associated function `pyo3::Python::<'_>::with_gil`: use `Python::attach` instead
+   --> src\python\cpython_executor.rs:523:21
+    |
+523 |             Python::with_gil(|py| -> PyResult<()> {
+    |                     ^^^^^^^^
+
+warning: unused variable: `ctx`
+   --> src\executor\node_executor.rs:126:36
+    |
+126 |     async fn initialize(&mut self, ctx: &NodeContext) -> Result<()> {
+    |                                    ^^^ help: if this is intentional, prefix it with an underscore: `_ctx`
+
+warning: unused variable: `input`
+   --> src\executor\node_executor.rs:141:33
+    |
+141 |     async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
+    |                                 ^^^^^ help: if this is intentional, prefix it with an underscore: `_input`
+
+warning: value assigned to `last_error` is never read
+   --> src\executor\retry.rs:238:13
+    |
+238 |     let mut last_error: Option<Error> = None;
+    |             ^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `arr`
+    --> src\executor\mod.rs:1424:21
+     |
+1424 |         if let Some(arr) = value.as_array() {
+     |                     ^^^ help: if this is intentional, prefix it with an underscore: `_arr`
+
+warning: unused variable: `is_speech`
+  --> src\nodes\audio\vad_fast.rs:79:13
+   |
+79 |         let is_speech = speech_frames > 0;
+   |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_is_speech`
+
+warning: unused variable: `idx`
+   --> src\nodes\registry.rs:207:14
+    |
+207 |         for (idx, registry) in self.registries.iter().enumerate() {
+    |              ^^^ help: if this is intentional, prefix it with an underscore: `_idx`
+
+warning: unused variable: `node_id`
+   --> src\nodes\streaming_registry.rs:105:22
+    |
+105 |     fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+    |                      ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_id`
+
+warning: unused variable: `node_id`
+   --> src\nodes\streaming_registry.rs:129:22
+    |
+129 |     fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+    |                      ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_id`
+
+warning: unused variable: `node_id`
+   --> src\nodes\streaming_registry.rs:177:22
+    |
+177 |     fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+    |                      ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_id`
+
+warning: unused variable: `duration_us`
+  --> src\nodes\sync_av.rs:67:21
+   |
+67 |                 let duration_us = (buf.num_samples as f64 / buf.sample_rate as f64 * 1_000_000.0) as i64;
+   |                     ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_duration_us`
+
+warning: unused variable: `data`
+   --> src\nodes\silero_vad.rs:216:29
+    |
+216 |     async fn process(&self, data: RuntimeData) -> Result<RuntimeData> {
+    |                             ^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+
+warning: unused variable: `data`
+   --> src\nodes\audio_buffer_accumulator.rs:303:29
+    |
+303 |     async fn process(&self, data: RuntimeData) -> Result<RuntimeData> {
+    |                             ^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+
+warning: unused variable: `asyncio`
+  --> src\python\cpython_executor\cpython_async.rs:27:13
+   |
+27 |         let asyncio = py.import("asyncio")?;
+   |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_asyncio`
+
+warning: unused variable: `event_loop`
+   --> src\python\cpython_executor.rs:119:17
+    |
+119 |             let event_loop = cpython_async::call_initialize_async(py, instance)?;
+    |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_event_loop`
+
+warning: unused variable: `py`
+   --> src\python\cpython_executor.rs:130:28
+    |
+130 |     fn call_cleanup(&self, py: Python, instance: &Bound<'_, PyAny>) -> PyResult<()> {
+    |                            ^^ help: if this is intentional, prefix it with an underscore: `_py`
+
+warning: unused variable: `method`
+   --> src\grpc_service\metrics.rs:219:40
+    |
+219 |     pub fn record_request_start(&self, method: &str) -> std::time::Instant {
+    |                                        ^^^^^^ help: if this is intentional, prefix it with an underscore: `_method`
+
+warning: fields `config` and `runtime_selector` are never read
+   --> src\executor\mod.rs:263:5
+    |
+261 | pub struct Executor {
+    |            -------- fields in this struct
+262 |     /// Execution configuration
+263 |     config: ExecutorConfig,
+    |     ^^^^^^
+...
+272 |     runtime_selector: RuntimeSelector,
+    |     ^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: method `is_streaming_output` is never used
+    --> src\executor\mod.rs:1421:8
+     |
+300  | impl Executor {
+     | ------------- method in this implementation
+...
+1421 |     fn is_streaming_output(&self, value: &Value) -> bool {
+     |        ^^^^^^^^^^^^^^^^^^^
+
+warning: field `node_type` is never read
+   --> src\executor\node_executor.rs:108:5
+    |
+107 | pub struct PythonNodeExecutor {
+    |            ------------------ field in this struct
+108 |     node_type: String,
+    |     ^^^^^^^^^
+
+warning: fields `min_speech_duration_ms` and `speech_pad_ms` are never read
+  --> src\nodes\silero_vad.rs:55:5
+   |
+49 | pub struct SileroVADNode {
+   |            ------------- fields in this struct
+...
+55 |     min_speech_duration_ms: u32,
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+...
+59 |     speech_pad_ms: u32,
+   |     ^^^^^^^^^^^^^
+
+warning: method `get_next` is never used
+  --> src\python\cpython_executor\cpython_async.rs:90:12
+   |
+67 | impl AsyncGenerator {
+   | ------------------- method in this implementation
+...
+90 |     pub fn get_next<'py>(
+   |            ^^^^^^^^
+
+warning: fields `queue` and `finished` are never read
+  --> src\python\cpython_executor\cpython_streaming.rs:10:5
+   |
+9  | pub struct StreamingQueue {
+   |            -------------- fields in this struct
+10 |     queue: Py<PyAny>,
+   |     ^^^^^
+11 |     finished: bool,
+   |     ^^^^^^^^
+
+warning: associated items `new`, `get_stream`, `put`, `finish`, and `is_finished` are never used
+  --> src\python\cpython_executor\cpython_streaming.rs:16:12
+   |
+14 | impl StreamingQueue {
+   | ------------------- associated items in this implementation
+15 |     /// Create a new streaming queue
+16 |     pub fn new(py: Python) -> PyResult<Self> {
+   |            ^^^
+...
+66 |     pub fn get_stream<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+   |            ^^^^^^^^^^
+...
+72 |     pub fn put(&self, py: Python, item: &Bound<'_, PyAny>) -> PyResult<()> {
+   |            ^^^
+...
+85 |     pub fn finish(&mut self, py: Python) -> PyResult<()> {
+   |            ^^^^^^
+...
+97 |     pub fn is_finished(&self) -> bool {
+   |            ^^^^^^^^^^^
+
+warning: field `limits` is never read
+  --> src\grpc_service\execution.rs:38:5
+   |
+36 | pub struct ExecutionServiceImpl {
+   |            -------------------- field in this struct
+37 |     auth_config: AuthConfig,
+38 |     limits: ResourceLimits,
+   |     ^^^^^^
+
+warning: methods `convert_audio_buffer` and `serialize_audio_buffer` are never used
+   --> src\grpc_service\execution.rs:110:8
+    |
+45  | impl ExecutionServiceImpl {
+    | ------------------------- methods in this implementation
+...
+110 |     fn convert_audio_buffer(
+    |        ^^^^^^^^^^^^^^^^^^^^
+...
+177 |     fn serialize_audio_buffer(&self, buffer: &AudioBuffer) -> ProtoAudioBuffer {
+    |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `MAX_BUFFER_CHUNKS` is never used
+  --> src\grpc_service\streaming.rs:46:7
+   |
+46 | const MAX_BUFFER_CHUNKS: usize = 10;
+   |       ^^^^^^^^^^^^^^^^^
+
+warning: constant `SESSION_TIMEOUT_SECS` is never used
+  --> src\grpc_service\streaming.rs:49:7
+   |
+49 | const SESSION_TIMEOUT_SECS: u64 = 300; // 5 minutes
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+warning: field `recommended_chunk_size` is never read
+   --> src\grpc_service\streaming.rs:183:5
+    |
+145 | struct StreamSession {
+    |        ------------- field in this struct
+...
+183 |     recommended_chunk_size: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `is_timed_out` and `cached_nodes_count` are never used
+   --> src\grpc_service\streaming.rs:227:8
+    |
+197 | impl StreamSession {
+    | ------------------ methods in this implementation
+...
+227 |     fn is_timed_out(&self) -> bool {
+    |        ^^^^^^^^^^^^
+...
+232 |     fn cached_nodes_count(&self) -> usize {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `handle_data_chunk` is never used
+   --> src\grpc_service\streaming.rs:722:10
+    |
+722 | async fn handle_data_chunk(
+    |          ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a module
+  --> src\lib.rs:17:1
+   |
+17 | pub mod data;
+   | ^^^^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> src\lib.rs:11:9
+   |
+11 | #![warn(missing_docs)]
+   |         ^^^^^^^^^^^^
+
+warning: missing documentation for a module
+ --> src\data\mod.rs:9:1
+  |
+9 | pub mod runtime_data;
+  | ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a module
+  --> src\data\mod.rs:10:1
+   |
+10 | pub mod conversions;
+   | ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a module
+  --> src\data\mod.rs:11:1
+   |
+11 | pub mod validation;
+   | ^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+  --> src\executor\mod.rs:47:5
+   |
+47 |     pub fn new() -> Self {
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+  --> src\executor\node_executor.rs:69:5
+   |
+69 |     async fn initialize(&mut self, params: &Value) -> Result<()>;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+  --> src\executor\node_executor.rs:70:5
+   |
+70 |     async fn process(&mut self, input: Value) -> Result<Vec<Value>>;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+  --> src\executor\node_executor.rs:71:5
+   |
+71 |     async fn cleanup(&mut self) -> Result<()>;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a module
+  --> src\nodes\mod.rs:34:1
+   |
+34 | pub mod silero_vad;
+   | ^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a module
+  --> src\nodes\mod.rs:38:1
+   |
+38 | pub mod audio_buffer_accumulator;
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src\nodes\mod.rs:135:5
+    |
+135 |     pub name: String,
+    |     ^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src\nodes\mod.rs:136:5
+    |
+136 |     pub version: String,
+    |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src\nodes\mod.rs:137:5
+    |
+137 |     pub description: Option<String>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+   --> src\nodes\mod.rs:226:5
+    |
+226 |     pub fn new() -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+   --> src\nodes\mod.rs:238:5
+    |
+238 |     pub fn new() -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+   --> src\nodes\mod.rs:356:5
+    |
+356 |     pub fn new() -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+   --> src\nodes\mod.rs:438:5
+    |
+438 |     pub fn new() -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a module
+  --> src\nodes\audio\mod.rs:13:1
+   |
+13 | pub mod resample_fast;
+   | ^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a module
+  --> src\nodes\audio\mod.rs:14:1
+   |
+14 | pub mod vad_fast;
+   | ^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a variant
+ --> src\nodes\audio\resample_fast.rs:9:5
+  |
+9 |     Low,
+  |     ^^^
+
+warning: missing documentation for a variant
+  --> src\nodes\audio\resample_fast.rs:10:5
+   |
+10 |     Medium,
+   |     ^^^^^^
+
+warning: missing documentation for a variant
+  --> src\nodes\audio\resample_fast.rs:11:5
+   |
+11 |     High,
+   |     ^^^^
+
+warning: missing documentation for an associated function
+  --> src\nodes\audio\resample_fast.rs:39:5
+   |
+39 | /     pub fn new(
+40 | |         source_rate: u32,
+41 | |         target_rate: u32,
+42 | |         quality: ResampleQuality,
+43 | |         channels: usize,
+44 | |     ) -> Result<Self> {
+   | |_____________________^
+
+warning: missing documentation for an associated function
+  --> src\nodes\audio\vad_fast.rs:13:5
+   |
+13 |     pub fn new(sample_rate: u32, frame_duration_ms: u32, energy_threshold: f32) -> Self {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src\nodes\passthrough.rs:12:5
+   |
+12 |     pub id: String,
+   |     ^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+  --> src\nodes\passthrough.rs:16:5
+   |
+16 |     pub fn new(id: String, _params: &str) -> Result<Self, Error> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+  --> src\nodes\python_streaming.rs:42:5
+   |
+42 |     pub async fn ensure_initialized(&self) -> Result<(), Error> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+  --> src\nodes\sync_av.rs:24:1
+   |
+24 | pub struct SynchronizedAudioVideoNode {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+  --> src\nodes\silero_vad.rs:70:5
+   |
+70 | /     pub fn new(
+71 | |         threshold: Option<f32>,
+72 | |         sampling_rate: Option<u32>,
+73 | |         min_speech_duration_ms: Option<u32>,
+74 | |         min_silence_duration_ms: Option<u32>,
+75 | |         speech_pad_ms: Option<u32>,
+76 | |     ) -> Self {
+   | |_____________^
+
+warning: missing documentation for an associated function
+  --> src\nodes\audio_buffer_accumulator.rs:69:5
+   |
+69 | /     pub fn new(
+70 | |         min_utterance_duration_ms: Option<u32>,
+71 | |         max_utterance_duration_ms: Option<u32>,
+72 | |     ) -> Self {
+   | |_____________^
+
+warning: missing documentation for an associated function
+  --> src\nodes\audio_chunker.rs:54:5
+   |
+54 |     pub fn new(chunk_size: Option<usize>) -> Self {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+  --> src\python\node_executor.rs:27:5
+   |
+27 |     pub fn from_source(_source: &str, class: &str, params: Value) -> Result<Self> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+  --> src\python\node_executor.rs:35:5
+   |
+35 |     pub fn get_info(&self) -> HashMap<String, String> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src\python\runtime_data_py.rs:20:5
+   |
+20 |     pub inner: RuntimeData,
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src\python\runtime_data_py.rs:22:5
+   |
+22 |     pub session_id: Option<String>,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+  --> src\python\cpython_executor.rs:40:5
+   |
+40 |     pub fn new(node_type: impl Into<String>) -> Self {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+  --> src\python\cpython_executor.rs:53:5
+   |
+53 |     pub fn new_with_cache(node_type: impl Into<String>, py_cache: PyObjectCache) -> Self {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+  --> src\python\cpython_executor.rs:66:5
+   |
+66 |     pub fn set_is_streaming_node(&mut self, is_streaming: bool) {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a module
+  --> src\grpc_service\mod.rs:40:1
+   |
+40 | pub mod generated {
+   | ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a variant
+  --> src\grpc_service\mod.rs:64:5
+   |
+64 |     Validation(String),
+   |     ^^^^^^^^^^
+
+warning: missing documentation for a variant
+  --> src\grpc_service\mod.rs:67:5
+   |
+67 |     NodeExecution { node_id: String, message: String },
+   |     ^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src\grpc_service\mod.rs:67:21
+   |
+67 |     NodeExecution { node_id: String, message: String },
+   |                     ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src\grpc_service\mod.rs:67:38
+   |
+67 |     NodeExecution { node_id: String, message: String },
+   |                                      ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a variant
+  --> src\grpc_service\mod.rs:70:5
+   |
+70 |     ResourceLimit(String),
+   |     ^^^^^^^^^^^^^
+
+warning: missing documentation for a variant
+  --> src\grpc_service\mod.rs:73:5
+   |
+73 |     Authentication(String),
+   |     ^^^^^^^^^^^^^^
+
+warning: missing documentation for a variant
+  --> src\grpc_service\mod.rs:76:5
+   |
+76 |     VersionMismatch(String),
+   |     ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a variant
+  --> src\grpc_service\mod.rs:79:5
+   |
+79 |     Internal(String),
+   |     ^^^^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\limits.rs:110:5
+    |
+110 |     MemoryExceeded { used: u64, limit: u64 },
+    |     ^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src\grpc_service\limits.rs:110:22
+    |
+110 |     MemoryExceeded { used: u64, limit: u64 },
+    |                      ^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src\grpc_service\limits.rs:110:33
+    |
+110 |     MemoryExceeded { used: u64, limit: u64 },
+    |                                 ^^^^^^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\limits.rs:113:5
+    |
+113 |     TimeoutExceeded {
+    |     ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src\grpc_service\limits.rs:114:9
+    |
+114 |         requested: Duration,
+    |         ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src\grpc_service\limits.rs:115:9
+    |
+115 |         limit: Duration,
+    |         ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\limits.rs:119:5
+    |
+119 |     AudioBufferTooLarge { samples: u64, limit: u64 },
+    |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src\grpc_service\limits.rs:119:27
+    |
+119 |     AudioBufferTooLarge { samples: u64, limit: u64 },
+    |                           ^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src\grpc_service\limits.rs:119:41
+    |
+119 |     AudioBufferTooLarge { samples: u64, limit: u64 },
+    |                                         ^^^^^^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\limits.rs:122:5
+    |
+122 |     TooManyConcurrentExecutions,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a variant
+  --> src\grpc_service\version.rs:93:5
+   |
+93 |     UnsupportedProtocol {
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src\grpc_service\version.rs:94:9
+   |
+94 |         requested: String,
+   |         ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src\grpc_service\version.rs:95:9
+   |
+95 |         supported: Vec<String>,
+   |         ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a variant
+  --> src\grpc_service\version.rs:99:5
+   |
+99 |     UnsupportedNodeType { node_type: String },
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src\grpc_service\version.rs:99:27
+   |
+99 |     UnsupportedNodeType { node_type: String },
+   |                           ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src\grpc_service\generated/remotemedia.v1.rs:235:5
+    |
+235 |     pub runtime_to_proto_ms: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\generated/remotemedia.v1.rs:350:5
+    |
+350 |     Unspecified = 0,
+    |     ^^^^^^^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\generated/remotemedia.v1.rs:389:5
+    |
+389 |     Unspecified = 0,
+    |     ^^^^^^^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\generated/remotemedia.v1.rs:432:5
+    |
+432 |     Unspecified = 0,
+    |     ^^^^^^^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\generated/remotemedia.v1.rs:491:5
+    |
+491 |     Unspecified = 0,
+    |     ^^^^^^^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\generated/remotemedia.v1.rs:492:5
+    |
+492 |     Audio = 1,
+    |     ^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\generated/remotemedia.v1.rs:493:5
+    |
+493 |     Video = 2,
+    |     ^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\generated/remotemedia.v1.rs:494:5
+    |
+494 |     Tensor = 3,
+    |     ^^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\generated/remotemedia.v1.rs:495:5
+    |
+495 |     Json = 4,
+    |     ^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\generated/remotemedia.v1.rs:496:5
+    |
+496 |     Text = 5,
+    |     ^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\generated/remotemedia.v1.rs:497:5
+    |
+497 |     Binary = 6,
+    |     ^^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\generated/remotemedia.v1.rs:540:5
+    |
+540 |     Unspecified = 0,
+    |     ^^^^^^^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\generated/remotemedia.v1.rs:600:5
+    |
+600 |     Unspecified = 0,
+    |     ^^^^^^^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\generated/remotemedia.v1.rs:637:5
+    |
+637 |     Unspecified = 0,
+    |     ^^^^^^^^^^^
+
+warning: missing documentation for a variant
+   --> src\grpc_service\generated/remotemedia.v1.rs:935:5
+    |
+935 |     Unspecified = 0,
+    |     ^^^^^^^^^^^
+
+warning: missing documentation for a variant
+    --> src\grpc_service\generated/remotemedia.v1.rs:1774:5
+     |
+1774 |     StreamErrorUnspecified = 0,
+     |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a variant
+  --> src\grpc_service\generated/remotemedia.v1.rs:35:9
+   |
+35 |         Audio(super::AudioBuffer),
+   |         ^^^^^
+
+warning: missing documentation for a variant
+  --> src\grpc_service\generated/remotemedia.v1.rs:37:9
+   |
+37 |         Video(super::VideoFrame),
+   |         ^^^^^
+
+warning: missing documentation for a variant
+  --> src\grpc_service\generated/remotemedia.v1.rs:39:9
+   |
+39 |         Tensor(super::TensorBuffer),
+   |         ^^^^^^
+
+warning: missing documentation for a variant
+  --> src\grpc_service\generated/remotemedia.v1.rs:41:9
+   |
+41 |         Json(super::JsonData),
+   |         ^^^^
+
+warning: missing documentation for a variant
+  --> src\grpc_service\generated/remotemedia.v1.rs:43:9
+   |
+43 |         Text(super::TextBuffer),
+   |         ^^^^
+
+warning: missing documentation for a variant
+  --> src\grpc_service\generated/remotemedia.v1.rs:45:9
+   |
+45 |         Binary(super::BinaryBuffer),
+   |         ^^^^^^
+
+warning: missing documentation for a variant
+    --> src\grpc_service\generated/remotemedia.v1.rs:1568:9
+     |
+1568 |         Unspecified = 0,
+     |         ^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src\error.rs:46:9
+   |
+46 |         message: String,
+   |         ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src\error.rs:47:9
+   |
+47 |         node_id: String,
+   |         ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src\error.rs:48:9
+   |
+48 |         context: String,
+   |         ^^^^^^^^^^^^^^^
+
+warning: `remotemedia-runtime` (lib) generated 176 warnings (run `cargo fix --lib -p remotemedia-runtime` to apply 23 suggestions)
+warning: unused import: `ExecutionStatus`
+  --> tests\grpc_integration\test_execution_resample.rs:10:5
+   |
+10 |     ExecutionStatus,
+   |     ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `ExecutionStatus`
+  --> tests\grpc_integration\test_execution_multi_node.rs:10:17
+   |
+10 |     Connection, ExecutionStatus, DataBuffer, data_buffer,
+   |                 ^^^^^^^^^^^^^^^
+
+warning: unused import: `ExecutionStatus`
+  --> tests\grpc_integration\test_execution_metrics.rs:12:5
+   |
+12 |     ExecutionStatus,
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused imports: `AudioBuffer` and `AudioFormat`
+  --> tests\grpc_integration\test_concurrent_memory.rs:15:72
+   |
+15 |     pipeline_execution_service_client::PipelineExecutionServiceClient, AudioFormat, ExecuteRequest,
+   |                                                                        ^^^^^^^^^^^
+16 |     AudioBuffer, DataBuffer, data_buffer, JsonData,
+   |     ^^^^^^^^^^^
+
+warning: unused imports: `ChunkResult`, `NodeManifest`, `PipelineManifest`, `StreamInit`, and `StreamRequest`
+  --> tests\grpc_integration\test_streaming_vad.rs:13:43
+   |
+13 |     AudioChunk, AudioBuffer, AudioFormat, ChunkResult,
+   |                                           ^^^^^^^^^^^
+14 |     PipelineManifest, NodeManifest, StreamInit, StreamRequest,
+   |     ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^  ^^^^^^^^^^  ^^^^^^^^^^^^^
+
+warning: unused imports: `AudioBuffer`, `AudioChunk`, `AudioFormat`, `ChunkResult`, and `StreamInit`
+  --> tests\grpc_integration\test_streaming_latency.rs:13:5
+   |
+13 |     AudioChunk, AudioBuffer, AudioFormat, ChunkResult,
+   |     ^^^^^^^^^^  ^^^^^^^^^^^  ^^^^^^^^^^^  ^^^^^^^^^^^
+14 |     PipelineManifest, NodeManifest, StreamInit,
+   |                                     ^^^^^^^^^^
+
+warning: unused import: `std::time::Instant`
+  --> tests\grpc_integration\test_streaming_latency.rs:16:5
+   |
+16 | use std::time::Instant;
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `StreamControl`, `StreamInit`, `StreamRequest`, `StreamResponse`, and `stream_response::Response`
+  --> tests\grpc_integration\test_streaming_backpressure.rs:13:43
+   |
+13 |     AudioChunk, AudioBuffer, AudioFormat, StreamControl,
+   |                                           ^^^^^^^^^^^^^
+14 |     PipelineManifest, NodeManifest, StreamInit, StreamRequest, StreamResponse,
+   |                                     ^^^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^
+15 |     stream_response::Response,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `StreamClosed`, `StreamInit`, `StreamResponse`, and `stream_response::Response`
+  --> tests\grpc_integration\test_streaming_lifecycle.rs:12:58
+   |
+12 |     AudioChunk, AudioBuffer, AudioFormat, StreamControl, StreamClosed,
+   |                                                          ^^^^^^^^^^^^
+13 |     PipelineManifest, NodeManifest, StreamInit, StreamRequest, StreamResponse,
+   |                                     ^^^^^^^^^^                 ^^^^^^^^^^^^^^
+14 |     stream_control::Command, stream_response::Response,
+   |                              ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `TextBuffer`
+  --> tests\grpc_integration\test_generic_streaming.rs:10:64
+   |
+10 |     DataBuffer, DataChunk, JsonData, VideoFrame, TensorBuffer, TextBuffer,
+   |                                                                ^^^^^^^^^^
+
+warning: unused import: `std::net::SocketAddr`
+  --> tests\grpc_integration\test_helpers.rs:11:5
+   |
+11 | use std::net::SocketAddr;
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `audio_input`
+  --> tests\grpc_integration\test_execution_resample.rs:51:9
+   |
+51 |     let audio_input = AudioBuffer {
+   |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_audio_input`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `request`
+  --> tests\grpc_integration\test_execution_resample.rs:59:9
+   |
+59 |     let request = ExecuteRequest {
+   |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_request`
+
+warning: unused variable: `request`
+  --> tests\grpc_integration\test_execution_multi_node.rs:74:9
+   |
+74 |     let request = ExecuteRequest {
+   |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_request`
+
+warning: unused variable: `audio_input`
+  --> tests\grpc_integration\test_execution_performance.rs:40:9
+   |
+40 |     let audio_input = AudioBuffer {
+   |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_audio_input`
+
+warning: unused variable: `request`
+  --> tests\grpc_integration\test_execution_performance.rs:48:9
+   |
+48 |     let request = ExecuteRequest {
+   |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_request`
+
+warning: unused variable: `audio_input`
+  --> tests\grpc_integration\test_execution_metrics.rs:41:9
+   |
+41 |     let audio_input = AudioBuffer {
+   |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_audio_input`
+
+warning: unused variable: `request`
+  --> tests\grpc_integration\test_execution_metrics.rs:49:9
+   |
+49 |     let request = ExecuteRequest {
+   |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_request`
+
+warning: unused variable: `client_id`
+   --> tests\grpc_integration\test_concurrent_load.rs:139:16
+    |
+139 |             Ok(client_id) => {
+    |                ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_client_id`
+
+warning: unused variable: `client_id`
+   --> tests\grpc_integration\test_concurrent_isolation.rs:373:20
+    |
+373 |         if let Ok((client_id, should_fail, response)) = handle.await {
+    |                    ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_client_id`
+
+warning: unused variable: `i`
+   --> tests\grpc_integration\test_concurrent_performance.rs:187:10
+    |
+187 |     for (i, &(num_concurrent, mean_latency, p50, p95, p99)) in results.iter().enumerate().skip(1) {
+    |          ^ help: if this is intentional, prefix it with an underscore: `_i`
+
+warning: unused variable: `p99`
+   --> tests\grpc_integration\test_concurrent_performance.rs:187:55
+    |
+187 |     for (i, &(num_concurrent, mean_latency, p50, p95, p99)) in results.iter().enumerate().skip(1) {
+    |                                                       ^^^ help: if this is intentional, prefix it with an underscore: `_p99`
+
+warning: unused variable: `i`
+   --> tests\grpc_integration\test_concurrent_connections.rs:232:13
+    |
+232 |         for i in 0..100 {
+    |             ^ help: if this is intentional, prefix it with an underscore: `_i`
+
+warning: unused variable: `buffer`
+   --> tests\grpc_integration\test_streaming_contract.rs:166:9
+    |
+166 |     let buffer = AudioBuffer {
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_buffer`
+
+warning: unused variable: `server_addr`
+   --> tests\grpc_integration\test_generic_streaming.rs:383:9
+    |
+383 |     let server_addr = "http://[::1]:50051";
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_server_addr`
+
+warning: unused variable: `server_addr`
+   --> tests\grpc_integration\test_generic_streaming.rs:529:9
+    |
+529 |     let server_addr = "http://[::1]:50051";
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_server_addr`
+
+warning: unused variable: `audio_ts`
+   --> tests\grpc_integration\test_generic_streaming.rs:748:16
+    |
+748 |     for (seq, (audio_ts, video_ts, description)) in test_cases.iter().enumerate() {
+    |                ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_audio_ts`
+
+warning: function `wrap_audio_in_data_buffer` is never used
+   --> tests\grpc_integration\test_helpers.rs:206:8
+    |
+206 | pub fn wrap_audio_in_data_buffer(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: `remotemedia-runtime` (test "test_grpc_service") generated 28 warnings (run `cargo fix --test "test_grpc_service"` to apply 11 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.62s
+     Running tests\test_grpc_service.rs (target\debug\deps\test_grpc_service-5a14752abb4e42ad.exe)
+
+running 1 test
+2025-11-02 01:55:40,101 - numexpr.utils - INFO - Note: NumExpr detected 32 cores but "NUMEXPR_MAX_THREADS" not set, so enforcing safe limit of 16.
+2025-11-02 01:55:40,101 - numexpr.utils - INFO - NumExpr defaulting to 16 threads.
+2025-11-02 01:55:41,739 - qwen_omni_utils.v2_5.vision_process - INFO - set VIDEO_TOTAL_PIXELS: 90316800
+[PYTHON] RangeGeneratorNode.process called with: RuntimeData(json)
+[PYTHON] Extracted JSON data: {'end': 5, 'start': 0, 'step': 1}
+[PYTHON] Generating range(0, 5, 1)
+[PYTHON] Yielding: {'value': 0}
+Range generator outputs: {"generator": DataBuffer { metadata: {}, data_type: Some(Json(JsonData { json_payload: "{\"value\":0}", schema_type: "" })) }}
+test grpc_integration::test_python_rust_mixed_pipeline::test_python_range_generator ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 66 filtered out; finished in 8.28s
+

@@ -121,6 +121,28 @@ impl StreamingNodeFactory for AudioBufferAccumulatorNodeFactory {
     }
 }
 
+struct TextCollectorNodeFactory;
+impl StreamingNodeFactory for TextCollectorNodeFactory {
+    fn create(&self, _node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::TextCollectorNode;
+
+        let split_pattern = params.get("splitPattern").or(params.get("split_pattern")).and_then(|v| v.as_str()).map(|s| s.to_string());
+        let min_length = params.get("minSentenceLength").or(params.get("min_sentence_length")).and_then(|v| v.as_u64()).map(|v| v as usize);
+        let yield_partial = params.get("yieldPartialOnEnd").or(params.get("yield_partial_on_end")).and_then(|v| v.as_bool());
+
+        let node = TextCollectorNode::new(split_pattern, min_length, yield_partial)?;
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "TextCollectorNode"
+    }
+
+    fn is_multi_output_streaming(&self) -> bool {
+        true // Can output 0 or multiple items (complete sentences)
+    }
+}
+
 #[cfg(feature = "silero-vad")]
 struct SileroVADNodeFactory;
 
@@ -170,6 +192,10 @@ impl StreamingNodeFactory for LFM2AudioNodeFactory {
     fn is_python_node(&self) -> bool {
         true
     }
+
+    fn is_multi_output_streaming(&self) -> bool {
+        true // LFM2Audio yields multiple tokens (text and audio) per input
+    }
 }
 
 struct AudioChunkerNodeFactory;
@@ -192,6 +218,59 @@ impl StreamingNodeFactory for AudioChunkerNodeFactory {
 
     fn is_multi_output_streaming(&self) -> bool {
         true // Can output 0 or multiple chunks per input
+    }
+}
+
+struct FastResampleNodeFactory;
+impl StreamingNodeFactory for FastResampleNodeFactory {
+    fn create(&self, _node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::audio::{FastResampleNode, ResampleQuality};
+        use crate::nodes::audio_resample_streaming::ResampleStreamingNode;
+
+        let source_rate = params.get("sourceRate")
+            .or(params.get("source_rate"))
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| Error::InvalidInput {
+                message: "sourceRate parameter required".into(),
+                node_id: "FastResampleNode".into(),
+                context: "create".into(),
+            })? as u32;
+
+        let target_rate = params.get("targetRate")
+            .or(params.get("target_rate"))
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| Error::InvalidInput {
+                message: "targetRate parameter required".into(),
+                node_id: "FastResampleNode".into(),
+                context: "create".into(),
+            })? as u32;
+
+        let quality_str = params.get("quality")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Medium");
+
+        let quality = match quality_str {
+            "Low" => ResampleQuality::Low,
+            "Medium" => ResampleQuality::Medium,
+            "High" => ResampleQuality::High,
+            _ => ResampleQuality::Medium,
+        };
+
+        let channels = params.get("channels")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as usize;
+
+        let inner = FastResampleNode::new(source_rate, target_rate, quality, channels)?;
+        let node = ResampleStreamingNode::new(inner, target_rate);
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "FastResampleNode"
+    }
+
+    fn is_multi_output_streaming(&self) -> bool {
+        false // Always outputs exactly 1 chunk per input
     }
 }
 
@@ -329,6 +408,10 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
     // Register audio processing nodes
     registry.register(Arc::new(AudioChunkerNodeFactory));
     registry.register(Arc::new(AudioBufferAccumulatorNodeFactory));
+    registry.register(Arc::new(FastResampleNodeFactory));
+
+    // Register text processing nodes
+    registry.register(Arc::new(TextCollectorNodeFactory));
 
     // Register Silero VAD node (Rust ONNX)
     #[cfg(feature = "silero-vad")]

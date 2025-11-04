@@ -304,11 +304,22 @@ def _get_next_with_loop(agen, loop):
     async def get_next():
         try:
             item = await anext(agen)
+            print(f"[Python] Successfully got item from generator: {type(item)}", flush=True)
             return (True, item)
         except StopAsyncIteration:
+            print("[Python] Generator exhausted (StopAsyncIteration)", flush=True)
             return (False, None)
+        except Exception as e:
+            print(f"[Python] Error getting next item: {e}", flush=True)
+            raise
 
-    return loop.run_until_complete(get_next())
+    try:
+        result = loop.run_until_complete(get_next())
+        print(f"[Python] run_until_complete returned: has_value={result[0]}", flush=True)
+        return result
+    except Exception as e:
+        print(f"[Python] Error in run_until_complete: {e}", flush=True)
+        raise
 "#,
                 )
                 .unwrap();
@@ -329,31 +340,48 @@ def _get_next_with_loop(agen, loop):
         let mut chunk_count = 0;
 
         loop {
-            tracing::debug!("Calling get_next iteration {}", chunk_count);
+            tracing::info!("Attempting to get next item, iteration {}", chunk_count + 1);
+
             let (has_value, runtime_data_opt) =
                 Python::with_gil(|py| -> Result<(bool, Option<RuntimeData>)> {
                     let process_result = process_result_py.bind(py);
                     let event_loop = event_loop_py.bind(py);
                     let get_next_fn = get_next_fn_py.bind(py);
 
+                    tracing::debug!("Calling Python get_next_fn...");
+                    // Note: passing references, not moving
                     let result_tuple = get_next_fn
-                        .call1((process_result, &event_loop))
-                        .map_err(|e| Error::Execution(format!("Failed to get next item: {}", e)))?;
+                        .call1((&process_result, &event_loop))
+                        .map_err(|e| {
+                            tracing::error!("Failed to call get_next_fn: {}", e);
+                            Error::Execution(format!("Failed to get next item: {}", e))
+                        })?;
 
+                    tracing::debug!("Got result tuple from Python");
                     let has_value: bool = result_tuple
                         .get_item(0)
                         .and_then(|v| v.extract())
-                        .map_err(|e| Error::Execution(format!("Failed to extract has_value: {}", e)))?;
+                        .map_err(|e| {
+                            tracing::error!("Failed to extract has_value: {}", e);
+                            Error::Execution(format!("Failed to extract has_value: {}", e))
+                        })?;
 
+                    tracing::debug!("has_value = {}", has_value);
                     if !has_value {
+                        tracing::info!("Python generator returned has_value=false, stopping iteration");
                         return Ok((false, None));
                     }
 
                     let py_item = result_tuple
                         .get_item(1)
-                        .map_err(|e| Error::Execution(format!("Failed to get item: {}", e)))?;
+                        .map_err(|e| {
+                            tracing::error!("Failed to get item from tuple: {}", e);
+                            Error::Execution(format!("Failed to get item: {}", e))
+                        })?;
 
+                    tracing::debug!("Extracting RuntimeData from Python item...");
                     let runtime_data = extract_runtime_data(py, &py_item)?;
+                    tracing::debug!("Successfully extracted RuntimeData");
 
                     Ok((true, Some(runtime_data)))
                 })?;
@@ -366,8 +394,19 @@ def _get_next_with_loop(agen, loop):
             if let Some(runtime_data) = runtime_data_opt {
                 chunk_count += 1;
                 tracing::info!("Yielded item {}: type={:?}", chunk_count, runtime_data.data_type());
-                callback(runtime_data)?;
+
+                // Call the callback
+                tracing::info!("📤 Calling callback for chunk {}", chunk_count);
+                let callback_result = callback(runtime_data);
+                if let Err(e) = callback_result {
+                    tracing::error!("Callback failed with error: {:?}", e);
+                    return Err(e);
+                }
+
+                tracing::info!("✅ Callback completed successfully for item {}", chunk_count);
                 tokio::task::yield_now().await;
+            } else {
+                tracing::warn!("has_value=true but runtime_data is None, this shouldn't happen");
             }
         }
 

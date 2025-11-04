@@ -87,13 +87,28 @@ fn extract_text(py_obj: &Bound<'_, PyAny>) -> Result<RuntimeData> {
 }
 
 fn extract_audio(py_obj: &Bound<'_, PyAny>) -> Result<RuntimeData> {
+    tracing::info!("extract_audio: Starting audio extraction from Python object");
+
     let audio_tuple_opt = py_obj
         .call_method0("as_audio")
-        .map_err(|e| Error::Execution(format!("Failed to call as_audio(): {}", e)))?;
+        .map_err(|e| {
+            tracing::error!("extract_audio: Failed to call as_audio(): {}", e);
+            Error::Execution(format!("Failed to call as_audio(): {}", e))
+        })?;
+
+    tracing::info!("extract_audio: as_audio() called successfully, extracting tuple...");
 
     let (samples, sample_rate, channels, format_str, num_samples): (Vec<u8>, u32, u32, String, u64) = audio_tuple_opt
         .extract()
-        .map_err(|e| Error::Execution(format!("Failed to extract audio tuple: {}", e)))?;
+        .map_err(|e| {
+            tracing::error!("extract_audio: Failed to extract audio tuple: {}", e);
+            Error::Execution(format!("Failed to extract audio tuple: {}", e))
+        })?;
+
+    tracing::info!(
+        "extract_audio: Extracted audio - {} samples, {}Hz, {} channels, format: {}, bytes: {}",
+        num_samples, sample_rate, channels, format_str, samples.len()
+    );
 
     let format = match format_str.as_str() {
         "f32" => 0,
@@ -102,15 +117,17 @@ fn extract_audio(py_obj: &Bound<'_, PyAny>) -> Result<RuntimeData> {
         _ => 0,
     };
 
-    Ok(RuntimeData::Audio(
-        crate::grpc_service::generated::AudioBuffer {
-            samples,
-            sample_rate,
-            channels,
-            format,
-            num_samples,
-        },
-    ))
+    let audio_buffer = crate::grpc_service::generated::AudioBuffer {
+        samples,
+        sample_rate,
+        channels,
+        format,
+        num_samples,
+    };
+
+    tracing::info!("extract_audio: Created AudioBuffer successfully");
+
+    Ok(RuntimeData::Audio(audio_buffer))
 }
 
 fn extract_json(py: Python, py_obj: &Bound<'_, PyAny>) -> Result<RuntimeData> {

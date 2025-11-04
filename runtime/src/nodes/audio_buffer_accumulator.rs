@@ -80,8 +80,8 @@ impl AudioBufferAccumulatorNode {
 
     fn convert_audio_to_f32(&self, audio_buf: &ProtoAudioBuffer) -> Result<Vec<f32>> {
         match audio_buf.format {
-            0 => {
-                // F32 format
+            1 => {
+                // AUDIO_FORMAT_F32
                 let sample_count = audio_buf.samples.len() / 4;
                 Ok((0..sample_count)
                     .map(|i| {
@@ -95,8 +95,8 @@ impl AudioBufferAccumulatorNode {
                     })
                     .collect())
             }
-            1 => {
-                // I16 format
+            2 => {
+                // AUDIO_FORMAT_I16
                 let sample_count = audio_buf.samples.len() / 2;
                 Ok((0..sample_count)
                     .map(|i| {
@@ -109,7 +109,7 @@ impl AudioBufferAccumulatorNode {
                     })
                     .collect())
             }
-            _ => Err(Error::Execution(format!("Unsupported audio format: {}", audio_buf.format))),
+            _ => Err(Error::Execution(format!("Unsupported audio format: {} (expected 1=F32 or 2=I16)", audio_buf.format))),
         }
     }
 
@@ -163,16 +163,24 @@ impl AudioBufferAccumulatorNode {
 
             Ok(None)
         } else {
-            // Not speaking yet, buffer this audio chunk in pending
-            tracing::debug!(
-                "[AudioBuffer] Session {}: Buffering audio chunk (not speaking yet)",
+            // Not speaking yet, buffer this audio in pending for speech padding
+            tracing::trace!(
+                "[AudioBuffer] Session {}: Buffering audio chunk in pending (not speaking yet)",
                 session_id
             );
 
-            pending
+            let pending_vec = pending
                 .entry(session_id.to_string())
-                .or_insert_with(Vec::new)
-                .push((samples, audio_buf.sample_rate, audio_buf.channels));
+                .or_insert_with(Vec::new);
+
+            pending_vec.push((samples, audio_buf.sample_rate, audio_buf.channels));
+
+            // Keep only last 20 chunks for speech padding (~640ms at 16kHz/512 samples)
+            // This prevents accumulating minutes of silence between utterances
+            let max_padding_chunks = 20;
+            if pending_vec.len() > max_padding_chunks {
+                pending_vec.drain(0..(pending_vec.len() - max_padding_chunks));
+            }
 
             Ok(None)
         }
@@ -202,10 +210,10 @@ impl AudioBufferAccumulatorNode {
             state.accumulated_samples.clear();
             state.chunks_accumulated = 0;
 
-            // Add any pending audio chunks that arrived before VAD
+            // Add pending chunks that contain the beginning of speech
             if let Some(pending_chunks) = pending.remove(session_id) {
                 tracing::info!(
-                    "[AudioBuffer] Session {}: Speech started, flushing {} pending chunks",
+                    "[AudioBuffer] Session {}: Speech started, adding {} pending chunks to buffer",
                     session_id,
                     pending_chunks.len()
                 );
@@ -217,7 +225,7 @@ impl AudioBufferAccumulatorNode {
                     state.chunks_accumulated += 1;
                 }
             } else {
-                tracing::info!("[AudioBuffer] Session {}: Speech started", session_id);
+                tracing::info!("[AudioBuffer] Session {}: Speech started, no pending chunks", session_id);
             }
 
             Ok(None)
@@ -232,7 +240,18 @@ impl AudioBufferAccumulatorNode {
                         state.chunks_accumulated
                     );
 
-                    return self.flush_buffer(state, session_id);
+                    let result = self.flush_buffer(state, session_id);
+
+                    // Clear any pending buffer to start fresh for next utterance
+                    if let Some(old_pending) = pending.remove(session_id) {
+                        tracing::info!(
+                            "[AudioBuffer] Session {}: Cleared {} pending chunks after speech end",
+                            session_id,
+                            old_pending.len()
+                        );
+                    }
+
+                    return result;
                 }
             }
 
@@ -281,7 +300,7 @@ impl AudioBufferAccumulatorNode {
             samples: sample_bytes,
             sample_rate: state.sample_rate,
             channels: state.channels,
-            format: 0, // F32
+            format: 1, // F32
             num_samples,
         };
 

@@ -1,8 +1,9 @@
 // RuntimeData enum: In-memory representation of all data types
 // Feature: 004-generic-streaming
 
-use crate::grpc_service::generated::{AudioBuffer, VideoFrame, TensorBuffer, JsonData, TextBuffer, BinaryBuffer, DataTypeHint};
+use crate::grpc_service::generated::{AudioBuffer, VideoFrame, TensorBuffer, DataTypeHint};
 use prost::bytes::Bytes;
+use std::fmt;
 
 /// Runtime representation of data after proto deserialization
 ///
@@ -120,6 +121,47 @@ impl RuntimeData {
             RuntimeData::Text(_) => "text",
             RuntimeData::Binary(_) => "binary",
         }
+    }
+}
+
+// Implement Display for RuntimeData for better logging
+impl fmt::Display for RuntimeData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RuntimeData::Audio(buf) => write!(f, "Audio({} samples @ {}Hz)", buf.num_samples, buf.sample_rate),
+            RuntimeData::Video(frame) => write!(f, "Video({}x{} frame #{})", frame.width, frame.height, frame.frame_number),
+            RuntimeData::Tensor(t) => write!(f, "Tensor(shape={:?})", t.shape),
+            RuntimeData::Json(_) => write!(f, "Json({} items)", self.item_count()),
+            RuntimeData::Text(s) => write!(f, "Text({} chars)", s.chars().count()),
+            RuntimeData::Binary(b) => write!(f, "Binary({} bytes)", b.len()),
+        }
+    }
+}
+
+// Helper trait to add Display to DataTypeHint
+pub trait DataTypeHintExt {
+    fn as_str(&self) -> &'static str;
+}
+
+impl DataTypeHintExt for DataTypeHint {
+    fn as_str(&self) -> &'static str {
+        match self {
+            DataTypeHint::Unspecified => "unspecified",
+            DataTypeHint::Audio => "audio",
+            DataTypeHint::Video => "video",
+            DataTypeHint::Tensor => "tensor",
+            DataTypeHint::Json => "json",
+            DataTypeHint::Text => "text",
+            DataTypeHint::Binary => "binary",
+            DataTypeHint::Any => "any",
+        }
+    }
+}
+
+// Implement Display for DataTypeHint
+impl fmt::Display for DataTypeHint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
 

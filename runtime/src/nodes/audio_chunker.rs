@@ -15,6 +15,7 @@ use crate::error::{Error, Result};
 use crate::nodes::AsyncStreamingNode;
 use crate::grpc_service::generated::AudioBuffer as ProtoAudioBuffer;
 use async_trait::async_trait;
+use tracing::info;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -27,7 +28,7 @@ struct ChunkerState {
     sample_rate: u32,
     /// Number of channels in buffered audio
     channels: u32,
-    /// Audio format (0 = F32)
+    /// Audio format (1 = F32, per protobuf AudioFormat enum)
     format: i32,
 }
 
@@ -37,7 +38,7 @@ impl Default for ChunkerState {
             buffer: Vec::new(),
             sample_rate: 16000,
             channels: 1,
-            format: 0,
+            format: 1, // AUDIO_FORMAT_F32
         }
     }
 }
@@ -61,8 +62,8 @@ impl AudioChunkerNode {
     /// Convert ProtoAudioBuffer samples to f32 vector
     fn samples_to_f32(&self, audio_buf: &ProtoAudioBuffer) -> Result<Vec<f32>> {
         match audio_buf.format {
-            0 => {
-                // F32 format
+            1 => {
+                // AUDIO_FORMAT_F32
                 let sample_count = audio_buf.samples.len() / 4;
                 Ok((0..sample_count)
                     .map(|i| {
@@ -76,7 +77,7 @@ impl AudioChunkerNode {
                     })
                     .collect())
             }
-            _ => Err(Error::Execution("AudioChunkerNode only supports F32 audio format".into())),
+            _ => Err(Error::Execution(format!("AudioChunkerNode only supports F32 audio format (received format {})", audio_buf.format))),
         }
     }
 

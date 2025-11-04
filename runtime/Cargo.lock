@@ -4234,6 +4234,7 @@ dependencies = [
  "criterion",
  "futures",
  "hex",
+ "hound",
  "hyper 1.7.0",
  "ndarray 0.15.6",
  "num_cpus",

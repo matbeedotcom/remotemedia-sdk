@@ -21,7 +21,10 @@
     "next": "^16.0.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1",
     "uuid": "^9.0.1",
+    "ws": "^8.18.3",
     "zustand": "^4.5.0"
   },
   "devDependencies": {
@@ -30,6 +33,7 @@
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "@types/uuid": "^9.0.8",
+    "@types/ws": "^8.18.1",
     "autoprefixer": "^10.4.0",
     "eslint": "^9.38.0",
     "eslint-config-next": "^16.0.1",

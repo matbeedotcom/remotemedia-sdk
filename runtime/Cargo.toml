@@ -100,6 +100,7 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 tempfile = "3.8"
 rand = "0.8"
 chrono = "0.4"
+hound = "3.5"  # For reading WAV files in tests
 
 # Windows memory measurement for tests
 [target.'cfg(windows)'.dev-dependencies]

@@ -34,10 +34,12 @@ use crate::grpc_service::generated::{
 };
 use crate::grpc_service::metrics::ServiceMetrics;
 use crate::grpc_service::{ServiceConfig, ServiceError};
+use crate::grpc_service::session_router::{SessionRouter, DataPacket};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{Mutex, RwLock};
+use tokio::task::JoinHandle;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
@@ -142,12 +144,12 @@ impl StreamingServiceImpl {
 }
 
 /// Per-session state for streaming execution
-struct StreamSession {
+pub(crate) struct StreamSession {
     /// Unique session identifier
-    session_id: String,
+    pub(crate) session_id: String,
 
     /// Parsed pipeline manifest
-    manifest: Manifest,
+    pub(crate) manifest: Manifest,
 
     /// Expected next sequence number
     next_sequence: u64,
@@ -185,13 +187,19 @@ struct StreamSession {
     /// Node cache: reuses initialized nodes across chunks
     /// Key: node_id, Value: cached StreamingNode instance
     /// This prevents expensive re-initialization (e.g., ML model loading)
-    node_cache: HashMap<String, Arc<Box<dyn crate::nodes::StreamingNode>>>,
+    pub(crate) node_cache: HashMap<String, Arc<Box<dyn crate::nodes::StreamingNode>>>,
 
     /// Cache hits for this session (Feature 005)
-    cache_hits: u64,
+    pub(crate) cache_hits: u64,
 
     /// Cache misses for this session (Feature 005)
-    cache_misses: u64,
+    pub(crate) cache_misses: u64,
+
+    /// Input sender to feed chunks to the session router
+    pub(crate) router_input: Option<tokio::sync::mpsc::UnboundedSender<DataPacket>>,
+
+    /// Router task handle
+    pub(crate) router_task: Option<JoinHandle<()>>,
 }
 
 impl StreamSession {
@@ -215,6 +223,8 @@ impl StreamSession {
             node_cache: HashMap::new(),
             cache_hits: 0,
             cache_misses: 0,
+            router_input: None,
+            router_task: None,
         }
     }
 
@@ -423,6 +433,32 @@ async fn handle_stream(
                 session_id = new_session_id.clone();
                 session = Some(sessions.read().await.get(&session_id).unwrap().clone());
 
+                // Create and start the SessionRouter for this session
+                {
+                    let sess = session.as_ref().unwrap();
+                    let mut sess_guard = sess.lock().await;
+
+                    // Create the session router
+                    let mut router = SessionRouter::new(
+                        session_id.clone(),
+                        streaming_registry.clone(),
+                        sess.clone(),
+                        tx.clone(),
+                    );
+
+                    // Get the input sender before starting
+                    let input_sender = router.get_input_sender();
+
+                    // Start the router task
+                    let task = router.start();
+                    sess_guard.router_task = Some(task);
+
+                    // Store the input sender for feeding chunks
+                    sess_guard.router_input = Some(input_sender);
+
+                    info!("🚀 SessionRouter started for session '{}'", session_id);
+                }
+
                 // Record metrics
                 metrics.record_stream_start();
 
@@ -508,43 +544,64 @@ async fn handle_stream(
                 let chunk_start = Instant::now();
                 debug!(sequence = data_chunk.sequence, "Processing DataChunk");
 
-                let result = handle_data_chunk_multi(
-                    data_chunk,
-                    sess.clone(),
-                    streaming_registry.clone(),
-                    metrics.clone(),
-                    tx.clone(),
-                    global_node_cache.clone()
-                ).await;
+                // Feed the chunk to the session router
+                let mut sess_guard = sess.lock().await;
+                if let Some(router_input) = &sess_guard.router_input {
+                    // Convert DataBuffer to RuntimeData
+                    use crate::data::convert_proto_to_runtime_data;
 
-                match result {
-                    Ok(chunk_count) => {
-                        let latency = chunk_start.elapsed().as_secs_f64();
-                        for _ in 0..chunk_count {
-                            metrics.record_chunk_processed(&session_id, latency / chunk_count as f64);
-                        }
+                    let runtime_data = if let Some(buffer) = data_chunk.buffer {
+                        convert_proto_to_runtime_data(buffer)
+                            .map_err(|e| ServiceError::Validation(format!("Data conversion failed: {}", e)))?
+                    } else if !data_chunk.named_buffers.is_empty() {
+                        // For multi-input, just use the first buffer for now
+                        let (_, buffer) = data_chunk.named_buffers.into_iter().next()
+                            .ok_or_else(|| ServiceError::Validation("No input data provided".to_string()))?;
+                        convert_proto_to_runtime_data(buffer)
+                            .map_err(|e| ServiceError::Validation(format!("Data conversion failed: {}", e)))?
+                    } else {
+                        return Err(ServiceError::Validation("DataChunk must have buffer or named_buffers".to_string()));
+                    };
 
-                        debug!("Processed DataChunk and sent {} output chunks", chunk_count);
+                    // Create DataPacket - the data should be sent TO the node specified in data_chunk.node_id
+                    // not FROM it. We use "client" as the source since this is input from the client.
+                    let packet = DataPacket {
+                        data: runtime_data,
+                        from_node: "client".to_string(),  // Data comes from client
+                        to_node: Some(data_chunk.node_id.clone()),  // Send TO this node for processing
+                        session_id: session_id.clone(),
+                        sequence: data_chunk.sequence,
+                        sub_sequence: 0,
+                    };
 
-                        // Send periodic metrics
-                        let sess_lock = sess.lock().await;
-                        if sess_lock.chunks_processed % METRICS_UPDATE_INTERVAL == 0 {
-                            let cached_nodes_count = global_node_cache.read().await.len() as u64;
-                            let stream_metrics = sess_lock.create_metrics(cached_nodes_count);
-                            drop(sess_lock);
+                    // Send to router
+                    router_input.send(packet)
+                        .map_err(|e| ServiceError::Internal(format!("Failed to send to router: {}", e)))?;
 
-                            let metrics_response = StreamResponse {
-                                response: Some(StreamResponseType::Metrics(stream_metrics)),
-                            };
-                            tx.send(Ok(metrics_response)).await.map_err(|_| {
-                                ServiceError::Internal("Failed to send StreamMetrics".to_string())
-                            })?;
-                        }
+                    sess_guard.chunks_processed += 1;
+                    drop(sess_guard);
+
+                    let latency = chunk_start.elapsed().as_secs_f64();
+                    metrics.record_chunk_processed(&session_id, latency);
+
+                    debug!("Fed DataChunk to session router");
+
+                    // Send periodic metrics
+                    let sess_lock = sess.lock().await;
+                    if sess_lock.chunks_processed % METRICS_UPDATE_INTERVAL == 0 {
+                        let cached_nodes_count = global_node_cache.read().await.len() as u64;
+                        let stream_metrics = sess_lock.create_metrics(cached_nodes_count);
+                        drop(sess_lock);
+
+                        let metrics_response = StreamResponse {
+                            response: Some(StreamResponseType::Metrics(stream_metrics)),
+                        };
+                        tx.send(Ok(metrics_response)).await.map_err(|_| {
+                            ServiceError::Internal("Failed to send StreamMetrics".to_string())
+                        })?;
                     }
-                    Err(e) => {
-                        metrics.record_chunk_error(&session_id);
-                        return Err(e);
-                    }
+                } else {
+                    return Err(ServiceError::Internal("Session router not initialized".to_string()));
                 }
             }
 
@@ -718,161 +775,6 @@ async fn handle_audio_chunk(
     Ok(result)
 }
 
-/// Handle DataChunk message (generic streaming)
-async fn handle_data_chunk(
-    chunk: crate::grpc_service::generated::DataChunk,
-    session: Arc<Mutex<StreamSession>>,
-    streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
-) -> Result<ChunkResult, ServiceError> {
-    let start_time = Instant::now();
-
-    // Get or create node from cache
-    let node: Arc<Box<dyn crate::nodes::StreamingNode>> = {
-        let mut sess = session.lock().await;
-        sess.validate_sequence(chunk.sequence)?;
-
-        // Check if node is already cached
-        if let Some(cached_node) = sess.node_cache.get(&chunk.node_id) {
-            info!("♻️ Reusing cached node: {}", chunk.node_id);
-            Arc::clone(cached_node)
-        } else {
-            // Node not cached - create new instance
-            info!("🆕 Creating new node: {}", chunk.node_id);
-
-            // Get node info from manifest
-            let node_spec = sess.manifest.nodes.iter()
-                .find(|n| n.id == chunk.node_id)
-                .ok_or_else(|| ServiceError::Validation(
-                    format!("Node '{}' not found in manifest", chunk.node_id)
-                ))?;
-
-            let node_type = node_spec.node_type.clone();
-            let params = node_spec.params.clone();
-
-            // Create the streaming node dynamically using the registry
-            let new_node = streaming_registry
-                .create_node(&node_type, chunk.node_id.clone(), &params)
-                .map_err(|e| ServiceError::Internal(format!("Failed to create node: {}", e)))?;
-
-            // Wrap in Arc and cache it
-            let arc_node = Arc::new(new_node);
-            sess.node_cache.insert(chunk.node_id.clone(), Arc::clone(&arc_node));
-
-            info!("💾 Cached node '{}' (type: {})", chunk.node_id, node_type);
-            arc_node
-        }
-    };
-
-    // Convert DataBuffer(s) to RuntimeData
-    // Support either single buffer OR named_buffers (for multi-input nodes)
-    use crate::data::convert_proto_to_runtime_data;
-
-    let (runtime_data_map, data_type, item_count) = if !chunk.named_buffers.is_empty() {
-        // Multi-input mode: convert all named buffers
-        let mut map = HashMap::new();
-        let mut total_items = 0u64;
-        let mut types = Vec::new();
-
-        for (name, data_buffer) in chunk.named_buffers {
-            let runtime_data = convert_proto_to_runtime_data(data_buffer)
-                .map_err(|e| ServiceError::Validation(format!("Data conversion failed for '{}': {}", name, e)))?;
-
-            types.push(runtime_data.type_name());
-            total_items += runtime_data.item_count() as u64;
-            map.insert(name, runtime_data);
-        }
-
-        let combined_type = if types.len() == 1 {
-            types[0].to_string()
-        } else {
-            format!("multi[{}]", types.join("+"))
-        };
-
-        (map, combined_type, total_items)
-    } else if let Some(data_buffer) = chunk.buffer {
-        // Single-input mode: use buffer field
-        let runtime_data = convert_proto_to_runtime_data(data_buffer)
-            .map_err(|e| ServiceError::Validation(format!("Data conversion failed: {}", e)))?;
-
-        let data_type = runtime_data.type_name().to_string();
-        let item_count = runtime_data.item_count() as u64;
-
-        // Wrap in map with default key for backward compatibility
-        let mut map = HashMap::new();
-        map.insert("input".to_string(), runtime_data);
-
-        (map, data_type, item_count)
-    } else {
-        return Err(ServiceError::Validation(
-            "DataChunk must have either 'buffer' or 'named_buffers' set".to_string()
-        ));
-    };
-
-    // Process data through node using the StreamingNode trait (async)
-    let output_data = if node.is_multi_input() {
-        // Multi-input node: pass entire HashMap
-        node.process_multi_async(runtime_data_map).await
-            .map_err(|e| ServiceError::Internal(format!("Node execution failed: {}", e)))?
-    } else {
-        // Single-input node: extract the first value
-        let input_data = runtime_data_map.get("input")
-            .or_else(|| runtime_data_map.values().next())
-            .ok_or_else(|| ServiceError::Validation("No input data provided".to_string()))?
-            .clone();
-
-        node.process_async(input_data).await
-            .map_err(|e| ServiceError::Internal(format!("Node execution failed: {}", e)))?
-    };
-
-    // Convert runtime data back to proto
-    use crate::data::convert_runtime_to_proto_data;
-    let mut data_outputs = HashMap::new();
-
-    // Log output data details before conversion
-    trace!("Converting RuntimeData to proto: type={}, items={}", output_data.type_name(), output_data.item_count());
-    if let crate::data::RuntimeData::Audio(ref audio_buf) = output_data {
-        trace!("Audio RuntimeData details: samples={} bytes, sample_rate={}Hz, channels={}, format={}, num_samples={}",
-            audio_buf.samples.len(), audio_buf.sample_rate, audio_buf.channels, audio_buf.format, audio_buf.num_samples);
-    }
-
-    let output_buffer = convert_runtime_to_proto_data(output_data);
-
-    // Log proto buffer size after conversion
-    use crate::grpc_service::generated::data_buffer::DataType;
-    match &output_buffer.data_type {
-        Some(DataType::Audio(audio)) => {
-            trace!("Proto AudioBuffer: samples={} bytes, sample_rate={}Hz, channels={}, format={}, num_samples={}",
-                audio.samples.len(), audio.sample_rate, audio.channels, audio.format, audio.num_samples);
-        },
-        Some(DataType::Text(text)) => {
-            trace!("Proto TextBuffer: {} bytes", text.text_data.len());
-        },
-        _ => {
-            trace!("Proto DataBuffer: non-audio/text type");
-        }
-    }
-
-    data_outputs.insert(chunk.node_id.clone(), output_buffer);
-
-    let processing_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
-
-    // Lock session again to record metrics
-    let total_items = {
-        let mut sess = session.lock().await;
-        sess.record_chunk_metrics(processing_time_ms, item_count, 0, &data_type);
-        sess.total_items
-    };
-
-    let result = ChunkResult {
-        sequence: chunk.sequence,
-        data_outputs,
-        processing_time_ms,
-        total_items_processed: total_items,
-    };
-
-    Ok(result)
-}
-
 /// Recursively route output data through the pipeline
 async fn route_to_downstream(
     output_data: RuntimeData,
@@ -883,133 +785,18 @@ async fn route_to_downstream(
     session_id: String,
     base_sequence: u64,
 ) -> Result<(), ServiceError> {
-    // Check if there's a downstream node - split into two phases to avoid borrow conflicts
-    let next_node_id = {
-        let sess = session.lock().await;
-        sess.manifest.connections.iter()
-            .find(|conn| conn.from == from_node_id)
-            .map(|conn| conn.to.clone())
-    };
+    // USE THE NEW ASYNC ROUTER FOR TRUE STREAMING
+    use crate::grpc_service::async_router::route_to_downstream_async;
 
-    let downstream_info = if let Some(next_id) = next_node_id {
-        let mut sess = session.lock().await;
-        // Get or create the node
-        if let Some(cached) = sess.node_cache.get(&next_id).cloned() {
-            sess.cache_hits += 1;
-            Some((next_id.clone(), cached))
-        } else {
-            sess.cache_misses += 1;
-            let spec = sess.manifest.nodes.iter().find(|n| n.id == next_id).cloned();
-            match spec {
-                Some(s) => {
-                    match streaming_registry.create_node(&s.node_type, next_id.clone(), &s.params) {
-                        Ok(node) => {
-                            let arc = Arc::new(node);
-                            sess.node_cache.insert(next_id.clone(), arc.clone());
-                            Some((next_id, arc))
-                        }
-                        Err(e) => {
-                            error!("Failed to create node '{}': {}", next_id, e);
-                            None
-                        }
-                    }
-                }
-                None => {
-                    error!("Node spec not found for '{}'", next_id);
-                    None
-                }
-            }
-        }
-    } else {
-        None
-    };
-
-    if let Some((next_node_id, next_node)) = downstream_info {
-        // info!("🔀 Routing: '{}' → '{}'", from_node_id, next_node_id);
-
-        // Check if downstream node is streaming
-        let is_streaming = streaming_registry.is_multi_output_streaming(&next_node.node_type());
-
-        if is_streaming {
-            // Streaming node - process and recursively route each output
-            let (output_tx, mut output_rx) = tokio::sync::mpsc::unbounded_channel();
-
-            let result = next_node.process_streaming_async(
-                output_data,
-                Some(session_id.clone()),
-                Box::new(move |out| {
-                    output_tx.send(out).map_err(|_| crate::Error::Execution("Channel send failed".into()))?;
-                    Ok(())
-                })
-            ).await;
-
-            if let Err(e) = result {
-                error!("Streaming node '{}' failed: {}", next_node_id, e);
-                return Err(ServiceError::Internal(format!("Node '{}' failed: {}", next_node_id, e)));
-            }
-
-            // Recursively route each output
-            while let Some(downstream_output) = output_rx.recv().await {
-                Box::pin(route_to_downstream(
-                    downstream_output,
-                    next_node_id.clone(),
-                    session.clone(),
-                    streaming_registry.clone(),
-                    tx.clone(),
-                    session_id.clone(),
-                    base_sequence,
-                )).await?;
-            }
-        } else {
-            // Non-streaming node - process once and recursively route
-            match next_node.process_async(output_data).await {
-                Ok(downstream_output) => {
-                    Box::pin(route_to_downstream(
-                        downstream_output,
-                        next_node_id,
-                        session.clone(),
-                        streaming_registry.clone(),
-                        tx.clone(),
-                        session_id.clone(),
-                        base_sequence,
-                    )).await?;
-                }
-                Err(e) => {
-                    error!("Non-streaming node '{}' failed: {}", next_node_id, e);
-                    return Err(ServiceError::Internal(format!("Node '{}' failed: {}", next_node_id, e)));
-                }
-            }
-        }
-    } else {
-        // No downstream node - this is a terminal node, send to client
-        info!("📤 Terminal node '{}' - sending to client (type: {})", from_node_id, output_data.type_name());
-        use crate::data::convert_runtime_to_proto_data;
-
-        debug!("Converting RuntimeData to proto...");
-        let output_buffer = convert_runtime_to_proto_data(output_data);
-        debug!("Conversion complete");
-
-        let mut data_outputs = HashMap::new();
-        data_outputs.insert(from_node_id, output_buffer);
-
-        let chunk_result = ChunkResult {
-            sequence: base_sequence,
-            data_outputs,
-            processing_time_ms: 0.0,
-            total_items_processed: 0,
-        };
-
-        let response = StreamResponse {
-            response: Some(StreamResponseType::Result(chunk_result)),
-        };
-
-        debug!("Sending response to client...");
-        tx.send(Ok(response)).await
-            .map_err(|_| ServiceError::Internal("Failed to send result".into()))?;
-        debug!("Response sent successfully");
-    }
-
-    Ok(())
+    return route_to_downstream_async(
+        output_data,
+        from_node_id,
+        session,
+        streaming_registry,
+        tx,
+        session_id,
+        base_sequence,
+    ).await.map_err(|e| ServiceError::Internal(e.to_string()));
 }
 
 /// Handle DataChunk message with multi-output support (for streaming generators)
@@ -1055,7 +842,7 @@ async fn handle_data_chunk_multi(
         let cache_entry = {
             let global_cache = global_node_cache.read().await;
             global_cache.get(&cache_key).map(|cached| {
-                info!("♻️ Reusing globally cached node: {} (key: {})", chunk.node_id, cache_key);
+                // info!("♻️ Reusing globally cached node: {} (key: {})", chunk.node_id, cache_key);
                 (Arc::clone(&cached.node), cached.py_streaming_node.clone())
             })
         };
@@ -1064,7 +851,7 @@ async fn handle_data_chunk_multi(
             // CACHE HIT!
             sess.cache_hits += 1;
             metrics.record_cache_hit(&node_type);
-            info!("✅ Cache HIT for node type '{}' (session hits: {}, misses: {})", node_type, sess.cache_hits, sess.cache_misses);
+            // info!("✅ Cache HIT for node type '{}' (session hits: {}, misses: {})", node_type, sess.cache_hits, sess.cache_misses);
 
             // Update timestamp in global cache (write lock)
             let mut global_cache = global_node_cache.write().await;
@@ -1079,10 +866,10 @@ async fn handle_data_chunk_multi(
             // CACHE MISS!
             sess.cache_misses += 1;
             metrics.record_cache_miss(&node_type);
-            info!("❌ Cache MISS for node type '{}' (session hits: {}, misses: {})", node_type, sess.cache_hits, sess.cache_misses);
+            // info!("❌ Cache MISS for node type '{}' (session hits: {}, misses: {})", node_type, sess.cache_hits, sess.cache_misses);
 
             // Node not cached - create new instance
-            info!("🆕 Creating new node: {} (type: {}, key: {})", chunk.node_id, node_type, cache_key);
+            // info!("🆕 Creating new node: {} (type: {}, key: {})", chunk.node_id, node_type, cache_key);
 
             // Check if this is a Python node via the registry
             // Python nodes need special handling to preserve the unwrapped instance for caching
@@ -1095,10 +882,10 @@ async fn handle_data_chunk_multi(
                     .map_err(|e| ServiceError::Internal(format!("Failed to create Python streaming node: {}", e)))?;
 
                 // Initialize the node immediately to load the model into memory
-                info!("🔧 Initializing Python streaming node '{}'...", chunk.node_id);
+                // info!("🔧 Initializing Python streaming node '{}'...", chunk.node_id);
                 py_node.ensure_initialized().await
                     .map_err(|e| ServiceError::Internal(format!("Failed to initialize Python node: {}", e)))?;
-                info!("✅ Python streaming node '{}' initialized successfully", chunk.node_id);
+                // info!("✅ Python streaming node '{}' initialized successfully", chunk.node_id);
 
                 let py_node_arc = Arc::new(py_node);
                 let wrapped: Box<dyn crate::nodes::StreamingNode> = Box::new(AsyncNodeWrapper(Arc::clone(&py_node_arc)));
@@ -1106,7 +893,7 @@ async fn handle_data_chunk_multi(
                 (wrapped, Some(py_node_arc))
             } else {
                 // Regular Rust nodes - use registry normally
-                info!("🦀 Creating Rust streaming node: {}", node_type);
+                // info!("🦀 Creating Rust streaming node: {}", node_type);
                 let node = streaming_registry
                     .create_node(&node_type, chunk.node_id.clone(), &params)
                     .map_err(|e| ServiceError::Internal(format!("Failed to create node: {}", e)))?;
@@ -1130,7 +917,7 @@ async fn handle_data_chunk_multi(
             // Also store in session cache for quick lookup
             sess.node_cache.insert(chunk.node_id.clone(), Arc::clone(&arc_node));
 
-            info!("💾 Globally cached node '{}' (type: {}, key: {}, total cached: {})", chunk.node_id, node_type, cache_key, global_cache.len());
+            // info!("💾 Globally cached node '{}' (type: {}, key: {}, total cached: {})", chunk.node_id, node_type, cache_key, global_cache.len());
             (arc_node, py_streaming_node)
         };
 
@@ -1217,10 +1004,11 @@ async fn handle_data_chunk_multi(
         let session_id_clone = session_id.clone();
 
         let send_task = tokio::spawn(async move {
+            info!("📡 Send task started - waiting for chunks...");
             let mut chunk_idx = 0u64;
 
             while let Some(output_data) = chunk_rx.recv().await {
-                debug!("🎯 Received chunk {} from streaming node '{}'", chunk_idx + 1, chunk_node_id);
+                info!("🎯 Received chunk {} from streaming node '{}' - immediately routing to client", chunk_idx + 1, chunk_node_id);
 
                 // Use recursive routing
                 if let Err(e) = route_to_downstream(
@@ -1243,19 +1031,45 @@ async fn handle_data_chunk_multi(
 
         // Process streaming with callback that just enqueues chunks
         // Use the unified trait method for both Python and Rust nodes
-        let chunk_tx_clone = chunk_tx.clone();
-        node.process_streaming_async(input_data, Some(session_id.clone()), Box::new(move |output_data| {
-            chunk_tx_clone.send(output_data)
-                .map_err(|_| crate::Error::Execution("Failed to enqueue chunk".to_string()))?;
-            Ok(())
-        })).await
-            .map_err(|e| ServiceError::Internal(format!("Multi-chunk streaming failed: {}", e)))?;
 
-        // Close the channel to signal completion
+        // Spawn the streaming processing as a separate task so it doesn't block
+        let chunk_tx_clone = chunk_tx.clone();
+        let node_clone = Arc::clone(&node); // Clone the Arc
+        let session_id_clone = session_id.clone();
+
+        // Start the process_task IMMEDIATELY without blocking
+        let process_task = tokio::spawn(async move {
+            info!("🚀 Process task started");
+            let result = node_clone.process_streaming_async(input_data, Some(session_id_clone), Box::new(move |output_data| {
+                info!("📨 Callback called - sending chunk to channel");
+                // Unbounded channels don't have try_send, just use send which never blocks
+                if let Err(e) = chunk_tx_clone.send(output_data) {
+                    error!("Failed to send chunk to channel: {:?}", e);
+                    return Err(crate::Error::Execution("Failed to enqueue chunk".to_string()));
+                }
+                info!("📨 Chunk sent to channel successfully");
+                Ok(())
+            })).await;
+            info!("🏁 Process task completed");
+            result
+        });
+
+        // Drop our reference to chunk_tx so it closes when process_task completes
         drop(chunk_tx);
 
-        // Wait for all chunks to be sent
-        output_count = send_task.await
+        // CRITICAL: Don't wait for process_task to complete before starting to send!
+        // The tasks should run truly concurrently
+
+        // Wait for both tasks to complete
+        let (send_result, process_result) = tokio::join!(send_task, process_task);
+
+        // Check process task result
+        process_result
+            .map_err(|e| ServiceError::Internal(format!("Process task panicked: {}", e)))?
+            .map_err(|e| ServiceError::Internal(format!("Multi-chunk streaming failed: {}", e)))?;
+
+        // Get output count from send task
+        output_count = send_result
             .map_err(|e| ServiceError::Internal(format!("Send task failed: {}", e)))? as usize;
 
         debug!("✅ Completed streaming {} chunks", output_count);
@@ -1347,7 +1161,7 @@ fn deserialize_manifest_from_proto(
             serde_json::json!({
                 "id": n.id,
                 "node_type": n.node_type,
-                "parameters": serde_json::from_str::<serde_json::Value>(&n.params)
+                "params": serde_json::from_str::<serde_json::Value>(&n.params)
                     .unwrap_or(serde_json::json!({})),
                 "runtime_hint": match n.runtime_hint {
                     0 => "auto",

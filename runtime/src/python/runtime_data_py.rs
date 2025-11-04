@@ -210,7 +210,7 @@ fn numpy_to_audio(
             samples: samples_vec,
             sample_rate,
             channels,
-            format: 0, // F32
+            format: 1, // F32 (codebase convention)
             num_samples,
         }),
         session_id: None,

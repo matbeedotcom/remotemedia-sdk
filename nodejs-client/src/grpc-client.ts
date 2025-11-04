@@ -23,9 +23,10 @@ const __dirname_resolved = dirname(__filename);
 // ============================================================================
 
 export enum AudioFormat {
-  F32 = 'AUDIO_FORMAT_F32',
-  I16 = 'AUDIO_FORMAT_I16',
-  I32 = 'AUDIO_FORMAT_I32',
+  UNSPECIFIED = 0,
+  F32 = 1,
+  I16 = 2,
+  I32 = 3,
 }
 
 export enum ErrorType {
@@ -111,6 +112,8 @@ export interface ChunkResult {
   totalSamplesProcessed: number;
   hasAudioOutput: boolean;
   audioOutput?: AudioBuffer;
+  textOutput?: string;
+  jsonOutput?: any;
   metrics?: StreamMetrics;
 }
 
@@ -804,7 +807,7 @@ export class PersistentStreamSession {
           audio: {
             samples: dataBuffer.data.samples,
             sample_rate: dataBuffer.data.sampleRate,
-            channels: dataBuffer.data.numChannels || dataBuffer.data.channels,
+            channels: dataBuffer.data.channels,
             format: dataBuffer.data.format,
             num_samples: dataBuffer.data.numSamples,
           },
@@ -831,7 +834,7 @@ export class PersistentStreamSession {
       }
     }
 
-    this.stream.write({
+    const streamRequest = {
       data_chunk: {
         node_id: nodeId,
         buffer: {
@@ -841,7 +844,9 @@ export class PersistentStreamSession {
         sequence: this.sequence++,
         timestamp_ms: Date.now(),
       },
-    });
+    };
+
+    this.stream.write(streamRequest);
   }
 
   /**

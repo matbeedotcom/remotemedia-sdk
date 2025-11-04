@@ -36,9 +36,16 @@ export async function GET(request: NextRequest) {
       };
 
       try {
+        console.log(`[Results API] Looking for session: ${sessionId}`);
+
         // Get session
         const session = sessionManager.getSession(sessionId);
+        console.log(`[Results API] Session lookup result: ${session ? 'FOUND' : 'NOT FOUND'}`);
+
         if (!session) {
+          // Log all available sessions for debugging
+          console.log(`[Results API] Available sessions:`, sessionManager.listSessions());
+
           sendSSE({
             type: 'error',
             content: `Session ${sessionId} not found`,
@@ -72,7 +79,7 @@ export async function GET(request: NextRequest) {
                   type: 'audio',
                   content: result.audioOutput.samples.toString('base64'),
                   sampleRate: result.audioOutput.sampleRate,
-                  numChannels: result.audioOutput.numChannels,
+                  channels: result.audioOutput.channels,
                   format: result.audioOutput.format,
                   timestamp: Date.now(),
                 });

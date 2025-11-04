@@ -2,6 +2,7 @@ use crate::audio::buffer::{AudioBuffer, AudioData, AudioFormat};
 use crate::error::{Error, Result};
 use crate::nodes::audio::fast::FastAudioNode;
 use rubato::{FftFixedIn, Resampler as RubatoResampler};
+use tracing::info;
 
 /// Quality settings for audio resampling
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +45,7 @@ impl FastResampleNode {
     ) -> Result<Self> {
         let chunk_size = quality.chunk_size();
         let sinc_len = quality.sinc_len();
-
+        info!("Creating FastResampleNode: {} Hz -> {} Hz, quality: {:?}, channels: {}, chunk_size: {}, sinc_len: {}", source_rate, target_rate, quality, channels, chunk_size, sinc_len);
         let resampler = FftFixedIn::new(
             source_rate as usize,
             target_rate as usize,
