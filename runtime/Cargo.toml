@@ -23,6 +23,7 @@ futures = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
+bincode = "1.3"  # For efficient binary serialization in IPC
 
 # Async trait support
 async-trait = "0.1"
@@ -55,14 +56,24 @@ hyper = { version = "1.1", optional = true }
 # Python FFI (using PyO3 per recommendation)
 # For native builds: use extension-module for Python extensions
 # For WASM builds: use abi3 only (no extension-module, no auto-initialize)
-pyo3 = { version = "0.26", features = ["abi3-py312"], default-features = false }
+pyo3 = { version = "0.26", features = ["abi3-py312", "auto-initialize"], default-features = false }
 pyo3-async-runtimes = { version = "0.26", features = ["tokio-runtime"], optional = true }
 numpy = { version = "0.26", optional = true }  # rust-numpy for zero-copy numpy array support (not available in WASM)
+
+# IPC for multiprocess support
+iceoryx2 = { version = "0.7.0", optional = true }
+iceoryx2-bb-log = { version = "0.7.0", optional = true }
+iceoryx2-bb-container = { version = "0.7.0", optional = true }
+iceoryx2-bb-elementary = { version = "0.7.0", optional = true }
 
 # Logging and tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 prometheus = { version = "0.13", optional = true }
+
+# Platform-specific dependencies
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30.1", features = ["signal", "process"] }
 
 # Windows memory measurement
 [target.'cfg(windows)'.dependencies]
@@ -116,7 +127,7 @@ tonic-prost-build = "0.14"
 wlr-libpy = { git = "https://github.com/vmware-labs/webassembly-language-runtimes.git", default-features = false, features = ["build", "py312"] }
 
 [features]
-default = ["webrtc-transport", "wasmtime-runtime", "grpc-transport", "python-async", "native-numpy", "silero-vad"]
+default = ["webrtc-transport", "wasmtime-runtime", "grpc-transport", "python-async", "native-numpy", "silero-vad", "multiprocess"]
 webrtc-transport = ["webrtc"]
 grpc-transport = ["tonic", "tonic-web", "tonic-prost", "prost", "prost-types", "tower", "tower-http", "hyper", "prometheus", "tokio-stream"]
 python-async = ["pyo3-async-runtimes"]
@@ -125,6 +136,7 @@ whisper = ["rwhisper", "rodio"]
 whisper-wasm = ["whisper-rs"]
 wasmtime-runtime = ["wasmtime", "wasmtime-wasi"]
 silero-vad = ["ort"]  # Silero VAD using ONNX Runtime
+multiprocess = ["iceoryx2", "iceoryx2-bb-log", "iceoryx2-bb-container", "iceoryx2-bb-elementary"]  # Multiprocess Python nodes with shared memory IPC
 wasm = []  # Enable WASM-specific code paths (no wasmtime, no webrtc, no grpc, no async python, no numpy)
 
 # WASM binary target
@@ -172,6 +184,11 @@ harness = false
 [[bench]]
 name = "audio_nodes_resample_vad"
 harness = false
+
+[[bench]]
+name = "ipc_latency"
+harness = false
+required-features = ["multiprocess"]
 
 [profile.release]
 opt-level = 3

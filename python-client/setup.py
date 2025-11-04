@@ -64,6 +64,11 @@ setup(
     extras_require={
         "dev": read_requirements("requirements-dev.txt"),
         "ml": read_requirements("requirements-ml.txt"),
+        "multiprocess": [
+            "multiprocessing>=0.70",  # Standard multiprocessing backport
+            "pyarrow>=14.0.0",  # For zero-copy data transfer
+            "msgpack>=1.0.0",  # Fast serialization for control messages
+        ],
     },
     entry_points={
         "console_scripts": [
