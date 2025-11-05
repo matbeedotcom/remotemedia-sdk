@@ -124,7 +124,16 @@ export async function POST(request: NextRequest) {
           maxNewTokens: 4096,
         });
 
-        console.log('[VAD S2S API] Created pipeline manifest:', JSON.stringify(manifest, null, 2));
+        console.log('[VAD S2S API] ========================================');
+        console.log('[VAD S2S API] MANIFEST BEING SENT TO GRPC SERVER:');
+        console.log('[VAD S2S API] ========================================');
+        console.log(JSON.stringify(manifest, null, 2));
+        console.log('[VAD S2S API] ========================================');
+        console.log('[VAD S2S API] Pipeline nodes:');
+        manifest.nodes.forEach((node, idx) => {
+          console.log(`[VAD S2S API]   ${idx + 1}. ${node.id} (${node.nodeType})`);
+        });
+        console.log('[VAD S2S API] ========================================');
 
         // Handle session reset
         if (reset) {

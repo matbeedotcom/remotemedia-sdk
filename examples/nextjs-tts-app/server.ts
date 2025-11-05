@@ -1,11 +1,11 @@
 /**
- * Custom Next.js server with Socket.io support
+ * Custom Next.js server with WebSocket support
  */
 
-const { createServer } = require('http');
-const { parse } = require('url');
-const next = require('next');
-const { configureSocket } = require('./lib/socket-handler.ts');
+import { createServer } from 'http';
+import { parse } from 'url';
+import next from 'next';
+import { configureSocket } from './lib/socket-handler.js';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
@@ -17,7 +17,7 @@ const handle = app.getRequestHandler();
 app.prepare().then(() => {
   const server = createServer(async (req, res) => {
     try {
-      const parsedUrl = parse(req.url, true);
+      const parsedUrl = parse(req.url!, true);
       await handle(req, res, parsedUrl);
     } catch (err) {
       console.error('Error handling request:', err);
@@ -26,12 +26,11 @@ app.prepare().then(() => {
     }
   });
 
-  // Configure Socket.io
+  // Configure WebSocket
   configureSocket(server, app);
 
-  server.listen(port, (err) => {
-    if (err) throw err;
+  server.listen(port, () => {
     console.log(`> Ready on http://${hostname}:${port}`);
-    console.log(`> Socket.io available at /api/s2s/socket`);
+    console.log(`> WebSocket available at /api/s2s/socket`);
   });
 });

@@ -1206,11 +1206,11 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
             }
         }
 
-        // TEST: Send a ping message to verify IPC communication works
+        // Wait for Python process to signal READY
         #[cfg(feature = "multiprocess")]
         {
             tracing::info!("Waiting for Python process to signal READY via iceoryx2...");
-            
+
             // Wait for Python to signal it's ready via iceoryx2 control channel
             // Python creates its input subscriber BEFORE sending READY, so when we receive
             // READY signal, Python is fully prepared to receive data
@@ -1219,7 +1219,7 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
             if !ready {
                 return Err(Error::Execution(format!("Node {} failed to signal ready within timeout", ctx.node_id)));
             }
-            
+
             tracing::info!("✅ Received READY signal - Python subscriber is ready to receive data");
 
             // Small delay to ensure Python subscriber is fully registered with iceoryx2's routing tables
@@ -1227,40 +1227,7 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
             // to complete the internal pub/sub connection registration
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-            tracing::info!("🧪 TEST: Sending ping message through input channel to verify IPC data transfer...");
-
-            // Create properly formatted IPC RuntimeData for PING_TEST
-            // This tests the real data pathway that will be used for actual node communication
-            let ping_data = IPCRuntimeData::text("PING_TEST", &session_id);
-
-            // Send using the channel registry
-            let registry = self.channel_registry.clone();
-            let input_ch = format!("{}_input", ctx.node_id);
-
-            let send_result = tokio::task::spawn_blocking(move || -> Result<()> {
-                let handle = tokio::runtime::Handle::current();
-                tracing::info!("🧪 Creating publisher for input channel: {}", input_ch);
-
-                let publisher = handle.block_on(registry.create_publisher(&input_ch))?;
-                tracing::info!("🧪 Publisher created, sending PING_TEST as IPC RuntimeData...");
-
-                // Send as proper RuntimeData (same format as real node-to-node communication)
-                publisher.publish(ping_data)?;
-                tracing::info!("🧪 PING_TEST sent successfully as IPC RuntimeData!");
-
-                // Keep publisher alive a bit longer to ensure message is received
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                Ok(())
-            })
-            .await
-            .map_err(|e| Error::Execution(format!("Join error: {}", e)))??;
-            
-            tracing::info!("✅ Test ping message sent, waiting for Python to receive it...");
-            
-            // Wait a bit for Python to process the ping
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-            
-            tracing::info!("✅ Input channel test complete");
+            tracing::info!("✅ Node initialization complete, IPC thread ready with persistent publishers");
         }
 
         Ok(())
