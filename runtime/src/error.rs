@@ -40,6 +40,10 @@ pub enum Error {
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    /// Configuration error
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
+
     /// Invalid input data (type mismatch, validation failure)
     #[error("Invalid input: {message}")]
     InvalidInput {

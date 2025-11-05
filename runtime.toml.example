@@ -1,0 +1,34 @@
+# RemoteMedia Runtime Configuration Example
+# Copy this file to runtime.toml and customize as needed
+
+# Multiprocess Python Node Execution Configuration
+# These settings control how Python nodes run in separate processes
+# with shared memory IPC for zero-copy data transfer
+
+# Maximum number of processes per session
+# Set to a specific number to limit resource usage, or omit for unlimited
+# Default: 10
+max_processes_per_session = 10
+
+# Channel buffer capacity (number of messages)
+# Higher values allow more buffering but use more memory
+# Default: 100
+channel_capacity = 100
+
+# Process initialization timeout in seconds
+# How long to wait for a node to initialize before failing
+# Increase for large models that take longer to load
+# Default: 30
+init_timeout_secs = 30
+
+# Python executable path
+# Can be "python", "python3", or an absolute path to a specific interpreter
+# Use a virtualenv path to ensure correct dependencies are available
+# Default: "python"
+python_executable = "python"
+
+# Enable backpressure on channels
+# When true, blocks writes when channel is full (prevents data loss)
+# When false, may drop data if consumer is slow
+# Default: true
+enable_backpressure = true

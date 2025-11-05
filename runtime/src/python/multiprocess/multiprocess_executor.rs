@@ -19,22 +19,48 @@ use super::ipc_channel::{ChannelHandle, ChannelRegistry};
 use super::health_monitor::{HealthMonitor, ProcessEvent};
 
 /// Configuration for multiprocess executor
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MultiprocessConfig {
     /// Maximum processes per session (None = unlimited)
+    #[serde(default = "default_max_processes")]
     pub max_processes_per_session: Option<usize>,
 
     /// Channel buffer capacity (number of messages)
+    #[serde(default = "default_channel_capacity")]
     pub channel_capacity: usize,
 
     /// Process initialization timeout in seconds
+    #[serde(default = "default_init_timeout")]
     pub init_timeout_secs: u64,
 
     /// Python executable path
+    #[serde(default = "default_python_executable")]
     pub python_executable: std::path::PathBuf,
 
     /// Enable backpressure on channels
+    #[serde(default = "default_backpressure")]
     pub enable_backpressure: bool,
+}
+
+// Default value functions for serde
+fn default_max_processes() -> Option<usize> {
+    Some(10)
+}
+
+fn default_channel_capacity() -> usize {
+    100
+}
+
+fn default_init_timeout() -> u64 {
+    30
+}
+
+fn default_python_executable() -> std::path::PathBuf {
+    std::path::PathBuf::from("python")
+}
+
+fn default_backpressure() -> bool {
+    true
 }
 
 impl Default for MultiprocessConfig {
@@ -45,6 +71,82 @@ impl Default for MultiprocessConfig {
             init_timeout_secs: 30,
             python_executable: std::path::PathBuf::from("python"),
             enable_backpressure: true,
+        }
+    }
+}
+
+impl MultiprocessConfig {
+    /// Load configuration from a TOML file
+    ///
+    /// # Arguments
+    /// * `path` - Path to the TOML configuration file
+    ///
+    /// # Returns
+    /// * `Ok(MultiprocessConfig)` - Loaded configuration with defaults for missing fields
+    /// * `Err(Error)` - If file cannot be read or parsed
+    ///
+    /// # Example
+    /// ```no_run
+    /// use remotemedia_runtime::python::multiprocess::MultiprocessConfig;
+    /// use std::path::Path;
+    ///
+    /// let config = MultiprocessConfig::from_file(Path::new("runtime.toml"))?;
+    /// # Ok::<(), remotemedia_runtime::Error>(())
+    /// ```
+    pub fn from_file(path: &std::path::Path) -> Result<Self> {
+        let contents = std::fs::read_to_string(path)
+            .map_err(|e| Error::ConfigError(format!("Failed to read config file {:?}: {}", path, e)))?;
+
+        Self::from_toml_str(&contents)
+    }
+
+    /// Load configuration from a TOML string
+    ///
+    /// # Arguments
+    /// * `toml_str` - TOML configuration string
+    ///
+    /// # Returns
+    /// * `Ok(MultiprocessConfig)` - Parsed configuration with defaults for missing fields
+    /// * `Err(Error)` - If TOML cannot be parsed
+    ///
+    /// # Example
+    /// ```
+    /// use remotemedia_runtime::python::multiprocess::MultiprocessConfig;
+    ///
+    /// let config_str = r#"
+    ///     max_processes_per_session = 20
+    ///     channel_capacity = 200
+    ///     init_timeout_secs = 60
+    ///     python_executable = "/usr/bin/python3"
+    ///     enable_backpressure = true
+    /// "#;
+    ///
+    /// let config = MultiprocessConfig::from_toml_str(config_str)?;
+    /// assert_eq!(config.channel_capacity, 200);
+    /// # Ok::<(), remotemedia_runtime::Error>(())
+    /// ```
+    pub fn from_toml_str(toml_str: &str) -> Result<Self> {
+        // Parse the TOML string
+        let config: MultiprocessConfig = toml::from_str(toml_str)
+            .map_err(|e| Error::ConfigError(format!("Failed to parse TOML config: {}", e)))?;
+
+        Ok(config)
+    }
+
+    /// Load configuration from runtime.toml in the current directory
+    ///
+    /// Falls back to default configuration if the file doesn't exist.
+    ///
+    /// # Returns
+    /// * `Ok(MultiprocessConfig)` - Loaded or default configuration
+    /// * `Err(Error)` - If file exists but cannot be parsed
+    pub fn from_default_file() -> Result<Self> {
+        let path = std::path::Path::new("runtime.toml");
+
+        if path.exists() {
+            Self::from_file(path)
+        } else {
+            Ok(Self::default())
         }
     }
 }
