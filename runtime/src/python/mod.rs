@@ -39,6 +39,12 @@ pub mod multiprocess {
     pub mod multiprocess_executor;
     pub mod process_manager;
 
-    pub use multiprocess_executor::MultiprocessExecutor;
+    // Re-export commonly used types
+    pub use multiprocess_executor::{
+        MultiprocessExecutor, MultiprocessConfig, SessionState, SessionStatus,
+        InitProgress, InitStatus
+    };
     pub use process_manager::ProcessManager;
+    pub use data_transfer::{RuntimeData, DataType};
+    pub use ipc_channel::{ChannelRegistry, ChannelHandle};
 }

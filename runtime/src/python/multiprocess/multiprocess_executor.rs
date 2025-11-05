@@ -66,6 +66,9 @@ pub struct SessionState {
 
     /// Creation timestamp
     pub created_at: std::time::Instant,
+
+    /// Initialization progress for each node (node_id -> progress)
+    pub init_progress: HashMap<String, InitProgress>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,7 +81,49 @@ pub enum SessionStatus {
     Error(String),
 }
 
+/// Initialization progress information for a node
+#[derive(Debug, Clone)]
+pub struct InitProgress {
+    /// Node identifier
+    pub node_id: String,
+
+    /// Node type
+    pub node_type: String,
+
+    /// Current initialization status
+    pub status: InitStatus,
+
+    /// Progress percentage (0.0 to 1.0)
+    pub progress: f32,
+
+    /// Human-readable progress message
+    pub message: String,
+
+    /// Timestamp of this progress update
+    pub timestamp: std::time::Instant,
+}
+
+/// Node initialization status
+#[derive(Debug, Clone, PartialEq)]
+pub enum InitStatus {
+    /// Node process is starting
+    Starting,
+
+    /// Loading model files or dependencies
+    LoadingModel,
+
+    /// Connecting to IPC channels
+    Connecting,
+
+    /// Node is ready for execution
+    Ready,
+
+    /// Initialization failed
+    Failed(String),
+}
+
 /// Multiprocess executor for Python nodes
+#[derive(Clone)]
 pub struct MultiprocessExecutor {
     /// Process manager
     process_manager: Arc<ProcessManager>,
@@ -264,10 +309,121 @@ impl MultiprocessExecutor {
             channels: HashMap::new(),
             status: SessionStatus::Initializing,
             created_at: std::time::Instant::now(),
+            init_progress: HashMap::new(),
         };
 
         sessions.insert(session_id, session);
         Ok(())
+    }
+
+    /// Wait for all nodes in a session to complete initialization
+    pub async fn wait_for_initialization(
+        &self,
+        session_id: &str,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        let start = std::time::Instant::now();
+
+        loop {
+            // Check if timeout expired
+            if start.elapsed() > timeout {
+                return Err(Error::Execution(format!(
+                    "Session {} initialization timeout after {}s",
+                    session_id,
+                    timeout.as_secs()
+                )));
+            }
+
+            // Check session status
+            let sessions = self.sessions.read().await;
+            let session = sessions.get(session_id)
+                .ok_or_else(|| Error::Execution(format!("Session {} not found", session_id)))?;
+
+            // Check if any nodes failed initialization
+            for (node_id, progress) in &session.init_progress {
+                if let InitStatus::Failed(reason) = &progress.status {
+                    return Err(Error::Execution(format!(
+                        "Node {} failed to initialize: {}",
+                        node_id, reason
+                    )));
+                }
+            }
+
+            // Check if all nodes are ready
+            if !session.node_processes.is_empty() {
+                let all_ready = session.node_processes.keys().all(|node_id| {
+                    session.init_progress.get(node_id)
+                        .map(|p| p.status == InitStatus::Ready)
+                        .unwrap_or(false)
+                });
+
+                if all_ready {
+                    // Update session status to Ready
+                    drop(sessions);
+                    let mut sessions = self.sessions.write().await;
+                    if let Some(session) = sessions.get_mut(session_id) {
+                        session.status = SessionStatus::Ready;
+                    }
+                    return Ok(());
+                }
+            }
+
+            drop(sessions);
+
+            // Wait before checking again
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Update initialization progress for a node
+    pub async fn update_init_progress(
+        &self,
+        session_id: &str,
+        node_id: &str,
+        status: InitStatus,
+        progress: f32,
+        message: String,
+    ) -> Result<()> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions.get_mut(session_id)
+            .ok_or_else(|| Error::Execution(format!("Session {} not found", session_id)))?;
+
+        // Get node type from process handle
+        let node_type = session.node_processes.get(node_id)
+            .map(|p| p.node_type.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Create or update progress entry
+        let init_progress = InitProgress {
+            node_id: node_id.to_string(),
+            node_type,
+            status,
+            progress: progress.clamp(0.0, 1.0),
+            message,
+            timestamp: std::time::Instant::now(),
+        };
+
+        session.init_progress.insert(node_id.to_string(), init_progress.clone());
+
+        // Log progress
+        tracing::info!(
+            "Session {}, Node {}: {} ({}%)",
+            session_id,
+            node_id,
+            init_progress.message,
+            (init_progress.progress * 100.0) as u8
+        );
+
+        Ok(())
+    }
+
+    /// Get initialization progress for all nodes in a session
+    pub async fn get_init_progress(&self, session_id: &str) -> Result<Vec<InitProgress>> {
+        let sessions = self.sessions.read().await;
+        let session = sessions.get(session_id)
+            .ok_or_else(|| Error::Execution(format!("Session {} not found", session_id)))?;
+
+        Ok(session.init_progress.values().cloned().collect())
     }
 
     /// Terminate a session and cleanup resources
