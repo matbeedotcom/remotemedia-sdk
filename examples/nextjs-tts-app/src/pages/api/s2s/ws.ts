@@ -10,7 +10,8 @@ import { NextApiRequest } from 'next';
 import { WebSocketServer, WebSocket } from 'ws';
 import clientPool from '@/lib/grpc-client-pool';
 import sessionManager from '@/lib/grpc-session-manager';
-import { createVADS2SPipeline } from '@/lib/pipeline-builder';
+import { createVADS2SPipeline, createVibeVoiceTTSPipeline } from '@/lib/pipeline-builder';
+console.log('[WS] Imported functions:', { createVADS2SPipeline: typeof createVADS2SPipeline, createVibeVoiceTTSPipeline: typeof createVibeVoiceTTSPipeline });
 
 const wss = new WebSocketServer({ noServer: true });
 
@@ -41,6 +42,7 @@ wss.on('connection', (ws: WebSocket) => {
             console.log(`[WebSocket S2S] Initializing session ${sessionId}`);
 
             const client = await clientPool.getClient();
+            console.log('[WS] About to call createVADS2SPipeline, function is:', createVADS2SPipeline.name);
             const manifest = createVADS2SPipeline({
               sessionId,
               systemPrompt:
@@ -48,6 +50,7 @@ wss.on('connection', (ws: WebSocket) => {
                 'Respond with interleaved text and audio.',
               maxNewTokens: 4096,
             });
+            console.log('[WS] Called function, checking manifest last node:', manifest.nodes[manifest.nodes.length - 1]?.nodeType);
 
             if (message.reset) {
               await sessionManager.closeSession(sessionId);
