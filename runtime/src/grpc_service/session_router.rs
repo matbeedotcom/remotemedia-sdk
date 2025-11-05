@@ -14,6 +14,9 @@ use tokio::task::JoinHandle;
 use tracing::{info, error, debug, warn};
 use tonic::Status;
 
+#[cfg(feature = "multiprocess")]
+use crate::python::multiprocess::MultiprocessExecutor;
+
 /// Represents a data packet flowing through the pipeline
 #[derive(Clone, Debug)]
 pub struct DataPacket {
@@ -65,6 +68,10 @@ pub struct SessionRouter {
 
     /// Whether the router is running
     running: bool,
+
+    /// Multiprocess executor for IPC communication (optional)
+    #[cfg(feature = "multiprocess")]
+    multiprocess_executor: Option<Arc<MultiprocessExecutor>>,
 }
 
 impl SessionRouter {
@@ -92,6 +99,8 @@ impl SessionRouter {
             node_tasks: HashMap::new(),
             node_inputs: HashMap::new(),
             running: false,
+            #[cfg(feature = "multiprocess")]
+            multiprocess_executor: None,
         };
 
         (router, shutdown_tx_clone)
@@ -100,6 +109,12 @@ impl SessionRouter {
     /// Get the input sender for feeding chunks from the client
     pub fn get_input_sender(&self) -> mpsc::UnboundedSender<DataPacket> {
         self.input_tx.clone()
+    }
+
+    /// Set the multiprocess executor for IPC communication
+    #[cfg(feature = "multiprocess")]
+    pub fn set_multiprocess_executor(&mut self, executor: Arc<MultiprocessExecutor>) {
+        self.multiprocess_executor = Some(executor);
     }
 
     /// Pre-initialize all nodes in the manifest before streaming starts
@@ -330,7 +345,45 @@ impl SessionRouter {
                 self.start_node_task(next_node_id.clone()).await?;
             }
 
-            // Send packet to the node's input channel
+            // Check if this is a Python node - all Python nodes use multiprocessing
+            #[cfg(feature = "multiprocess")]
+            {
+                let node_type = self.get_node_type(&next_node_id).await;
+                let is_multiprocess = self.registry.is_python_node(&node_type);
+                
+                if is_multiprocess {
+                    if let Some(ref executor) = self.multiprocess_executor {
+                        debug!("📡 Routing to multiprocess node '{}' via IPC", next_node_id);
+                        
+                        // Convert RuntimeData to IPC format and send
+                        let ipc_data = MultiprocessExecutor::to_ipc_runtime_data(&packet.data, &packet.session_id);
+                        let input_channel = format!("{}_input", next_node_id);
+                        let executor_clone = executor.clone();
+                        let node_id_clone = next_node_id.clone();
+                        
+                        // Send via IPC in background task
+                        tokio::task::spawn_blocking(move || {
+                            let handle = tokio::runtime::Handle::current();
+                            match handle.block_on(executor_clone.channel_registry().create_publisher(&input_channel)) {
+                                Ok(publisher) => {
+                                    if let Err(e) = publisher.publish(ipc_data) {
+                                        error!("Failed to send IPC data to node '{}': {}", node_id_clone, e);
+                                    } else {
+                                        debug!("✅ Sent data to multiprocess node '{}' via IPC", node_id_clone);
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Failed to create IPC publisher for node '{}': {}", node_id_clone, e);
+                                }
+                            }
+                        });
+                    } else {
+                        warn!("Multiprocess node '{}' detected but no multiprocess executor available", next_node_id);
+                    }
+                }
+            }
+
+            // Also send via in-memory channel (for native nodes or as fallback)
             if let Some(node_input) = self.node_inputs.get(&next_node_id) {
                 let packet_clone = packet.clone();
                 if let Err(e) = node_input.send(packet_clone) {
@@ -456,7 +509,9 @@ impl SessionRouter {
             .find(|n| n.id == node_id)
             .ok_or_else(|| Status::internal(format!("Node spec not found for '{}'", node_id)))?;
 
-        let node = self.registry.create_node(&spec.node_type, node_id.to_string(), &spec.params)
+        // Pass session_id for multiprocess execution
+        let session_id = Some(session.session_id.clone());
+        let node = self.registry.create_node(&spec.node_type, node_id.to_string(), &spec.params, session_id)
             .map_err(|e| Status::internal(format!("Failed to create node '{}': {}", node_id, e)))?;
 
         let arc_node = Arc::new(node);
@@ -475,6 +530,15 @@ impl SessionRouter {
             .collect();
 
         Ok(downstream)
+    }
+
+    /// Get node type from node ID
+    async fn get_node_type(&self, node_id: &str) -> String {
+        let session = self.session.lock().await;
+        session.manifest.nodes.iter()
+            .find(|n| n.id == node_id)
+            .map(|n| n.node_type.clone())
+            .unwrap_or_else(|| "unknown".to_string())
     }
 
     /// Send a packet to the client

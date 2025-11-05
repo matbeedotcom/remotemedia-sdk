@@ -87,6 +87,10 @@ pub struct StreamingServiceImpl {
     /// Global node cache (shared across all sessions)
     /// Key: "{node_type}:{json_params_hash}", Value: cached node with timestamp
     global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>>,
+
+    /// Multiprocess executor for Python nodes
+    #[cfg(feature = "multiprocess")]
+    multiprocess_executor: Option<Arc<crate::python::multiprocess::MultiprocessExecutor>>,
 }
 
 impl StreamingServiceImpl {
@@ -134,12 +138,20 @@ impl StreamingServiceImpl {
             metrics,
             streaming_registry,
             global_node_cache,
+            #[cfg(feature = "multiprocess")]
+            multiprocess_executor: None,
         }
     }
 
     /// Get number of active sessions
     pub async fn active_session_count(&self) -> usize {
         self.sessions.read().await.len()
+    }
+
+    /// Set multiprocess executor for Python nodes
+    #[cfg(feature = "multiprocess")]
+    pub fn set_multiprocess_executor(&mut self, executor: Arc<crate::python::multiprocess::MultiprocessExecutor>) {
+        self.multiprocess_executor = Some(executor);
     }
 }
 
@@ -409,6 +421,8 @@ impl crate::grpc_service::StreamingPipelineService for StreamingServiceImpl {
         let sessions = self.sessions.clone();
         let executor = self.executor.clone();
         let metrics = self.metrics.clone();
+        #[cfg(feature = "multiprocess")]
+        let multiprocess_executor = self.multiprocess_executor.clone();
 
         // Clone registry and global cache for the async task
         let streaming_registry = self.streaming_registry.clone();
@@ -416,7 +430,28 @@ impl crate::grpc_service::StreamingPipelineService for StreamingServiceImpl {
 
         // Spawn async task to handle bidirectional streaming
         tokio::spawn(async move {
-            let result = handle_stream(&mut stream, tx.clone(), sessions, executor, metrics, streaming_registry, global_node_cache).await;
+            #[cfg(feature = "multiprocess")]
+            let result = handle_stream(
+                &mut stream,
+                tx.clone(),
+                sessions,
+                executor,
+                metrics,
+                streaming_registry,
+                global_node_cache,
+                multiprocess_executor,
+            ).await;
+
+            #[cfg(not(feature = "multiprocess"))]
+            let result = handle_stream(
+                &mut stream,
+                tx.clone(),
+                sessions,
+                executor,
+                metrics,
+                streaming_registry,
+                global_node_cache,
+            ).await;
             
             if let Err(e) = result {
                 error!(error = %e, "Stream handling error");
@@ -447,6 +482,8 @@ async fn handle_stream(
     metrics: Arc<ServiceMetrics>,
     streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
     global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>>,
+    #[cfg(feature = "multiprocess")]
+    multiprocess_executor: Option<Arc<crate::python::multiprocess::MultiprocessExecutor>>,
 ) -> Result<(), ServiceError> {
     let mut session: Option<Arc<Mutex<StreamSession>>> = None;
     let mut session_id = String::new();
@@ -479,6 +516,12 @@ async fn handle_stream(
                     sess.clone(),
                     tx.clone(),
                 );
+
+                // Set multiprocess executor if available
+                #[cfg(feature = "multiprocess")]
+                if let Some(ref mp_executor) = multiprocess_executor {
+                    router.set_multiprocess_executor(mp_executor.clone());
+                }
 
                 // 🔥 Pre-initialize all nodes before streaming starts
                 // CRITICAL: Do this WITHOUT holding the session lock to avoid deadlock
@@ -932,9 +975,9 @@ async fn handle_data_chunk_multi(
             let (new_node, py_streaming_node) = if streaming_registry.is_python_node(&node_type) {
                 use crate::nodes::{python_streaming::PythonStreamingNode, AsyncNodeWrapper};
 
-                info!("🐍 Creating Python streaming node: {}", node_type);
+                info!("🐍 Creating Python streaming node: {} with session {}", node_type, session_id);
 
-                let py_node = PythonStreamingNode::new(chunk.node_id.clone(), &node_type, &params)
+                let py_node = PythonStreamingNode::with_session(chunk.node_id.clone(), &node_type, &params, session_id.clone())
                     .map_err(|e| ServiceError::Internal(format!("Failed to create Python streaming node: {}", e)))?;
 
                 // Initialize the node immediately to load the model into memory
@@ -951,7 +994,7 @@ async fn handle_data_chunk_multi(
                 // Regular Rust nodes - use registry normally
                 // info!("🦀 Creating Rust streaming node: {}", node_type);
                 let node = streaming_registry
-                    .create_node(&node_type, chunk.node_id.clone(), &params)
+                    .create_node(&node_type, chunk.node_id.clone(), &params, Some(session_id.clone()))
                     .map_err(|e| ServiceError::Internal(format!("Failed to create node: {}", e)))?;
                 (node, None)
             };

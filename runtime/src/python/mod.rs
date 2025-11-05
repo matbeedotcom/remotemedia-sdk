@@ -25,12 +25,22 @@ pub mod cpython_executor;
 #[cfg(feature = "python-async")]
 pub use ffi::*;
 
+// DEPRECATED in v0.3.0: Use MultiprocessExecutor instead
+// CPythonNodeExecutor is kept for backward compatibility but will be removed in v0.4.0
+#[deprecated(
+    since = "0.3.0",
+    note = "Use MultiprocessExecutor instead. CPythonNodeExecutor will be removed in v0.4.0"
+)]
 pub use cpython_executor::CPythonNodeExecutor;
+
 pub use node_executor::PythonNodeInstance;
 pub use runtime_data_py::{py_to_runtime_data, runtime_data_to_py, runtime_data_to_py_with_session, PyRuntimeData};
 // pub use cpython_node::{CPythonNodeFactory, inputs_to_pydict, pydict_to_outputs};  // Archived in v0.2.1
 
-// Multiprocess support modules (requires multiprocess feature)
+/// Multiprocess execution support modules (requires multiprocess feature)
+///
+/// This module provides true process-level isolation for Python nodes via iceoryx2 IPC.
+/// Use `MultiprocessExecutor` instead of the deprecated `CPythonNodeExecutor`.
 #[cfg(feature = "multiprocess")]
 pub mod multiprocess {
     pub mod data_transfer;

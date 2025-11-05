@@ -51,7 +51,7 @@ class Pipeline:
 
     Example:
         ```python
-        from remotemedia_sdk.multiprocess import Pipeline
+        from remotemedia.core.multiprocessing import Pipeline
 
         # Build a speech-to-speech pipeline
         pipeline = (Pipeline("s2s_pipeline")

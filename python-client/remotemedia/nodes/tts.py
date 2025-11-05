@@ -1,10 +1,13 @@
 """
-Kokoro TTS Node using RuntimeData API
+Kokoro TTS Node using RuntimeData API and MultiprocessNode base
 
-This is an updated version of KokoroTTSNode that uses the new RuntimeData API
-for efficient, type-safe communication with the Rust runtime.
+This is an updated version of KokoroTTSNode that:
+- Inherits from MultiprocessNode for multiprocess execution support
+- Uses the RuntimeData API for efficient, type-safe communication
+- Can run in separate processes with independent GIL
 
 Key improvements:
+- Multiprocess execution support (concurrent with other nodes)
 - Direct RuntimeData communication (no JSON serialization)
 - Efficient numpy array conversion to audio RuntimeData
 - Type-safe input/output handling
@@ -13,7 +16,7 @@ Key improvements:
 
 import logging
 import numpy as np
-from typing import AsyncGenerator, Optional, TYPE_CHECKING
+from typing import AsyncGenerator, Optional, TYPE_CHECKING, Union, Dict, Any
 import asyncio
 
 # Import RuntimeData bindings
@@ -30,6 +33,9 @@ except ImportError:
     audio_to_numpy = None  # type: ignore
     logging.warning("RuntimeData bindings not available. Using fallback implementation.")
 
+# Import MultiprocessNode base class from core
+from remotemedia.core import MultiprocessNode, NodeConfig
+
 logger = logging.getLogger(__name__)
 
 # Configure logger to output to console
@@ -42,10 +48,11 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 
-class KokoroTTSNode:
+class KokoroTTSNode(MultiprocessNode):
     """
-    Text-to-speech synthesis using Kokoro TTS with RuntimeData API.
+    Text-to-speech synthesis using Kokoro TTS with RuntimeData API and multiprocess support.
 
+    Inherits from MultiprocessNode to enable concurrent execution in separate processes.
     This node accepts text via RuntimeData.Text and yields audio chunks via
     RuntimeData.Audio, enabling efficient streaming synthesis.
 
@@ -56,7 +63,7 @@ class KokoroTTSNode:
 
     def __init__(
         self,
-        node_id: str,
+        node_id: str = None,
         lang_code: str = 'a',
         voice: str = 'af_heart',
         speed: float = 1.0,
@@ -64,10 +71,11 @@ class KokoroTTSNode:
         sample_rate: int = 24000,
         stream_chunks: bool = True,
         skip_tokens: list = None,
+        config: Union[NodeConfig, Dict[str, Any]] = None,
         **kwargs
     ):
         """
-        Initialize Kokoro TTS node with RuntimeData support.
+        Initialize Kokoro TTS node with RuntimeData and multiprocess support.
 
         Args:
             node_id: Unique identifier for this node instance
@@ -80,8 +88,33 @@ class KokoroTTSNode:
             sample_rate: Output sample rate (default: 24000)
             stream_chunks: Whether to stream audio chunks as they're generated (default: True)
             skip_tokens: List of token patterns to skip (e.g., ['<|text_end|>', '<|audio_end|>'])
+            config: NodeConfig for multiprocess mode (if available)
+            **kwargs: Additional parameters
         """
-        self.node_id = node_id
+        # Initialize MultiprocessNode base if config provided
+        if config is not None:
+            super().__init__(config, **kwargs)
+            # Extract params from config
+            if isinstance(config, NodeConfig):
+                params = config.params
+            else:
+                params = config.get('params', {})
+
+            # Override with params from config
+            lang_code = params.get('lang_code', lang_code)
+            voice = params.get('voice', voice)
+            speed = params.get('speed', speed)
+            split_pattern = params.get('split_pattern', split_pattern)
+            sample_rate = params.get('sample_rate', sample_rate)
+            stream_chunks = params.get('stream_chunks', stream_chunks)
+            skip_tokens = params.get('skip_tokens', skip_tokens)
+        else:
+            # Standalone mode without multiprocess
+            self.node_id = node_id or "kokoro_tts"
+            self.node_type = "KokoroTTSNode"
+            self.logger = logging.getLogger(__name__)
+
+        # Kokoro-specific configuration
         self.lang_code = lang_code
         self.voice = voice
         self.speed = speed
@@ -167,7 +200,7 @@ class KokoroTTSNode:
         except StopIteration:
             return None
 
-    async def process(self, data: RuntimeData) -> AsyncGenerator[RuntimeData, None]:
+    async def process(self, data: RuntimeData) -> Union[RuntimeData, AsyncGenerator[RuntimeData, None], None]:
         """
         Process text input and generate speech audio chunks incrementally.
 

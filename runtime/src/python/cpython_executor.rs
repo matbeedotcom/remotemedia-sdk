@@ -1,7 +1,17 @@
 //! CPython Node Executor with Dedicated Worker Threads (CUDA-Safe)
 //!
+//! **DEPRECATED in v0.3.0**: This module is deprecated and will be removed in v0.4.0.
+//! Use `MultiprocessExecutor` instead for all Python nodes.
+//!
 //! Each CPythonNodeExecutor runs in its own dedicated OS thread with persistent GIL.
 //! This prevents CUDA tensor corruption from repeated GIL acquisition/release.
+//!
+//! **Migration Guide:**
+//! Replace `CPythonNodeExecutor::new(node_type)` with:
+//! ```rust,ignore
+//! let config = MultiprocessConfig::from_default_file().unwrap_or_default();
+//! MultiprocessExecutor::new(config)
+//! ```
 
 use crate::data::RuntimeData;
 use crate::executor::PyObjectCache;
@@ -98,6 +108,8 @@ enum WorkerCommand {
 
 /// CPython-based node executor with dedicated thread and persistent GIL (CUDA-safe)
 ///
+/// **DEPRECATED**: Use `MultiprocessExecutor` instead for true process isolation and better parallelism.
+///
 /// Architecture:
 ///   Rust async → channel → Dedicated OS thread (holds GIL persistently) → channel → Rust async
 ///
@@ -105,6 +117,10 @@ enum WorkerCommand {
 ///   - CUDA-safe: Same Python thread state for entire node lifetime
 ///   - Each node isolated: LFM2Audio and VibeVoice run in separate threads
 ///   - No GIL contention: Each thread has its own Python context
+#[deprecated(
+    since = "0.3.0",
+    note = "Use MultiprocessExecutor instead. This will be removed in v0.4.0"
+)]
 pub struct CPythonNodeExecutor {
     node_type: String,
     initialized: bool,

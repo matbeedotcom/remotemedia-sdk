@@ -12,7 +12,7 @@ Usage:
 
 import sys
 import time
-from remotemedia_sdk.multiprocess import Pipeline, InitProgress, InitStatus
+from remotemedia.core.multiprocessing import Pipeline, InitProgress, InitStatus
 
 
 def show_progress(progress: InitProgress):

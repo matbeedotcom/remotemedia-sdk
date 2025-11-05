@@ -1,10 +1,11 @@
 """
-VibeVoice TTS Node using RuntimeData API
+VibeVoice TTS Node using RuntimeData API and MultiprocessNode base
 
-A streaming text-to-speech node built on the VibeVoice model family. This node mirrors the
-shape and async/streaming behavior of KokoroTTSNode, but integrates the VibeVoice
-processor/model and its AudioStreamer. It is designed to be used inside the Pipeline system
-(which will handle chunking, sentence aggregation, and audio reformatting upstream/downstream).
+A streaming text-to-speech node built on the VibeVoice model family with multiprocess support.
+This node mirrors the shape and async/streaming behavior of KokoroTTSNode, but integrates the
+VibeVoice processor/model and its AudioStreamer.
+
+Inherits from MultiprocessNode to enable concurrent execution in separate processes.
 
 Inputs:
 - RuntimeData.Text (string)
@@ -13,6 +14,7 @@ Outputs:
 - RuntimeData.Audio (float32 mono @ sample_rate, streamed in chunks)
 
 Key notes:
+- Multiprocess execution support for concurrent operation with other AI models
 - Each next() call on the underlying generator is isolated on a worker thread to avoid PyTorch
   heap corruption when called from Rust/PyO3 on Windows
 - Optional voice cloning via preloaded reference audio files
@@ -23,7 +25,7 @@ import asyncio
 import logging
 import queue
 import threading
-from typing import AsyncGenerator, List, Optional, TYPE_CHECKING
+from typing import AsyncGenerator, List, Optional, TYPE_CHECKING, Union, Dict, Any
 
 import numpy as np
 
@@ -41,6 +43,9 @@ except ImportError:
     audio_to_numpy = None  # type: ignore
     logging.warning("RuntimeData bindings not available. Using fallback implementation.")
 
+# Import MultiprocessNode base class from core
+from remotemedia.core import MultiprocessNode, NodeConfig
+
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     _h = logging.StreamHandler()
@@ -50,16 +55,17 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 
-class VibeVoiceTTSNode:
-    """Text-to-speech synthesis using VibeVoice with RuntimeData API.
+class VibeVoiceTTSNode(MultiprocessNode):
+    """Text-to-speech synthesis using VibeVoice with RuntimeData API and multiprocess support.
 
+    Inherits from MultiprocessNode to enable concurrent execution in separate processes.
     Parameters are intentionally similar to the public Gradio demo so you can
     move between them easily.
     """
 
     def __init__(
         self,
-        node_id: str,
+        node_id: str = None,
         model_path: str = "/tmp/vibevoice-model",
         device: Optional[str] = None,  # "cuda" | "mps" | "cpu" | None (auto)
         inference_steps: int = 10,
@@ -70,9 +76,54 @@ class VibeVoiceTTSNode:
         voice_samples: Optional[List] = None,  # Can be file paths (str) or embedded audio (dict)
         adapter_path: Optional[str] = None,
         skip_tokens: Optional[List[str]] = None,
+        config: Union[NodeConfig, Dict[str, Any]] = None,
         **kwargs,
     ) -> None:
-        self.node_id = node_id
+        """
+        Initialize VibeVoice TTS node with RuntimeData and multiprocess support.
+
+        Args:
+            node_id: Unique identifier for this node instance
+            model_path: Path to VibeVoice model files
+            device: Device for inference ("cuda", "mps", "cpu", or None for auto-detect)
+            inference_steps: Number of denoising steps
+            cfg_scale: Classifier-free guidance scale
+            sample_rate: Output audio sample rate
+            stream_chunks: Whether to stream audio chunks
+            use_voice_cloning: Enable voice cloning
+            voice_samples: Voice samples for cloning (file paths or audio data)
+            adapter_path: Path to LoRA adapter
+            skip_tokens: Tokens to filter from input text
+            config: NodeConfig for multiprocess mode (if available)
+            **kwargs: Additional parameters
+        """
+        # Initialize MultiprocessNode base if config provided
+        if config is not None:
+            super().__init__(config, **kwargs)
+            # Extract params from config
+            if isinstance(config, NodeConfig):
+                params = config.params
+            else:
+                params = config.get('params', {})
+
+            # Override with params from config
+            model_path = params.get('model_path', model_path)
+            device = params.get('device', device)
+            inference_steps = params.get('inference_steps', inference_steps)
+            cfg_scale = params.get('cfg_scale', cfg_scale)
+            sample_rate = params.get('sample_rate', sample_rate)
+            stream_chunks = params.get('stream_chunks', stream_chunks)
+            use_voice_cloning = params.get('use_voice_cloning', use_voice_cloning)
+            voice_samples = params.get('voice_samples', voice_samples)
+            adapter_path = params.get('adapter_path', adapter_path)
+            skip_tokens = params.get('skip_tokens', skip_tokens)
+        else:
+            # Standalone mode without multiprocess
+            self.node_id = node_id or "vibevoice_tts"
+            self.node_type = "VibeVoiceTTSNode"
+            self.logger = logging.getLogger(__name__)
+
+        # VibeVoice-specific configuration
         self.model_path = model_path
         self.device = device
         self.inference_steps = inference_steps
@@ -456,7 +507,7 @@ class VibeVoiceTTSNode:
         except StopIteration:
             return None
 
-    async def process(self, data: RuntimeData) -> AsyncGenerator[RuntimeData, None]:
+    async def process(self, data: RuntimeData) -> Union[RuntimeData, AsyncGenerator[RuntimeData, None], None]:
         """Process RuntimeData.Text to streamed RuntimeData.Audio chunks."""
         try:
             logger.info("VibeVoice process() called")

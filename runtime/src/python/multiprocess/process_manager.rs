@@ -160,15 +160,11 @@ impl ProcessManager {
 
         // Add multiprocess runner module
         command.args([
-            "-m", "remotemedia_sdk.multiprocess.runner",
+            "-m", "remotemedia.core.multiprocessing.runner",
             "--node-type", node_type,
             "--node-id", node_id,
+            "--params-stdin",  // Signal that params come from stdin
         ]);
-
-        // Pass parameters as JSON
-        if !params.is_null() {
-            command.args(["--params", &params.to_string()]);
-        }
 
         // Set environment variables
         for (key, value) in &self.spawn_config.env_vars {
@@ -199,6 +195,7 @@ impl ProcessManager {
         }
 
         // Configure I/O
+        command.stdin(Stdio::piped());  // Always need stdin for params
         if self.spawn_config.capture_output {
             command.stdout(Stdio::piped());
             command.stderr(Stdio::piped());
@@ -210,6 +207,25 @@ impl ProcessManager {
             .map_err(|e| Error::Execution(format!("Failed to spawn process: {}", e)))?;
 
         let pid = child.id();
+
+        // Capture stderr for logging if process crashes
+        let stderr_handle = if self.spawn_config.capture_output {
+            child.stderr.take()
+        } else {
+            None
+        };
+
+        // Write params to stdin (avoids command-line length limits)
+        if !params.is_null() {
+            use std::io::Write;
+            if let Some(mut stdin) = child.stdin.take() {
+                let params_json = params.to_string();
+                stdin.write_all(params_json.as_bytes())
+                    .map_err(|e| Error::Execution(format!("Failed to write params to stdin: {}", e)))?;
+                // Drop stdin to close the pipe
+                drop(stdin);
+            }
+        }
 
         // Create process handle
         let handle = ProcessHandle {
@@ -225,7 +241,7 @@ impl ProcessManager {
         self.processes.write().await.insert(pid, handle.clone());
 
         // Start monitoring
-        self.start_monitoring(handle.clone());
+        self.start_monitoring(handle.clone(), stderr_handle);
 
         tracing::info!("Process {} spawned for node {}", pid, node_id);
         Ok(handle)
@@ -286,9 +302,24 @@ impl ProcessManager {
     }
 
     /// Start monitoring a process
-    fn start_monitoring(&self, process: ProcessHandle) {
+    fn start_monitoring(&self, process: ProcessHandle, stderr: Option<std::process::ChildStderr>) {
         let processes = self.processes.clone();
         let handlers = self.exit_handlers.clone();
+
+        // Spawn task to capture stderr output
+        if let Some(stderr) = stderr {
+            let node_id = process.node_id.clone();
+            let pid = process.id;
+            tokio::spawn(async move {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let stderr = tokio::process::ChildStderr::from_std(stderr).unwrap();
+                let mut lines = BufReader::new(stderr).lines();
+
+                while let Ok(Some(line)) = lines.next_line().await {
+                    tracing::warn!("[Process {}] {}: {}", pid, node_id, line);
+                }
+            });
+        }
 
         // Spawn monitoring task
         tokio::spawn(async move {

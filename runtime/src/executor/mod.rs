@@ -15,6 +15,10 @@ pub mod retry;
 pub mod runtime_selector;
 pub mod scheduler;
 
+// Multiprocess integration modules (spec 002)
+pub mod executor_bridge;
+pub mod data_conversion;
+
 // Re-export key types for convenience
 pub use error::ExecutionErrorExt;
 pub use graph::{PipelineGraph as Graph, PipelineNode as Node};
@@ -570,12 +574,25 @@ impl Executor {
         manifest: &Manifest,
         runtime_inputs: HashMap<String, crate::data::RuntimeData>,
     ) -> Result<HashMap<String, crate::data::RuntimeData>> {
+        self.execute_with_runtime_data_and_session(manifest, runtime_inputs, None).await
+    }
+
+    /// Execute pipeline with RuntimeData inputs and optional session ID
+    ///
+    /// When session_id is provided, Python nodes will use multiprocess execution (spec 002).
+    pub async fn execute_with_runtime_data_and_session(
+        &self,
+        manifest: &Manifest,
+        runtime_inputs: HashMap<String, crate::data::RuntimeData>,
+        session_id: Option<String>,
+    ) -> Result<HashMap<String, crate::data::RuntimeData>> {
         use crate::nodes::streaming_registry::create_default_streaming_registry;
 
         tracing::info!(
-            "Executing streaming pipeline: {} with {} runtime inputs",
+            "Executing streaming pipeline: {} with {} runtime inputs (session: {:?})",
             manifest.metadata.name,
-            runtime_inputs.len()
+            runtime_inputs.len(),
+            session_id
         );
 
         // Build graph and validate
@@ -587,11 +604,19 @@ impl Executor {
         let nodes: HashMap<String, Box<dyn crate::nodes::StreamingNode>> = {
             let mut n = HashMap::new();
             for node_spec in &manifest.nodes {
-                tracing::debug!("Creating node: {} (type: {})", node_spec.id, node_spec.node_type);
+                tracing::debug!("Creating node: {} (type: {}) for session: {:?}", node_spec.id, node_spec.node_type, session_id);
+
+                // Inject session_id into params for multiprocess execution (spec 002)
+                let mut params_with_session = node_spec.params.clone();
+                if let Some(ref sid) = session_id {
+                    params_with_session["__session_id__"] = serde_json::Value::String(sid.clone());
+                }
+
                 let node = streaming_registry.create_node(
                     &node_spec.node_type,
                     node_spec.id.clone(),
-                    &node_spec.params,
+                    &params_with_session,
+                    session_id.clone(),
                 )?;
                 n.insert(node_spec.id.clone(), node);
             }

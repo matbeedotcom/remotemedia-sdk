@@ -249,7 +249,12 @@ impl<T: AsyncStreamingNode + 'static> StreamingNode for AsyncNodeWrapper<T> {
 /// Factory trait for creating streaming node instances
 pub trait StreamingNodeFactory: Send + Sync {
     /// Create a new streaming node instance
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error>;
+    ///
+    /// # Arguments
+    /// * `node_id` - Unique identifier for this node instance
+    /// * `params` - Node initialization parameters
+    /// * `session_id` - Optional session ID for multiprocess execution
+    fn create(&self, node_id: String, params: &Value, session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error>;
 
     /// Get the node type this factory creates
     fn node_type(&self) -> &str;
@@ -287,11 +292,18 @@ impl StreamingNodeRegistry {
     }
 
     /// Create a streaming node by type
+    ///
+    /// # Arguments
+    /// * `node_type` - The type of node to create
+    /// * `node_id` - Unique identifier for this node instance
+    /// * `params` - Node initialization parameters
+    /// * `session_id` - Optional session ID for multiprocess execution
     pub fn create_node(
         &self,
         node_type: &str,
         node_id: String,
         params: &Value,
+        session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
         let factory = self.factories.get(node_type).ok_or_else(|| {
             Error::Execution(format!(
@@ -301,7 +313,7 @@ impl StreamingNodeRegistry {
             ))
         })?;
 
-        factory.create(node_id, params)
+        factory.create(node_id, params, session_id)
     }
 
     /// Check if a node type is registered

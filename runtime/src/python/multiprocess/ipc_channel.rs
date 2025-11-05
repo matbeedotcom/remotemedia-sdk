@@ -6,17 +6,25 @@
 #[cfg(feature = "multiprocess")]
 use iceoryx2::prelude::*;
 #[cfg(feature = "multiprocess")]
+use iceoryx2::service::port_factory::publish_subscribe::PortFactory;
+#[cfg(feature = "multiprocess")]
 use iceoryx2_bb_log::set_log_level;
 use crate::{Error, Result};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
 
 use super::data_transfer::RuntimeData;
 
-/// Maximum payload size for IPC transfers (10 MB)
+/// Global shared channel registry instance
+/// All MultiprocessExecutor instances will use this single registry to ensure
+/// they all share the same iceoryx2 Node and can communicate with each other
+static GLOBAL_REGISTRY: OnceLock<Arc<ChannelRegistry>> = OnceLock::new();
+
+/// Maximum payload size for IPC transfers (1 MB)
 /// This is the maximum size of a single RuntimeData message that can be transferred
-const MAX_SLICE_LEN: usize = 10 * 1024 * 1024;
+/// Matches the global iceoryx2 config: publish_subscribe.max_slice_len = 1048576
+const MAX_SLICE_LEN: usize = 1 * 1024 * 1024;
 
 /// Channel statistics
 #[derive(Debug, Default, Clone)]
@@ -51,16 +59,50 @@ pub struct ChannelRegistry {
 
     /// Active channels
     channels: Arc<RwLock<HashMap<String, ChannelHandle>>>,
+
+    #[cfg(feature = "multiprocess")]
+    /// Active services (must be kept alive or they get dropped/deleted)
+    services: Arc<RwLock<HashMap<String, PortFactory<ipc::Service, [u8], ()>>>>,
 }
 
 impl ChannelRegistry {
-    /// Create a new channel registry
-    pub fn new() -> Self {
+    /// Get or create the global shared channel registry
+    /// This ensures all nodes/executors use the same iceoryx2 Node instance
+    pub fn global() -> Arc<Self> {
+        GLOBAL_REGISTRY.get_or_init(|| {
+            let mut registry = Self::new_internal();
+            
+            #[cfg(feature = "multiprocess")]
+            {
+                if let Err(e) = registry.initialize() {
+                    tracing::error!("Failed to initialize global iceoryx2 registry: {}", e);
+                } else {
+                    tracing::info!("Global iceoryx2 registry initialized successfully");
+                }
+            }
+            
+            Arc::new(registry)
+        }).clone()
+    }
+
+    /// Create a new channel registry (internal use only)
+    /// External code should use `global()` to get the shared instance
+    fn new_internal() -> Self {
         Self {
             #[cfg(feature = "multiprocess")]
             node: None,
             channels: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "multiprocess")]
+            services: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+    
+    /// Create a new channel registry
+    /// 
+    /// **DEPRECATED**: Use `ChannelRegistry::global()` instead to ensure all nodes
+    /// share the same iceoryx2 Node instance for proper IPC communication.
+    pub fn new() -> Self {
+        Self::new_internal()
     }
 
     /// Initialize iceoryx2 runtime
@@ -69,20 +111,10 @@ impl ChannelRegistry {
         // Set log level
         set_log_level(LogLevel::Info);
 
-        // Create custom config with increased limits for AI model data transfer
-        let mut config = Config::global_config().clone();
-
-        // Configure publish-subscribe defaults
-        // Note: max_slice_len must be configured per-publisher using initial_max_slice_len() in v0.7.0
-        config.defaults.publish_subscribe.subscriber_max_buffer_size = 100;
-        config.defaults.publish_subscribe.subscriber_max_borrowed_samples = 100;
-        config.defaults.publish_subscribe.publisher_max_loaned_samples = 16;
-
-        // Create iceoryx2 node with custom config
+        // Create iceoryx2 node
         let node = NodeBuilder::new()
-            .config(&config)
             .create::<ipc::Service>()
-            .map_err(|e| Error::Execution(format!("Failed to create iceoryx2 node: {:?}", e)))?;
+            .map_err(|e| Error::IpcError(format!("Failed to create iceoryx2 node: {:?}", e)))?;
 
         self.node = Some(node);
 
@@ -99,21 +131,26 @@ impl ChannelRegistry {
         backpressure: bool,
     ) -> Result<ChannelHandle> {
         let node = self.node.as_ref()
-            .ok_or_else(|| Error::Execution("iceoryx2 not initialized".to_string()))?;
+            .ok_or_else(|| Error::IpcError("Node not initialized".to_string()))?;
 
-        // Create service name
-        let service_name = name.try_into()
-            .map_err(|e| Error::Execution(format!("Invalid service name: {:?}", e)))?;
+        // Create service name from channel name
+        let service_name = ServiceName::new(name)
+            .map_err(|e| Error::IpcError(format!("Invalid service name: {:?}", e)))?;
 
-        // Create publish-subscribe service for RuntimeData
-        let _service = node
+        // Create publish-subscribe service for byte slices
+        let service = node
             .service_builder(&service_name)
-            .publish_subscribe::<[u8]>()  // Using byte array for serialized RuntimeData
-            .history_size(0)  // No history needed for real-time streaming
+            .publish_subscribe::<[u8]>()
+            .max_publishers(10)
+            .max_subscribers(10)
+            .history_size(capacity)
             .subscriber_max_buffer_size(capacity)
-            .subscriber_max_borrowed_samples(capacity)
             .open_or_create()
-            .map_err(|e| Error::Execution(format!("Failed to create service: {:?}", e)))?;
+            .map_err(|e| Error::IpcError(format!("Failed to create service: {:?}", e)))?;
+
+        // Store the service to keep it alive
+        let mut services = self.services.write().await;
+        services.insert(name.to_string(), service);
 
         // Create channel handle
         let handle = ChannelHandle {
@@ -123,11 +160,10 @@ impl ChannelRegistry {
             backpressure_enabled: backpressure,
         };
 
-        // Store handle
         let mut channels = self.channels.write().await;
         channels.insert(name.to_string(), handle.clone());
 
-        tracing::info!("Created channel: {} with capacity: {}", name, capacity);
+        tracing::info!("Created iceoryx2 channel: {} (capacity: {})", name, capacity);
         Ok(handle)
     }
 
@@ -144,40 +180,27 @@ impl ChannelRegistry {
     /// Create a publisher for a channel
     #[cfg(feature = "multiprocess")]
     pub async fn create_publisher(&self, channel_name: &str) -> Result<Publisher> {
-        let node = self.node.as_ref()
-            .ok_or_else(|| Error::Execution("iceoryx2 not initialized".to_string()))?;
+        let services = self.services.read().await;
+        let service = services.get(channel_name)
+            .ok_or_else(|| Error::IpcError(format!("Channel not found: {}", channel_name)))?;
+
+        // Create publisher from service with dynamic allocation support
+        // Start with 512KB to handle typical audio buffers without reallocation
+        let publisher = service.publisher_builder()
+            .initial_max_slice_len(512 * 1024)  // 512KB - large enough for most audio chunks
+            .allocation_strategy(AllocationStrategy::PowerOfTwo)
+            .create()
+            .map_err(|e| Error::IpcError(format!("Failed to create publisher: {:?}", e)))?;
 
         let channels = self.channels.read().await;
-        let channel = channels.get(channel_name)
-            .ok_or_else(|| Error::Execution(format!("Channel {} not found", channel_name)))?;
-
-        // Create service name
-        let service_name = channel_name.try_into()
-            .map_err(|e| Error::Execution(format!("Invalid service name: {:?}", e)))?;
-
-        // Open the service
-        let service = node
-            .service_builder(&service_name)
-            .publish_subscribe::<[u8]>()
-            .history_size(0)
-            .subscriber_max_buffer_size(channel.capacity)
-            .subscriber_max_borrowed_samples(channel.capacity)
-            .open_or_create()
-            .map_err(|e| Error::Execution(format!("Failed to open service: {:?}", e)))?;
-
-        // Configure publisher to allow multiple samples and large payloads
-        let iox_publisher = service
-            .publisher_builder()
-            .max_loaned_samples(16)  // Allow up to 16 samples to be loaned simultaneously
-            .initial_max_slice_len(MAX_SLICE_LEN)  // Set maximum payload size for slices
-            .create()
-            .map_err(|e| Error::Execution(format!("Failed to create publisher: {:?}", e)))?;
+        let handle = channels.get(channel_name)
+            .ok_or_else(|| Error::IpcError(format!("Channel handle not found: {}", channel_name)))?;
 
         Ok(Publisher {
             channel_name: channel_name.to_string(),
-            inner: iox_publisher,
-            stats: channel.stats.clone(),
-            backpressure: channel.backpressure_enabled,
+            inner: publisher,
+            stats: handle.stats.clone(),
+            backpressure: handle.backpressure_enabled,
             _lifetime: std::marker::PhantomData,
         })
     }
@@ -185,37 +208,58 @@ impl ChannelRegistry {
     /// Create a subscriber for a channel
     #[cfg(feature = "multiprocess")]
     pub async fn create_subscriber(&self, channel_name: &str) -> Result<Subscriber> {
-        let node = self.node.as_ref()
-            .ok_or_else(|| Error::Execution("iceoryx2 not initialized".to_string()))?;
+        let services = self.services.read().await;
+        let service = services.get(channel_name)
+            .ok_or_else(|| Error::IpcError(format!("Channel not found: {}", channel_name)))?;
 
         let channels = self.channels.read().await;
-        let channel = channels.get(channel_name)
-            .ok_or_else(|| Error::Execution(format!("Channel {} not found", channel_name)))?;
+        let handle = channels.get(channel_name)
+            .ok_or_else(|| Error::IpcError(format!("Channel handle not found: {}", channel_name)))?;
 
-        // Create service name
-        let service_name = channel_name.try_into()
-            .map_err(|e| Error::Execution(format!("Invalid service name: {:?}", e)))?;
-
-        // Open the service
-        let service = node
-            .service_builder(&service_name)
-            .publish_subscribe::<[u8]>()
-            .history_size(0)
-            .subscriber_max_buffer_size(channel.capacity)
-            .subscriber_max_borrowed_samples(channel.capacity)
-            .open_or_create()
-            .map_err(|e| Error::Execution(format!("Failed to open service: {:?}", e)))?;
-
-        let iox_subscriber = service
-            .subscriber_builder()
+        // Create subscriber with buffer size to receive historical messages
+        let subscriber = service.subscriber_builder()
+            .buffer_size(handle.capacity)  // Request history
             .create()
-            .map_err(|e| Error::Execution(format!("Failed to create subscriber: {:?}", e)))?;
+            .map_err(|e| Error::IpcError(format!("Failed to create subscriber: {:?}", e)))?;
+
+        tracing::info!(
+            "Created subscriber for '{}' with buffer_size={} to receive historical messages",
+            channel_name,
+            handle.capacity
+        );
 
         Ok(Subscriber {
             channel_name: channel_name.to_string(),
-            inner: iox_subscriber,
-            stats: channel.stats.clone(),
+            inner: subscriber,
+            stats: handle.stats.clone(),
         })
+    }
+
+    /// Create a raw subscriber for control channels (bypasses RuntimeData deserialization)
+    /// Used for simple control messages like READY signals
+    #[cfg(feature = "multiprocess")]
+    pub async fn create_raw_subscriber(&self, channel_name: &str) -> Result<iceoryx2::port::subscriber::Subscriber<ipc::Service, [u8], ()>> {
+        let services = self.services.read().await;
+        let service = services.get(channel_name)
+            .ok_or_else(|| Error::IpcError(format!("Channel not found: {}", channel_name)))?;
+
+        let channels = self.channels.read().await;
+        let handle = channels.get(channel_name)
+            .ok_or_else(|| Error::IpcError(format!("Channel handle not found: {}", channel_name)))?;
+
+        // Create subscriber with buffer size to receive historical messages
+        let subscriber = service.subscriber_builder()
+            .buffer_size(handle.capacity)  // Request history
+            .create()
+            .map_err(|e| Error::IpcError(format!("Failed to create raw subscriber: {:?}", e)))?;
+
+        tracing::info!(
+            "Created raw subscriber for '{}' with buffer_size={} to receive historical messages",
+            channel_name,
+            handle.capacity
+        );
+
+        Ok(subscriber)
     }
 }
 
@@ -231,44 +275,95 @@ pub struct Publisher<'a> {
 
 #[cfg(feature = "multiprocess")]
 impl<'a> Publisher<'a> {
-    /// Publish data to the channel
-    pub async fn publish(&self, data: RuntimeData) -> Result<()> {
+    /// Publish data to the channel (synchronous - iceoryx2 is lock-free)
+    pub fn publish(&self, data: RuntimeData) -> Result<()> {
+        // Serialize RuntimeData to bytes
         let bytes = data.to_bytes();
-        let size = bytes.len();
-
-        tracing::info!("Attempting to loan {} bytes for channel: {}", size, self.channel_name);
-
-        // Get a loan for zero-copy transfer
-        let mut sample = self.inner
-            .loan_slice_uninit(size)
-            .map_err(|e| Error::Execution(format!("Failed to loan {} bytes: {:?}", size, e)))?;
-
-        // Write data to the sample (initialize the MaybeUninit slice)
-        let payload = sample.payload_mut();
-        for (i, &byte) in bytes.iter().enumerate() {
-            payload[i].write(byte);
+        
+        tracing::info!(
+            "[IPC Publisher] Channel '{}' publishing {} bytes (type: {:?})",
+            self.channel_name,
+            bytes.len(),
+            data.data_type
+        );
+        
+        if bytes.len() > MAX_SLICE_LEN {
+            return Err(Error::IpcError(format!(
+                "Message too large: {} bytes (max: {})",
+                bytes.len(),
+                MAX_SLICE_LEN
+            )));
         }
 
-        // Assume initialized and send
-        let sample = unsafe { sample.assume_init() };
+        // Loan uninitialized memory
+        let sample = self.inner.loan_slice_uninit(bytes.len())
+            .map_err(|e| Error::IpcError(format!("Failed to loan memory: {:?}", e)))?;
+
+        // Write payload and send
+        let sample = sample.write_from_slice(&bytes);
         sample.send()
-            .map_err(|e| Error::Execution(format!("Failed to send sample: {:?}", e)))?;
+            .map_err(|e| Error::IpcError(format!("Failed to send sample: {:?}", e)))?;
+
+        tracing::info!(
+            "[IPC Publisher] Channel '{}' successfully sent {} bytes",
+            self.channel_name,
+            bytes.len()
+        );
 
         // Update stats
-        let mut stats = self.stats.write().await;
+        let mut stats = self.stats.blocking_write();
         stats.messages_sent += 1;
-        stats.bytes_transferred += size as u64;
+        stats.bytes_transferred += bytes.len() as u64;
         stats.last_activity = Some(std::time::Instant::now());
 
-        tracing::trace!("Published {} bytes to channel: {}", size, self.channel_name);
         Ok(())
     }
 
     /// Try to publish without blocking (returns false if would block)
-    pub async fn try_publish(&self, data: RuntimeData) -> Result<bool> {
+    pub fn try_publish(&self, data: RuntimeData) -> Result<bool> {
         // For now, just call publish - backpressure handling can be added later
-        self.publish(data).await?;
+        self.publish(data)?;
         Ok(true)
+    }
+
+    /// Send raw bytes directly (like READY signal) - bypasses RuntimeData serialization
+    pub fn send(&self, bytes: &[u8]) -> Result<()> {
+        tracing::info!(
+            "[IPC Publisher] Channel '{}' sending raw {} bytes",
+            self.channel_name,
+            bytes.len()
+        );
+        
+        if bytes.len() > MAX_SLICE_LEN {
+            return Err(Error::IpcError(format!(
+                "Message too large: {} bytes (max: {})",
+                bytes.len(),
+                MAX_SLICE_LEN
+            )));
+        }
+
+        // Loan uninitialized memory
+        let sample = self.inner.loan_slice_uninit(bytes.len())
+            .map_err(|e| Error::IpcError(format!("Failed to loan memory: {:?}", e)))?;
+
+        // Write payload and send
+        let sample = sample.write_from_slice(bytes);
+        sample.send()
+            .map_err(|e| Error::IpcError(format!("Failed to send sample: {:?}", e)))?;
+
+        tracing::info!(
+            "[IPC Publisher] Channel '{}' successfully sent raw {} bytes",
+            self.channel_name,
+            bytes.len()
+        );
+
+        // Update stats
+        let mut stats = self.stats.blocking_write();
+        stats.messages_sent += 1;
+        stats.bytes_transferred += bytes.len() as u64;
+        stats.last_activity = Some(std::time::Instant::now());
+
+        Ok(())
     }
 }
 
@@ -282,54 +377,36 @@ pub struct Subscriber {
 
 #[cfg(feature = "multiprocess")]
 impl Subscriber {
-    /// Receive data from the channel
-    pub async fn receive(&self) -> Result<Option<RuntimeData>> {
+    /// Receive data from the channel (synchronous - iceoryx2 is lock-free)
+    pub fn receive(&self) -> Result<Option<RuntimeData>> {
         // Try to receive a sample
-        let sample = self.inner
-            .receive()
-            .map_err(|e| Error::Execution(format!("Failed to receive sample: {:?}", e)))?;
+        match self.inner.receive() {
+            Ok(Some(sample)) => {
+                let bytes = sample.payload();
+                
+                tracing::info!(
+                    "[IPC Subscriber] Channel '{}' received {} bytes",
+                    self.channel_name,
+                    bytes.len()
+                );
+                
+                // Deserialize RuntimeData from bytes
+                let data = RuntimeData::from_bytes(bytes)
+                    .map_err(|e| Error::IpcError(format!("Failed to deserialize: {}", e)))?;
 
-        if let Some(sample) = sample {
-            // Get the bytes and deserialize
-            let bytes = sample.payload();
-            let data = RuntimeData::from_bytes(bytes)
-                .map_err(|e| Error::Execution(format!("Failed to deserialize data: {}", e)))?;
+                // Update stats
+                let mut stats = self.stats.blocking_write();
+                stats.messages_received += 1;
+                stats.bytes_transferred += bytes.len() as u64;
+                stats.last_activity = Some(std::time::Instant::now());
 
-            // Update stats
-            let mut stats = self.stats.write().await;
-            stats.messages_received += 1;
-            stats.bytes_transferred += bytes.len() as u64;
-            stats.last_activity = Some(std::time::Instant::now());
-
-            tracing::trace!("Received {} bytes from channel: {}", bytes.len(), self.channel_name);
-            Ok(Some(data))
-        } else {
-            Ok(None)
+                Ok(Some(data))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(Error::IpcError(format!("Failed to receive: {:?}", e))),
         }
     }
 }
-
-// Placeholder implementations for when multiprocess feature is disabled
-#[cfg(not(feature = "multiprocess"))]
-impl ChannelRegistry {
-    pub fn initialize(&mut self) -> Result<()> {
-        Err(Error::Execution("Multiprocess support not enabled".to_string()))
-    }
-
-    pub fn create_channel(
-        &self,
-        _name: &str,
-        _capacity: usize,
-        _backpressure: bool,
-    ) -> Result<ChannelHandle> {
-        Err(Error::Execution("Multiprocess support not enabled".to_string()))
-    }
-
-    pub fn destroy_channel(&self, _channel: ChannelHandle) -> Result<()> {
-        Err(Error::Execution("Multiprocess support not enabled".to_string()))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,13 +417,15 @@ mod tests {
         let mut registry = ChannelRegistry::new();
         registry.initialize().unwrap();
 
+        // Use unique name to avoid conflicts with other tests
+        let channel_name = format!("test/channel/create/{}", std::process::id());
         let channel = registry.create_channel(
-            "test_channel",
+            &channel_name,
             100,
             true,
         ).await.unwrap();
 
-        assert_eq!(channel.name, "test_channel");
+        assert_eq!(channel.name, channel_name);
         assert_eq!(channel.capacity, 100);
         assert!(channel.backpressure_enabled);
 
@@ -359,18 +438,30 @@ mod tests {
         let mut registry = ChannelRegistry::new();
         registry.initialize().unwrap();
 
-        let channel = registry.create_channel("test_channel", 10, false).await.unwrap();
+        // Use unique name with timestamp to avoid conflicts
+        let channel_name = format!("test/channel/pubsub/{}/{}", 
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+
+        let channel = registry.create_channel(&channel_name, 10, false).await.unwrap();
 
         // Create publisher and subscriber
-        let publisher = registry.create_publisher("test_channel").await.unwrap();
-        let subscriber = registry.create_subscriber("test_channel").await.unwrap();
+        let publisher = registry.create_publisher(&channel_name).await.unwrap();
+        let subscriber = registry.create_subscriber(&channel_name).await.unwrap();
 
         // Publish data
         let data = RuntimeData::text("Hello, IPC!", "test_session");
-        publisher.publish(data).await.unwrap();
+        publisher.publish(data).unwrap();
+
+        // Small delay to ensure message is received
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         // Receive data
-        let received = subscriber.receive().await.unwrap();
+        let received = subscriber.receive().unwrap();
         assert!(received.is_some());
 
         let received_data = received.unwrap();

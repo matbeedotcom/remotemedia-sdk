@@ -3,7 +3,8 @@
 //! Implements NodeExecutor trait to manage Python nodes running in separate processes
 //! with iceoryx2 shared memory IPC for zero-copy data transfer.
 
-use crate::executor::node_executor::{NodeContext, NodeExecutor};
+use crate::executor::node_executor::{NodeContext as ExecutorNodeContext, NodeExecutor as ExecutorNodeExecutor};
+use crate::nodes::{NodeContext as NodesNodeContext, NodeExecutor as NodesNodeExecutor};
 use crate::{Error, Result};
 use async_trait::async_trait;
 use serde_json::Value;
@@ -14,9 +15,82 @@ use tokio::sync::RwLock;
 #[cfg(feature = "multiprocess")]
 use super::process_manager::{ProcessHandle, ProcessManager, ProcessStatus, ExitReason};
 #[cfg(feature = "multiprocess")]
-use super::ipc_channel::{ChannelHandle, ChannelRegistry};
+use super::ipc_channel::{ChannelHandle, ChannelRegistry, Publisher};
 #[cfg(feature = "multiprocess")]
 use super::health_monitor::{HealthMonitor, ProcessEvent};
+#[cfg(feature = "multiprocess")]
+use super::data_transfer::RuntimeData as IPCRuntimeData;
+
+// NOTE: Publisher caching attempts and why they failed:
+//
+// ATTEMPT 1: Global static cache with Mutex
+//   - Problem: Publisher contains Rc<> which is !Send + !Sync
+//   - Error: "cannot be sent/shared between threads safely"
+//   - Code: static PUBLISHER_CACHE: OnceLock<Mutex<HashMap<String, Publisher>>> = ...
+//
+// ATTEMPT 2: Thread-local storage (TLS)
+//   - Problem: Publisher has lifetime tied to ChannelRegistry (&'a ChannelRegistry)
+//   - Error: "does not live long enough" - registry lives in spawn_blocking closure
+//   - Publishers can't outlive the registry that created them
+//   - Code: thread_local! { static PUBLISHER_CACHE: RefCell<HashMap<...>> = ... }
+//
+// ATTEMPT 3: Store publishers in SessionState
+//   - Problem: Publisher is !Send, can't be stored in async-accessible SessionState
+//   - Would require wrapping in unsafe or redesigning entire session storage
+//
+// ROOT CAUSE:
+// iceoryx2::Publisher is !Send + !Sync and has lifetime bounds to its registry.
+// This makes it impossible to cache in Rust's standard patterns (static, TLS, Arc).
+//
+// CURRENT SOLUTION:
+// Create a new publisher for each send with a 50ms delay for iceoryx2 routing.
+// This is correct but adds latency. Future optimization would require:
+// - Restructuring to create publishers during initialization
+// - Storing them in a non-Send-friendly way (e.g., blocking thread with channels)
+// - Or contributing to iceoryx2 to make Publisher Send+Sync
+
+/// Commands sent to the dedicated IPC thread
+#[cfg(feature = "multiprocess")]
+enum IpcCommand {
+    /// Send data to the node's input channel
+    SendData { data: IPCRuntimeData },
+    /// Request graceful shutdown of the IPC thread
+    Shutdown,
+}
+
+/// Responses from the dedicated IPC thread
+#[cfg(feature = "multiprocess")]
+enum IpcResponse {
+    /// Data received from the node's output channel
+    OutputData(IPCRuntimeData),
+    /// Acknowledgment that data was sent successfully
+    SendComplete,
+    /// Error occurred during IPC operation
+    Error(String),
+}
+
+/// Handle to a node's dedicated IPC thread
+#[cfg(feature = "multiprocess")]
+pub struct NodeIpcThread {
+    /// Channel to send commands to the IPC thread
+    command_tx: tokio::sync::mpsc::Sender<IpcCommand>,
+    /// Channel to receive responses from the IPC thread
+    response_rx: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<IpcResponse>>>,
+    /// Handle to the OS thread (for cleanup)
+    thread_handle: Option<std::thread::JoinHandle<()>>,
+    /// Node ID this thread serves
+    node_id: String,
+}
+
+#[cfg(feature = "multiprocess")]
+impl std::fmt::Debug for NodeIpcThread {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NodeIpcThread")
+            .field("node_id", &self.node_id)
+            .field("thread_handle", &self.thread_handle.is_some())
+            .finish()
+    }
+}
 
 /// Configuration for multiprocess executor
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -163,6 +237,11 @@ pub struct SessionState {
     /// IPC channels for this session
     pub channels: HashMap<String, ChannelHandle>,
 
+    /// Dedicated IPC threads for each node (one thread per node)
+    /// These threads own the persistent publishers/subscribers
+    #[cfg(feature = "multiprocess")]
+    pub ipc_threads: HashMap<String, NodeIpcThread>,
+
     /// Session status
     pub status: SessionStatus,
 
@@ -244,18 +323,208 @@ pub struct MultiprocessExecutor {
     config: MultiprocessConfig,
 
     /// Current node context
-    current_context: Option<NodeContext>,
+    current_context: Option<ExecutorNodeContext>,
 }
 
 impl MultiprocessExecutor {
+    /// Process RuntimeData with streaming callback via IPC channels
+    #[cfg(feature = "multiprocess")]
+    pub async fn process_runtime_data_streaming<F>(
+        &self,  // Changed from &mut self - all state is behind Arc/RwLock
+        input: crate::data::RuntimeData,
+        session_id: Option<String>,
+        mut callback: F,
+    ) -> Result<usize>
+    where
+        F: FnMut(crate::data::RuntimeData) -> Result<()> + Send,
+    {
+        let ctx = self.current_context.as_ref()
+            .ok_or_else(|| Error::Execution("Node not initialized".to_string()))?;
+
+        let session_id = session_id.or_else(|| ctx.session_id.clone())
+            .unwrap_or_else(|| format!("default_{}", ctx.node_id));
+
+        tracing::info!(
+            "MultiprocessExecutor::process_runtime_data_streaming for node {} (session: {})",
+            ctx.node_id, session_id
+        );
+
+        // Get channel names
+        let input_channel_name = format!("{}_input", ctx.node_id);
+        let output_channel_name = format!("{}_output", ctx.node_id);
+
+        // Convert input to IPC format
+        let ipc_data = Self::to_ipc_runtime_data(&input, &session_id);
+        
+        tracing::info!(
+            "[Multiprocess] Converted input data for node '{}': {:?} with {} bytes payload",
+            ctx.node_id,
+            ipc_data.data_type,
+            ipc_data.payload.len()
+        );
+
+        // Get the IPC thread for this node
+        let sessions = self.sessions.read().await;
+        let session = sessions.get(&session_id)
+            .ok_or_else(|| Error::Execution(format!("Session {} not found", session_id)))?;
+
+        let ipc_thread_cmd_tx = session.ipc_threads.get(&ctx.node_id)
+            .ok_or_else(|| Error::Execution(format!("IPC thread not found for node {}", ctx.node_id)))?
+            .command_tx.clone();
+
+        let ipc_thread_resp_rx = session.ipc_threads.get(&ctx.node_id)
+            .ok_or_else(|| Error::Execution(format!("IPC thread not found for node {}", ctx.node_id)))?
+            .response_rx.clone();
+
+        drop(sessions); // Release read lock
+
+        // Send data to IPC thread (fast, no blocking!)
+        tracing::info!("[Multiprocess] Sending data to IPC thread for node '{}'", ctx.node_id);
+        ipc_thread_cmd_tx.send(IpcCommand::SendData { data: ipc_data })
+            .await
+            .map_err(|e| Error::Execution(format!("Failed to send to IPC thread: {}", e)))?;
+
+        // Wait for send acknowledgment
+        let mut resp_rx = ipc_thread_resp_rx.lock().await;
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            resp_rx.recv()
+        ).await {
+            Ok(Some(IpcResponse::SendComplete)) => {
+                tracing::debug!("Data sent successfully to node: {}", ctx.node_id);
+            }
+            Ok(Some(IpcResponse::Error(e))) => {
+                return Err(Error::Execution(format!("IPC send error: {}", e)));
+            }
+            Ok(None) | Err(_) => {
+                return Err(Error::Execution(format!("Timeout waiting for send confirmation")));
+            }
+            _ => {}
+        }
+
+        // Collect outputs from IPC thread
+        let mut output_count = 0;
+        let timeout_duration = tokio::time::Duration::from_secs(300);
+        let start = tokio::time::Instant::now();
+
+        tracing::info!(
+            "[Multiprocess] Waiting for output from node '{}' (timeout: {}s)",
+            ctx.node_id,
+            timeout_duration.as_secs()
+        );
+
+        loop {
+            if start.elapsed() > timeout_duration {
+                return Err(Error::Execution(format!("Timeout waiting for output from node {}", ctx.node_id)));
+            }
+
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                resp_rx.recv()
+            ).await {
+                Ok(Some(IpcResponse::OutputData(ipc_output))) => {
+                    let output_data = Self::from_ipc_runtime_data(ipc_output)?;
+
+                    // Check for end markers
+                    if let crate::data::RuntimeData::Text(ref text) = output_data {
+                        if text == "<|audio_end|>" || text == "<|text_end|>" {
+                            callback(output_data)?;
+                            output_count += 1;
+                            break;
+                        }
+                    }
+
+                    callback(output_data)?;
+                    output_count += 1;
+                }
+                Ok(Some(IpcResponse::Error(e))) => {
+                    return Err(Error::Execution(format!("IPC error: {}", e)));
+                }
+                Ok(None) => {
+                    return Err(Error::Execution(format!("IPC thread disconnected for node {}", ctx.node_id)));
+                }
+                Err(_) => {
+                    // Timeout - continue waiting
+                    continue;
+                }
+                _ => continue,
+            }
+        }
+
+        tracing::info!("Collected {} outputs from node {}", output_count, ctx.node_id);
+        Ok(output_count)
+    }
+
+    /// Convert main RuntimeData to IPC RuntimeData
+    #[cfg(feature = "multiprocess")]
+    pub fn to_ipc_runtime_data(data: &crate::data::RuntimeData, session_id: &str) -> IPCRuntimeData {
+        use crate::data::RuntimeData as MainRD;
+        use super::data_transfer::DataType;
+
+        match data {
+            MainRD::Text(text) => IPCRuntimeData::text(text, session_id),
+            MainRD::Audio(audio) => {
+                // Convert bytes to f32 samples based on format
+                // For now, only handle F32 format
+                if audio.format == crate::grpc_service::AudioFormat::F32 as i32 {
+                    // Convert bytes to f32 slice for IPC transfer
+                    let samples_f32: Vec<f32> = audio.samples
+                        .chunks_exact(4)
+                        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                        .collect();
+                    IPCRuntimeData::audio(&samples_f32, audio.sample_rate, audio.channels as u16, session_id)
+                } else {
+                    // For other formats, convert to text for now
+                    IPCRuntimeData::text(&format!("Unsupported audio format: {}", audio.format), session_id)
+                }
+            }
+            _ => {
+                // For now, convert unsupported types to text representation
+                IPCRuntimeData::text(&format!("{:?}", data), session_id)
+            }
+        }
+    }
+
+    /// Convert IPC RuntimeData back to main RuntimeData
+    #[cfg(feature = "multiprocess")]
+    fn from_ipc_runtime_data(ipc_data: IPCRuntimeData) -> Result<crate::data::RuntimeData> {
+        use crate::data::RuntimeData as MainRD;
+        use super::data_transfer::DataType;
+
+        match ipc_data.data_type {
+            DataType::Text => {
+                let text = String::from_utf8_lossy(&ipc_data.payload).to_string();
+                Ok(MainRD::Text(text))
+            }
+            DataType::Audio => {
+                // IPC payload is already in bytes (f32 samples as little-endian bytes)
+                let num_samples = (ipc_data.payload.len() / 4) as u64; // 4 bytes per f32 sample
+
+                // Create audio buffer using the grpc_service types
+                Ok(MainRD::Audio(crate::grpc_service::AudioBuffer {
+                    samples: ipc_data.payload,
+                    sample_rate: 24000, // TODO: Extract from IPC metadata
+                    channels: 1,        // TODO: Extract from IPC metadata
+                    format: crate::grpc_service::AudioFormat::F32 as i32,
+                    num_samples,
+                }))
+            }
+            _ => Err(Error::Execution(format!("Unsupported IPC data type: {:?}", ipc_data.data_type)))
+        }
+    }
+
     /// Create a new multiprocess executor
     pub fn new(config: MultiprocessConfig) -> Self {
         #[cfg(feature = "multiprocess")]
         let health_monitor = Arc::new(HealthMonitor::new(config.init_timeout_secs));
 
+        // Use the global shared channel registry to ensure all executors
+        // share the same iceoryx2 Node instance
+        let channel_registry = ChannelRegistry::global();
+
         let executor = Self {
             process_manager: Arc::new(ProcessManager::new(config.clone())),
-            channel_registry: Arc::new(ChannelRegistry::new()),
+            channel_registry,
             #[cfg(feature = "multiprocess")]
             health_monitor: health_monitor.clone(),
             sessions: Arc::new(RwLock::new(HashMap::new())),
@@ -268,6 +537,11 @@ impl MultiprocessExecutor {
         executor.setup_failure_handling();
 
         executor
+    }
+
+    /// Get the channel registry for IPC communication
+    pub fn channel_registry(&self) -> &Arc<ChannelRegistry> {
+        &self.channel_registry
     }
 
     /// Setup failure handling for pipeline termination
@@ -409,6 +683,8 @@ impl MultiprocessExecutor {
             session_id: session_id.clone(),
             node_processes: HashMap::new(),
             channels: HashMap::new(),
+            #[cfg(feature = "multiprocess")]
+            ipc_threads: HashMap::new(),
             status: SessionStatus::Initializing,
             created_at: std::time::Instant::now(),
             init_progress: HashMap::new(),
@@ -528,6 +804,217 @@ impl MultiprocessExecutor {
         Ok(session.init_progress.values().cloned().collect())
     }
 
+    /// Wait for a Python process to signal it's ready via iceoryx2 control channel
+    async fn wait_for_ready_signal_ipc(
+        &self,
+        _session_id: &str,
+        node_id: &str,
+        timeout: std::time::Duration,
+    ) -> Result<bool> {
+        let start = std::time::Instant::now();
+        let control_channel_name = format!("control/{}", node_id);
+        
+        tracing::info!("Subscribing to control channel: {}", control_channel_name);
+        
+        // Create subscriber for the control channel in a blocking task
+        let registry = self.channel_registry.clone();
+        let channel_name = control_channel_name.clone();
+        let node_id_clone = node_id.to_string();
+        
+        // First, create the control channel (Python will open_or_create)
+        self.channel_registry.create_channel(
+            &control_channel_name,
+            10, // Small capacity for control messages
+            false, // No backpressure for control
+        ).await?;
+        
+        // Now poll for the READY signal - need direct iceoryx2 subscriber (not RuntimeData wrapper)
+        let ready = tokio::task::spawn_blocking(move || -> Result<bool> {
+            let handle = tokio::runtime::Handle::current();
+            
+            // Create raw subscriber for control channel (bypasses RuntimeData deserialization)
+            let subscriber = handle.block_on(registry.create_raw_subscriber(&channel_name))?;
+            
+            tracing::info!("Control channel subscriber created, polling for READY signal...");
+            let mut poll_count = 0;
+            
+            loop {
+                // Check timeout
+                if start.elapsed() > timeout {
+                    tracing::warn!("Timeout waiting for READY signal from node {} after {} polls", node_id_clone, poll_count);
+                    return Ok(false);
+                }
+                
+                poll_count += 1;
+                if poll_count % 100 == 0 {
+                    tracing::debug!("Control channel poll #{} - still waiting for READY", poll_count);
+                }
+                
+                // Try to receive READY signal (raw bytes, not RuntimeData)
+                match subscriber.receive().map_err(|e| Error::Execution(format!("Receive error: {:?}", e)))? {
+                    Some(sample) => {
+                        let bytes = sample.payload();
+                        
+                        // Debug: log what we received
+                        tracing::info!("Received control message #{} - {} bytes: {:?}, as_str: {:?}", 
+                            poll_count,
+                            bytes.len(),
+                            bytes, 
+                            std::str::from_utf8(bytes).unwrap_or("<invalid utf8>")
+                        );
+                        
+                        // Check if it's the READY signal
+                        if bytes == b"READY" {
+                            tracing::info!("Node {} signaled READY via iceoryx2", node_id_clone);
+                            return Ok(true);
+                        } else {
+                            tracing::warn!("Received non-READY control message - expected 'READY', got: {:?}", 
+                                std::str::from_utf8(bytes).unwrap_or("<invalid utf8>"));
+                        }
+                    }
+                    None => {
+                        // No data yet, sleep briefly and retry
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                }
+            }
+        })
+        .await
+        .map_err(|e| Error::Execution(format!("Join error: {}", e)))??;
+        
+        Ok(ready)
+    }
+
+    /// Spawn a dedicated IPC thread for a node
+    /// This thread owns persistent publishers/subscribers and never recreates them
+    #[cfg(feature = "multiprocess")]
+    async fn spawn_ipc_thread(
+        &self,
+        node_id: &str,
+        session_id: &str,
+        input_channel_name: &str,
+        output_channel_name: &str,
+    ) -> Result<NodeIpcThread> {
+        // Create channels for async <-> thread communication
+        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<IpcCommand>(100);
+        let (resp_tx, resp_rx) = tokio::sync::mpsc::channel::<IpcResponse>(100);
+
+        let registry = self.channel_registry.clone();
+        let input_ch = input_channel_name.to_string();
+        let output_ch = output_channel_name.to_string();
+        let node_id_clone = node_id.to_string();
+
+        // Spawn dedicated OS thread
+        let handle = std::thread::spawn(move || {
+            tracing::info!("IPC thread starting for node: {}", node_id_clone);
+
+            // Create tokio runtime for this thread (needed for async create_publisher/subscriber)
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create runtime for IPC thread");
+
+            // Create persistent publishers/subscribers ONCE
+            let (publisher, subscriber) = rt.block_on(async {
+                let pub_result = registry.create_publisher(&input_ch).await;
+                let sub_result = registry.create_subscriber(&output_ch).await;
+                (pub_result, sub_result)
+            });
+
+            let publisher = match publisher {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!("Failed to create publisher: {}", e);
+                    return;
+                }
+            };
+
+            let subscriber = match subscriber {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to create subscriber: {}", e);
+                    return;
+                }
+            };
+
+            // CRITICAL: One-time delay for iceoryx2 routing to stabilize
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            tracing::info!("IPC thread ready for node: {} (publishers created)", node_id_clone);
+
+            // Main loop: process commands using persistent publishers/subscribers
+            loop {
+                // Check for commands (non-blocking poll)
+                match cmd_rx.try_recv() {
+                    Ok(IpcCommand::SendData { data }) => {
+                        // Send using persistent publisher (no delay needed!)
+                        tracing::debug!("IPC thread sending {} bytes for node: {}", data.payload.len(), node_id_clone);
+
+                        if let Err(e) = publisher.publish(data) {
+                            let _ = resp_tx.blocking_send(IpcResponse::Error(format!("Publish failed: {}", e)));
+                            continue;
+                        }
+
+                        // Acknowledge send
+                        let _ = resp_tx.blocking_send(IpcResponse::SendComplete);
+
+                        // Now poll for responses (subscriber is persistent too!)
+                        loop {
+                            match subscriber.receive() {
+                                Ok(Some(output_data)) => {
+                                    tracing::debug!("IPC thread received output for node: {}", node_id_clone);
+                                    if resp_tx.blocking_send(IpcResponse::OutputData(output_data)).is_err() {
+                                        tracing::warn!("Response channel closed for node: {}", node_id_clone);
+                                        break;
+                                    }
+                                }
+                                Ok(None) => {
+                                    // No more data immediately available
+                                    break;
+                                }
+                                Err(e) => {
+                                    tracing::error!("Receive error for node {}: {}", node_id_clone, e);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Ok(IpcCommand::Shutdown) => {
+                        tracing::info!("IPC thread shutting down for node: {}", node_id_clone);
+                        break;
+                    }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                        // No command, poll subscriber for incoming data
+                        match subscriber.receive() {
+                            Ok(Some(output_data)) => {
+                                let _ = resp_tx.blocking_send(IpcResponse::OutputData(output_data));
+                            }
+                            Ok(None) => {
+                                // No data, sleep briefly
+                                std::thread::sleep(std::time::Duration::from_millis(10));
+                            }
+                            Err(e) => {
+                                tracing::error!("Receive error for node {}: {}", node_id_clone, e);
+                            }
+                        }
+                    }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        tracing::info!("Command channel closed for node: {}", node_id_clone);
+                        break;
+                    }
+                }
+            }
+
+            tracing::info!("IPC thread exited for node: {}", node_id_clone);
+        });
+
+        Ok(NodeIpcThread {
+            command_tx: cmd_tx,
+            response_rx: Arc::new(tokio::sync::Mutex::new(resp_rx)),
+            thread_handle: Some(handle),
+            node_id: node_id.to_string(),
+        })
+    }
+
     /// Terminate a session and cleanup resources
     pub async fn terminate_session(&self, session_id: &str) -> Result<()> {
         let mut sessions = self.sessions.write().await;
@@ -535,7 +1022,25 @@ impl MultiprocessExecutor {
         if let Some(mut session) = sessions.remove(session_id) {
             session.status = SessionStatus::Terminating;
 
-            // Terminate all processes in the session
+            // Shutdown IPC threads first
+            #[cfg(feature = "multiprocess")]
+            {
+                for (node_id, mut ipc_thread) in session.ipc_threads.drain() {
+                    tracing::info!("Shutting down IPC thread for node: {}", node_id);
+
+                    // Send shutdown command
+                    let _ = ipc_thread.command_tx.send(IpcCommand::Shutdown).await;
+
+                    // Wait for thread to exit (with timeout)
+                    if let Some(handle) = ipc_thread.thread_handle.take() {
+                        std::thread::spawn(move || {
+                            let _ = handle.join();
+                        });
+                    }
+                }
+            }
+
+            // Then terminate processes
             #[cfg(feature = "multiprocess")]
             {
                 for (_, process) in session.node_processes.drain() {
@@ -623,8 +1128,8 @@ impl MultiprocessExecutor {
 }
 
 #[async_trait]
-impl NodeExecutor for MultiprocessExecutor {
-    async fn initialize(&mut self, ctx: &NodeContext) -> Result<()> {
+impl ExecutorNodeExecutor for MultiprocessExecutor {
+    async fn initialize(&mut self, ctx: &ExecutorNodeContext) -> Result<()> {
         tracing::info!(
             "Initializing multiprocess node: {} ({})",
             ctx.node_id,
@@ -643,7 +1148,33 @@ impl NodeExecutor for MultiprocessExecutor {
             self.create_session(session_id.clone()).await?;
         }
 
-        // Spawn process for this node
+        // Create IPC channels BEFORE spawning process (must exist when Python connects)
+        #[cfg(feature = "multiprocess")]
+        let (input_channel_name, output_channel_name, input_channel, output_channel) = {
+            let input_channel_name = format!("{}_input", ctx.node_id);
+            let output_channel_name = format!("{}_output", ctx.node_id);
+
+            let input_channel = self.channel_registry.create_channel(
+                &input_channel_name,
+                self.config.channel_capacity,
+                self.config.enable_backpressure,
+            ).await?;
+
+            let output_channel = self.channel_registry.create_channel(
+                &output_channel_name,
+                self.config.channel_capacity,
+                self.config.enable_backpressure,
+            ).await?;
+
+            tracing::info!(
+                "Pre-created IPC channels for node {}: {}, {}",
+                ctx.node_id, input_channel_name, output_channel_name
+            );
+
+            (input_channel_name, output_channel_name, input_channel, output_channel)
+        };
+
+        // NOW spawn process (channels already exist)
         #[cfg(feature = "multiprocess")]
         {
             let process = self.process_manager.spawn_node(
@@ -652,11 +1183,84 @@ impl NodeExecutor for MultiprocessExecutor {
                 &ctx.params,
             ).await?;
 
-            // Add process to session
+            // Spawn dedicated IPC thread for this node
+            let ipc_thread = self.spawn_ipc_thread(
+                &ctx.node_id,
+                &session_id,
+                &input_channel_name,
+                &output_channel_name,
+            ).await?;
+
+            // Add process, channels, and IPC thread to session
             let mut sessions = self.sessions.write().await;
             if let Some(session) = sessions.get_mut(&session_id) {
                 session.node_processes.insert(ctx.node_id.clone(), process);
+                session.channels.insert(input_channel_name.clone(), input_channel);
+                session.channels.insert(output_channel_name.clone(), output_channel);
+                session.ipc_threads.insert(ctx.node_id.clone(), ipc_thread);
+
+                tracing::info!(
+                    "Created IPC thread and channels for node {}: {}, {}",
+                    ctx.node_id, input_channel_name, output_channel_name
+                );
             }
+        }
+
+        // TEST: Send a ping message to verify IPC communication works
+        #[cfg(feature = "multiprocess")]
+        {
+            tracing::info!("Waiting for Python process to signal READY via iceoryx2...");
+            
+            // Wait for Python to signal it's ready via iceoryx2 control channel
+            // Python creates its input subscriber BEFORE sending READY, so when we receive
+            // READY signal, Python is fully prepared to receive data
+            // Timeout after 10 seconds to avoid hanging forever
+            let ready = self.wait_for_ready_signal_ipc(&session_id, &ctx.node_id, std::time::Duration::from_secs(10)).await?;
+            if !ready {
+                return Err(Error::Execution(format!("Node {} failed to signal ready within timeout", ctx.node_id)));
+            }
+            
+            tracing::info!("✅ Received READY signal - Python subscriber is ready to receive data");
+
+            // Small delay to ensure Python subscriber is fully registered with iceoryx2's routing tables
+            // The subscriber creation and READY signal are very close in time, but iceoryx2 needs a moment
+            // to complete the internal pub/sub connection registration
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+            tracing::info!("🧪 TEST: Sending ping message through input channel to verify IPC data transfer...");
+
+            // Create properly formatted IPC RuntimeData for PING_TEST
+            // This tests the real data pathway that will be used for actual node communication
+            let ping_data = IPCRuntimeData::text("PING_TEST", &session_id);
+
+            // Send using the channel registry
+            let registry = self.channel_registry.clone();
+            let input_ch = format!("{}_input", ctx.node_id);
+
+            let send_result = tokio::task::spawn_blocking(move || -> Result<()> {
+                let handle = tokio::runtime::Handle::current();
+                tracing::info!("🧪 Creating publisher for input channel: {}", input_ch);
+
+                let publisher = handle.block_on(registry.create_publisher(&input_ch))?;
+                tracing::info!("🧪 Publisher created, sending PING_TEST as IPC RuntimeData...");
+
+                // Send as proper RuntimeData (same format as real node-to-node communication)
+                publisher.publish(ping_data)?;
+                tracing::info!("🧪 PING_TEST sent successfully as IPC RuntimeData!");
+
+                // Keep publisher alive a bit longer to ensure message is received
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                Ok(())
+            })
+            .await
+            .map_err(|e| Error::Execution(format!("Join error: {}", e)))??;
+            
+            tracing::info!("✅ Test ping message sent, waiting for Python to receive it...");
+            
+            // Wait a bit for Python to process the ping
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            
+            tracing::info!("✅ Input channel test complete");
         }
 
         Ok(())
@@ -713,6 +1317,48 @@ impl NodeExecutor for MultiprocessExecutor {
     }
 }
 
+// Implement the old nodes::NodeExecutor trait for compatibility with PythonStreamingNode
+#[async_trait]
+impl NodesNodeExecutor for MultiprocessExecutor {
+    async fn initialize(&mut self, ctx: &NodesNodeContext) -> Result<()> {
+        // Convert to new NodeContext format
+        let executor_ctx = ExecutorNodeContext {
+            node_id: ctx.node_id.clone(),
+            node_type: ctx.node_type.clone(),
+            params: ctx.params.clone(),
+            session_id: ctx.session_id.clone(),
+            metadata: ctx.metadata.clone(),
+        };
+
+        // Delegate to new trait implementation
+        ExecutorNodeExecutor::initialize(self, &executor_ctx).await
+    }
+
+    async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
+        // Delegate to new trait implementation
+        ExecutorNodeExecutor::process(self, input).await
+    }
+
+    async fn cleanup(&mut self) -> Result<()> {
+        // Delegate to new trait implementation
+        ExecutorNodeExecutor::cleanup(self).await
+    }
+
+    fn is_streaming(&self) -> bool {
+        // Multiprocess nodes can support streaming
+        ExecutorNodeExecutor::is_streaming(self)
+    }
+
+    async fn finish_streaming(&mut self) -> Result<Vec<Value>> {
+        // Delegate to new trait implementation
+        ExecutorNodeExecutor::finish_streaming(self).await
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -739,7 +1385,7 @@ mod tests {
         let config = MultiprocessConfig::default();
         let mut executor = MultiprocessExecutor::new(config);
 
-        let ctx = NodeContext {
+        let ctx = ExecutorNodeContext {
             node_id: "test_node".to_string(),
             node_type: "test_processor".to_string(),
             params: serde_json::json!({"param": "value"}),
@@ -748,9 +1394,9 @@ mod tests {
         };
 
         // Initialize should create session and prepare for process spawn
-        executor.initialize(&ctx).await.unwrap();
+        ExecutorNodeExecutor::initialize(&mut executor, &ctx).await.unwrap();
 
         // Cleanup
-        executor.cleanup().await.unwrap();
+        ExecutorNodeExecutor::cleanup(&mut executor).await.unwrap();
     }
 }

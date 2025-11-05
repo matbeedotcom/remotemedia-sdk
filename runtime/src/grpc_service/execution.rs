@@ -16,6 +16,7 @@ use crate::grpc_service::{
         PipelineManifest as ProtoPipelineManifest, Connection as ProtoConnection,
         ExecutionResult as ProtoExecutionResult,
     },
+    executor_registry::{ExecutorRegistry, ExecutorType},
     limits::ResourceLimits,
     metrics::ServiceMetrics,
     version::VersionManager,
@@ -23,12 +24,13 @@ use crate::grpc_service::{
 };
 use crate::{
     audio::AudioBuffer,
-    executor::{Executor, ExecutorConfig},
+    executor::{Executor, ExecutorConfig, executor_bridge::*},
     manifest::Manifest,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 use tracing::{error, info};
 
@@ -40,26 +42,59 @@ pub struct ExecutionServiceImpl {
     metrics: Arc<ServiceMetrics>,
     /// T042: Shared executor to avoid Python re-initialization overhead
     executor: Arc<Executor>,
+    /// Executor registry for routing nodes to appropriate executors
+    executor_registry: Arc<ExecutorRegistry>,
+    /// Multiprocess executor for Python nodes
+    #[cfg(feature = "multiprocess")]
+    multiprocess_executor: Arc<crate::python::multiprocess::MultiprocessExecutor>,
 }
 
 impl ExecutionServiceImpl {
     /// Create new execution service with pre-configured executor
+    #[cfg(feature = "multiprocess")]
     pub fn new(
         auth_config: AuthConfig,
         limits: ResourceLimits,
         version: VersionManager,
         metrics: Arc<ServiceMetrics>,
         executor: Arc<Executor>,
+        executor_registry: Arc<ExecutorRegistry>,
+        multiprocess_executor: Arc<crate::python::multiprocess::MultiprocessExecutor>,
     ) -> Self {
         // T042: Use shared executor with registered nodes from server initialization
         info!("Using shared executor for request handling (nodes already registered)");
-        
+        info!("Multiprocess executor enabled for Python nodes");
+
         Self {
             auth_config,
             limits,
             version,
             metrics,
             executor,
+            executor_registry,
+            multiprocess_executor,
+        }
+    }
+
+    /// Create new execution service (non-multiprocess version)
+    #[cfg(not(feature = "multiprocess"))]
+    pub fn new(
+        auth_config: AuthConfig,
+        limits: ResourceLimits,
+        version: VersionManager,
+        metrics: Arc<ServiceMetrics>,
+        executor: Arc<Executor>,
+        executor_registry: Arc<ExecutorRegistry>,
+    ) -> Self {
+        info!("Using shared executor for request handling (nodes already registered)");
+
+        Self {
+            auth_config,
+            limits,
+            version,
+            metrics,
+            executor,
+            executor_registry,
         }
     }
 
@@ -281,6 +316,247 @@ impl ExecutionServiceImpl {
     }
 }
 
+
+/// Session execution context for managing executor instances and node assignments
+///
+/// Public for testing purposes
+pub struct SessionExecutionContext {
+    /// Session identifier
+    session_id: String,
+
+    /// Node ID → Executor type assignments (interior mutability for Arc usage)
+    node_assignments: RwLock<HashMap<String, ExecutorType>>,
+
+    /// Executor bridges for this session
+    executor_bridges: Arc<RwLock<HashMap<ExecutorType, Arc<dyn ExecutorBridge>>>>,
+
+    /// Session creation time
+    created_at: Instant,
+}
+
+impl SessionExecutionContext {
+    /// Create a new session execution context
+    pub fn new(session_id: String) -> Self {
+        Self {
+            session_id,
+            node_assignments: RwLock::new(HashMap::new()),
+            executor_bridges: Arc::new(RwLock::new(HashMap::new())),
+            created_at: Instant::now(),
+        }
+    }
+
+    /// Assign a node to an executor type
+    pub async fn assign_node(&self, node_id: String, executor_type: ExecutorType) {
+        tracing::debug!(
+            "Session {}: Assigning node '{}' to executor {:?}",
+            self.session_id,
+            node_id,
+            executor_type
+        );
+        self.node_assignments.write().await.insert(node_id, executor_type);
+    }
+
+    /// Get executor type for a node
+    pub async fn get_node_executor(&self, node_id: &str) -> Option<ExecutorType> {
+        self.node_assignments.read().await.get(node_id).copied()
+    }
+
+    /// Initialize executors for assigned nodes
+    #[cfg(feature = "multiprocess")]
+    pub async fn initialize_executors(
+        &self,
+        native_executor: Arc<Executor>,
+        multiprocess_executor: Arc<crate::python::multiprocess::MultiprocessExecutor>,
+    ) -> Result<(), ServiceError> {
+        let mut bridges = self.executor_bridges.write().await;
+
+        // Determine which executor types are needed
+        let mut needs_native = false;
+        let mut needs_multiprocess = false;
+
+        for executor_type in self.node_assignments.read().await.values() {
+            match executor_type {
+                ExecutorType::Native => needs_native = true,
+                #[cfg(feature = "multiprocess")]
+                ExecutorType::Multiprocess => needs_multiprocess = true,
+                _ => {}
+            }
+        }
+
+        // Create native bridge if needed
+        if needs_native {
+            let bridge = Arc::new(NativeExecutorBridge::new(native_executor)) as Arc<dyn ExecutorBridge>;
+            bridges.insert(ExecutorType::Native, bridge);
+            tracing::info!("Session {}: Native executor bridge created", self.session_id);
+        }
+
+        // Create multiprocess bridge if needed
+        if needs_multiprocess {
+            // Create session in multiprocess executor
+            multiprocess_executor.create_session(self.session_id.clone()).await
+                .map_err(|e| ServiceError::Internal(format!("Failed to create multiprocess session: {}", e)))?;
+
+            let bridge = Arc::new(MultiprocessExecutorBridge::new(
+                multiprocess_executor,
+                self.session_id.clone(),
+            )) as Arc<dyn ExecutorBridge>;
+            bridges.insert(ExecutorType::Multiprocess, bridge);
+            tracing::info!("Session {}: Multiprocess executor bridge created", self.session_id);
+        }
+
+        Ok(())
+    }
+
+    /// Initialize executors (non-multiprocess version for when multiprocess feature is disabled)
+    #[cfg(not(feature = "multiprocess"))]
+    pub async fn initialize_executors(
+        &self,
+        native_executor: Arc<Executor>,
+    ) -> Result<(), ServiceError> {
+        let mut bridges = self.executor_bridges.write().await;
+
+        // Only native executor available
+        let bridge = Arc::new(NativeExecutorBridge::new(native_executor)) as Arc<dyn ExecutorBridge>;
+        bridges.insert(ExecutorType::Native, bridge);
+        tracing::info!("Session {}: Native executor bridge created", self.session_id);
+
+        Ok(())
+    }
+
+    /// Initialize all assigned nodes
+    pub async fn initialize_nodes(&self, manifest: &Manifest) -> Result<(), ServiceError> {
+        let node_count = self.node_assignments.read().await.len();
+        tracing::info!("Session {}: Initializing {} nodes", self.session_id, node_count);
+
+        let bridges = self.executor_bridges.read().await;
+        let assignments = self.node_assignments.read().await;
+
+        for node in &manifest.nodes {
+            if let Some(&executor_type) = assignments.get(&node.id) {
+                if let Some(bridge) = bridges.get(&executor_type) {
+                    bridge.initialize_node(&node.id, &node.node_type, &node.params).await
+                        .map_err(|e| ServiceError::NodeExecution {
+                            node_id: node.id.clone(),
+                            message: format!("Initialization failed: {}", e),
+                        })?;
+                }
+            }
+        }
+
+        tracing::info!("Session {}: All nodes initialized", self.session_id);
+        Ok(())
+    }
+
+    /// Cleanup session resources
+    #[cfg(feature = "multiprocess")]
+    pub async fn cleanup(
+        &self,
+        multiprocess_executor: Option<Arc<crate::python::multiprocess::MultiprocessExecutor>>,
+    ) -> Result<(), ServiceError> {
+        tracing::info!("Session {}: Cleaning up resources", self.session_id);
+
+        let bridges = self.executor_bridges.read().await;
+        let assignments = self.node_assignments.read().await;
+
+        // Cleanup nodes in each bridge
+        for (node_id, &executor_type) in assignments.iter() {
+            if let Some(bridge) = bridges.get(&executor_type) {
+                let _ = bridge.cleanup_node(node_id).await;
+            }
+        }
+
+        // Terminate multiprocess session if exists
+        if let Some(mp_executor) = multiprocess_executor {
+            mp_executor.terminate_session(&self.session_id).await
+                .map_err(|e| ServiceError::Internal(format!("Failed to terminate multiprocess session: {}", e)))?;
+            tracing::info!("Session {}: Multiprocess session terminated", self.session_id);
+        }
+
+        Ok(())
+    }
+
+    /// Cleanup session resources (non-multiprocess version)
+    #[cfg(not(feature = "multiprocess"))]
+    pub async fn cleanup(&self) -> Result<(), ServiceError> {
+        tracing::info!("Session {}: Cleaning up resources", self.session_id);
+
+        let bridges = self.executor_bridges.read().await;
+        let assignments = self.node_assignments.read().await;
+
+        // Cleanup nodes in each bridge
+        for (node_id, &executor_type) in assignments.iter() {
+            if let Some(bridge) = bridges.get(&executor_type) {
+                let _ = bridge.cleanup_node(node_id).await;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get session age
+    pub fn age(&self) -> std::time::Duration {
+        self.created_at.elapsed()
+    }
+
+    /// Get session ID (for logging and testing)
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Execute pipeline using assigned executors
+    ///
+    /// Routes execution through appropriate executor bridges based on node assignments.
+    /// For multiprocess nodes, this ensures they execute in separate Python processes.
+    #[cfg(feature = "multiprocess")]
+    pub async fn execute_pipeline(
+        &self,
+        manifest: &Manifest,
+        runtime_inputs: HashMap<String, crate::data::RuntimeData>,
+        native_executor: Arc<Executor>,
+        _multiprocess_executor: Arc<crate::python::multiprocess::MultiprocessExecutor>,
+    ) -> Result<HashMap<String, crate::data::RuntimeData>, ServiceError> {
+        tracing::info!("Session {}: Executing pipeline with {} nodes", self.session_id, manifest.nodes.len());
+
+        // Check if we have any multiprocess nodes
+        let has_multiprocess = {
+            let assignments = self.node_assignments.read().await;
+            assignments.values().any(|&et| et == ExecutorType::Multiprocess)
+        };
+
+        if has_multiprocess {
+            tracing::info!("Session {}: Pipeline has MULTIPROCESS Python nodes - enabling concurrent execution", self.session_id);
+        }
+
+        // Execute with session ID - this enables multiprocess execution for Python nodes
+        native_executor.execute_with_runtime_data_and_session(
+            manifest,
+            runtime_inputs,
+            Some(self.session_id.clone())
+        ).await
+            .map_err(|e| ServiceError::NodeExecution {
+                node_id: "pipeline".to_string(),
+                message: format!("Pipeline execution failed: {}", e),
+            })
+    }
+
+    /// Execute pipeline (non-multiprocess version)
+    #[cfg(not(feature = "multiprocess"))]
+    pub async fn execute_pipeline(
+        &self,
+        manifest: &Manifest,
+        runtime_inputs: HashMap<String, crate::data::RuntimeData>,
+        native_executor: Arc<Executor>,
+    ) -> Result<HashMap<String, crate::data::RuntimeData>, ServiceError> {
+        tracing::info!("Session {}: Executing pipeline with native executor only", self.session_id);
+
+        native_executor.execute_with_runtime_data(manifest, runtime_inputs).await
+            .map_err(|e| ServiceError::NodeExecution {
+                node_id: "pipeline".to_string(),
+                message: format!("Pipeline execution failed: {}", e),
+            })
+    }
+}
+
 #[tonic::async_trait]
 impl PipelineExecutionService for ExecutionServiceImpl {
     async fn execute_pipeline(
@@ -323,6 +599,39 @@ impl PipelineExecutionService for ExecutionServiceImpl {
                 return Ok(Response::new(response));
             }
         };
+
+        // Create session execution context and assign nodes to executors (spec 002)
+        let session_id = format!("grpc_session_{}", uuid::Uuid::new_v4());
+        let session_ctx = Arc::new(SessionExecutionContext::new(session_id.clone()));
+
+        // Assign each node to appropriate executor based on node type
+        for node in &manifest.nodes {
+            let executor_type = self.executor_registry.get_executor_for_node(&node.node_type);
+            session_ctx.assign_node(node.id.clone(), executor_type).await;
+            tracing::info!(
+                "Node '{}' (type: {}) assigned to {:?} executor",
+                node.id,
+                node.node_type,
+                executor_type
+            );
+        }
+
+        // Initialize executors for this session
+        #[cfg(feature = "multiprocess")]
+        session_ctx.initialize_executors(
+            Arc::clone(&self.executor),
+            Arc::clone(&self.multiprocess_executor),
+        ).await.map_err(|e| Status::internal(format!("Failed to initialize executors: {}", e)))?;
+
+        #[cfg(not(feature = "multiprocess"))]
+        session_ctx.initialize_executors(Arc::clone(&self.executor))
+            .await
+            .map_err(|e| Status::internal(format!("Failed to initialize executors: {}", e)))?;
+
+        // Initialize all nodes
+        session_ctx.initialize_nodes(&manifest)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to initialize nodes: {}", e)))?;
 
         // Validate manifest
         if let Err(e) = self.validate_manifest(&manifest) {
@@ -375,19 +684,28 @@ impl PipelineExecutionService for ExecutionServiceImpl {
             }
         }
 
-        // T042: Use shared executor with per-request task spawning for true parallelism
-        // Clone the Arc for the spawned task
-        let executor = Arc::clone(&self.executor);
-        
-        // Store manifest metadata for logging before moving manifest
+        // Store manifest metadata for logging before moving values
         let num_nodes = manifest.nodes.len();
         let num_connections = manifest.connections.len();
-        
+
         // T038: Spawn each pipeline execution in its own tokio task
         // This enables true concurrent execution across CPU cores
+        // Use SessionExecutionContext to route to appropriate executors (spec 002)
+        let executor = Arc::clone(&self.executor);
+
+        #[cfg(feature = "multiprocess")]
+        let mp_executor = Arc::clone(&self.multiprocess_executor);
+
+        let session_ctx_clone = Arc::clone(&session_ctx);
+
+        #[cfg(feature = "multiprocess")]
         let execution_task = tokio::spawn(async move {
-            // Execute with RuntimeData - supports all data types (Audio, Video, Tensor, JSON, Text, Binary)
-            executor.execute_with_runtime_data(&manifest, runtime_inputs).await
+            session_ctx_clone.execute_pipeline(&manifest, runtime_inputs, executor, mp_executor).await
+        });
+
+        #[cfg(not(feature = "multiprocess"))]
+        let execution_task = tokio::spawn(async move {
+            session_ctx_clone.execute_pipeline(&manifest, runtime_inputs, executor).await
         });
 
         // Execute pipeline
@@ -471,6 +789,19 @@ impl PipelineExecutionService for ExecutionServiceImpl {
 
         self.metrics
             .record_request_end("ExecutePipeline", "success", start_time);
+
+        // Cleanup session resources (spec 002)
+        #[cfg(feature = "multiprocess")]
+        session_ctx.cleanup(Some(Arc::clone(&self.multiprocess_executor)))
+            .await
+            .map_err(|e| Status::internal(format!("Session cleanup failed: {}", e)))?;
+
+        #[cfg(not(feature = "multiprocess"))]
+        session_ctx.cleanup()
+            .await
+            .map_err(|e| Status::internal(format!("Session cleanup failed: {}", e)))?;
+
+        tracing::info!("Session {} completed and cleaned up", session_ctx.session_id());
 
         Ok(Response::new(response))
     }

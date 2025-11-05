@@ -2,13 +2,18 @@
 //!
 //! This module provides a wrapper that allows Python nodes to participate
 //! in streaming pipelines via the AsyncStreamingNode trait.
+//!
+//! With multiprocess feature enabled (spec 002), Python AI nodes can run in
+//! separate processes with independent GILs for concurrent execution.
 
 use crate::data::RuntimeData;
 use crate::nodes::{AsyncStreamingNode, NodeExecutor, NodeContext};
 use crate::Error;
-use pyo3::Python;
 use serde_json::Value;
 use tokio::sync::Mutex;
+
+#[cfg(feature = "multiprocess")]
+use crate::python::multiprocess::MultiprocessConfig;
 
 /// Wrapper that adapts a Python node to the AsyncStreamingNode trait
 pub struct PythonStreamingNode {
@@ -16,16 +21,44 @@ pub struct PythonStreamingNode {
     node_type: String,
     params: Value,
     executor: Mutex<Option<Box<dyn NodeExecutor>>>,
+    /// Session ID for multiprocess execution (spec 002)
+    session_id: Option<String>,
 }
 
 impl PythonStreamingNode {
     /// Create a new Python streaming node
     pub fn new(node_id: String, node_type: &str, params: &Value) -> Result<Self, Error> {
+        // Extract session_id from params if present (spec 002)
+        let session_id = params.get("__session_id__")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        if session_id.is_some() {
+            tracing::info!(
+                "Python node {} (type: {}) created with multiprocess session: {:?}",
+                node_id,
+                node_type,
+                session_id
+            );
+        }
+
         Ok(Self {
             node_id,
             node_type: node_type.to_string(),
             params: params.clone(),
             executor: Mutex::new(None),
+            session_id,
+        })
+    }
+
+    /// Create with session ID for multiprocess execution (spec 002)
+    pub fn with_session(node_id: String, node_type: &str, params: &Value, session_id: String) -> Result<Self, Error> {
+        Ok(Self {
+            node_id,
+            node_type: node_type.to_string(),
+            params: params.clone(),
+            executor: Mutex::new(None),
+            session_id: Some(session_id),
         })
     }
 
@@ -36,22 +69,34 @@ impl PythonStreamingNode {
             node_type: node_type.to_string(),
             params: params.clone(),
             executor: Mutex::new(Some(executor)),
+            session_id: None,
         })
     }
 
     pub async fn ensure_initialized(&self) -> Result<(), Error> {
         let mut executor_guard = self.executor.lock().await;
         if executor_guard.is_none() {
-            // Create the Python executor
-            let mut py_executor: Box<dyn NodeExecutor> =
-                Box::new(crate::python::CPythonNodeExecutor::new(&self.node_type));
+            // Always use multiprocess executor for all Python nodes (spec 002)
+            tracing::info!(
+                "Using MULTIPROCESS execution for Python node {} (type: {})",
+                self.node_id,
+                self.node_type
+            );
+
+            // Load config from runtime.toml or use defaults
+            let config = crate::python::multiprocess::MultiprocessConfig::from_default_file()
+                .unwrap_or_default();
+
+            let mut py_executor: Box<dyn NodeExecutor> = Box::new(
+                crate::python::multiprocess::MultiprocessExecutor::new(config)
+            );
 
             // Create context for initialization
             let context = NodeContext {
                 node_id: self.node_id.clone(),
                 node_type: self.node_type.clone(),
                 params: self.params.clone(),
-                session_id: None,
+                session_id: self.session_id.clone(),
                 metadata: std::collections::HashMap::new(),
             };
 
@@ -87,14 +132,14 @@ impl AsyncStreamingNode for PythonStreamingNode {
         let executor = executor_guard.as_mut()
             .ok_or_else(|| Error::Execution("Python node not initialized".to_string()))?;
 
-        // Downcast to CPythonNodeExecutor
-        let py_executor = executor.as_any_mut()
-            .downcast_mut::<crate::python::CPythonNodeExecutor>()
-            .ok_or_else(|| Error::Execution("Failed to downcast to CPythonNodeExecutor".to_string()))?;
+        // Downcast to MultiprocessExecutor
+        let mp_executor = executor.as_any_mut()
+            .downcast_mut::<crate::python::multiprocess::MultiprocessExecutor>()
+            .ok_or_else(|| Error::Execution("Failed to downcast to MultiprocessExecutor".to_string()))?;
 
         // Use streaming iteration but only take the first item
         let mut result: Option<RuntimeData> = None;
-        py_executor.process_runtime_data_streaming(data, None, |output| {
+        mp_executor.process_runtime_data_streaming(data, None, |output| {
             result = Some(output);
             // Return error to stop iteration after first item
             Err(crate::Error::Execution("StopIteration".to_string()))
@@ -121,13 +166,13 @@ impl AsyncStreamingNode for PythonStreamingNode {
         let executor = executor_guard.as_mut()
             .ok_or_else(|| Error::Execution("Python node not initialized".to_string()))?;
 
-        // Downcast to CPythonNodeExecutor
-        let py_executor = executor.as_any_mut()
-            .downcast_mut::<crate::python::CPythonNodeExecutor>()
-            .ok_or_else(|| Error::Execution("Failed to downcast to CPythonNodeExecutor".to_string()))?;
+        // Use MultiprocessExecutor with IPC streaming
+        let mp_executor = executor.as_any_mut()
+            .downcast_mut::<crate::python::multiprocess::MultiprocessExecutor>()
+            .ok_or_else(|| Error::Execution("Failed to downcast to MultiprocessExecutor".to_string()))?;
 
-        // Call the streaming method with callback and session_id
-        py_executor.process_runtime_data_streaming(data, session_id, callback).await
+        tracing::info!("Using MultiprocessExecutor with IPC streaming for node {}", self.node_id);
+        mp_executor.process_runtime_data_streaming(data, session_id, callback).await
     }
 }
 

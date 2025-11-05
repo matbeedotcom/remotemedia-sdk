@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 struct CalculatorNodeFactory;
 impl StreamingNodeFactory for CalculatorNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+    fn create(&self, node_id: String, params: &Value, _session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
         let params_str = params.to_string();
         let node = CalculatorNode::new(node_id, &params_str)?;
         Ok(Box::new(SyncNodeWrapper(node)))
@@ -27,7 +27,7 @@ impl StreamingNodeFactory for CalculatorNodeFactory {
 
 struct VideoProcessorNodeFactory;
 impl StreamingNodeFactory for VideoProcessorNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+    fn create(&self, node_id: String, params: &Value, _session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
         let params_str = params.to_string();
         let node = VideoProcessorNode::new(node_id, &params_str)?;
         Ok(Box::new(SyncNodeWrapper(node)))
@@ -40,7 +40,7 @@ impl StreamingNodeFactory for VideoProcessorNodeFactory {
 
 struct SynchronizedAudioVideoNodeFactory;
 impl StreamingNodeFactory for SynchronizedAudioVideoNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+    fn create(&self, node_id: String, params: &Value, _session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
         let params_str = params.to_string();
         let node = SynchronizedAudioVideoNode::new(node_id, &params_str)?;
         Ok(Box::new(SyncNodeWrapper(node)))
@@ -53,7 +53,7 @@ impl StreamingNodeFactory for SynchronizedAudioVideoNodeFactory {
 
 struct PassThroughNodeFactory;
 impl StreamingNodeFactory for PassThroughNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+    fn create(&self, node_id: String, params: &Value, _session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
         let params_str = params.to_string();
         let node = PassThroughNode::new(node_id, &params_str)?;
         Ok(Box::new(SyncNodeWrapper(node)))
@@ -66,8 +66,12 @@ impl StreamingNodeFactory for PassThroughNodeFactory {
 
 struct KokoroTTSNodeFactory;
 impl StreamingNodeFactory for KokoroTTSNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
-        let node = PythonStreamingNode::new(node_id, "KokoroTTSNode", params)?;
+    fn create(&self, node_id: String, params: &Value, session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = if let Some(sid) = session_id {
+            PythonStreamingNode::with_session(node_id, "KokoroTTSNode", params, sid)?
+        } else {
+            PythonStreamingNode::new(node_id, "KokoroTTSNode", params)?
+        };
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
@@ -86,8 +90,12 @@ impl StreamingNodeFactory for KokoroTTSNodeFactory {
 
 struct VibeVoiceTTSNodeFactory;
 impl StreamingNodeFactory for VibeVoiceTTSNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
-        let node = PythonStreamingNode::new(node_id, "VibeVoiceTTSNode", params)?;
+    fn create(&self, node_id: String, params: &Value, session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = if let Some(sid) = session_id {
+            PythonStreamingNode::with_session(node_id, "VibeVoiceTTSNode", params, sid)?
+        } else {
+            PythonStreamingNode::new(node_id, "VibeVoiceTTSNode", params)?
+        };
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
@@ -106,8 +114,12 @@ impl StreamingNodeFactory for VibeVoiceTTSNodeFactory {
 
 struct SimplePyTorchNodeFactory;
 impl StreamingNodeFactory for SimplePyTorchNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
-        let node = PythonStreamingNode::new(node_id, "SimplePyTorchNode", params)?;
+    fn create(&self, node_id: String, params: &Value, session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = if let Some(sid) = session_id {
+            PythonStreamingNode::with_session(node_id, "SimplePyTorchNode", params, sid)?
+        } else {
+            PythonStreamingNode::new(node_id, "SimplePyTorchNode", params)?
+        };
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
@@ -122,7 +134,7 @@ impl StreamingNodeFactory for SimplePyTorchNodeFactory {
 
 struct AudioBufferAccumulatorNodeFactory;
 impl StreamingNodeFactory for AudioBufferAccumulatorNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+    fn create(&self, node_id: String, params: &Value, _session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
         use crate::nodes::AudioBufferAccumulatorNode;
 
         let min_duration_ms = params.get("minUtteranceDurationMs").or(params.get("min_utterance_duration_ms")).and_then(|v| v.as_u64()).map(|v| v as u32);
@@ -143,7 +155,7 @@ impl StreamingNodeFactory for AudioBufferAccumulatorNodeFactory {
 
 struct TextCollectorNodeFactory;
 impl StreamingNodeFactory for TextCollectorNodeFactory {
-    fn create(&self, _node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+    fn create(&self, _node_id: String, params: &Value, _session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
         use crate::nodes::TextCollectorNode;
 
         let split_pattern = params.get("splitPattern").or(params.get("split_pattern")).and_then(|v| v.as_str()).map(|s| s.to_string());
@@ -168,7 +180,7 @@ struct SileroVADNodeFactory;
 
 #[cfg(feature = "silero-vad")]
 impl StreamingNodeFactory for SileroVADNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+    fn create(&self, node_id: String, params: &Value, _session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
         use crate::nodes::SileroVADNode;
 
         // Extract parameters
@@ -200,8 +212,12 @@ impl StreamingNodeFactory for SileroVADNodeFactory {
 
 struct LFM2AudioNodeFactory;
 impl StreamingNodeFactory for LFM2AudioNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
-        let node = PythonStreamingNode::new(node_id, "LFM2AudioNode", params)?;
+    fn create(&self, node_id: String, params: &Value, session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = if let Some(sid) = session_id {
+            PythonStreamingNode::with_session(node_id, "LFM2AudioNode", params, sid)?
+        } else {
+            PythonStreamingNode::new(node_id, "LFM2AudioNode", params)?
+        };
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
@@ -220,7 +236,7 @@ impl StreamingNodeFactory for LFM2AudioNodeFactory {
 
 struct AudioChunkerNodeFactory;
 impl StreamingNodeFactory for AudioChunkerNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+    fn create(&self, node_id: String, params: &Value, _session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
         use crate::nodes::AudioChunkerNode;
 
         let chunk_size = params.get("chunkSize")
@@ -243,7 +259,7 @@ impl StreamingNodeFactory for AudioChunkerNodeFactory {
 
 struct FastResampleNodeFactory;
 impl StreamingNodeFactory for FastResampleNodeFactory {
-    fn create(&self, _node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
+    fn create(&self, _node_id: String, params: &Value, _session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
         use crate::nodes::audio::{FastResampleNode, ResampleQuality};
         use crate::nodes::audio_resample_streaming::ResampleStreamingNode;
 
@@ -297,8 +313,12 @@ impl StreamingNodeFactory for FastResampleNodeFactory {
 // Test node factories for Python streaming nodes
 struct ExpanderNodeFactory;
 impl StreamingNodeFactory for ExpanderNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
-        let node = PythonStreamingNode::new(node_id, "ExpanderNode", params)?;
+    fn create(&self, node_id: String, params: &Value, session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = if let Some(sid) = session_id {
+            PythonStreamingNode::with_session(node_id, "ExpanderNode", params, sid)?
+        } else {
+            PythonStreamingNode::new(node_id, "ExpanderNode", params)?
+        };
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
@@ -317,8 +337,12 @@ impl StreamingNodeFactory for ExpanderNodeFactory {
 
 struct RangeGeneratorNodeFactory;
 impl StreamingNodeFactory for RangeGeneratorNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
-        let node = PythonStreamingNode::new(node_id, "RangeGeneratorNode", params)?;
+    fn create(&self, node_id: String, params: &Value, session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = if let Some(sid) = session_id {
+            PythonStreamingNode::with_session(node_id, "RangeGeneratorNode", params, sid)?
+        } else {
+            PythonStreamingNode::new(node_id, "RangeGeneratorNode", params)?
+        };
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
@@ -337,8 +361,12 @@ impl StreamingNodeFactory for RangeGeneratorNodeFactory {
 
 struct TransformAndExpandNodeFactory;
 impl StreamingNodeFactory for TransformAndExpandNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
-        let node = PythonStreamingNode::new(node_id, "TransformAndExpandNode", params)?;
+    fn create(&self, node_id: String, params: &Value, session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = if let Some(sid) = session_id {
+            PythonStreamingNode::with_session(node_id, "TransformAndExpandNode", params, sid)?
+        } else {
+            PythonStreamingNode::new(node_id, "TransformAndExpandNode", params)?
+        };
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
@@ -357,8 +385,12 @@ impl StreamingNodeFactory for TransformAndExpandNodeFactory {
 
 struct ChainedTransformNodeFactory;
 impl StreamingNodeFactory for ChainedTransformNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
-        let node = PythonStreamingNode::new(node_id, "ChainedTransformNode", params)?;
+    fn create(&self, node_id: String, params: &Value, session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = if let Some(sid) = session_id {
+            PythonStreamingNode::with_session(node_id, "ChainedTransformNode", params, sid)?
+        } else {
+            PythonStreamingNode::new(node_id, "ChainedTransformNode", params)?
+        };
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
@@ -377,8 +409,12 @@ impl StreamingNodeFactory for ChainedTransformNodeFactory {
 
 struct ConditionalExpanderNodeFactory;
 impl StreamingNodeFactory for ConditionalExpanderNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
-        let node = PythonStreamingNode::new(node_id, "ConditionalExpanderNode", params)?;
+    fn create(&self, node_id: String, params: &Value, session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = if let Some(sid) = session_id {
+            PythonStreamingNode::with_session(node_id, "ConditionalExpanderNode", params, sid)?
+        } else {
+            PythonStreamingNode::new(node_id, "ConditionalExpanderNode", params)?
+        };
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
@@ -397,8 +433,12 @@ impl StreamingNodeFactory for ConditionalExpanderNodeFactory {
 
 struct FilterNodeFactory;
 impl StreamingNodeFactory for FilterNodeFactory {
-    fn create(&self, node_id: String, params: &Value) -> Result<Box<dyn StreamingNode>, Error> {
-        let node = PythonStreamingNode::new(node_id, "FilterNode", params)?;
+    fn create(&self, node_id: String, params: &Value, session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = if let Some(sid) = session_id {
+            PythonStreamingNode::with_session(node_id, "FilterNode", params, sid)?
+        } else {
+            PythonStreamingNode::new(node_id, "FilterNode", params)?
+        };
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
