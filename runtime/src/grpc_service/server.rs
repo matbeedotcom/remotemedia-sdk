@@ -14,6 +14,7 @@ use crate::grpc_service::{
         streaming_pipeline_service_server::StreamingPipelineServiceServer,
     },
     metrics::ServiceMetrics,
+    executor_registry::{ExecutorRegistry, ExecutorType, PatternRule},
     ServiceConfig,
 };
 use crate::executor::Executor;
@@ -26,18 +27,61 @@ pub struct GrpcServer {
     config: ServiceConfig,
     metrics: Arc<ServiceMetrics>,
     executor: Arc<Executor>,
+    executor_registry: Arc<ExecutorRegistry>,
 }
 
 impl GrpcServer {
     /// Create new server with configuration and executor
     pub fn new(config: ServiceConfig, executor: Arc<Executor>) -> Result<Self, Box<dyn std::error::Error>> {
         let metrics = Arc::new(ServiceMetrics::with_default_registry()?);
-        
-        Ok(Self { 
-            config, 
+
+        // Initialize executor registry with default mappings
+        let executor_registry = Arc::new(Self::initialize_executor_registry()?);
+
+        Ok(Self {
+            config,
             metrics,
             executor,
+            executor_registry,
         })
+    }
+
+    /// Initialize executor registry with default node type mappings
+    fn initialize_executor_registry() -> Result<ExecutorRegistry, Box<dyn std::error::Error>> {
+        let mut registry = ExecutorRegistry::new();
+
+        // Register native Rust audio nodes
+        registry.register_explicit("AudioChunkerNode", ExecutorType::Native);
+        registry.register_explicit("FastResampleNode", ExecutorType::Native);
+        registry.register_explicit("SileroVADNode", ExecutorType::Native);
+        registry.register_explicit("AudioBufferAccumulatorNode", ExecutorType::Native);
+
+        // Register pattern for Python multiprocess nodes
+        #[cfg(feature = "multiprocess")]
+        {
+            // Pattern: Node types ending with "Node" that are not explicitly registered
+            // go to multiprocess executor (for WhisperNode, LFM2Node, VibeVoiceNode, etc.)
+            let python_pattern = PatternRule::new(
+                r"^(Whisper|LFM2|VibeVoice|HF.*)Node$",
+                ExecutorType::Multiprocess,
+                100,
+                "Python AI model nodes",
+            )?;
+            registry.register_pattern(python_pattern);
+        }
+
+        // Set default executor to Native
+        registry.set_default(ExecutorType::Native);
+
+        let summary = registry.summary();
+        info!(
+            "Executor registry initialized: {} explicit mappings, {} pattern rules, default: {:?}",
+            summary.explicit_mappings_count,
+            summary.pattern_rules_count,
+            summary.default_executor
+        );
+
+        Ok(registry)
     }
 
     /// Get metrics for use in service implementations
@@ -53,7 +97,7 @@ impl GrpcServer {
     /// Build and run the server
     pub async fn serve(self) -> Result<(), Box<dyn std::error::Error>> {
         let addr: std::net::SocketAddr = self.config.bind_address.parse()?;
-        
+
         info!(
             %addr,
             auth_required = self.config.auth.require_auth,
@@ -61,16 +105,52 @@ impl GrpcServer {
             "Starting gRPC server"
         );
 
+        // Create multiprocess executor (spec 002)
+        #[cfg(feature = "multiprocess")]
+        let multiprocess_executor = {
+            use crate::python::multiprocess::{MultiprocessExecutor, MultiprocessConfig};
+
+            let config = MultiprocessConfig::from_default_file()
+                .map_err(|e| format!("Failed to load multiprocess config: {}", e))?;
+
+            Arc::new(MultiprocessExecutor::new(config))
+        };
+
         // Create service implementations
+        #[cfg(feature = "multiprocess")]
         let execution_service = ExecutionServiceImpl::new(
             self.config.auth.clone(),
             self.config.limits.clone(),
             self.config.version.clone(),
             Arc::clone(&self.metrics),
             Arc::clone(&self.executor),
+            Arc::clone(&self.executor_registry),
+            multiprocess_executor.clone(),
+        );
+
+        #[cfg(not(feature = "multiprocess"))]
+        let execution_service = ExecutionServiceImpl::new(
+            self.config.auth.clone(),
+            self.config.limits.clone(),
+            self.config.version.clone(),
+            Arc::clone(&self.metrics),
+            Arc::clone(&self.executor),
+            Arc::clone(&self.executor_registry),
         );
 
         // Phase 5: Streaming service (T058)
+        #[cfg(feature = "multiprocess")]
+        let streaming_service = {
+            let mut service = StreamingServiceImpl::new(
+                self.config.clone(),
+                Arc::clone(&self.executor),
+                Arc::clone(&self.metrics),
+            );
+            service.set_multiprocess_executor(multiprocess_executor.clone());
+            service
+        };
+
+        #[cfg(not(feature = "multiprocess"))]
         let streaming_service = StreamingServiceImpl::new(
             self.config.clone(),
             Arc::clone(&self.executor),
@@ -155,16 +235,52 @@ impl GrpcServer {
             "Starting gRPC server"
         );
 
+        // Create multiprocess executor (spec 002)
+        #[cfg(feature = "multiprocess")]
+        let multiprocess_executor_2 = {
+            use crate::python::multiprocess::{MultiprocessExecutor, MultiprocessConfig};
+
+            let config = MultiprocessConfig::from_default_file()
+                .map_err(|e| format!("Failed to load multiprocess config: {}", e))?;
+
+            Arc::new(MultiprocessExecutor::new(config))
+        };
+
         // Create service implementations
+        #[cfg(feature = "multiprocess")]
         let execution_service = ExecutionServiceImpl::new(
             self.config.auth.clone(),
             self.config.limits.clone(),
             self.config.version.clone(),
             Arc::clone(&self.metrics),
             Arc::clone(&self.executor),
+            Arc::clone(&self.executor_registry),
+            multiprocess_executor_2.clone(),
+        );
+
+        #[cfg(not(feature = "multiprocess"))]
+        let execution_service = ExecutionServiceImpl::new(
+            self.config.auth.clone(),
+            self.config.limits.clone(),
+            self.config.version.clone(),
+            Arc::clone(&self.metrics),
+            Arc::clone(&self.executor),
+            Arc::clone(&self.executor_registry),
         );
 
         // Phase 5: Streaming service (T058)
+        #[cfg(feature = "multiprocess")]
+        let streaming_service = {
+            let mut service = StreamingServiceImpl::new(
+                self.config.clone(),
+                Arc::clone(&self.executor),
+                Arc::clone(&self.metrics),
+            );
+            service.set_multiprocess_executor(multiprocess_executor_2.clone());
+            service
+        };
+
+        #[cfg(not(feature = "multiprocess"))]
         let streaming_service = StreamingServiceImpl::new(
             self.config.clone(),
             Arc::clone(&self.executor),

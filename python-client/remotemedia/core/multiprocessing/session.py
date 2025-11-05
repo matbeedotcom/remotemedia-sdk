@@ -62,7 +62,7 @@ class Session:
 
     Example:
         ```python
-        from remotemedia_sdk.multiprocess import Session
+        from remotemedia.core.multiprocessing import Session
 
         # Create a new session
         session = Session("my_pipeline_session")

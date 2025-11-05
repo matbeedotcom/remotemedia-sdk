@@ -32,6 +32,10 @@ pub enum Error {
     #[error("Marshaling error: {0}")]
     Marshaling(String),
 
+    /// IPC communication error
+    #[error("IPC error: {0}")]
+    IpcError(String),
+
     /// I/O error
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

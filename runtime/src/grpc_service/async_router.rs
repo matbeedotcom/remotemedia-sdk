@@ -249,7 +249,9 @@ impl AsyncRouter {
                     .find(|n| n.id == next_id)
                     .ok_or_else(|| Status::internal(format!("Node spec not found for '{}'", next_id)))?;
 
-                let node = self.registry.create_node(&spec.node_type, next_id.clone(), &spec.params)
+                // Pass session_id for multiprocess execution
+                let session_id = Some(session.session_id.clone());
+                let node = self.registry.create_node(&spec.node_type, next_id.clone(), &spec.params, session_id)
                     .map_err(|e| Status::internal(format!("Failed to create node '{}': {}", next_id, e)))?;
 
                 let arc_node = Arc::new(node);

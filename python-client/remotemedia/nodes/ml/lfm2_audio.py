@@ -1,10 +1,13 @@
 """
-LFM2-Audio-1.5B Node using RuntimeData API
+LFM2-Audio-1.5B Node using RuntimeData API and MultiprocessNode base
 
 Speech-to-speech conversational AI node that uses Liquid AI's LFM2-Audio model
-for interleaved text and audio generation.
+for interleaved text and audio generation, with multiprocess execution support.
+
+Inherits from MultiprocessNode to enable concurrent execution in separate processes.
 
 Key features:
+- Multiprocess execution support (concurrent with other AI models)
 - Direct audio-to-audio conversation without intermediate text transcription
 - Maintains conversation history across multiple turns
 - Supports both text and audio outputs
@@ -16,7 +19,7 @@ import logging
 import numpy as np
 import torch
 import torchaudio
-from typing import AsyncGenerator, Optional, Dict, List, Any, TYPE_CHECKING
+from typing import AsyncGenerator, Optional, Dict, List, Any, TYPE_CHECKING, Union
 from liquid_audio import ChatState, LFMModality
 # Import liquid_audio here to avoid import errors if not installed
 from liquid_audio import LFM2AudioModel, LFM2AudioProcessor
@@ -54,6 +57,9 @@ except ImportError:
     audio_to_numpy = None  # type: ignore
     logging.warning("RuntimeData bindings not available. Using fallback implementation.")
 
+# Import MultiprocessNode base class from core
+from remotemedia.core import MultiprocessNode, NodeConfig
+
 logger = logging.getLogger(__name__)
 
 # Configure logger to output to console
@@ -80,10 +86,11 @@ class ConversationState:
         self.last_accessed = datetime.now()
 
 
-class LFM2AudioNode:
+class LFM2AudioNode(MultiprocessNode):
     """
-    Speech-to-speech conversation node using LFM2-Audio-1.5B.
+    Speech-to-speech conversation node using LFM2-Audio-1.5B with multiprocess support.
 
+    Inherits from MultiprocessNode to enable concurrent execution in separate processes.
     This node accepts audio via RuntimeData.Audio and yields both text and audio
     responses, enabling natural conversational AI without intermediate transcription.
 
@@ -93,7 +100,7 @@ class LFM2AudioNode:
 
     def __init__(
         self,
-        node_id: str,
+        node_id: str = None,
         hf_repo: str = "LiquidAI/LFM2-Audio-1.5B",
         system_prompt: str = "Respond with interleaved text and audio.",
         device: Optional[str] = None,
@@ -103,24 +110,52 @@ class LFM2AudioNode:
         sample_rate: int = 24000,
         session_timeout_minutes: int = 30,
         text_only: bool = False,
+        config: Union[NodeConfig, Dict[str, Any]] = None,
         **kwargs
     ):
         """
-        Initialize LFM2-Audio node with RuntimeData support.
+        Initialize LFM2-Audio node with RuntimeData and multiprocess support.
 
         Args:
             node_id: Unique identifier for this node instance
-            hf_repo: HuggingFace repository for the model (default: LiquidAI/LFM2-Audio-1.5B)
+            hf_repo: HuggingFace repository for the model
             system_prompt: System prompt for the conversation
             device: Device to run the model on (cuda/cpu, auto-detected if None)
-            audio_temperature: Temperature for audio generation (default: 1.0)
+            audio_temperature: Temperature for audio generation
+            audio_top_k: Top-k sampling for audio tokens
+            max_new_tokens: Maximum number of tokens to generate
+            sample_rate: Output sample rate
+            session_timeout_minutes: Minutes before session expires
             text_only: If True, only output text (no audio synthesis)
-            audio_top_k: Top-k sampling for audio tokens (default: 4)
-            max_new_tokens: Maximum number of tokens to generate (default: 512)
-            sample_rate: Output sample rate (default: 24000)
-            session_timeout_minutes: Minutes before session expires (default: 30)
+            config: NodeConfig for multiprocess mode (if available)
+            **kwargs: Additional parameters
         """
-        self.node_id = node_id
+        # Initialize MultiprocessNode base if config provided
+        if config is not None:
+            super().__init__(config, **kwargs)
+            # Extract params from config
+            if isinstance(config, NodeConfig):
+                params = config.params
+            else:
+                params = config.get('params', {})
+
+            # Override with params from config
+            hf_repo = params.get('hf_repo', hf_repo)
+            system_prompt = params.get('system_prompt', system_prompt)
+            device = params.get('device', device)
+            audio_temperature = params.get('audio_temperature', audio_temperature)
+            audio_top_k = params.get('audio_top_k', audio_top_k)
+            max_new_tokens = params.get('max_new_tokens', max_new_tokens)
+            sample_rate = params.get('sample_rate', sample_rate)
+            session_timeout_minutes = params.get('session_timeout_minutes', session_timeout_minutes)
+            text_only = params.get('text_only', text_only)
+        else:
+            # Standalone mode without multiprocess
+            self.node_id = node_id or "lfm2_audio"
+            self.node_type = "LFM2AudioNode"
+            self.logger = logging.getLogger(__name__)
+
+        # LFM2-specific configuration
         self.hf_repo = hf_repo
         self.system_prompt = system_prompt
         self.audio_temperature = audio_temperature
@@ -275,7 +310,7 @@ class LFM2AudioNode:
     async def process(
         self,
         data: RuntimeData
-    ) -> AsyncGenerator[RuntimeData, None]:
+    ) -> Union[RuntimeData, AsyncGenerator[RuntimeData, None], None]:
         """
         Process audio input and generate speech+text response.
 

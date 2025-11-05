@@ -103,11 +103,11 @@ impl NodeExecutor for RustNodeExecutor {
 
 /// Python node executor wrapper
 ///
-/// Delegates to CPythonNodeExecutor from the python module.
+/// Delegates to MultiprocessExecutor from the python module.
 pub struct PythonNodeExecutor {
     node_type: String,
-    #[cfg(feature = "python")]
-    inner: Option<crate::python::CPythonNodeExecutor>,
+    #[cfg(feature = "multiprocess")]
+    inner: Option<crate::python::multiprocess::MultiprocessExecutor>,
 }
 
 impl PythonNodeExecutor {
@@ -115,7 +115,7 @@ impl PythonNodeExecutor {
     pub fn new(node_type: impl Into<String>) -> Self {
         Self {
             node_type: node_type.into(),
-            #[cfg(feature = "python")]
+            #[cfg(feature = "multiprocess")]
             inner: None,
         }
     }
@@ -124,22 +124,25 @@ impl PythonNodeExecutor {
 #[async_trait]
 impl NodeExecutor for PythonNodeExecutor {
     async fn initialize(&mut self, ctx: &NodeContext) -> Result<()> {
-        #[cfg(feature = "python")]
+        #[cfg(feature = "multiprocess")]
         {
-            let mut executor = crate::python::CPythonNodeExecutor::new(&self.node_type);
+            // Load config from runtime.toml or use defaults
+            let config = crate::python::multiprocess::MultiprocessConfig::from_default_file()
+                .unwrap_or_default();
+            let mut executor = crate::python::multiprocess::MultiprocessExecutor::new(config);
             executor.initialize(ctx).await?;
             self.inner = Some(executor);
             Ok(())
         }
 
-        #[cfg(not(feature = "python"))]
+        #[cfg(not(feature = "multiprocess"))]
         {
-            Err(Error::Execution("Python support not enabled".to_string()))
+            Err(Error::Execution("Multiprocess support not enabled".to_string()))
         }
     }
 
     async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
-        #[cfg(feature = "python")]
+        #[cfg(feature = "multiprocess")]
         {
             if let Some(ref mut executor) = self.inner {
                 executor.process(input).await
@@ -148,14 +151,14 @@ impl NodeExecutor for PythonNodeExecutor {
             }
         }
 
-        #[cfg(not(feature = "python"))]
+        #[cfg(not(feature = "multiprocess"))]
         {
-            Err(Error::Execution("Python support not enabled".to_string()))
+            Err(Error::Execution("Multiprocess support not enabled".to_string()))
         }
     }
 
     async fn cleanup(&mut self) -> Result<()> {
-        #[cfg(feature = "python")]
+        #[cfg(feature = "multiprocess")]
         {
             if let Some(ref mut executor) = self.inner {
                 executor.cleanup().await?;
@@ -164,14 +167,14 @@ impl NodeExecutor for PythonNodeExecutor {
             Ok(())
         }
 
-        #[cfg(not(feature = "python"))]
+        #[cfg(not(feature = "multiprocess"))]
         {
             Ok(())
         }
     }
 
     fn is_streaming(&self) -> bool {
-        #[cfg(feature = "python")]
+        #[cfg(feature = "multiprocess")]
         {
             self.inner
                 .as_ref()
@@ -179,7 +182,7 @@ impl NodeExecutor for PythonNodeExecutor {
                 .unwrap_or(false)
         }
 
-        #[cfg(not(feature = "python"))]
+        #[cfg(not(feature = "multiprocess"))]
         {
             false
         }
