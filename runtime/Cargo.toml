@@ -190,6 +190,11 @@ name = "ipc_latency"
 harness = false
 required-features = ["multiprocess"]
 
+[[bench]]
+name = "multiprocess_vad_pipeline"
+harness = false
+required-features = ["multiprocess"]
+
 [profile.release]
 opt-level = 3
 lto = true

@@ -290,4 +290,185 @@ mod tests {
         // Cleanup
         executor.cleanup().await.expect("Failed to cleanup");
     }
+
+    /// Test initialization progress tracking
+    #[tokio::test]
+    async fn test_initialization_progress_tracking() {
+        use remotemedia_runtime::python::multiprocess::{InitStatus, InitProgress};
+
+        // Create multiprocess executor
+        let config = MultiprocessConfig {
+            max_processes_per_session: Some(3),
+            channel_capacity: 100,
+            init_timeout_secs: 30,
+            python_executable: std::path::PathBuf::from("python"),
+            enable_backpressure: true,
+        };
+
+        let executor = MultiprocessExecutor::new(config);
+
+        // Create a session
+        let session_id = "progress_test_session";
+        executor.create_session(session_id.to_string()).await
+            .expect("Failed to create session");
+
+        // Simulate node initialization progress updates
+        let node_id = "test_node_1";
+
+        // Starting
+        executor.update_init_progress(
+            session_id,
+            node_id,
+            InitStatus::Starting,
+            0.0,
+            "Starting node process".to_string()
+        ).await.expect("Failed to update progress");
+
+        // Loading model
+        executor.update_init_progress(
+            session_id,
+            node_id,
+            InitStatus::LoadingModel,
+            0.3,
+            "Loading AI model weights".to_string()
+        ).await.expect("Failed to update progress");
+
+        // Connecting
+        executor.update_init_progress(
+            session_id,
+            node_id,
+            InitStatus::Connecting,
+            0.7,
+            "Connecting to IPC channels".to_string()
+        ).await.expect("Failed to update progress");
+
+        // Ready
+        executor.update_init_progress(
+            session_id,
+            node_id,
+            InitStatus::Ready,
+            1.0,
+            "Node ready for execution".to_string()
+        ).await.expect("Failed to update progress");
+
+        // Get progress
+        let progress_list = executor.get_init_progress(session_id).await
+            .expect("Failed to get progress");
+
+        assert_eq!(progress_list.len(), 1, "Should have progress for one node");
+
+        let progress = &progress_list[0];
+        assert_eq!(progress.node_id, node_id);
+        assert_eq!(progress.status, InitStatus::Ready);
+        assert_eq!(progress.progress, 1.0);
+        assert_eq!(progress.message, "Node ready for execution");
+
+        // Cleanup
+        executor.terminate_session(session_id).await
+            .expect("Failed to terminate session");
+    }
+
+    /// Test wait_for_initialization with timeout
+    #[tokio::test]
+    async fn test_wait_for_initialization() {
+        use remotemedia_runtime::python::multiprocess::{InitStatus};
+
+        // Create multiprocess executor
+        let config = MultiprocessConfig::default();
+        let executor = MultiprocessExecutor::new(config);
+
+        // Create a session
+        let session_id = "wait_test_session";
+        executor.create_session(session_id.to_string()).await
+            .expect("Failed to create session");
+
+        // Simulate node initialization in background task
+        let executor_clone = executor.clone();
+        let session_id_clone = session_id.to_string();
+        tokio::spawn(async move {
+            // Simulate gradual initialization
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            executor_clone.update_init_progress(
+                &session_id_clone,
+                "node1",
+                InitStatus::Starting,
+                0.0,
+                "Starting".to_string()
+            ).await.unwrap();
+
+            tokio::time::sleep(Duration::from_millis(200)).await;
+
+            executor_clone.update_init_progress(
+                &session_id_clone,
+                "node1",
+                InitStatus::LoadingModel,
+                0.5,
+                "Loading model".to_string()
+            ).await.unwrap();
+
+            tokio::time::sleep(Duration::from_millis(200)).await;
+
+            executor_clone.update_init_progress(
+                &session_id_clone,
+                "node1",
+                InitStatus::Ready,
+                1.0,
+                "Ready".to_string()
+            ).await.unwrap();
+        });
+
+        // Wait for initialization (should complete successfully)
+        let start = Instant::now();
+        let result = executor.wait_for_initialization(
+            session_id,
+            Duration::from_secs(5)
+        ).await;
+
+        let elapsed = start.elapsed();
+
+        assert!(result.is_ok(), "Initialization should succeed");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "Should complete in reasonable time"
+        );
+
+        println!("Initialization completed in {:?}", elapsed);
+
+        // Cleanup
+        executor.terminate_session(session_id).await
+            .expect("Failed to terminate session");
+    }
+
+    /// Test initialization timeout
+    #[tokio::test]
+    async fn test_initialization_timeout() {
+        // Create multiprocess executor
+        let config = MultiprocessConfig::default();
+        let executor = MultiprocessExecutor::new(config);
+
+        // Create a session
+        let session_id = "timeout_test_session";
+        executor.create_session(session_id.to_string()).await
+            .expect("Failed to create session");
+
+        // Don't complete initialization - should timeout
+        let result = executor.wait_for_initialization(
+            session_id,
+            Duration::from_millis(500)  // Short timeout
+        ).await;
+
+        assert!(result.is_err(), "Should timeout");
+
+        if let Err(e) = result {
+            assert!(
+                e.to_string().contains("timeout"),
+                "Error should mention timeout"
+            );
+        }
+
+        // Cleanup
+        executor.terminate_session(session_id).await
+            .expect("Failed to terminate session");
+    }
 }
