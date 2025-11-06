@@ -353,27 +353,22 @@ impl SessionRouter {
                 
                 if is_multiprocess {
                     if let Some(ref executor) = self.multiprocess_executor {
-                        debug!("📡 Routing to multiprocess node '{}' via IPC", next_node_id);
-                        
-                        // Convert RuntimeData to IPC format and send
-                        let ipc_data = MultiprocessExecutor::to_ipc_runtime_data(&packet.data, &packet.session_id);
-                        let input_channel = format!("{}_input", next_node_id);
+                        debug!("📡 Routing to multiprocess node '{}' via IPC (using dedicated thread)", next_node_id);
+
+                        // Send data via the dedicated IPC thread (no 50ms delay!)
                         let executor_clone = executor.clone();
                         let node_id_clone = next_node_id.clone();
-                        
-                        // Send via IPC in background task
-                        tokio::task::spawn_blocking(move || {
-                            let handle = tokio::runtime::Handle::current();
-                            match handle.block_on(executor_clone.channel_registry().create_publisher(&input_channel)) {
-                                Ok(publisher) => {
-                                    if let Err(e) = publisher.publish(ipc_data) {
-                                        error!("Failed to send IPC data to node '{}': {}", node_id_clone, e);
-                                    } else {
-                                        debug!("✅ Sent data to multiprocess node '{}' via IPC", node_id_clone);
-                                    }
+                        let session_id_clone = packet.session_id.clone();
+                        let data_clone = packet.data.clone();
+
+                        // Send via dedicated IPC thread (async, no blocking)
+                        tokio::spawn(async move {
+                            match executor_clone.send_to_node_async(&node_id_clone, &session_id_clone, data_clone).await {
+                                Ok(_) => {
+                                    debug!("✅ Sent data to multiprocess node '{}' via dedicated IPC thread", node_id_clone);
                                 }
                                 Err(e) => {
-                                    error!("Failed to create IPC publisher for node '{}': {}", node_id_clone, e);
+                                    error!("Failed to send IPC data to node '{}': {}", node_id_clone, e);
                                 }
                             }
                         });

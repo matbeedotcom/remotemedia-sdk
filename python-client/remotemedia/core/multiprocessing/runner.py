@@ -97,7 +97,8 @@ class NodeRunner:
             node = iox2.NodeBuilder.new().create(iox2.ServiceType.Ipc)
             
             # Create control channel service for READY signal using dynamic slice
-            control_service_name = iox2.ServiceName.new(f"control/{self.config.node_id}")
+            # Include session_id to avoid conflicts between sessions
+            control_service_name = iox2.ServiceName.new(f"control/{self.config.session_id}_{self.config.node_id}")
             control_service = (
                 node.service_builder(control_service_name)
                 .publish_subscribe(iox2.Slice[ctypes.c_uint8])
@@ -115,9 +116,9 @@ class NodeRunner:
             # Create input/output data channels for RuntimeData BEFORE sending READY
             # This ensures Python is fully prepared to receive data when Rust sends it
             
-            # Input channel: {node_id}_input - Wait for Rust to create it first, then open
-            logger.info(f"Opening input channel: {self.config.node_id}_input (waiting for Rust to create it)")
-            input_channel_name = iox2.ServiceName.new(f"{self.config.node_id}_input")
+            # Input channel: {session_id}_{node_id}_input - Wait for Rust to create it first, then open
+            logger.info(f"Opening input channel: {self.config.session_id}_{self.config.node_id}_input (waiting for Rust to create it)")
+            input_channel_name = iox2.ServiceName.new(f"{self.config.session_id}_{self.config.node_id}_input")
             
             # Retry opening the service - Rust creates it first when publisher is created
             max_retries = 50
@@ -154,9 +155,9 @@ class NodeRunner:
             input_subscriber = input_service.subscriber_builder().buffer_size(100).create()
             logger.info(f"✅ Input subscriber created successfully with history enabled")
             
-            # Output channel: {node_id}_output - use .open() to connect to Rust's pre-created service
-            logger.info(f"Opening output channel: {self.config.node_id}_output")
-            output_channel_name = iox2.ServiceName.new(f"{self.config.node_id}_output")
+            # Output channel: {session_id}_{node_id}_output - use .open() to connect to Rust's pre-created service
+            logger.info(f"Opening output channel: {self.config.session_id}_{self.config.node_id}_output")
+            output_channel_name = iox2.ServiceName.new(f"{self.config.session_id}_{self.config.node_id}_output")
             output_service = (
                 node.service_builder(output_channel_name)
                 .publish_subscribe(iox2.Slice[ctypes.c_uint8])
@@ -171,7 +172,7 @@ class NodeRunner:
             )
             logger.info(f"✅ Output publisher created successfully")
             
-            logger.info(f"✅ Created IPC data channels: {self.config.node_id}_input (sub), {self.config.node_id}_output (pub)")
+            logger.info(f"✅ Created IPC data channels: {self.config.session_id}_{self.config.node_id}_input (sub), {self.config.session_id}_{self.config.node_id}_output (pub)")
             
             # NOW send READY signal - Python is fully prepared to receive data
             logger.info(f"Sending READY signal to Rust (subscriber is ready to receive)...")
@@ -182,7 +183,7 @@ class NodeRunner:
             sample = sample.assume_init()
             sample.send()
             
-            logger.info(f"✅ Sent READY signal via iceoryx2 control channel: control/{self.config.node_id}")
+            logger.info(f"✅ Sent READY signal via iceoryx2 control channel: control/{self.config.session_id}_{self.config.node_id}")
             
             # Store node and services for later use
             self.node._iox2_node = node

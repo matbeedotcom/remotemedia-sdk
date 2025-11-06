@@ -152,8 +152,9 @@ impl ProcessManager {
         node_type: &str,
         node_id: &str,
         params: &Value,
+        session_id: &str,
     ) -> Result<ProcessHandle> {
-        tracing::info!("Spawning process for node: {} ({})", node_id, node_type);
+        tracing::info!("Spawning process for node: {} ({}) in session: {}", node_id, node_type, session_id);
 
         // Build command for Python subprocess
         let mut command = Command::new(&self.spawn_config.python_executable);
@@ -163,6 +164,7 @@ impl ProcessManager {
             "-m", "remotemedia.core.multiprocessing.runner",
             "--node-type", node_type,
             "--node-id", node_id,
+            "--session-id", session_id,  // Pass session_id for channel naming
             "--params-stdin",  // Signal that params come from stdin
         ]);
 
