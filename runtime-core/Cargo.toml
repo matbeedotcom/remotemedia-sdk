@@ -1,0 +1,87 @@
+[package]
+name = "remotemedia-runtime-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Core runtime library for RemoteMedia pipelines - transport-agnostic execution engine"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "remotemedia_runtime_core"
+crate-type = ["rlib"]
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+futures = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+toml = { workspace = true }
+bincode = { workspace = true }
+
+# Async trait support
+async-trait = { workspace = true }
+
+# Audio processing libraries
+rubato = { workspace = true }
+rustfft = { workspace = true }
+bytemuck = { workspace = true }
+ort = { workspace = true, optional = true }
+ndarray = { workspace = true }
+
+# WASM runtime (optional)
+wasmtime = { workspace = true, optional = true }
+wasmtime-wasi = { workspace = true, optional = true }
+
+# IPC for multiprocess support
+iceoryx2 = { workspace = true, optional = true }
+iceoryx2-bb-log = { workspace = true, optional = true }
+iceoryx2-bb-container = { workspace = true, optional = true }
+iceoryx2-bb-elementary = { workspace = true, optional = true }
+
+# Logging and tracing
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Platform-specific dependencies
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+num_cpus = { workspace = true }
+reqwest = { workspace = true }
+ctrlc = { workspace = true }
+regex = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+criterion = { workspace = true }
+tempfile = { workspace = true }
+rand = { workspace = true }
+chrono = { workspace = true }
+hound = { workspace = true }
+
+[features]
+default = ["wasmtime-runtime", "silero-vad", "multiprocess"]
+wasmtime-runtime = ["wasmtime", "wasmtime-wasi"]
+silero-vad = ["ort"]
+multiprocess = ["iceoryx2", "iceoryx2-bb-log", "iceoryx2-bb-container", "iceoryx2-bb-elementary"]
+
+# NOTE: NO transport-specific features (grpc-transport, python-async, native-numpy)
+# Those belong in separate transport crates
