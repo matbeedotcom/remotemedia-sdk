@@ -311,7 +311,7 @@ class MultiprocessNode(BaseNode):
                         self.logger.info(f"Queuing message during initialization: {data.data_type()}")
                         init_queue.append(data)
                     else:
-                        await asyncio.sleep(0.01)
+                        await asyncio.sleep(0)
 
             # Start queuing task
             queue_task = asyncio.create_task(queue_messages_during_init())
@@ -427,8 +427,8 @@ class MultiprocessNode(BaseNode):
                 data = await self._receive_input()
 
                 if data is None:
-                    # No data available, check for stop
-                    await asyncio.sleep(0.01)
+                    # No data available, yield to event loop without artificial delay
+                    await asyncio.sleep(0)
                     continue
 
                 # Process the message

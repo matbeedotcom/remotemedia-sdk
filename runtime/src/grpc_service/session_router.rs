@@ -378,9 +378,68 @@ impl SessionRouter {
         let session_id = self.session_id.clone();
         let router_tx = self.input_tx.clone();  // Send outputs back to router
 
+        // Check if this is a multiprocess node and set up continuous output draining
+        #[cfg(feature = "multiprocess")]
+        let multiprocess_executor = self.multiprocess_executor.clone();
+        #[cfg(feature = "multiprocess")]
+        let node_type = self.get_node_type(&node_id).await;
+        #[cfg(feature = "multiprocess")]
+        let is_multiprocess_node = self.registry.is_python_node(&node_type);
+
         // Spawn the node task
         let task = tokio::spawn(async move {
             info!("⚡ Node '{}' task started (streaming: {})", node_id_clone, is_streaming);
+
+            // For multiprocess nodes, set up continuous output draining
+            #[cfg(feature = "multiprocess")]
+            if is_multiprocess_node {
+                if let Some(ref executor) = multiprocess_executor {
+                    // Create channel for continuous output forwarding
+                    let (output_tx, mut output_rx) = tokio::sync::mpsc::unbounded_channel();
+
+                    // Register callback with IPC thread
+                    if let Err(e) = executor.register_output_callback(&node_id_clone, &session_id, output_tx).await {
+                        error!("Failed to register output callback for node '{}': {}", node_id_clone, e);
+                    } else {
+                        info!("✅ Registered continuous output callback for multiprocess node '{}'", node_id_clone);
+
+                        // Spawn background task to drain outputs and forward to router
+                        let router_tx_for_drain = router_tx.clone();
+                        let node_id_for_drain = node_id_clone.clone();
+                        let session_id_for_drain = session_id.clone();
+
+                        tokio::spawn(async move {
+                            let mut sub_sequence = 0;
+                            while let Some(ipc_output) = output_rx.recv().await {
+                                sub_sequence += 1;
+
+                                // Convert IPC data to RuntimeData
+                                match crate::python::multiprocess::MultiprocessExecutor::from_ipc_runtime_data(ipc_output) {
+                                    Ok(output_data) => {
+                                        let output_packet = DataPacket {
+                                            data: output_data,
+                                            from_node: node_id_for_drain.clone(),
+                                            to_node: None,
+                                            session_id: session_id_for_drain.clone(),
+                                            sequence: 0,  // Continuous outputs don't have input sequence
+                                            sub_sequence,
+                                        };
+
+                                        if let Err(e) = router_tx_for_drain.send(output_packet) {
+                                            error!("Failed to forward output from '{}': {}", node_id_for_drain, e);
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to convert IPC output for node '{}': {}", node_id_for_drain, e);
+                                    }
+                                }
+                            }
+                            info!("Output draining task ended for node '{}'", node_id_for_drain);
+                        });
+                    }
+                }
+            }
 
             while let Some(packet) = input_rx.recv().await {
                 debug!("📦 Node '{}' processing packet (seq: {})", node_id_clone, packet.sequence);
