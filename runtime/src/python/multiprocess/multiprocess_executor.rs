@@ -9,7 +9,7 @@ use crate::{Error, Result};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
 
 #[cfg(feature = "multiprocess")]
@@ -48,6 +48,20 @@ use super::data_transfer::RuntimeData as IPCRuntimeData;
 // - Restructuring to create publishers during initialization
 // - Storing them in a non-Send-friendly way (e.g., blocking thread with channels)
 // - Or contributing to iceoryx2 to make Publisher Send+Sync
+
+/// Global session storage
+/// Maps session_id -> HashMap<node_id, IPC thread command sender>
+/// This is shared across all MultiprocessExecutor instances to ensure
+/// session_router can find IPC threads regardless of which executor instance it uses
+#[cfg(feature = "multiprocess")]
+static GLOBAL_SESSIONS: OnceLock<Arc<RwLock<HashMap<String, HashMap<String, tokio::sync::mpsc::Sender<IpcCommand>>>>>> = OnceLock::new();
+
+#[cfg(feature = "multiprocess")]
+fn global_sessions() -> Arc<RwLock<HashMap<String, HashMap<String, tokio::sync::mpsc::Sender<IpcCommand>>>>> {
+    GLOBAL_SESSIONS.get_or_init(|| {
+        Arc::new(RwLock::new(HashMap::new()))
+    }).clone()
+}
 
 /// Commands sent to the dedicated IPC thread
 #[cfg(feature = "multiprocess")]
@@ -349,10 +363,6 @@ impl MultiprocessExecutor {
             ctx.node_id, session_id
         );
 
-        // Get channel names
-        let input_channel_name = format!("{}_input", ctx.node_id);
-        let output_channel_name = format!("{}_output", ctx.node_id);
-
         // Convert input to IPC format
         let ipc_data = Self::to_ipc_runtime_data(&input, &session_id);
         
@@ -453,6 +463,52 @@ impl MultiprocessExecutor {
 
         tracing::info!("Collected {} outputs from node {}", output_count, ctx.node_id);
         Ok(output_count)
+    }
+
+    /// Send data to a node's IPC thread without waiting for response (fire-and-forget)
+    /// This is used for routing data between nodes in the pipeline
+    #[cfg(feature = "multiprocess")]
+    pub async fn send_to_node_async(
+        &self,
+        node_id: &str,
+        session_id: &str,
+        data: crate::data::RuntimeData,
+    ) -> Result<()> {
+        // Convert to IPC format
+        let ipc_data = Self::to_ipc_runtime_data(&data, session_id);
+
+        // Get the IPC thread from global sessions storage
+        let global_sessions = global_sessions();
+        let sessions = global_sessions.read().await;
+
+        let session = sessions.get(session_id)
+            .ok_or_else(|| {
+                let available: Vec<_> = sessions.keys().collect();
+                Error::Execution(format!(
+                    "Session {} not found in global sessions. Available: {:?}",
+                    session_id, available
+                ))
+            })?;
+
+        let ipc_thread_cmd_tx = session.get(node_id)
+            .ok_or_else(|| {
+                let available: Vec<_> = session.keys().collect();
+                Error::Execution(format!(
+                    "IPC thread not found for node {} in session {}. Available nodes: {:?}",
+                    node_id, session_id, available
+                ))
+            })?
+            .clone();
+
+        drop(sessions); // Release read lock
+
+        // Send data to IPC thread (no waiting for response)
+        tracing::debug!("send_to_node_async: Sending data to node '{}' in session '{}'", node_id, session_id);
+        ipc_thread_cmd_tx.send(IpcCommand::SendData { data: ipc_data })
+            .await
+            .map_err(|e| Error::Execution(format!("Failed to send to IPC thread for node {}: {}", node_id, e)))?;
+
+        Ok(())
     }
 
     /// Convert main RuntimeData to IPC RuntimeData
@@ -807,12 +863,12 @@ impl MultiprocessExecutor {
     /// Wait for a Python process to signal it's ready via iceoryx2 control channel
     async fn wait_for_ready_signal_ipc(
         &self,
-        _session_id: &str,
+        session_id: &str,
         node_id: &str,
         timeout: std::time::Duration,
     ) -> Result<bool> {
         let start = std::time::Instant::now();
-        let control_channel_name = format!("control/{}", node_id);
+        let control_channel_name = format!("control/{}_{}", session_id, node_id);
         
         tracing::info!("Subscribing to control channel: {}", control_channel_name);
         
@@ -957,26 +1013,9 @@ impl MultiprocessExecutor {
                         // Acknowledge send
                         let _ = resp_tx.blocking_send(IpcResponse::SendComplete);
 
-                        // Now poll for responses (subscriber is persistent too!)
-                        loop {
-                            match subscriber.receive() {
-                                Ok(Some(output_data)) => {
-                                    tracing::debug!("IPC thread received output for node: {}", node_id_clone);
-                                    if resp_tx.blocking_send(IpcResponse::OutputData(output_data)).is_err() {
-                                        tracing::warn!("Response channel closed for node: {}", node_id_clone);
-                                        break;
-                                    }
-                                }
-                                Ok(None) => {
-                                    // No more data immediately available
-                                    break;
-                                }
-                                Err(e) => {
-                                    tracing::error!("Receive error for node {}: {}", node_id_clone, e);
-                                    break;
-                                }
-                            }
-                        }
+                        // Continue polling in the main loop - don't break out!
+                        // The subscriber will be polled continuously even between commands
+                        // to ensure we capture all output from streaming nodes
                     }
                     Ok(IpcCommand::Shutdown) => {
                         tracing::info!("IPC thread shutting down for node: {}", node_id_clone);
@@ -1038,6 +1077,13 @@ impl MultiprocessExecutor {
                         });
                     }
                 }
+
+                // Remove session from global sessions storage
+                let global_sessions = global_sessions();
+                let mut global_sessions_guard = global_sessions.write().await;
+                global_sessions_guard.remove(session_id);
+                tracing::info!("Removed session {} from global sessions storage", session_id);
+                drop(global_sessions_guard);
             }
 
             // Then terminate processes
@@ -1149,10 +1195,11 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
         }
 
         // Create IPC channels BEFORE spawning process (must exist when Python connects)
+        // Prefix with session_id to avoid conflicts and make cleanup easier
         #[cfg(feature = "multiprocess")]
         let (input_channel_name, output_channel_name, input_channel, output_channel) = {
-            let input_channel_name = format!("{}_input", ctx.node_id);
-            let output_channel_name = format!("{}_output", ctx.node_id);
+            let input_channel_name = format!("{}_{}_input", session_id, ctx.node_id);
+            let output_channel_name = format!("{}_{}_output", session_id, ctx.node_id);
 
             let input_channel = self.channel_registry.create_channel(
                 &input_channel_name,
@@ -1181,6 +1228,7 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
                 &ctx.node_type,
                 &ctx.node_id,
                 &ctx.params,
+                &session_id,
             ).await?;
 
             // Spawn dedicated IPC thread for this node
@@ -1191,7 +1239,16 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
                 &output_channel_name,
             ).await?;
 
-            // Add process, channels, and IPC thread to session
+            // Register IPC thread in global sessions storage
+            let global_sessions = global_sessions();
+            let mut global_sessions_guard = global_sessions.write().await;
+            global_sessions_guard
+                .entry(session_id.clone())
+                .or_insert_with(HashMap::new)
+                .insert(ctx.node_id.clone(), ipc_thread.command_tx.clone());
+            drop(global_sessions_guard);
+
+            // Add process, channels, and IPC thread to local session
             let mut sessions = self.sessions.write().await;
             if let Some(session) = sessions.get_mut(&session_id) {
                 session.node_processes.insert(ctx.node_id.clone(), process);
