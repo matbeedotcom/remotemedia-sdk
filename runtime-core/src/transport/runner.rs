@@ -132,8 +132,8 @@ impl Clone for PipelineRunner {
 
 /// Internal implementation (opaque to transports)
 struct PipelineRunnerInner {
-    // NOTE: For Phase 2, we create a minimal implementation
-    // In Phase 4/5, this will be wired to the actual Executor from runtime/
+    /// The actual executor (now in runtime-core)
+    executor: Arc<crate::executor::Executor>,
 
     /// Session counter for generating unique IDs
     session_counter: Arc<std::sync::atomic::AtomicU64>,
@@ -141,28 +141,40 @@ struct PipelineRunnerInner {
 
 impl PipelineRunnerInner {
     fn new() -> Result<Self> {
-        // Minimal initialization for Phase 2
-        // Full implementation will come when we wire to existing Executor
+        // Initialize the real executor
+        let executor = Arc::new(crate::executor::Executor::new());
 
         Ok(Self {
+            executor,
             session_counter: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
     async fn execute_unary(
         &self,
-        _manifest: Arc<crate::manifest::Manifest>,
+        manifest: Arc<crate::manifest::Manifest>,
         input: TransportData,
     ) -> Result<TransportData> {
-        // TODO: Wire to actual Executor in later phases
-        // For now, echo input as output for testing
-        tracing::warn!("PipelineRunner::execute_unary not yet wired to Executor - echoing input");
-        Ok(input)
+        // Execute via real Executor (no conversion needed - same RuntimeData)
+        let output_data = self.executor
+            .execute(&manifest, input.data)
+            .await?;
+
+        // Wrap in TransportData, preserve metadata
+        let mut output = TransportData::new(output_data);
+        if let Some(seq) = input.sequence {
+            output = output.with_sequence(seq);
+        }
+        for (k, v) in &input.metadata {
+            output = output.with_metadata(k.clone(), v.clone());
+        }
+
+        Ok(output)
     }
 
     async fn create_stream_session(
         &self,
-        _manifest: Arc<crate::manifest::Manifest>,
+        manifest: Arc<crate::manifest::Manifest>,
     ) -> Result<StreamSessionHandle> {
         // Generate unique session ID
         let session_num = self.session_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -173,16 +185,15 @@ impl PipelineRunnerInner {
         let (output_tx, output_rx) = mpsc::unbounded_channel();
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
 
-        // Spawn a simple echo task for testing
-        // TODO: Wire to actual SessionRouter in later phases
+        // TODO: Wire to SessionRouter for real streaming
+        // For now, echo mode
         let session_id_clone = session_id.clone();
         tokio::spawn(async move {
-            tracing::info!("StreamSession {} started (echo mode for Phase 2)", session_id_clone);
+            tracing::info!("StreamSession {} started (TODO: wire to SessionRouter)", session_id_clone);
 
             loop {
                 tokio::select! {
                     Some(data) = input_rx.recv() => {
-                        // Echo input to output
                         tracing::debug!("Session {} echoing data", session_id_clone);
                         if output_tx.send(data).is_err() {
                             break;

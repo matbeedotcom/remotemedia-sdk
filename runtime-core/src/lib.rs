@@ -41,32 +41,110 @@
 #![warn(clippy::all)]
 #![allow(clippy::arc_with_non_send_sync)] // iceoryx2 types are intentionally !Send
 
-// Transport abstraction layer (NEW in Phase 2)
+// Core execution modules
+pub mod audio;
+pub mod executor;
+pub mod nodes;
+pub mod python;
+
+// Manifest
+pub use manifest::Manifest;
+
+// Transport abstraction layer
 pub mod transport;
 
 // Re-export core modules from existing runtime
 // NOTE: For Phase 2, these are stub re-exports
 // In later phases, we'll copy the actual implementations from runtime/
 
-/// Data types module (RuntimeData, AudioBuffer, etc.)
+/// Data types module - transport-agnostic data representations
 pub mod data {
     //! Core data types
     //!
-    //! NOTE: This is a stub for Phase 2. In Phase 4/5, this will contain
-    //! the actual RuntimeData types copied from runtime/src/data/
+    //! These types match the DataBuffer protobuf schema but are pure Rust types
+    //! with no protobuf dependencies. Transports handle conversion.
 
-    /// Placeholder RuntimeData for Phase 2
-    #[derive(Debug, Clone, PartialEq)]
+    use serde::{Deserialize, Serialize};
+
+    /// Audio format enumeration
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    pub enum AudioFormat {
+        /// Unknown format
+        Unspecified = 0,
+        /// 32-bit float (little-endian)
+        F32 = 1,
+        /// 16-bit signed integer (little-endian)
+        S16 = 2,
+    }
+
+    /// Data type hint for routing
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    pub enum DataTypeHint {
+        /// Unspecified
+        Unspecified = 0,
+        /// Audio
+        Audio = 1,
+        /// Video
+        Video = 2,
+        /// Tensor
+        Tensor = 3,
+        /// JSON
+        Json = 4,
+        /// Text
+        Text = 5,
+        /// Binary
+        Binary = 6,
+        /// Any type
+        Any = 7,
+    }
+
+    /// Pixel format for video frames
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    pub enum PixelFormat {
+        /// Unknown format
+        Unspecified = 0,
+        /// RGB24 (packed)
+        Rgb24 = 1,
+        /// RGBA32 (packed)
+        Rgba32 = 2,
+        /// YUV420P (planar)
+        Yuv420p = 3,
+    }
+
+    /// Runtime data representation matching DataBuffer oneof types
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub enum RuntimeData {
-        /// Audio data
+        /// Audio samples (f32 PCM)
         Audio {
-            /// Audio samples (f32 PCM)
+            /// Audio samples as f32
             samples: Vec<f32>,
             /// Sample rate in Hz
             sample_rate: u32,
             /// Number of channels (1=mono, 2=stereo)
             channels: u32,
         },
+        /// Video frame
+        Video {
+            /// Pixel data
+            pixel_data: Vec<u8>,
+            /// Frame width
+            width: u32,
+            /// Frame height
+            height: u32,
+            /// Frame number/timestamp
+            frame_number: u64,
+        },
+        /// Tensor data
+        Tensor {
+            /// Flattened tensor data
+            data: Vec<u8>,
+            /// Tensor shape
+            shape: Vec<i32>,
+            /// Data type (0=float32, 1=int32, etc.)
+            dtype: i32,
+        },
+        /// JSON data
+        Json(serde_json::Value),
         /// Text data
         Text(String),
         /// Binary data
@@ -74,45 +152,93 @@ pub mod data {
     }
 
     impl RuntimeData {
-        /// Get the type of this data
+        /// Get the type of this data as string
         pub fn data_type(&self) -> &str {
             match self {
                 RuntimeData::Audio { .. } => "audio",
+                RuntimeData::Video { .. } => "video",
+                RuntimeData::Tensor { .. } => "tensor",
+                RuntimeData::Json(_) => "json",
                 RuntimeData::Text(_) => "text",
                 RuntimeData::Binary(_) => "binary",
             }
         }
+
+        /// Get item count
+        pub fn item_count(&self) -> usize {
+            match self {
+                RuntimeData::Audio { samples, .. } => samples.len(),
+                RuntimeData::Video { .. } => 1,
+                RuntimeData::Tensor { data, .. } => data.len(),
+                RuntimeData::Json(value) => match value {
+                    serde_json::Value::Array(arr) => arr.len(),
+                    serde_json::Value::Object(obj) => obj.len(),
+                    _ => 1,
+                },
+                RuntimeData::Text(s) => s.len(),
+                RuntimeData::Binary(b) => b.len(),
+            }
+        }
+
+        /// Get memory size in bytes
+        pub fn size_bytes(&self) -> usize {
+            match self {
+                RuntimeData::Audio { samples, .. } => samples.len() * 4,
+                RuntimeData::Video { pixel_data, .. } => pixel_data.len(),
+                RuntimeData::Tensor { data, .. } => data.len(),
+                RuntimeData::Json(value) => {
+                    serde_json::to_string(value).map(|s| s.len()).unwrap_or(0)
+                }
+                RuntimeData::Text(s) => s.len(),
+                RuntimeData::Binary(b) => b.len(),
+            }
+        }
+    }
+
+    /// Audio buffer (standalone struct for nodes)
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct AudioBuffer {
+        /// Raw audio samples (bytes for f32)
+        pub samples: Vec<u8>,
+        /// Sample rate in Hz
+        pub sample_rate: u32,
+        /// Number of channels
+        pub channels: u32,
+        /// Audio format
+        pub format: i32,
+        /// Number of samples
+        pub num_samples: u64,
+    }
+
+    /// Video frame (standalone struct for nodes)
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct VideoFrame {
+        /// Pixel data
+        pub pixel_data: Vec<u8>,
+        /// Frame width
+        pub width: u32,
+        /// Frame height
+        pub height: u32,
+        /// Pixel format
+        pub format: i32,
+        /// Frame number
+        pub frame_number: u64,
+    }
+
+    /// Tensor buffer (standalone struct for nodes)
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct TensorBuffer {
+        /// Tensor data (bytes)
+        pub data: Vec<u8>,
+        /// Tensor shape
+        pub shape: Vec<i32>,
+        /// Data type
+        pub dtype: i32,
     }
 }
 
 /// Manifest parsing module
-pub mod manifest {
-    //! Pipeline manifest parsing
-    //!
-    //! NOTE: This is a stub for Phase 2. In Phase 4/5, this will contain
-    //! the actual Manifest types copied from runtime/src/manifest/
-
-    use serde::{Deserialize, Serialize};
-
-    /// Placeholder Manifest for Phase 2
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct Manifest {
-        /// Manifest version
-        pub version: String,
-        /// Pipeline nodes
-        pub nodes: Vec<serde_json::Value>,
-        /// Node connections
-        pub connections: Vec<serde_json::Value>,
-    }
-
-    impl Manifest {
-        /// Parse manifest from JSON string
-        pub fn from_json(json: &str) -> crate::Result<Self> {
-            serde_json::from_str(json)
-                .map_err(|e| crate::Error::InvalidManifest(format!("Parse error: {}", e)))
-        }
-    }
-}
+pub mod manifest;
 
 // Error types
 mod error;
