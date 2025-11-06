@@ -68,6 +68,8 @@ fn global_sessions() -> Arc<RwLock<HashMap<String, HashMap<String, tokio::sync::
 enum IpcCommand {
     /// Send data to the node's input channel
     SendData { data: IPCRuntimeData },
+    /// Register a callback for continuous output forwarding
+    RegisterOutputCallback { callback_tx: tokio::sync::mpsc::UnboundedSender<IPCRuntimeData> },
     /// Request graceful shutdown of the IPC thread
     Shutdown,
 }
@@ -412,50 +414,114 @@ impl MultiprocessExecutor {
             _ => {}
         }
 
-        // Collect outputs from IPC thread
+        // Collect outputs from IPC thread continuously
+        // The callback will control when to stop (e.g., based on end markers)
         let mut output_count = 0;
-        let timeout_duration = tokio::time::Duration::from_secs(300);
-        let start = tokio::time::Instant::now();
 
         tracing::info!(
-            "[Multiprocess] Waiting for output from node '{}' (timeout: {}s)",
-            ctx.node_id,
-            timeout_duration.as_secs()
+            "[Multiprocess] Continuously collecting output from node '{}'",
+            ctx.node_id
         );
 
         loop {
-            if start.elapsed() > timeout_duration {
-                return Err(Error::Execution(format!("Timeout waiting for output from node {}", ctx.node_id)));
-            }
-
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(100),
-                resp_rx.recv()
-            ).await {
-                Ok(Some(IpcResponse::OutputData(ipc_output))) => {
+            match resp_rx.recv().await {
+                Some(IpcResponse::OutputData(ipc_output)) => {
                     let output_data = Self::from_ipc_runtime_data(ipc_output)?;
 
-                    // Forward all outputs - don't interpret end markers
-                    // The node itself is responsible for managing its output lifecycle
-                    callback(output_data)?;
-                    output_count += 1;
+                    // Forward all outputs - the callback decides when to stop
+                    match callback(output_data) {
+                        Ok(_) => {
+                            output_count += 1;
+                        }
+                        Err(e) => {
+                            // Callback returned error - stop collecting
+                            tracing::info!("Callback stopped collection for node {} after {} outputs: {}",
+                                ctx.node_id, output_count, e);
+                            return Ok(output_count);
+                        }
+                    }
                 }
-                Ok(Some(IpcResponse::Error(e))) => {
-                    return Err(Error::Execution(format!("IPC error: {}", e)));
-                }
-                Ok(None) => {
-                    return Err(Error::Execution(format!("IPC thread disconnected for node {}", ctx.node_id)));
-                }
-                Err(_) => {
-                    // Timeout - continue waiting
+                Some(IpcResponse::SendComplete) => {
+                    // Acknowledgment - ignore and continue polling for outputs
                     continue;
                 }
-                _ => continue,
+                Some(IpcResponse::Error(e)) => {
+                    return Err(Error::Execution(format!("IPC error: {}", e)));
+                }
+                None => {
+                    // IPC thread disconnected
+                    tracing::info!("IPC thread disconnected for node {} after {} outputs", ctx.node_id, output_count);
+                    return Ok(output_count);
+                }
             }
         }
+    }
 
-        tracing::info!("Collected {} outputs from node {}", output_count, ctx.node_id);
-        Ok(output_count)
+    /// Register a callback for continuous output forwarding from a node's IPC thread
+    /// The callback will receive ALL outputs from the node, independent of any input processing
+    #[cfg(feature = "multiprocess")]
+    pub async fn register_output_callback(
+        &self,
+        node_id: &str,
+        session_id: &str,
+        callback_tx: tokio::sync::mpsc::UnboundedSender<IPCRuntimeData>,
+    ) -> Result<()> {
+        // Get the IPC thread from global sessions storage
+        let global_sessions = global_sessions();
+        let sessions = global_sessions.read().await;
+
+        let session = sessions.get(session_id)
+            .ok_or_else(|| Error::Execution(format!("Session {} not found", session_id)))?;
+
+        let ipc_thread_cmd_tx = session.get(node_id)
+            .ok_or_else(|| Error::Execution(format!("IPC thread not found for node {}", node_id)))?
+            .clone();
+
+        drop(sessions);
+
+        // Send register command to IPC thread
+        ipc_thread_cmd_tx.send(IpcCommand::RegisterOutputCallback { callback_tx })
+            .await
+            .map_err(|e| Error::Execution(format!("Failed to register callback for node {}: {}", node_id, e)))?;
+
+        tracing::info!("Registered output callback for node '{}' in session '{}'", node_id, session_id);
+        Ok(())
+    }
+
+    /// Send data to a specific node without collecting outputs
+    /// Use this when a background output draining task is already registered
+    #[cfg(feature = "multiprocess")]
+    pub async fn send_data_to_node(
+        &self,
+        node_id: &str,
+        session_id: &str,
+        input: crate::data::RuntimeData,
+    ) -> Result<()> {
+        tracing::debug!("send_data_to_node: Sending to node '{}' in session '{}'", node_id, session_id);
+
+        // Convert input to IPC format
+        let ipc_data = Self::to_ipc_runtime_data(&input, session_id);
+
+        // Get the IPC thread from global sessions storage
+        let global_sessions = global_sessions();
+        let sessions = global_sessions.read().await;
+
+        let session = sessions.get(session_id)
+            .ok_or_else(|| Error::Execution(format!("Session {} not found", session_id)))?;
+
+        let ipc_thread_cmd_tx = session.get(node_id)
+            .ok_or_else(|| Error::Execution(format!("IPC thread not found for node {}", node_id)))?
+            .clone();
+
+        drop(sessions);
+
+        // Send data to IPC thread (no waiting for outputs)
+        tracing::info!("[Multiprocess] Sending data to node '{}' via IPC thread (fire-and-forget)", node_id);
+        ipc_thread_cmd_tx.send(IpcCommand::SendData { data: ipc_data })
+            .await
+            .map_err(|e| Error::Execution(format!("Failed to send to IPC thread for node {}: {}", node_id, e)))?;
+
+        Ok(())
     }
 
     /// Send data to a node's IPC thread without waiting for response (fire-and-forget)
@@ -536,7 +602,7 @@ impl MultiprocessExecutor {
 
     /// Convert IPC RuntimeData back to main RuntimeData
     #[cfg(feature = "multiprocess")]
-    fn from_ipc_runtime_data(ipc_data: IPCRuntimeData) -> Result<crate::data::RuntimeData> {
+    pub fn from_ipc_runtime_data(ipc_data: IPCRuntimeData) -> Result<crate::data::RuntimeData> {
         use crate::data::RuntimeData as MainRD;
         use super::data_transfer::DataType;
 
@@ -797,8 +863,8 @@ impl MultiprocessExecutor {
 
             drop(sessions);
 
-            // Wait before checking again
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            // Yield to allow other tasks to run before checking again
+            tokio::task::yield_now().await;
         }
     }
 
@@ -922,8 +988,8 @@ impl MultiprocessExecutor {
                         }
                     }
                     None => {
-                        // No data yet, sleep briefly and retry
-                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        // No data yet, yield to scheduler
+                        std::thread::yield_now();
                     }
                 }
             }
@@ -987,8 +1053,11 @@ impl MultiprocessExecutor {
             };
 
             // CRITICAL: One-time delay for iceoryx2 routing to stabilize
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            // std::thread::sleep(std::time::Duration::from_millis(50));
             tracing::info!("IPC thread ready for node: {} (publishers created)", node_id_clone);
+
+            // Optional callback for continuous output forwarding
+            let mut output_callback: Option<tokio::sync::mpsc::UnboundedSender<IPCRuntimeData>> = None;
 
             // Main loop: process commands using persistent publishers/subscribers
             loop {
@@ -1010,6 +1079,10 @@ impl MultiprocessExecutor {
                         // The subscriber will be polled continuously even between commands
                         // to ensure we capture all output from streaming nodes
                     }
+                    Ok(IpcCommand::RegisterOutputCallback { callback_tx }) => {
+                        tracing::info!("IPC thread registered output callback for node: {}", node_id_clone);
+                        output_callback = Some(callback_tx);
+                    }
                     Ok(IpcCommand::Shutdown) => {
                         tracing::info!("IPC thread shutting down for node: {}", node_id_clone);
                         break;
@@ -1018,11 +1091,20 @@ impl MultiprocessExecutor {
                         // No command, poll subscriber for incoming data
                         match subscriber.receive() {
                             Ok(Some(output_data)) => {
+                                // If we have a registered callback, use it (for continuous forwarding)
+                                if let Some(ref cb) = output_callback {
+                                    if let Err(e) = cb.send(output_data.clone()) {
+                                        tracing::error!("Failed to send output via callback for node {}: {}", node_id_clone, e);
+                                        // Callback channel closed, clear it
+                                        output_callback = None;
+                                    }
+                                }
+                                // Also send via response channel (for backwards compat)
                                 let _ = resp_tx.blocking_send(IpcResponse::OutputData(output_data));
                             }
                             Ok(None) => {
-                                // No data, sleep briefly
-                                std::thread::sleep(std::time::Duration::from_millis(10));
+                                // No data, yield to scheduler (avoids 100% CPU but minimal latency)
+                                std::thread::yield_now();
                             }
                             Err(e) => {
                                 tracing::error!("Receive error for node {}: {}", node_id_clone, e);

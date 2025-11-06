@@ -344,9 +344,9 @@ class LFM2AudioNode(MultiprocessNode):
             # to avoid PyO3 FFI issues in async context
             samples_bytes, input_sample_rate, channels, format_str, num_samples = data.as_audio()
             
-            # audio_array_echo = np.frombuffer(samples_bytes, dtype=np.float32)
-            # audio_runtime_data_echo = numpy_to_audio(audio_array_echo, self.sample_rate, channels=1)
-            # yield audio_runtime_data_echo
+            audio_array_echo = np.frombuffer(samples_bytes, dtype=np.float32)
+            audio_runtime_data_echo = numpy_to_audio(audio_array_echo, self.sample_rate, channels=1)
+            yield audio_runtime_data_echo
             # Convert bytes to numpy array
             audio_array = np.frombuffer(samples_bytes, dtype=np.float32)
 

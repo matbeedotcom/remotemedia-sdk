@@ -172,7 +172,17 @@ impl AsyncStreamingNode for PythonStreamingNode {
             .ok_or_else(|| Error::Execution("Failed to downcast to MultiprocessExecutor".to_string()))?;
 
         tracing::info!("Using MultiprocessExecutor with IPC streaming for node {}", self.node_id);
-        mp_executor.process_runtime_data_streaming(data, session_id, callback).await
+
+        // Get session_id (from parameter or from node)
+        let session_id_str = session_id.as_ref()
+            .or(self.session_id.as_ref())
+            .ok_or_else(|| Error::Execution("No session_id available for multiprocess node".to_string()))?;
+
+        // Just send the data - a background task is continuously draining outputs
+        mp_executor.send_data_to_node(&self.node_id, session_id_str, data).await?;
+
+        // Return immediately - the background draining task will forward outputs
+        Ok(0)
     }
 }
 
