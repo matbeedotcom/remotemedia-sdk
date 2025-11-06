@@ -345,40 +345,9 @@ impl SessionRouter {
                 self.start_node_task(next_node_id.clone()).await?;
             }
 
-            // Check if this is a Python node - all Python nodes use multiprocessing
-            #[cfg(feature = "multiprocess")]
-            {
-                let node_type = self.get_node_type(&next_node_id).await;
-                let is_multiprocess = self.registry.is_python_node(&node_type);
-                
-                if is_multiprocess {
-                    if let Some(ref executor) = self.multiprocess_executor {
-                        debug!("📡 Routing to multiprocess node '{}' via IPC (using dedicated thread)", next_node_id);
-
-                        // Send data via the dedicated IPC thread (no 50ms delay!)
-                        let executor_clone = executor.clone();
-                        let node_id_clone = next_node_id.clone();
-                        let session_id_clone = packet.session_id.clone();
-                        let data_clone = packet.data.clone();
-
-                        // Send via dedicated IPC thread (async, no blocking)
-                        tokio::spawn(async move {
-                            match executor_clone.send_to_node_async(&node_id_clone, &session_id_clone, data_clone).await {
-                                Ok(_) => {
-                                    debug!("✅ Sent data to multiprocess node '{}' via dedicated IPC thread", node_id_clone);
-                                }
-                                Err(e) => {
-                                    error!("Failed to send IPC data to node '{}': {}", node_id_clone, e);
-                                }
-                            }
-                        });
-                    } else {
-                        warn!("Multiprocess node '{}' detected but no multiprocess executor available", next_node_id);
-                    }
-                }
-            }
-
-            // Also send via in-memory channel (for native nodes or as fallback)
+            // Send via in-memory channel to the node task
+            // The node task will handle both native and multiprocess nodes
+            // Multiprocess nodes will internally use the IPC thread via process_streaming_async()
             if let Some(node_input) = self.node_inputs.get(&next_node_id) {
                 let packet_clone = packet.clone();
                 if let Err(e) = node_input.send(packet_clone) {
@@ -417,44 +386,53 @@ impl SessionRouter {
                 debug!("📦 Node '{}' processing packet (seq: {})", node_id_clone, packet.sequence);
 
                 if is_streaming {
-                    // Streaming node - may produce multiple outputs
-                    let mut output_count = 0;
-                    let node_id_for_cb = node_id_clone.clone();
-                    let session_id_for_cb = session_id.clone();
-                    let router_tx_for_cb = router_tx.clone();
+                    // Streaming node - spawn processing in background for pipelined execution
+                    let node_clone = node.clone();
+                    let node_id_for_task = node_id_clone.clone();
+                    let session_id_for_task = session_id.clone();
+                    let router_tx_for_task = router_tx.clone();
                     let packet_sequence = packet.sequence;
+                    let packet_data = packet.data;
 
-                    let result = node.process_streaming_async(
-                        packet.data,
-                        Some(session_id.clone()),
-                        Box::new(move |output| {
-                            output_count += 1;
-                            let output_packet = DataPacket {
-                                data: output,
-                                from_node: node_id_for_cb.clone(),
-                                to_node: None,
-                                session_id: session_id_for_cb.clone(),
-                                sequence: packet_sequence,
-                                sub_sequence: output_count,
-                            };
+                    // Process asynchronously - don't block the node task
+                    tokio::spawn(async move {
+                        let mut output_count = 0;
+                        let node_id_for_cb = node_id_for_task.clone();
+                        let session_id_for_cb = session_id_for_task.clone();
+                        let router_tx_for_cb = router_tx_for_task.clone();
 
-                            // Send output back to router for further routing
-                            if let Err(e) = router_tx_for_cb.send(output_packet) {
-                                error!("Failed to send output from '{}': {}", node_id_for_cb, e);
-                                return Err(crate::Error::Execution("Channel closed".into()));
+                        let result = node_clone.process_streaming_async(
+                            packet_data,
+                            Some(session_id_for_task.clone()),
+                            Box::new(move |output| {
+                                output_count += 1;
+                                let output_packet = DataPacket {
+                                    data: output,
+                                    from_node: node_id_for_cb.clone(),
+                                    to_node: None,
+                                    session_id: session_id_for_cb.clone(),
+                                    sequence: packet_sequence,
+                                    sub_sequence: output_count,
+                                };
+
+                                // Send output back to router for further routing
+                                if let Err(e) = router_tx_for_cb.send(output_packet) {
+                                    error!("Failed to send output from '{}': {}", node_id_for_cb, e);
+                                    return Err(crate::Error::Execution("Channel closed".into()));
+                                }
+                                Ok(())
+                            })
+                        ).await;
+
+                        match result {
+                            Ok(count) => {
+                                debug!("✅ Node '{}' produced {} outputs", node_id_for_task, count);
                             }
-                            Ok(())
-                        })
-                    ).await;
-
-                    match result {
-                        Ok(count) => {
-                            debug!("✅ Node '{}' produced {} outputs", node_id_clone, count);
+                            Err(e) => {
+                                error!("Streaming node '{}' failed: {}", node_id_for_task, e);
+                            }
                         }
-                        Err(e) => {
-                            error!("Streaming node '{}' failed: {}", node_id_clone, e);
-                        }
-                    }
+                    });
                 } else {
                     // Non-streaming node - single output
                     match node.process_async(packet.data).await {

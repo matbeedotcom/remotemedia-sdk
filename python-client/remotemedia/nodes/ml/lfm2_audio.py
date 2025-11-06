@@ -542,7 +542,7 @@ class LFM2AudioNode(MultiprocessNode):
                             if audio_np.ndim == 2:
                                 audio_np = audio_np[0]
 
-                            logger.debug(f"Yielding audio batch: {len(audio_np)} samples")
+                            logger.info(f"Yielding audio batch: {len(audio_np)} samples")
                             audio_runtime_data = numpy_to_audio(audio_np, self.sample_rate, channels=1)
                             yield audio_runtime_data
                             logger.debug(f"Successfully yielded audio batch")
