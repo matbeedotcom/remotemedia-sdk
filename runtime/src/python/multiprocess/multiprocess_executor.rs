@@ -435,15 +435,8 @@ impl MultiprocessExecutor {
                 Ok(Some(IpcResponse::OutputData(ipc_output))) => {
                     let output_data = Self::from_ipc_runtime_data(ipc_output)?;
 
-                    // Check for end markers
-                    if let crate::data::RuntimeData::Text(ref text) = output_data {
-                        if text == "<|audio_end|>" || text == "<|text_end|>" {
-                            callback(output_data)?;
-                            output_count += 1;
-                            break;
-                        }
-                    }
-
+                    // Forward all outputs - don't interpret end markers
+                    // The node itself is responsible for managing its output lifecycle
                     callback(output_data)?;
                     output_count += 1;
                 }
