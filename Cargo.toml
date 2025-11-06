@@ -2,7 +2,7 @@
 members = [
     "runtime",
     "runtime-core",  # Phase 2: Core abstractions
-    # "transports/remotemedia-grpc",  # To be created in Phase 4
+    "transports/remotemedia-grpc",  # Phase 4: gRPC transport
     # "transports/remotemedia-ffi",   # To be created in Phase 5
     # "transports/remotemedia-webrtc", # To be created in Phase 7
 ]
