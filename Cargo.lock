@@ -4551,6 +4551,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
+name = "remotemedia-grpc"
+version = "0.4.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "hyper 1.7.0",
+ "prometheus",
+ "prost",
+ "prost-build",
+ "prost-types",
+ "remotemedia-runtime-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-build",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tonic-web",
+ "tower 0.4.13",
+ "tower-http",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "remotemedia-runtime"
 version = "0.2.0"
 dependencies = [
@@ -4625,7 +4652,6 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64 0.21.7",
  "bincode",
  "bytemuck",
  "chrono",
@@ -4644,7 +4670,6 @@ dependencies = [
  "ort",
  "rand 0.8.5",
  "regex",
- "reqwest",
  "rubato",
  "rustfft",
  "serde",
@@ -4654,13 +4679,11 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-stream",
  "tokio-test",
- "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
  "uuid",
- "wasmtime",
- "wasmtime-wasi",
  "windows 0.52.0",
 ]
 

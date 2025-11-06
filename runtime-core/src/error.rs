@@ -1,46 +1,70 @@
-//! Error types for runtime-core
+//! Error types for RemoteMedia Runtime Core
 
 use thiserror::Error;
 
-/// Result type alias for runtime-core operations
+/// Result type alias for RemoteMedia Runtime Core operations
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Error types for runtime-core
+/// Error types that can occur in the RemoteMedia Runtime Core
 #[derive(Debug, Error)]
 pub enum Error {
     /// Manifest parsing or validation error
+    #[error("Manifest error: {0}")]
+    Manifest(String),
+
+    /// Manifest parsing or validation error (alias)
     #[error("Invalid manifest: {0}")]
     InvalidManifest(String),
 
-    /// Node execution error
-    #[error("Node execution failed: {0}")]
-    NodeExecutionFailed(String),
-
-    /// Data validation error
-    #[error("Invalid data: {0}")]
-    InvalidData(String),
-
-    /// General execution error
+    /// Pipeline execution error
     #[error("Execution error: {0}")]
     Execution(String),
 
-    /// Session not found
-    #[error("Session not found: {0}")]
-    SessionNotFound(String),
+    /// Invalid input data (type mismatch, validation failure)
+    #[error("Invalid data: {0}")]
+    InvalidData(String),
 
-    /// Resource limit exceeded
-    #[error("Resource limit exceeded: {0}")]
-    ResourceLimit(String),
-
-    /// Serialization error
-    #[error("Serialization error: {0}")]
-    SerializationError(String),
+    /// IPC communication error
+    #[error("IPC error: {0}")]
+    IpcError(String),
 
     /// I/O error
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// JSON error
-    #[error("JSON error: {0}")]
-    Json(#[from] serde_json::Error),
+    /// Serialization error
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+
+    /// Configuration error
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
+
+    /// Invalid input (node-specific)
+    #[error("Invalid input: {message}")]
+    InvalidInput {
+        /// Error message
+        message: String,
+        /// Node that rejected the input
+        node_id: String,
+        /// Additional context
+        context: String,
+    },
+
+    /// Generic error
+    #[error("{0}")]
+    Other(String),
+}
+
+impl From<anyhow::Error> for Error {
+    fn from(err: anyhow::Error) -> Self {
+        Error::Other(err.to_string())
+    }
+}
+
+#[cfg(feature = "silero-vad")]
+impl From<ort::Error> for Error {
+    fn from(err: ort::Error) -> Self {
+        Error::Execution(format!("ONNX Runtime error: {}", err))
+    }
 }
