@@ -14,7 +14,7 @@ use crate::{
     metrics::ServiceMetrics,
     ServiceConfig,
 };
-use remotemedia_runtime_core::executor::Executor;
+use remotemedia_runtime_core::transport::PipelineRunner;
 use std::sync::Arc;
 use tonic::{service::LayerExt as _, transport::Server};
 use tracing::{info, warn};
@@ -23,21 +23,21 @@ use tracing::{info, warn};
 pub struct GrpcServer {
     config: ServiceConfig,
     metrics: Arc<ServiceMetrics>,
-    executor: Arc<Executor>,
+    runner: Arc<PipelineRunner>,
 }
 
 impl GrpcServer {
-    /// Create new server with configuration and executor
+    /// Create new server with configuration and pipeline runner
     ///
-    /// The executor should already be configured with all necessary node registries.
+    /// The runner encapsulates all executor and node registry details.
     /// The server is only responsible for the gRPC transport layer.
-    pub fn new(config: ServiceConfig, executor: Arc<Executor>) -> Result<Self, Box<dyn std::error::Error>> {
-        let metrics = Arc<ServiceMetrics>::new(ServiceMetrics::with_default_registry()?);
+    pub fn new(config: ServiceConfig, runner: Arc<PipelineRunner>) -> Result<Self, Box<dyn std::error::Error>> {
+        let metrics = Arc::new(ServiceMetrics::with_default_registry()?);
 
         Ok(Self {
             config,
             metrics,
-            executor,
+            runner,
         })
     }
 
@@ -62,56 +62,19 @@ impl GrpcServer {
             "Starting gRPC server"
         );
 
-        // Create multiprocess executor (spec 002)
-        #[cfg(feature = "multiprocess")]
-        let multiprocess_executor = {
-            use remotemedia_runtime_core::python::multiprocess::{MultiprocessExecutor, MultiprocessConfig};
-
-            let config = MultiprocessConfig::from_default_file()
-                .map_err(|e| format!("Failed to load multiprocess config: {}", e))?;
-
-            Arc::new(MultiprocessExecutor::new(config))
-        };
-
-        // Create service implementations
-        #[cfg(feature = "multiprocess")]
+        // Create service implementations with PipelineRunner
         let execution_service = ExecutionServiceImpl::new(
             self.config.auth.clone(),
             self.config.limits.clone(),
-            self.config.version.clone(),
             Arc::clone(&self.metrics),
-            Arc::clone(&self.executor),
-            Arc::clone(&self.executor_registry),
-            multiprocess_executor.clone(),
+            Arc::clone(&self.runner),
         );
 
-        #[cfg(not(feature = "multiprocess"))]
-        let execution_service = ExecutionServiceImpl::new(
-            self.config.auth.clone(),
-            self.config.limits.clone(),
-            self.config.version.clone(),
-            Arc::clone(&self.metrics),
-            Arc::clone(&self.executor),
-            Arc::clone(&self.executor_registry),
-        );
-
-        // Phase 5: Streaming service (T058)
-        #[cfg(feature = "multiprocess")]
-        let streaming_service = {
-            let mut service = StreamingServiceImpl::new(
-                self.config.clone(),
-                Arc::clone(&self.executor),
-                Arc::clone(&self.metrics),
-            );
-            service.set_multiprocess_executor(multiprocess_executor.clone());
-            service
-        };
-
-        #[cfg(not(feature = "multiprocess"))]
         let streaming_service = StreamingServiceImpl::new(
-            self.config.clone(),
-            Arc::clone(&self.executor),
+            self.config.auth.clone(),
+            self.config.limits.clone(),
             Arc::clone(&self.metrics),
+            Arc::clone(&self.runner),
         );
 
         // Wrap services with gRPC-Web and CORS support using tower ServiceBuilder
@@ -155,24 +118,12 @@ impl GrpcServer {
             .add_service(streaming_service)
             ;
 
-        // Graceful shutdown on Ctrl+C
-        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        
-        tokio::spawn(async move {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("Failed to listen for Ctrl+C");
-            info!("Received shutdown signal");
-            let _ = tx.send(());
-        });
-
+        // TODO: Add graceful shutdown on Ctrl+C
+        // Requires tokio signal feature which may not be available on all platforms
         info!("gRPC server listening on {}", addr);
-        
+
         server
-            .serve_with_shutdown(addr, async {
-                rx.await.ok();
-                info!("Graceful shutdown complete");
-            })
+            .serve(addr)
             .await?;
 
         Ok(())
@@ -184,64 +135,27 @@ impl GrpcServer {
         shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let addr: std::net::SocketAddr = self.config.bind_address.parse()?;
-        
+
         info!(
             %addr,
             auth_required = self.config.auth.require_auth,
             max_memory_mb = self.config.limits.max_memory_bytes / 1_000_000,
-            "Starting gRPC server"
+            "Starting gRPC server with shutdown flag"
         );
 
-        // Create multiprocess executor (spec 002)
-        #[cfg(feature = "multiprocess")]
-        let multiprocess_executor_2 = {
-            use remotemedia_runtime_core::python::multiprocess::{MultiprocessExecutor, MultiprocessConfig};
-
-            let config = MultiprocessConfig::from_default_file()
-                .map_err(|e| format!("Failed to load multiprocess config: {}", e))?;
-
-            Arc::new(MultiprocessExecutor::new(config))
-        };
-
-        // Create service implementations
-        #[cfg(feature = "multiprocess")]
+        // Create service implementations with PipelineRunner
         let execution_service = ExecutionServiceImpl::new(
             self.config.auth.clone(),
             self.config.limits.clone(),
-            self.config.version.clone(),
             Arc::clone(&self.metrics),
-            Arc::clone(&self.executor),
-            Arc::clone(&self.executor_registry),
-            multiprocess_executor_2.clone(),
+            Arc::clone(&self.runner),
         );
 
-        #[cfg(not(feature = "multiprocess"))]
-        let execution_service = ExecutionServiceImpl::new(
-            self.config.auth.clone(),
-            self.config.limits.clone(),
-            self.config.version.clone(),
-            Arc::clone(&self.metrics),
-            Arc::clone(&self.executor),
-            Arc::clone(&self.executor_registry),
-        );
-
-        // Phase 5: Streaming service (T058)
-        #[cfg(feature = "multiprocess")]
-        let streaming_service = {
-            let mut service = StreamingServiceImpl::new(
-                self.config.clone(),
-                Arc::clone(&self.executor),
-                Arc::clone(&self.metrics),
-            );
-            service.set_multiprocess_executor(multiprocess_executor_2.clone());
-            service
-        };
-
-        #[cfg(not(feature = "multiprocess"))]
         let streaming_service = StreamingServiceImpl::new(
-            self.config.clone(),
-            Arc::clone(&self.executor),
+            self.config.auth.clone(),
+            self.config.limits.clone(),
             Arc::clone(&self.metrics),
+            Arc::clone(&self.runner),
         );
 
         // Wrap services with gRPC-Web and CORS support using tower ServiceBuilder
@@ -340,16 +254,16 @@ mod tests {
     #[test]
     fn test_server_creation() {
         let config = ServiceConfig::default();
-        let executor = Arc::new(Executor::new());
-        let server = GrpcServer::new(config, executor);
+        let runner = Arc::new(PipelineRunner::new().unwrap());
+        let server = GrpcServer::new(config, runner);
         assert!(server.is_ok());
     }
 
     #[test]
     fn test_metrics_access() {
         let config = ServiceConfig::default();
-        let executor = Arc::new(Executor::new());
-        let server = GrpcServer::new(config, executor).unwrap();
+        let runner = Arc::new(PipelineRunner::new().unwrap());
+        let server = GrpcServer::new(config, runner).unwrap();
         let metrics = server.metrics();
 
         // Test metrics are accessible
@@ -360,8 +274,8 @@ mod tests {
     #[test]
     fn test_metrics_text_export() {
         let config = ServiceConfig::default();
-        let executor = Arc::new(Executor::new());
-        let server = GrpcServer::new(config, executor).unwrap();
+        let runner = Arc::new(PipelineRunner::new().unwrap());
+        let server = GrpcServer::new(config, runner).unwrap();
 
         let text = server.metrics_text();
         assert!(text.contains("remotemedia_grpc"));
@@ -372,8 +286,8 @@ mod tests {
         let mut config = ServiceConfig::default();
         config.auth.require_auth = false;
 
-        let executor = Arc::new(Executor::new());
-        let server = GrpcServer::new(config, executor).unwrap();
+        let runner = Arc::new(PipelineRunner::new().unwrap());
+        let server = GrpcServer::new(config, runner).unwrap();
         assert!(!server.auth_config().require_auth);
     }
 }

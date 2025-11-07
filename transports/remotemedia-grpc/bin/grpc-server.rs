@@ -31,7 +31,7 @@
 //! - `GRPC_JSON_LOGGING`: Enable JSON structured logging (default: `true`)
 //! - `RUST_LOG`: Logging level (default: `info`, options: `trace`, `debug`, `info`, `warn`, `error`)
 
-use remotemedia_runtime_core::executor::Executor;
+use remotemedia_runtime_core::transport::PipelineRunner;
 use remotemedia_grpc::{server::GrpcServer, ServiceConfig, init_tracing};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -108,41 +108,19 @@ async fn async_main(shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::e
         "Configuration loaded"
     );
 
-    // Create executor for pipeline execution
-    let mut executor = Executor::new();
-    
-    // Register built-in test nodes (PassThrough, Echo, Calculator, Add, Multiply)
-    let builtin_registry = remotemedia_runtime_core::nodes::create_builtin_registry();
-    executor.add_system_registry(Arc::new(builtin_registry));
-    info!("Built-in test nodes registered (PassThrough, Echo, CalculatorNode, AddNode, MultiplyNode)");
-    
-    // Register audio processing nodes (resample, VAD, format converter)
-    let audio_registry = remotemedia_runtime_core::nodes::audio::create_audio_registry();
-    executor.add_audio_registry(Arc::new(audio_registry));
-    info!("Audio processing nodes registered (RustResampleNode, RustVADNode, RustFormatConverterNode)");
+    // Create pipeline runner
+    // PipelineRunner encapsulates the executor and all node registries
+    let runner = PipelineRunner::new()?;
+    info!("PipelineRunner initialized with all nodes");
 
-    // Register Python TTS nodes (KokoroTTSNode)
-    let python_tts_registry = remotemedia_runtime_core::nodes::python_nodes::create_python_tts_registry();
-    executor.add_user_registry(Arc::new(python_tts_registry));
-    info!("Python TTS nodes registered (KokoroTTSNode)");
+    // TODO: Get node type information from PipelineRunner for logging
+    // Currently PipelineRunner doesn't expose this information
+    // The nodes are registered internally during PipelineRunner::new()
 
-    // Get all node types from all registries for version info
-    let node_types = executor.list_all_node_types();
-    info!(
-        node_count = node_types.len(),
-        nodes = ?node_types,
-        "Available node types"
-    );
-    
-    // Note: Version management moved to version.rs module
-    // TODO: Re-enable version tracking if needed
-    // let version = remotemedia_grpc::version::VersionManager::from_node_types(node_types);
-
-    let executor = Arc::new(executor);
-    info!("Pipeline executor initialized with all nodes");
+    let runner = Arc::new(runner);
 
     // Create and start server
-    let server = GrpcServer::new(config, executor)?;
+    let server = GrpcServer::new(config, runner)?;
 
     info!("Server initialized, starting listener...");
 
