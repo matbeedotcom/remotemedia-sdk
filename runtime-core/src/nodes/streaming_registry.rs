@@ -4,6 +4,7 @@ use crate::nodes::calculator::CalculatorNode;
 use crate::nodes::passthrough::PassThroughNode;
 use crate::nodes::python_streaming::PythonStreamingNode;
 use crate::nodes::sync_av::SynchronizedAudioVideoNode;
+use crate::nodes::video_flip::VideoFlipNode;
 use crate::nodes::video_processor::VideoProcessorNode;
 use crate::nodes::{
     AsyncNodeWrapper, StreamingNode, StreamingNodeFactory, StreamingNodeRegistry, SyncNodeWrapper,
@@ -47,6 +48,30 @@ impl StreamingNodeFactory for VideoProcessorNodeFactory {
 
     fn node_type(&self) -> &str {
         "VideoProcessorNode"
+    }
+}
+
+struct VideoFlipNodeFactory;
+impl StreamingNodeFactory for VideoFlipNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        let config = if params.is_null() {
+            crate::nodes::video_flip::VideoFlipConfig::default()
+        } else {
+            serde_json::from_value(params.clone()).map_err(|e| {
+                Error::Execution(format!("Failed to parse VideoFlip config: {}", e))
+            })?
+        };
+        let node = VideoFlipNode::new(config);
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "VideoFlip"
     }
 }
 
@@ -599,6 +624,7 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
     // Register all built-in streaming nodes
     registry.register(Arc::new(CalculatorNodeFactory));
     registry.register(Arc::new(VideoProcessorNodeFactory));
+    registry.register(Arc::new(VideoFlipNodeFactory));
     registry.register(Arc::new(SynchronizedAudioVideoNodeFactory));
     registry.register(Arc::new(PassThroughNodeFactory));
 

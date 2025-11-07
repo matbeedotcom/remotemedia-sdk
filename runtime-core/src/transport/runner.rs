@@ -119,6 +119,30 @@ impl PipelineRunner {
     ) -> Result<StreamSessionHandle> {
         self.inner.create_stream_session(manifest).await
     }
+
+    /// Get a reference to the internal executor
+    ///
+    /// This is exposed for transports that need direct access to the executor,
+    /// such as for use with SessionRouter.
+    ///
+    /// # Returns
+    ///
+    /// Arc-wrapped Executor instance
+    pub fn executor(&self) -> Arc<crate::executor::Executor> {
+        Arc::clone(&self.inner.executor)
+    }
+
+    /// Create a streaming node registry
+    ///
+    /// Returns a new registry with all default streaming nodes registered.
+    /// This is exposed for transports that need to create SessionRouter instances.
+    ///
+    /// # Returns
+    ///
+    /// Arc-wrapped StreamingNodeRegistry with default nodes
+    pub fn create_streaming_registry(&self) -> Arc<crate::nodes::streaming_node::StreamingNodeRegistry> {
+        Arc::new(crate::nodes::streaming_registry::create_default_streaming_registry())
+    }
 }
 
 // Clone is cheap (Arc-wrapped)
@@ -205,21 +229,45 @@ impl PipelineRunnerInner {
         let (output_tx, output_rx) = mpsc::unbounded_channel();
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
 
-        // TODO: Wire to SessionRouter for real streaming
-        // For now, echo mode
+        // Create streaming session router task
         let session_id_clone = session_id.clone();
+        let executor = Arc::clone(&self.executor);
+        let manifest_clone = Arc::clone(&manifest);
+
         tokio::spawn(async move {
-            tracing::info!(
-                "StreamSession {} started (TODO: wire to SessionRouter)",
-                session_id_clone
-            );
+            tracing::info!("StreamSession {} started", session_id_clone);
+
+            // Find first node ID for routing
+            let first_node_id = match manifest_clone.nodes.first() {
+                Some(n) => n.id.clone(),
+                None => {
+                    tracing::error!("Session {}: No nodes in manifest", session_id_clone);
+                    return;
+                }
+            };
 
             loop {
                 tokio::select! {
-                    Some(data) = input_rx.recv() => {
-                        tracing::debug!("Session {} echoing data", session_id_clone);
-                        if output_tx.send(data).is_err() {
-                            break;
+                    Some(input_data) = input_rx.recv() => {
+                        tracing::debug!("Session {} processing input", session_id_clone);
+
+                        // Execute pipeline with input
+                        let mut runtime_inputs = std::collections::HashMap::new();
+                        runtime_inputs.insert(first_node_id.clone(), input_data);
+
+                        match executor.execute_with_runtime_data(&manifest_clone, runtime_inputs).await {
+                            Ok(output_map) => {
+                                // Send all outputs
+                                for (_, output_data) in output_map {
+                                    if output_tx.send(output_data).is_err() {
+                                        tracing::warn!("Session {}: Failed to send output (receiver closed)", session_id_clone);
+                                        return;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("Session {}: Pipeline execution error: {}", session_id_clone, e);
+                            }
                         }
                     }
                     _ = shutdown_rx.recv() => {

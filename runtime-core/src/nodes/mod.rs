@@ -47,6 +47,9 @@ pub use audio_resample_streaming::ResampleStreamingNode;
 pub mod text_collector;
 pub use text_collector::TextCollectorNode;
 
+pub mod video_flip;
+pub use video_flip::VideoFlipNode;
+
 pub use registry::{CompositeRegistry, NodeFactory as NodeFactoryTrait, RuntimeHint};
 pub use streaming_node::{
     AsyncNodeWrapper, AsyncStreamingNode, StreamingNode, StreamingNodeFactory,
