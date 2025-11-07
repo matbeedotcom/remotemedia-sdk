@@ -47,6 +47,13 @@ pub mod executor;
 pub mod nodes;
 pub mod python;
 
+// Model Registry and Tensor modules
+#[cfg(feature = "model-registry")]
+pub mod model_registry;
+#[cfg(any(feature = "shared-memory", feature = "model-registry"))]
+pub mod tensor;
+pub mod model_worker;
+
 // Manifest
 pub use manifest::Manifest;
 

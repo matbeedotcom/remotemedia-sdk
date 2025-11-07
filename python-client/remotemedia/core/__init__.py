@@ -16,6 +16,15 @@ from .exceptions import (
     RemoteExecutionError,
     WebRTCError,
 )
+from .model_registry import (
+    ModelRegistry,
+    ModelHandle,
+    RegistryConfig,
+    RegistryMetrics,
+    ModelInfo,
+    EvictionPolicy,
+    get_or_load,
+)
 
 __all__ = [
     "Pipeline",
@@ -33,4 +42,11 @@ __all__ = [
     "NodeError",
     "RemoteExecutionError",
     "WebRTCError",
+    "ModelRegistry",
+    "ModelHandle",
+    "RegistryConfig",
+    "RegistryMetrics",
+    "ModelInfo",
+    "EvictionPolicy",
+    "get_or_load",
 ] 

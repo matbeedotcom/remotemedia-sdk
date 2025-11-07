@@ -57,8 +57,8 @@ except ImportError:
     audio_to_numpy = None  # type: ignore
     logging.warning("RuntimeData bindings not available. Using fallback implementation.")
 
-# Import MultiprocessNode base class from core
-from remotemedia.core import MultiprocessNode, NodeConfig
+# Import MultiprocessNode base class and ModelRegistry from core
+from remotemedia.core import MultiprocessNode, NodeConfig, get_or_load
 
 logger = logging.getLogger(__name__)
 
@@ -186,49 +186,61 @@ class LFM2AudioNode(MultiprocessNode):
         self._cleanup_task = None
 
     async def initialize(self) -> None:
-        """Initialize the LFM2-Audio model and processor."""
+        """Initialize the LFM2-Audio model and processor using model registry."""
         if self._initialized:
             return
 
         try:
             logger.info(f"Initializing LFM2-Audio from '{self.hf_repo}' on device '{self.device}'")
 
-            # Load processor directly (no thread isolation)
-            import os
-            if self.device == "cpu" and not torch.cuda.is_available():
-                os.environ["CUDA_VISIBLE_DEVICES"] = ""
+            # Use model registry for efficient sharing across nodes
+            model_key = f"{self.hf_repo}@{self.device}"
+            processor_key = f"{self.hf_repo}_processor@{self.device}"
+            
+            # Load processor via registry
+            def load_processor():
+                import os
+                if self.device == "cpu" and not torch.cuda.is_available():
+                    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+                
+                try:
+                    processor = LFM2AudioProcessor.from_pretrained(
+                        self.hf_repo,
+                        device=self.device
+                    )
+                except TypeError:
+                    processor = LFM2AudioProcessor.from_pretrained(self.hf_repo)
+                    if self.device == "cpu":
+                        processor = processor.to("cpu")
+                
+                return processor.eval()
+            
+            self._processor = get_or_load(processor_key, load_processor)
 
-            try:
-                self._processor = LFM2AudioProcessor.from_pretrained(
-                    self.hf_repo,
-                    device=self.device
-                )
-            except TypeError:
-                self._processor = LFM2AudioProcessor.from_pretrained(self.hf_repo)
-                if self.device == "cpu":
-                    self._processor = self._processor.to("cpu")
+            # Load model via registry
+            def load_model():
+                try:
+                    model = LFM2AudioModel.from_pretrained(
+                        self.hf_repo,
+                        attn_implementation="flash_attn"
+                    )
+                except (TypeError, ValueError):
+                    model = LFM2AudioModel.from_pretrained(self.hf_repo)
 
-            self._processor = self._processor.eval()
+                model = model.eval()
 
-            # Load model directly
-            try:
-                self._model = LFM2AudioModel.from_pretrained(
-                    self.hf_repo,
-                    attn_implementation="flash_attn"
-                )
-            except (TypeError, ValueError):
-                self._model = LFM2AudioModel.from_pretrained(self.hf_repo)
-
-            self._model = self._model.eval()
-
-            # Move to device
-            if self.device == "cuda":
-                self._model = self._model.cuda()
-            else:
-                self._model = self._model.to("cpu")
+                # Move to device
+                if self.device == "cuda":
+                    model = model.cuda()
+                else:
+                    model = model.to("cpu")
+                
+                return model
+            
+            self._model = get_or_load(model_key, load_model)
 
             self._initialized = True
-            logger.info("LFM2-Audio model initialized successfully")
+            logger.info("LFM2-Audio model initialized successfully (via registry)")
 
             # Start session cleanup task
             self._cleanup_task = asyncio.create_task(self._cleanup_expired_sessions())

@@ -12,6 +12,11 @@ repository.workspace = true
 name = "remotemedia_runtime_core"
 crate-type = ["rlib"]
 
+[[bin]]
+name = "model-worker"
+path = "bin/model-worker.rs"
+required-features = ["model-registry"]
+
 [dependencies]
 # Async runtime
 tokio = { workspace = true }
@@ -65,6 +70,11 @@ regex = { workspace = true }
 ctrlc = { workspace = true }
 reqwest = { workspace = true }
 
+# Model Registry and Shared Memory
+shared_memory_extended = { version = "0.13", optional = true }
+pyo3 = { workspace = true, optional = true }
+clap = { version = "4.5", features = ["derive"], optional = true }
+
 [dev-dependencies]
 tokio-test = { workspace = true }
 criterion = { workspace = true }
@@ -77,6 +87,8 @@ hound = { workspace = true }
 default = ["multiprocess", "silero-vad"]
 multiprocess = ["iceoryx2", "iceoryx2-bb-log", "iceoryx2-bb-container", "iceoryx2-bb-elementary"]
 silero-vad = ["ort"]
+model-registry = ["clap"]
+shared-memory = ["shared_memory_extended", "pyo3"]
 
 # NOTE: NO transport-specific features (grpc-transport, python-ffi, etc.)
 # Those belong in separate transport crates
