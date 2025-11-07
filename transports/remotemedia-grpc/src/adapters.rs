@@ -19,7 +19,7 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
                 samples: samples.iter().flat_map(|f| f.to_le_bytes()).collect(),
                 sample_rate: *sample_rate,
                 channels: *channels,
-                format: AudioFormat::F32le as i32,
+                format: AudioFormat::F32 as i32,
                 num_samples: samples.len() as u64,
             })
         }
@@ -36,19 +36,22 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
         RuntimeData::Tensor { data, shape, dtype } => {
             DataType::Tensor(TensorBuffer {
                 data: data.clone(),
-                shape: shape.clone(),
+                shape: shape.iter().map(|&s| s as u64).collect(),
                 dtype: *dtype,
+                layout: String::new(),  // Empty layout - nodes document expected layout
             })
         }
         RuntimeData::Json(value) => {
             DataType::Json(JsonData {
-                content: serde_json::to_string(value).unwrap_or_default(),
+                json_payload: serde_json::to_string(value).unwrap_or_default(),
+                schema_type: String::new(),
             })
         }
         RuntimeData::Text(s) => {
             DataType::Text(TextBuffer {
-                content: s.clone(),
+                text_data: s.as_bytes().to_vec(),
                 encoding: "utf-8".to_string(),
+                language: String::new(),
             })
         }
         RuntimeData::Binary(bytes) => {
@@ -95,15 +98,15 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
         Some(DataType::Tensor(tensor)) => {
             Some(RuntimeData::Tensor {
                 data: tensor.data.clone(),
-                shape: tensor.shape.clone(),
+                shape: tensor.shape.iter().map(|&s| s as i32).collect(),
                 dtype: tensor.dtype,
             })
         }
         Some(DataType::Json(json)) => {
-            serde_json::from_str(&json.content).ok().map(RuntimeData::Json)
+            serde_json::from_str(&json.json_payload).ok().map(RuntimeData::Json)
         }
         Some(DataType::Text(text)) => {
-            Some(RuntimeData::Text(text.content.clone()))
+            String::from_utf8(text.text_data.clone()).ok().map(RuntimeData::Text)
         }
         Some(DataType::Binary(bin)) => {
             Some(RuntimeData::Binary(bin.data.clone()))

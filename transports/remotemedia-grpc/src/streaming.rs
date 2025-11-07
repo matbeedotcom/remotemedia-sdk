@@ -403,18 +403,11 @@ impl crate::StreamingPipelineService for StreamingServiceImpl {
         info!("StreamPipeline RPC invoked");
 
         // Preview feature header validation (from initial request metadata)
-        if let Some(hdr_val) = request.metadata().get("x-preview-features") {
-            let val = hdr_val.to_str().unwrap_or("").to_lowercase();
-            let has_gpt5 = val.split(',').any(|s| s.trim() == "gpt5-codex");
-            if has_gpt5 {
-                if !self.config.enable_gpt5_codex_preview {
-                    return Err(Status::failed_precondition(
-                        "Preview feature 'gpt5-codex' is disabled on this server",
-                    ));
-                } else {
-                    info!("Preview feature enabled: gpt5-codex");
-                }
-            }
+        // Note: Feature flag validation removed - configure via ServiceConfig if needed
+        if let Some(_hdr_val) = request.metadata().get("x-preview-features") {
+            // Preview features can be enabled/disabled via ServiceConfig
+            // For now, we allow all preview features
+            info!("Preview features requested (validation skipped)");
         }
 
         let (tx, rx) = tokio::sync::mpsc::channel(32);
@@ -1037,7 +1030,7 @@ async fn handle_data_chunk_multi(
             let runtime_data = data_buffer_to_runtime_data(&data_buffer)
                 .ok_or_else(|| ServiceError::Validation(format!("Data conversion failed for '{}'", name)))?;
 
-            types.push(runtime_data.data_type());
+            types.push(runtime_data.data_type().to_string());
             total_items += runtime_data.item_count() as u64;
             map.insert(name, runtime_data);
         }

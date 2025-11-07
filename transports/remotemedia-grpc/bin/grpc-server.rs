@@ -31,10 +31,8 @@
 //! - `GRPC_JSON_LOGGING`: Enable JSON structured logging (default: `true`)
 //! - `RUST_LOG`: Logging level (default: `info`, options: `trace`, `debug`, `info`, `warn`, `error`)
 
-#![cfg(feature = "grpc-transport")]
-
-use remotemedia_runtime::executor::Executor;
-use remotemedia_runtime::grpc_service::{init_tracing, server::GrpcServer, ServiceConfig};
+use remotemedia_runtime_core::executor::Executor;
+use remotemedia_grpc::{server::GrpcServer, ServiceConfig};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::{error, info};

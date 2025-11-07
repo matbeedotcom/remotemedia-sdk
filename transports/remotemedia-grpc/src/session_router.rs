@@ -4,10 +4,10 @@
 //! continuously processing chunks from the client and routing them through the pipeline.
 
 use remotemedia_runtime_core::data::RuntimeData;
+use remotemedia_runtime_core::nodes::{StreamingNode, StreamingNodeRegistry};
 use crate::adapters::runtime_data_to_data_buffer;
 use crate::streaming::StreamSession;
 use crate::generated::{StreamResponse, stream_response::Response as StreamResponseType, ChunkResult};
-use remotemedia_runtime_core::nodes::StreamingNode;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
@@ -41,7 +41,7 @@ pub struct SessionRouter {
     session_id: String,
 
     /// Registry for creating nodes
-    registry: Arc<crate::nodes::StreamingNodeRegistry>,
+    registry: Arc<StreamingNodeRegistry>,
 
     /// Session state
     session: Arc<Mutex<StreamSession>>,
@@ -80,7 +80,7 @@ impl SessionRouter {
     /// Returns (router, shutdown_sender) - the shutdown_sender should be stored to trigger shutdown
     pub fn new(
         session_id: String,
-        registry: Arc<crate::nodes::StreamingNodeRegistry>,
+        registry: Arc<StreamingNodeRegistry>,
         session: Arc<Mutex<StreamSession>>,
         client_tx: mpsc::Sender<Result<StreamResponse, Status>>,
     ) -> (Self, mpsc::Sender<()>) {
