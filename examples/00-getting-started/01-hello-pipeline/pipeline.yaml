@@ -1,0 +1,32 @@
+# Hello Pipeline Configuration
+#
+# This is a simple pipeline that processes text through a single node.
+# It demonstrates the basic structure of a RemoteMedia pipeline manifest.
+
+version: v1
+
+metadata:
+  name: hello-pipeline
+  description: Your first RemoteMedia pipeline - processes text
+  created_at: "2025-11-07"
+
+# Nodes: The processing units in your pipeline
+nodes:
+  # A simple text processor node
+  - id: text_processor
+    node_type: TextProcessorNode
+    params:
+      # Convert text to uppercase
+      operation: uppercase
+      # Add a prefix to the output
+      prefix: "PROCESSED: "
+    executor: python  # Run this node in Python
+
+# Connections: How data flows between nodes
+# (In this simple example, we only have one node, so no connections needed)
+connections: []
+
+# Output mapping: Which node's output becomes the pipeline output
+outputs:
+  - node_id: text_processor
+    output_key: processed_text

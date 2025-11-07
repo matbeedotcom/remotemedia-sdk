@@ -1,0 +1,286 @@
+# GitHub Actions Workflow: Repository Structure Validation
+# File location: .github/workflows/repo-structure-validation.yml
+
+name: Repository Structure Validation
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!*.md'
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # Allow manual trigger
+
+# Allow concurrent runs, but cancel in-progress runs for same PR
+concurrency:
+  group: repo-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Job 1: Root Directory Structure
+  validate-root-structure:
+    name: Root Directory Structure
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true  # WARNING-ONLY MODE during migration
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check root item count
+        run: |
+          # Count non-hidden items in root (excluding .git, .github, etc.)
+          count=$(ls -1 | grep -v '^\.' | wc -l)
+          echo "Root directory items: $count"
+
+          if [ $count -gt 15 ]; then
+            echo "❌ FAIL: Root has $count items (max: 15)"
+            echo "Run 'ls -1 | grep -v \"^\.\" | wc -l' to check locally"
+            exit 1
+          fi
+          echo "✅ PASS: Root has $count items"
+
+      - name: Check for test files in root
+        run: |
+          # Find any test_*.py or *_test.py files in root
+          test_files=$(find . -maxdepth 1 \( -name 'test_*.py' -o -name '*_test.py' \) || true)
+
+          if [ -n "$test_files" ]; then
+            echo "❌ FAIL: Test files found in root:"
+            echo "$test_files"
+            echo ""
+            echo "These files should be moved to appropriate test directories:"
+            echo "  - Integration tests → tests/integration/"
+            echo "  - Crate tests → [crate]/tests/"
+            echo "  - Example tests → examples/[category]/[example]/tests/"
+            exit 1
+          fi
+          echo "✅ PASS: No test files in root"
+
+      - name: Check for loose scripts in root
+        run: |
+          # Find shell scripts and utility scripts (excluding setup.py)
+          scripts=$(find . -maxdepth 1 \( -name '*.sh' -o -name '*_script.py' -o -name 'debug_*.py' -o -name 'build*.sh' \) ! -name 'setup.py' || true)
+
+          if [ -n "$scripts" ]; then
+            echo "❌ FAIL: Loose scripts found in root (should be in scripts/):"
+            echo "$scripts"
+            echo ""
+            echo "Move scripts to appropriate subdirectories:"
+            echo "  - Build scripts → scripts/build/"
+            echo "  - Debug scripts → scripts/debug/"
+            echo "  - Test runners → scripts/test/"
+            echo "  - Validation → scripts/validate/"
+            exit 1
+          fi
+          echo "✅ PASS: No loose scripts in root"
+
+  # Job 2: Example Structure
+  validate-examples:
+    name: Example Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true  # WARNING-ONLY MODE during migration
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check examples have READMEs
+        run: |
+          missing_count=0
+
+          # Check all example directories have README.md
+          for example_dir in examples/*-*/*/; do
+            if [ -d "$example_dir" ] && [ ! -f "$example_dir/README.md" ]; then
+              echo "❌ Missing README in: $example_dir"
+              ((missing_count++))
+            fi
+          done
+
+          if [ $missing_count -gt 0 ]; then
+            echo ""
+            echo "❌ FAIL: $missing_count examples missing README.md"
+            echo "All examples must have README.md following the template"
+            exit 1
+          fi
+          echo "✅ PASS: All examples have README.md"
+
+      - name: Validate example README templates
+        run: |
+          violations=0
+          required_sections=("Prerequisites" "Quick Start" "Expected Output")
+
+          for readme in examples/*-*/*/README.md; do
+            if [ -f "$readme" ]; then
+              for section in "${required_sections[@]}"; do
+                if ! grep -q "## $section" "$readme"; then
+                  echo "❌ $readme missing section: ## $section"
+                  ((violations++))
+                fi
+              done
+            fi
+          done
+
+          if [ $violations -gt 0 ]; then
+            echo ""
+            echo "❌ FAIL: $violations template violations found"
+            echo "Example READMEs must include all required sections"
+            exit 1
+          fi
+          echo "✅ PASS: All example READMEs follow template"
+
+      - name: Check example categorization
+        run: |
+          # Verify examples are in valid tier directories
+          valid_tiers="00-getting-started 01-advanced 02-applications by-transport by-feature assets"
+          invalid_count=0
+
+          for tier_dir in examples/*/; do
+            if [ -d "$tier_dir" ]; then
+              tier_name=$(basename "$tier_dir")
+              if ! echo "$valid_tiers" | grep -qw "$tier_name"; then
+                echo "❌ Invalid category directory: $tier_name"
+                ((invalid_count++))
+              fi
+            fi
+          done
+
+          if [ $invalid_count -gt 0 ]; then
+            echo ""
+            echo "❌ FAIL: Invalid example categories found"
+            echo "Valid categories: $valid_tiers"
+            exit 1
+          fi
+          echo "✅ PASS: Examples in valid categories"
+
+  # Job 3: Documentation Structure
+  validate-documentation:
+    name: Documentation Completeness
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true  # WARNING-ONLY MODE during migration
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check major directory READMEs
+        run: |
+          required_readmes=(
+            "examples/README.md"
+            "runtime-core/README.md"
+            "transports/README.md"
+          )
+
+          missing_count=0
+          for readme in "${required_readmes[@]}"; do
+            if [ ! -f "$readme" ]; then
+              echo "❌ Missing required README: $readme"
+              ((missing_count++))
+            fi
+          done
+
+          if [ $missing_count -gt 0 ]; then
+            echo ""
+            echo "❌ FAIL: $missing_count required READMEs missing"
+            echo "Major directories must have README.md explaining their purpose"
+            exit 1
+          fi
+          echo "✅ PASS: All major directories have READMEs"
+
+      - name: Check for basic broken links
+        run: |
+          # Quick check for obviously broken relative links in main documentation
+          broken_count=0
+
+          for md_file in README.md CONTRIBUTING.md INSTALL.md; do
+            if [ -f "$md_file" ]; then
+              # Extract relative links (simplified - checks for common paths)
+              links=$(grep -oP '\[.*?\]\(\K[^\)]+' "$md_file" | grep -v '^http' || true)
+
+              for link in $links; do
+                # Check if file exists (handle anchors by removing #fragment)
+                clean_link="${link%#*}"
+                if [ -n "$clean_link" ] && [ ! -e "$clean_link" ]; then
+                  echo "⚠️  Possible broken link in $md_file: $link"
+                  ((broken_count++))
+                fi
+              done
+            fi
+          done
+
+          # Warning only for now (not blocking)
+          if [ $broken_count -gt 0 ]; then
+            echo ""
+            echo "⚠️  WARNING: $broken_count potential broken links found"
+            echo "This is a warning only and will not fail the build"
+          else
+            echo "✅ PASS: No obvious broken links in main documentation"
+          fi
+
+  # Job 4: Validation Script Existence
+  validate-automation:
+    name: Automation Infrastructure
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    continue-on-error: true  # WARNING-ONLY MODE during migration
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check validation scripts exist
+        run: |
+          expected_scripts=(
+            "scripts/validate/check-repo-structure.sh"
+            "scripts/validate/check-examples.sh"
+          )
+
+          missing_count=0
+          for script in "${expected_scripts[@]}"; do
+            if [ ! -f "$script" ]; then
+              echo "⚠️  Expected validation script not found: $script"
+              ((missing_count++))
+            fi
+          done
+
+          # Warning only (scripts created during implementation)
+          if [ $missing_count -gt 0 ]; then
+            echo ""
+            echo "⚠️  WARNING: $missing_count validation scripts not yet created"
+            echo "This is expected during initial migration"
+          else
+            echo "✅ PASS: Validation scripts present"
+          fi
+
+  # Job 5: Summary
+  validation-summary:
+    name: Validation Summary
+    runs-on: ubuntu-latest
+    needs: [validate-root-structure, validate-examples, validate-documentation, validate-automation]
+    if: always()
+
+    steps:
+      - name: Check results
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Repository Structure Validation Complete"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Job Results:"
+          echo "  Root Structure: ${{ needs.validate-root-structure.result }}"
+          echo "  Examples: ${{ needs.validate-examples.result }}"
+          echo "  Documentation: ${{ needs.validate-documentation.result }}"
+          echo "  Automation: ${{ needs.validate-automation.result }}"
+          echo ""
+          echo "⚠️  NOTE: Currently in WARNING-ONLY mode during migration"
+          echo "    Failures will not block PRs until migration is complete"
+          echo ""
+          echo "For more information, see:"
+          echo "  - specs/001-repo-cleanup/spec.md"
+          echo "  - specs/001-repo-cleanup/contracts/validation-rules.md"

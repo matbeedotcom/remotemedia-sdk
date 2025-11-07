@@ -1,0 +1,124 @@
+# Pre-commit Hook Configuration
+# File location: .pre-commit-config.yaml
+
+# See https://pre-commit.com for more information
+# Installation: pip install pre-commit && pre-commit install
+
+repos:
+  # Local repository structure checks
+  - repo: local
+    hooks:
+      # Check for test files in root
+      - id: no-root-test-files
+        name: No test files in repository root
+        entry: bash -c 'test -z "$(find . -maxdepth 1 \( -name "test_*.py" -o -name "*_test.py" \))" || { echo "ERROR: Test files found in root - move to appropriate test directories"; exit 1; }'
+        language: system
+        pass_filenames: false
+        stages: [commit]
+
+      # Check for loose scripts in root
+      - id: no-root-scripts
+        name: No loose scripts in repository root
+        entry: bash -c 'test -z "$(find . -maxdepth 1 \( -name "*.sh" -o -name "*_script.py" -o -name "debug_*.py" \) ! -name "setup.py")" || { echo "ERROR: Loose scripts found in root - move to scripts/ directory"; exit 1; }'
+        language: system
+        pass_filenames: false
+        stages: [commit]
+
+      # Check root directory item count (warning only)
+      - id: root-item-limit
+        name: Root directory item count check
+        entry: bash -c 'count=$(ls -1 | grep -v "^\." | wc -l); if [ $count -gt 15 ]; then echo "WARNING: Root has $count items (target: ≤15)"; fi; exit 0'
+        language: system
+        pass_filenames: false
+        verbose: true
+        stages: [commit]
+
+      # Check example READMEs (if examples modified)
+      - id: example-readme-check
+        name: Example README validation
+        entry: scripts/validate/check-examples.sh
+        language: script
+        files: ^examples/
+        pass_filenames: false
+        stages: [commit]
+
+  # Standard pre-commit hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      # Prevent committing to protected branches
+      - id: no-commit-to-branch
+        args: ['--branch', 'main', '--branch', 'master']
+
+      # File checks
+      - id: check-added-large-files
+        args: ['--maxkb=5000']  # 5MB limit
+        exclude: ^examples/assets/
+
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: destroyed-symlinks
+
+      # Syntax checks
+      - id: check-yaml
+        exclude: ^specs/
+      - id: check-json
+      - id: check-toml
+
+      # Whitespace/formatting
+      - id: end-of-file-fixer
+        exclude: ^archive/
+      - id: trailing-whitespace
+        exclude: ^archive/
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+        exclude: ^archive/
+
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.38.0
+    hooks:
+      - id: markdownlint
+        args: ['--fix', '--disable', 'MD013', 'MD033', 'MD041']
+        exclude: ^(archive/|CHANGELOG.md|specs/.*/tasks.md)
+
+  # Python formatting (if modifying Python files)
+  - repo: https://github.com/psf/black
+    rev: 23.12.1
+    hooks:
+      - id: black
+        args: ['--line-length=88']
+        files: \.py$
+        exclude: ^archive/
+
+  # Rust formatting (if modifying Rust files)
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      - id: fmt
+        args: ['--manifest-path', 'Cargo.toml', '--']
+      - id: cargo-check
+        args: ['--manifest-path', 'Cargo.toml']
+
+# Global configuration
+default_language_version:
+  python: python3.11
+  rust: 1.75
+
+# Execution settings
+default_stages: [commit]
+fail_fast: false  # Run all hooks even if one fails
+
+# CI configuration
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit hooks
+
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: monthly
+  skip: []
+  submodules: false

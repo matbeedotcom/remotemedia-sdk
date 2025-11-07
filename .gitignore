@@ -181,4 +181,8 @@ debug/
 release/
 Cargo.lock  # For libraries; remove this line if building binaries
 
+# Repository validation temporary files
+scripts/validate/*.tmp
+scripts/validate/.validation-cache
+
 nul

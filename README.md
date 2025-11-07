@@ -94,6 +94,50 @@ See [CHANGELOG.md](CHANGELOG.md) for full details.
 
 **Try the live demo:** [https://matbeedotcom.github.io/remotemedia-sdk/](https://matbeedotcom.github.io/remotemedia-sdk/)
 
+## 🎯 Getting Started
+
+**New to RemoteMedia?** Follow this learning path:
+
+### 1. Your First Pipeline (5 minutes)
+Start with our beginner-friendly examples:
+```bash
+cd examples/00-getting-started/01-hello-pipeline/
+pip install -r requirements.txt
+python main.py
+```
+
+**What you'll learn**: Pipeline basics, node connections, audio processing
+
+### 2. Explore Examples by Your Need
+
+**Browse by complexity**:
+- 📚 [**Getting Started**](examples/00-getting-started/) - Beginner tutorials (5-15 min each)
+- 🔬 [**Advanced**](examples/01-advanced/) - Production patterns (20-45 min each)
+- 🚀 [**Applications**](examples/02-applications/) - Full-stack apps (30-90 min)
+
+**Browse by feature**:
+- 🎵 [**Audio Processing**](examples/by-feature/audio-processing/) - Resampling, VAD, effects
+- 🔀 [**Multiprocess**](examples/by-feature/multiprocess/) - Process isolation, IPC
+- 📡 [**Streaming**](examples/by-feature/streaming/) - Real-time pipelines
+
+**Browse by transport**:
+- 🌐 [**gRPC**](examples/by-transport/grpc/) - Remote execution
+- ⚡ [**FFI**](examples/by-transport/ffi/) - Python ↔ Rust integration
+- 📞 [**WebRTC**](examples/by-transport/webrtc/) - Browser-based audio
+
+See [**examples/README.md**](examples/README.md) for complete navigation and learning paths.
+
+### 3. Quick Navigation
+
+| I want to... | Go to |
+|--------------|-------|
+| Learn the basics | [examples/00-getting-started/](examples/00-getting-started/) |
+| Build production pipelines | [examples/01-advanced/](examples/01-advanced/) |
+| Deploy a full application | [examples/02-applications/](examples/02-applications/) |
+| Understand architecture | [CLAUDE.md](CLAUDE.md) |
+| Contribute code | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Report issues | [GitHub Issues](https://github.com/org/remotemedia-sdk/issues) |
+
 ## Quick Start
 
 ### Python SDK with Native Rust Acceleration

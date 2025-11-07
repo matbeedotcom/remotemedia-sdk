@@ -1,0 +1,8 @@
+# Hello Pipeline Requirements
+# Minimal dependencies for your first RemoteMedia example
+
+# RemoteMedia SDK - The core library
+remotemedia>=0.4.0
+
+# No additional dependencies needed for this basic example!
+# Future examples will add more libraries as needed.
