@@ -17,6 +17,11 @@ name = "model-worker"
 path = "bin/model-worker.rs"
 required-features = ["model-registry"]
 
+[[bench]]
+name = "shm_tensor_benchmark"
+harness = false
+required-features = ["shared-memory"]
+
 [dependencies]
 # Async runtime
 tokio = { workspace = true }
