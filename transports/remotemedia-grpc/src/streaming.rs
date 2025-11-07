@@ -34,13 +34,8 @@ use crate::{ServiceConfig, ServiceError};
 use remotemedia_runtime_core::{
     audio::AudioBuffer as RuntimeAudioBuffer,
     data::RuntimeData,
-    executor::Executor,
     manifest::Manifest,
-    nodes::{
-        python_streaming::PythonStreamingNode,
-        streaming_registry::create_default_streaming_registry, StreamingNode,
-        StreamingNodeRegistry,
-    },
+    nodes::{python_streaming::PythonStreamingNode, StreamingNode, StreamingNodeRegistry},
     transport::PipelineRunner,
 };
 use std::collections::HashMap;
@@ -92,13 +87,6 @@ pub struct StreamingServiceImpl {
     /// Pipeline runner (encapsulates executor and registries)
     runner: Arc<PipelineRunner>,
 
-    /// Global executor (still needed for SessionRouter compatibility)
-    /// TODO: Remove once SessionRouter is integrated into PipelineRunner
-    executor: Arc<Executor>,
-
-    /// Streaming node registry
-    streaming_registry: Arc<StreamingNodeRegistry>,
-
     /// Global node cache (shared across all sessions)
     /// Key: "{node_type}:{json_params_hash}", Value: cached node with timestamp
     global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>>,
@@ -112,11 +100,6 @@ impl StreamingServiceImpl {
         metrics: Arc<ServiceMetrics>,
         runner: Arc<PipelineRunner>,
     ) -> Self {
-        // Create default streaming node registry
-        // TODO: Get this from PipelineRunner once streaming is fully integrated
-        let executor = Arc::new(Executor::new());
-        let streaming_registry = Arc::new(create_default_streaming_registry());
-
         let global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>> =
             Arc::new(RwLock::new(HashMap::new()));
 
@@ -157,10 +140,8 @@ impl StreamingServiceImpl {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             auth_config,
             limits,
-            executor,
             metrics,
             runner,
-            streaming_registry,
             global_node_cache,
         }
     }
@@ -456,13 +437,13 @@ impl crate::StreamingPipelineService for StreamingServiceImpl {
         let (tx, rx) = tokio::sync::mpsc::channel(32);
         let mut stream = request.into_inner();
         let sessions = self.sessions.clone();
-        let executor = self.executor.clone();
         let metrics = self.metrics.clone();
         #[cfg(feature = "multiprocess")]
         let multiprocess_executor = self.multiprocess_executor.clone();
 
-        // Clone registry and global cache for the async task
-        let streaming_registry = self.streaming_registry.clone();
+        // Get executor and registry from PipelineRunner
+        let executor = self.runner.executor();
+        let streaming_registry = self.runner.create_streaming_registry();
         let global_node_cache = self.global_node_cache.clone();
 
         // Spawn async task to handle bidirectional streaming
@@ -519,7 +500,7 @@ async fn handle_stream(
     stream: &mut Streaming<StreamRequest>,
     tx: tokio::sync::mpsc::Sender<Result<StreamResponse, Status>>,
     sessions: Arc<RwLock<HashMap<String, Arc<Mutex<StreamSession>>>>>,
-    executor: Arc<Executor>,
+    executor: Arc<remotemedia_runtime_core::executor::Executor>,
     metrics: Arc<ServiceMetrics>,
     streaming_registry: Arc<StreamingNodeRegistry>,
     global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>>,
@@ -818,7 +799,7 @@ async fn handle_stream(
 async fn handle_stream_init(
     init: StreamInit,
     sessions: &Arc<RwLock<HashMap<String, Arc<Mutex<StreamSession>>>>>,
-    _executor: Arc<Executor>,
+    _executor: Arc<remotemedia_runtime_core::executor::Executor>,
 ) -> Result<(String, StreamReady), ServiceError> {
     // Validate client version (basic check)
     if init.client_version.is_empty() {
@@ -874,7 +855,7 @@ async fn handle_stream_init(
 async fn handle_audio_chunk(
     chunk: AudioChunk,
     session: Arc<Mutex<StreamSession>>,
-    executor: Arc<Executor>,
+    executor: Arc<remotemedia_runtime_core::executor::Executor>,
 ) -> Result<ChunkResult, ServiceError> {
     let start_time = Instant::now();
 

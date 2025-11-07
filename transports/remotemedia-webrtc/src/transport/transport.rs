@@ -141,15 +141,17 @@ impl WebRtcTransport {
     async fn setup_signaling_callbacks(&self, client: &mut SignalingClient) {
         let peer_manager = self.peer_manager.clone();
         let config = self.config.clone();
+        let signaling_client = self.signaling_client.clone();
 
         // On offer received: create answer
         client
             .on_offer_received(move |from, _to, sdp| {
                 let peer_manager = peer_manager.clone();
                 let config = config.clone();
+                let signaling_client = signaling_client.clone();
 
                 tokio::spawn(async move {
-                    if let Err(e) = Self::handle_offer_received(peer_manager, config, from, sdp).await
+                    if let Err(e) = Self::handle_offer_received(peer_manager, config, signaling_client, from, sdp).await
                     {
                         warn!("Failed to handle offer: {}", e);
                     }
@@ -192,6 +194,7 @@ impl WebRtcTransport {
     async fn handle_offer_received(
         peer_manager: Arc<PeerManager>,
         config: WebRtcTransportConfig,
+        signaling_client: Arc<RwLock<Option<SignalingClient>>>,
         from: String,
         sdp: String,
     ) -> Result<()> {
@@ -209,9 +212,17 @@ impl WebRtcTransport {
         };
 
         // Create answer
-        let _answer = peer.create_answer(sdp).await?;
+        let answer = peer.create_answer(sdp).await?;
 
-        // TODO: Send answer via signaling in Phase 3
+        // Send answer via signaling
+        let client_guard = signaling_client.read().await;
+        if let Some(client) = client_guard.as_ref() {
+            client.send_answer(from, answer).await?;
+        } else {
+            return Err(Error::SignalingError(
+                "Signaling client not initialized".to_string(),
+            ));
+        }
 
         Ok(())
     }
@@ -655,6 +666,49 @@ impl WebRtcTransport {
         info!("WebRTC transport shutdown complete");
 
         Ok(())
+    }
+}
+
+// ============================================================================
+// PipelineTransport Trait Implementation (T132-T135)
+// ============================================================================
+
+use remotemedia_runtime_core::transport::{PipelineTransport, TransportData, PipelineRunner};
+use remotemedia_runtime_core::manifest::Manifest;
+use async_trait::async_trait;
+
+#[async_trait]
+impl PipelineTransport for WebRtcTransport {
+    /// Execute a pipeline with unary semantics (T133)
+    ///
+    /// This uses PipelineRunner directly for pipeline execution.
+    async fn execute(
+        &self,
+        manifest: Arc<Manifest>,
+        input: TransportData,
+    ) -> remotemedia_runtime_core::Result<TransportData> {
+        // Create pipeline runner
+        let runner = PipelineRunner::new()?;
+
+        // Execute directly
+        runner.execute_unary(manifest, input).await
+    }
+
+    /// Start a streaming pipeline session (T134)
+    ///
+    /// Creates a persistent session with continuous data flow.
+    async fn stream(
+        &self,
+        manifest: Arc<Manifest>,
+    ) -> remotemedia_runtime_core::Result<Box<dyn remotemedia_runtime_core::transport::StreamSession>> {
+        // Create pipeline runner
+        let runner = PipelineRunner::new()?;
+
+        // Create streaming session
+        let session = runner.create_stream_session(manifest).await?;
+
+        // Return as boxed trait object
+        Ok(Box::new(session))
     }
 }
 
