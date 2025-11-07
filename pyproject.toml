@@ -56,7 +56,14 @@ include = ["remotemedia*"]
 resolver = "backtracking"
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "python-client/tests", "service/tests"]
+testpaths = [
+    "tests",
+    "python-client/tests",
+    "service/tests",
+    "runtime-core/tests",
+    "transports/remotemedia-ffi/tests",
+    "transports/remotemedia-grpc/tests",
+]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
