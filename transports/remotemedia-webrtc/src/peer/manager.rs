@@ -18,9 +18,6 @@ pub struct PeerInfo {
 
     /// Connection duration (if connected)
     pub duration_secs: Option<u64>,
-
-    /// Number of ICE candidates collected
-    pub ice_candidate_count: usize,
 }
 
 /// Manages multiple peer connections in a mesh topology
@@ -138,13 +135,10 @@ impl PeerManager {
                     .await
                     .map(|d| d.as_secs());
 
-                let ice_candidate_count = connection.ice_candidate_count().await;
-
                 connected_peers.push(PeerInfo {
                     peer_id: peer_id.clone(),
                     state,
                     duration_secs,
-                    ice_candidate_count,
                 });
             }
         }
@@ -164,13 +158,11 @@ impl PeerManager {
                 .connection_duration()
                 .await
                 .map(|d| d.as_secs());
-            let ice_candidate_count = connection.ice_candidate_count().await;
 
             all_peers.push(PeerInfo {
                 peer_id: peer_id.clone(),
                 state,
                 duration_secs,
-                ice_candidate_count,
             });
         }
 
@@ -226,7 +218,7 @@ mod tests {
         let manager = PeerManager::new(10).unwrap();
         let config = WebRtcTransportConfig::default();
 
-        let peer = Arc::new(PeerConnection::new("peer-1".to_string(), &config).unwrap());
+        let peer = Arc::new(PeerConnection::new("peer-1".to_string(), &config).await.unwrap());
         manager
             .add_peer("peer-1".to_string(), peer.clone())
             .await
@@ -243,7 +235,7 @@ mod tests {
         let manager = PeerManager::new(10).unwrap();
         let config = WebRtcTransportConfig::default();
 
-        let peer = Arc::new(PeerConnection::new("peer-1".to_string(), &config).unwrap());
+        let peer = Arc::new(PeerConnection::new("peer-1".to_string(), &config).await.unwrap());
         manager
             .add_peer("peer-1".to_string(), peer)
             .await
@@ -258,9 +250,9 @@ mod tests {
         let manager = PeerManager::new(2).unwrap();
         let config = WebRtcTransportConfig::default();
 
-        let peer1 = Arc::new(PeerConnection::new("peer-1".to_string(), &config).unwrap());
-        let peer2 = Arc::new(PeerConnection::new("peer-2".to_string(), &config).unwrap());
-        let peer3 = Arc::new(PeerConnection::new("peer-3".to_string(), &config).unwrap());
+        let peer1 = Arc::new(PeerConnection::new("peer-1".to_string(), &config).await.unwrap());
+        let peer2 = Arc::new(PeerConnection::new("peer-2".to_string(), &config).await.unwrap());
+        let peer3 = Arc::new(PeerConnection::new("peer-3".to_string(), &config).await.unwrap());
 
         manager.add_peer("peer-1".to_string(), peer1).await.unwrap();
         manager.add_peer("peer-2".to_string(), peer2).await.unwrap();
@@ -274,8 +266,8 @@ mod tests {
         let manager = PeerManager::new(10).unwrap();
         let config = WebRtcTransportConfig::default();
 
-        let peer1 = Arc::new(PeerConnection::new("peer-1".to_string(), &config).unwrap());
-        let peer2 = Arc::new(PeerConnection::new("peer-1".to_string(), &config).unwrap());
+        let peer1 = Arc::new(PeerConnection::new("peer-1".to_string(), &config).await.unwrap());
+        let peer2 = Arc::new(PeerConnection::new("peer-1".to_string(), &config).await.unwrap());
 
         manager.add_peer("peer-1".to_string(), peer1).await.unwrap();
 
@@ -288,8 +280,8 @@ mod tests {
         let manager = PeerManager::new(10).unwrap();
         let config = WebRtcTransportConfig::default();
 
-        let peer1 = Arc::new(PeerConnection::new("peer-1".to_string(), &config).unwrap());
-        let peer2 = Arc::new(PeerConnection::new("peer-2".to_string(), &config).unwrap());
+        let peer1 = Arc::new(PeerConnection::new("peer-1".to_string(), &config).await.unwrap());
+        let peer2 = Arc::new(PeerConnection::new("peer-2".to_string(), &config).await.unwrap());
 
         manager.add_peer("peer-1".to_string(), peer1).await.unwrap();
         manager.add_peer("peer-2".to_string(), peer2).await.unwrap();
@@ -307,8 +299,8 @@ mod tests {
         let manager = PeerManager::new(10).unwrap();
         let config = WebRtcTransportConfig::default();
 
-        let peer1 = Arc::new(PeerConnection::new("peer-1".to_string(), &config).unwrap());
-        let peer2 = Arc::new(PeerConnection::new("peer-2".to_string(), &config).unwrap());
+        let peer1 = Arc::new(PeerConnection::new("peer-1".to_string(), &config).await.unwrap());
+        let peer2 = Arc::new(PeerConnection::new("peer-2".to_string(), &config).await.unwrap());
 
         manager.add_peer("peer-1".to_string(), peer1).await.unwrap();
         manager.add_peer("peer-2".to_string(), peer2).await.unwrap();

@@ -77,6 +77,7 @@ pub use config::{
 };
 pub use error::{Error, Result};
 pub use peer::{ConnectionState, PeerInfo};
+pub use session::{Session, SessionId, SessionManager, SessionState};
 pub use transport::WebRtcTransport;
 
 /// Get the version of this crate

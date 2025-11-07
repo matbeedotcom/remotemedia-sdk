@@ -30,6 +30,10 @@ pub enum Error {
     #[error("Session not found: {0}")]
     SessionNotFound(String),
 
+    /// Session management error
+    #[error("Session error: {0}")]
+    SessionError(String),
+
     /// Invalid data format
     #[error("Invalid data: {0}")]
     InvalidData(String),
@@ -77,6 +81,10 @@ pub enum Error {
     /// Internal error (should not occur in normal operation)
     #[error("Internal error: {0}")]
     InternalError(String),
+
+    /// WebRTC library error
+    #[error("WebRTC error: {0}")]
+    WebRtcError(String),
 
     /// I/O error
     #[error("I/O error: {0}")]

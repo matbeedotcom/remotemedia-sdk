@@ -3,6 +3,7 @@
 use crate::{
     config::WebRtcTransportConfig,
     peer::{PeerConnection, PeerInfo, PeerManager},
+    session::{Session, SessionId, SessionManager},
     signaling::{IceCandidateParams, SignalingClient},
     Error, Result,
 };
@@ -24,10 +25,11 @@ pub struct WebRtcTransport {
     /// Peer connection manager
     peer_manager: Arc<PeerManager>,
 
+    /// Session manager for pipeline integration
+    session_manager: Arc<SessionManager>,
+
     /// Local peer ID (assigned after announcement)
     local_peer_id: Arc<RwLock<Option<String>>>,
-
-    // Note: Session manager will be added in Phase 5
 }
 
 impl WebRtcTransport {
@@ -50,10 +52,14 @@ impl WebRtcTransport {
 
         let signaling_client = SignalingClient::new(&config.signaling_url);
 
+        // Create session manager with same max limit as peers
+        let session_manager = Arc::new(SessionManager::new(config.max_peers as usize)?);
+
         Ok(Self {
             config,
             signaling_client: Arc::new(RwLock::new(Some(signaling_client))),
             peer_manager,
+            session_manager,
             local_peer_id: Arc::new(RwLock::new(None)),
         })
     }
@@ -177,7 +183,7 @@ impl WebRtcTransport {
         let peer = if peer_manager.has_peer(&from).await {
             peer_manager.get_peer(&from).await?
         } else {
-            let connection = Arc::new(PeerConnection::new(from.clone(), &config)?);
+            let connection = Arc::new(PeerConnection::new(from.clone(), &config).await?);
             peer_manager
                 .add_peer(from.clone(), connection.clone())
                 .await?;
@@ -231,7 +237,7 @@ impl WebRtcTransport {
         info!("Connecting to peer: {}", peer_id);
 
         // Create peer connection
-        let connection = Arc::new(PeerConnection::new(peer_id.clone(), &self.config)?);
+        let connection = Arc::new(PeerConnection::new(peer_id.clone(), &self.config).await?);
 
         // Add to manager
         self.peer_manager
@@ -294,9 +300,220 @@ impl WebRtcTransport {
         self.local_peer_id.read().await.clone()
     }
 
+    /// Send audio samples to a specific peer
+    ///
+    /// # Arguments
+    ///
+    /// * `peer_id` - Identifier of the peer to send audio to
+    /// * `samples` - Audio samples as f32 (range -1.0 to 1.0)
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Peer not found or not connected
+    /// - Peer has no audio track configured
+    /// - Audio encoding or transmission fails
+    pub async fn send_audio(&self, peer_id: &str, samples: Arc<Vec<f32>>) -> Result<()> {
+        debug!("Sending audio to peer: {} ({} samples)", peer_id, samples.len());
+
+        // Get peer connection
+        let peer = self.peer_manager.get_peer(peer_id).await?;
+
+        // Get audio track
+        let audio_track = peer
+            .audio_track()
+            .await
+            .ok_or_else(|| Error::MediaTrackError(format!("Peer {} has no audio track", peer_id)))?;
+
+        // Send audio via track
+        audio_track.send_audio(samples).await?;
+
+        Ok(())
+    }
+
+    /// Send video frame to a specific peer
+    ///
+    /// # Arguments
+    ///
+    /// * `peer_id` - Identifier of the peer to send video to
+    /// * `frame` - Video frame to send
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Peer not found or not connected
+    /// - Peer has no video track configured
+    /// - Video encoding or transmission fails
+    pub async fn send_video(&self, peer_id: &str, frame: &crate::media::video::VideoFrame) -> Result<()> {
+        debug!("Sending video frame to peer: {} ({}x{})", peer_id, frame.width, frame.height);
+
+        // Get peer connection
+        let peer = self.peer_manager.get_peer(peer_id).await?;
+
+        // Get video track
+        let video_track = peer
+            .video_track()
+            .await
+            .ok_or_else(|| Error::MediaTrackError(format!("Peer {} has no video track", peer_id)))?;
+
+        // Send video via track
+        video_track.send_video(frame).await?;
+
+        Ok(())
+    }
+
+    /// Broadcast audio samples to all connected peers
+    ///
+    /// # Arguments
+    ///
+    /// * `samples` - Audio samples as f32 (range -1.0 to 1.0)
+    /// * `exclude` - Optional list of peer IDs to exclude from broadcast
+    ///
+    /// # Note
+    ///
+    /// Silently skips peers that don't have audio tracks configured.
+    /// Use `send_audio()` if you need to handle individual peer errors.
+    pub async fn broadcast_audio(&self, samples: Arc<Vec<f32>>, exclude: Option<Vec<String>>) -> Result<()> {
+        let exclude_set: std::collections::HashSet<String> = exclude
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+
+        let peers = self.peer_manager.list_connected_peers().await;
+        let peer_count = peers.len();
+
+        debug!("Broadcasting audio to {} peers ({} samples)", peer_count, samples.len());
+
+        // Send to all connected peers with audio tracks
+        for peer_info in peers {
+            if exclude_set.contains(&peer_info.peer_id) {
+                continue;
+            }
+
+            match self.send_audio(&peer_info.peer_id, Arc::clone(&samples)).await {
+                Ok(_) => {},
+                Err(e) => {
+                    // Log error but continue broadcasting to other peers
+                    warn!("Failed to send audio to peer {}: {}", peer_info.peer_id, e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Broadcast video frame to all connected peers
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - Video frame to broadcast
+    /// * `exclude` - Optional list of peer IDs to exclude from broadcast
+    ///
+    /// # Note
+    ///
+    /// Silently skips peers that don't have video tracks configured.
+    /// Use `send_video()` if you need to handle individual peer errors.
+    pub async fn broadcast_video(&self, frame: &crate::media::video::VideoFrame, exclude: Option<Vec<String>>) -> Result<()> {
+        let exclude_set: std::collections::HashSet<String> = exclude
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+
+        let peers = self.peer_manager.list_connected_peers().await;
+        let peer_count = peers.len();
+
+        debug!("Broadcasting video to {} peers ({}x{})", peer_count, frame.width, frame.height);
+
+        // Send to all connected peers with video tracks
+        for peer_info in peers {
+            if exclude_set.contains(&peer_info.peer_id) {
+                continue;
+            }
+
+            match self.send_video(&peer_info.peer_id, frame).await {
+                Ok(_) => {},
+                Err(e) => {
+                    // Log error but continue broadcasting to other peers
+                    warn!("Failed to send video to peer {}: {}", peer_info.peer_id, e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Create a new streaming session
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - Unique identifier for the session
+    ///
+    /// # Returns
+    ///
+    /// Returns the created Session wrapped in Arc for shared ownership.
+    pub async fn create_session(&self, session_id: SessionId) -> Result<Arc<Session>> {
+        info!("Creating session: {}", session_id);
+        self.session_manager.create_session(session_id).await
+    }
+
+    /// Get an existing session
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - Session identifier
+    pub async fn get_session(&self, session_id: &str) -> Result<Arc<Session>> {
+        self.session_manager.get_session(session_id).await
+    }
+
+    /// Check if a session exists
+    pub async fn has_session(&self, session_id: &str) -> bool {
+        self.session_manager.has_session(session_id).await
+    }
+
+    /// Remove a session
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - Session identifier
+    pub async fn remove_session(&self, session_id: &str) -> Result<()> {
+        self.session_manager.remove_session(session_id).await
+    }
+
+    /// List all active sessions
+    pub async fn list_sessions(&self) -> Vec<SessionId> {
+        self.session_manager.list_sessions().await
+    }
+
+    /// Get session count
+    pub async fn session_count(&self) -> usize {
+        self.session_manager.session_count().await
+    }
+
+    /// Associate a peer with a session
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - Session identifier
+    /// * `peer_id` - Peer identifier
+    pub async fn add_peer_to_session(&self, session_id: &str, peer_id: String) -> Result<()> {
+        let session = self.get_session(session_id).await?;
+        session.add_peer(peer_id).await
+    }
+
+    /// Remove a peer from a session
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - Session identifier
+    /// * `peer_id` - Peer identifier
+    pub async fn remove_peer_from_session(&self, session_id: &str, peer_id: &str) -> Result<()> {
+        let session = self.get_session(session_id).await?;
+        session.remove_peer(peer_id).await
+    }
+
     /// Shutdown the transport
     ///
-    /// Closes all peer connections and disconnects from signaling server.
+    /// Closes all peer connections, sessions, and disconnects from signaling server.
     pub async fn shutdown(&self) -> Result<()> {
         info!("Shutting down WebRTC transport");
 
@@ -309,6 +526,9 @@ impl WebRtcTransport {
                 }
             }
         }
+
+        // Clear all sessions
+        self.session_manager.clear().await?;
 
         // Close all peer connections
         self.peer_manager.clear().await?;
@@ -359,6 +579,119 @@ mod tests {
         let transport = WebRtcTransport::new(config).unwrap();
 
         let peers = transport.list_peers().await;
+        assert_eq!(peers.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_create_session() {
+        let config = WebRtcTransportConfig::default();
+        let transport = WebRtcTransport::new(config).unwrap();
+
+        let session = transport
+            .create_session("test-session".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(session.session_id(), "test-session");
+        assert_eq!(transport.session_count().await, 1);
+        assert!(transport.has_session("test-session").await);
+    }
+
+    #[tokio::test]
+    async fn test_get_session() {
+        let config = WebRtcTransportConfig::default();
+        let transport = WebRtcTransport::new(config).unwrap();
+
+        transport
+            .create_session("test-session".to_string())
+            .await
+            .unwrap();
+
+        let session = transport.get_session("test-session").await.unwrap();
+        assert_eq!(session.session_id(), "test-session");
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions() {
+        let config = WebRtcTransportConfig::default();
+        let transport = WebRtcTransport::new(config).unwrap();
+
+        transport
+            .create_session("session-1".to_string())
+            .await
+            .unwrap();
+        transport
+            .create_session("session-2".to_string())
+            .await
+            .unwrap();
+
+        let sessions = transport.list_sessions().await;
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.contains(&"session-1".to_string()));
+        assert!(sessions.contains(&"session-2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_remove_session() {
+        let config = WebRtcTransportConfig::default();
+        let transport = WebRtcTransport::new(config).unwrap();
+
+        transport
+            .create_session("test-session".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(transport.session_count().await, 1);
+
+        transport.remove_session("test-session").await.unwrap();
+
+        assert_eq!(transport.session_count().await, 0);
+        assert!(!transport.has_session("test-session").await);
+    }
+
+    #[tokio::test]
+    async fn test_add_peer_to_session() {
+        let config = WebRtcTransportConfig::default();
+        let transport = WebRtcTransport::new(config).unwrap();
+
+        transport
+            .create_session("test-session".to_string())
+            .await
+            .unwrap();
+
+        transport
+            .add_peer_to_session("test-session", "peer-1".to_string())
+            .await
+            .unwrap();
+
+        let session = transport.get_session("test-session").await.unwrap();
+        let peers = session.list_peers().await;
+        assert_eq!(peers.len(), 1);
+        assert!(peers.contains(&"peer-1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_remove_peer_from_session() {
+        let config = WebRtcTransportConfig::default();
+        let transport = WebRtcTransport::new(config).unwrap();
+
+        transport
+            .create_session("test-session".to_string())
+            .await
+            .unwrap();
+
+        transport
+            .add_peer_to_session("test-session", "peer-1".to_string())
+            .await
+            .unwrap();
+
+        transport
+            .remove_peer_from_session("test-session", "peer-1")
+            .await
+            .unwrap();
+
+        let session = transport.get_session("test-session").await.unwrap();
+        let peers = session.list_peers().await;
         assert_eq!(peers.len(), 0);
     }
 }
