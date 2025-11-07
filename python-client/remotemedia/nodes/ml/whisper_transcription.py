@@ -9,6 +9,14 @@ import re
 from remotemedia.core.node import Node
 from remotemedia.core.exceptions import NodeError
 
+# Try to import model registry for optimization
+try:
+    from remotemedia.core import get_or_load
+    MODEL_REGISTRY_AVAILABLE = True
+except ImportError:
+    MODEL_REGISTRY_AVAILABLE = False
+    get_or_load = None
+
 # Configure basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -67,6 +75,7 @@ class WhisperTranscriptionNode(Node):
                  max_buffer_duration_s: int = 15,
                  buffer_growth_factor: float = 1.5,
                  overlap_duration_s: float = 1.0,
+                 use_registry: bool = True,
                  **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.is_streaming = True
@@ -75,6 +84,7 @@ class WhisperTranscriptionNode(Node):
         self._requested_torch_dtype = torch_dtype
         self.chunk_length_s = chunk_length_s
         self.sample_rate = 16000  # Whisper models expect 16kHz audio
+        self.use_registry = use_registry and MODEL_REGISTRY_AVAILABLE
         
         # Dynamic buffer management
         self.initial_buffer_duration_s = initial_buffer_duration_s
@@ -123,18 +133,53 @@ class WhisperTranscriptionNode(Node):
         self.torch_dtype = resolved_torch_dtype if torch.cuda.is_available() else torch.float32
 
         logger.info(f"WhisperNode configured for model '{self.model_id}' on device '{self.device}'")
-        logger.info(f"Initializing Whisper model '{self.model_id}'...")
+        logger.info(f"Initializing Whisper model '{self.model_id}' (registry: {self.use_registry})...")
+        
         try:
-            model = await asyncio.to_thread(
-                AutoModelForSpeechSeq2Seq.from_pretrained,
-                self.model_id,
-                torch_dtype=self.torch_dtype,
-                low_cpu_mem_usage=True,
-                use_safetensors=True
-            )
-            model.to(self.device)
-
-            processor = await asyncio.to_thread(AutoProcessor.from_pretrained, self.model_id)
+            if self.use_registry and MODEL_REGISTRY_AVAILABLE:
+                # Use model registry for efficient sharing
+                model_key = f"{self.model_id}@{self.device}"
+                
+                def load_whisper_model():
+                    model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                        self.model_id,
+                        torch_dtype=self.torch_dtype,
+                        low_cpu_mem_usage=True,
+                        use_safetensors=True
+                    )
+                    model.to(self.device)
+                    return model
+                
+                def load_whisper_processor():
+                    return AutoProcessor.from_pretrained(self.model_id)
+                
+                # Load via registry (shared across nodes)
+                model = await asyncio.to_thread(
+                    get_or_load,
+                    model_key,
+                    load_whisper_model
+                )
+                
+                processor = await asyncio.to_thread(
+                    get_or_load,
+                    f"{model_key}_processor",
+                    load_whisper_processor
+                )
+                
+                logger.info("Loaded Whisper model via registry (shared)")
+            else:
+                # Load directly without registry (baseline)
+                model = await asyncio.to_thread(
+                    AutoModelForSpeechSeq2Seq.from_pretrained,
+                    self.model_id,
+                    torch_dtype=self.torch_dtype,
+                    low_cpu_mem_usage=True,
+                    use_safetensors=True
+                )
+                model.to(self.device)
+                processor = await asyncio.to_thread(AutoProcessor.from_pretrained, self.model_id)
+                
+                logger.info("Loaded Whisper model directly (no registry)")
 
             self.transcription_pipeline = pipeline(
                 "automatic-speech-recognition",
