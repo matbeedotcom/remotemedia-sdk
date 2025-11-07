@@ -1,6 +1,6 @@
 //! Core pipeline execution engine exposed to transports
 
-use crate::transport::{TransportData, StreamSessionHandle};
+use crate::transport::{StreamSessionHandle, TransportData};
 use crate::Result;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -156,7 +156,9 @@ impl PipelineRunnerInner {
         input: TransportData,
     ) -> Result<TransportData> {
         // Find the first input node from manifest
-        let first_node_id = manifest.nodes.first()
+        let first_node_id = manifest
+            .nodes
+            .first()
             .map(|n| n.id.as_str())
             .ok_or_else(|| crate::Error::InvalidManifest("No nodes in manifest".to_string()))?;
 
@@ -165,12 +167,14 @@ impl PipelineRunnerInner {
         runtime_inputs.insert(first_node_id.to_string(), input.data);
 
         // Execute via real Executor
-        let output_map = self.executor
+        let output_map = self
+            .executor
             .execute_with_runtime_data(&manifest, runtime_inputs)
             .await?;
 
         // Extract output from last node
-        let output_data = output_map.into_values()
+        let output_data = output_map
+            .into_values()
             .next()
             .ok_or_else(|| crate::Error::Execution("No output from pipeline".to_string()))?;
 
@@ -191,7 +195,9 @@ impl PipelineRunnerInner {
         manifest: Arc<crate::manifest::Manifest>,
     ) -> Result<StreamSessionHandle> {
         // Generate unique session ID
-        let session_num = self.session_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let session_num = self
+            .session_counter
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let session_id = format!("session_{}", session_num);
 
         // Create channels for communication
@@ -203,7 +209,10 @@ impl PipelineRunnerInner {
         // For now, echo mode
         let session_id_clone = session_id.clone();
         tokio::spawn(async move {
-            tracing::info!("StreamSession {} started (TODO: wire to SessionRouter)", session_id_clone);
+            tracing::info!(
+                "StreamSession {} started (TODO: wire to SessionRouter)",
+                session_id_clone
+            );
 
             loop {
                 tokio::select! {

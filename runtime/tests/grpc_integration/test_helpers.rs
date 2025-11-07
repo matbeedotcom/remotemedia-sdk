@@ -6,7 +6,9 @@
 #![cfg(feature = "grpc-transport")]
 
 use remotemedia_runtime::executor::Executor;
-use remotemedia_runtime::grpc_service::{server::GrpcServer, ServiceConfig, version::VersionManager};
+use remotemedia_runtime::grpc_service::{
+    server::GrpcServer, version::VersionManager, ServiceConfig,
+};
 use remotemedia_runtime::nodes::streaming_registry::create_default_streaming_registry;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -45,22 +47,22 @@ pub async fn start_test_server() -> String {
 
     // Create executor
     let executor = Arc::new(Executor::new());
-    
+
     // Create server
     let _server = GrpcServer::new(config, executor).expect("Failed to create test server");
-    
+
     // Get a random available port
     let listener = tokio::net::TcpListener::bind("[::1]:0")
         .await
         .expect("Failed to bind to random port");
-    
+
     let addr = listener.local_addr().expect("Failed to get local addr");
     drop(listener); // Close listener so server can bind to it
-    
+
     // Spawn server in background
     let server_addr_str = addr.to_string();
     let server_addr_clone = server_addr_str.clone();
-    
+
     tokio::spawn(async move {
         // Create streaming registry with all test nodes
         let streaming_registry = create_default_streaming_registry();
@@ -79,21 +81,21 @@ pub async fn start_test_server() -> String {
 
         let executor = Arc::new(Executor::new());
         let server = GrpcServer::new(config, executor).expect("Failed to create server");
-        
+
         // Run server (this will block until shutdown)
         let _ = server.serve().await;
     });
-    
+
     // Give server time to start
     sleep(Duration::from_millis(500)).await;
-    
+
     server_addr_str
 }
 
 /// Wait for server to be ready by attempting connection
 pub async fn wait_for_server(addr: &str, max_attempts: u32) -> bool {
     use remotemedia_runtime::grpc_service::generated::pipeline_execution_service_client::PipelineExecutionServiceClient;
-    
+
     for attempt in 1..=max_attempts {
         match PipelineExecutionServiceClient::connect(format!("http://{}", addr)).await {
             Ok(_) => {
@@ -106,7 +108,7 @@ pub async fn wait_for_server(addr: &str, max_attempts: u32) -> bool {
             }
         }
     }
-    
+
     false
 }
 
@@ -117,7 +119,7 @@ pub fn create_test_audio_buffer(
     frequency_hz: f32,
 ) -> remotemedia_runtime::grpc_service::generated::AudioBuffer {
     use remotemedia_runtime::grpc_service::generated::AudioFormat;
-    
+
     let num_samples = sample_rate * duration_sec;
     let samples: Vec<f32> = (0..num_samples)
         .map(|i| {
@@ -125,12 +127,9 @@ pub fn create_test_audio_buffer(
             (t * frequency_hz * 2.0 * std::f32::consts::PI).sin() * 0.5
         })
         .collect();
-    
-    let audio_bytes: Vec<u8> = samples
-        .iter()
-        .flat_map(|&f| f.to_le_bytes())
-        .collect();
-    
+
+    let audio_bytes: Vec<u8> = samples.iter().flat_map(|&f| f.to_le_bytes()).collect();
+
     remotemedia_runtime::grpc_service::generated::AudioBuffer {
         samples: audio_bytes,
         sample_rate,
@@ -149,7 +148,7 @@ pub fn create_calculator_manifest(
     use remotemedia_runtime::grpc_service::generated::{
         ManifestMetadata, NodeManifest, PipelineManifest,
     };
-    
+
     PipelineManifest {
         version: "v1".to_string(),
         metadata: Some(ManifestMetadata {
@@ -165,7 +164,7 @@ pub fn create_calculator_manifest(
             capabilities: None,
             host: String::new(),
             runtime_hint: 0,
-            input_types: vec![3], // JSON
+            input_types: vec![3],  // JSON
             output_types: vec![3], // JSON
         }],
         connections: vec![],
@@ -195,7 +194,7 @@ pub fn create_passthrough_manifest(
             capabilities: None,
             host: String::new(),
             runtime_hint: 0,
-            input_types: vec![1], // Audio
+            input_types: vec![1],  // Audio
             output_types: vec![1], // Audio
         }],
         connections: vec![],
@@ -206,7 +205,7 @@ pub fn create_passthrough_manifest(
 pub fn wrap_audio_in_data_buffer(
     audio: remotemedia_runtime::grpc_service::generated::AudioBuffer,
 ) -> remotemedia_runtime::grpc_service::generated::DataBuffer {
-    use remotemedia_runtime::grpc_service::generated::{DataBuffer, data_buffer};
+    use remotemedia_runtime::grpc_service::generated::{data_buffer, DataBuffer};
 
     DataBuffer {
         data_type: Some(data_buffer::DataType::Audio(audio)),
@@ -217,17 +216,17 @@ pub fn wrap_audio_in_data_buffer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_server_startup() {
         let addr = start_test_server().await;
         assert!(!addr.is_empty());
         assert!(addr.contains("::1") || addr.contains("127.0.0.1"));
-        
+
         // Verify server is accessible
         assert!(wait_for_server(&addr, 10).await);
     }
-    
+
     #[test]
     fn test_create_test_audio_buffer() {
         let buffer = create_test_audio_buffer(16000, 1, 440.0);
@@ -236,7 +235,7 @@ mod tests {
         assert_eq!(buffer.channels, 1);
         assert_eq!(buffer.samples.len(), 16000 * 4); // f32 = 4 bytes
     }
-    
+
     #[test]
     fn test_create_calculator_manifest() {
         let manifest = create_calculator_manifest("test", "add", 5.0);
@@ -244,7 +243,7 @@ mod tests {
         assert_eq!(manifest.nodes.len(), 1);
         assert_eq!(manifest.nodes[0].node_type, "CalculatorNode");
     }
-    
+
     #[test]
     fn test_create_passthrough_manifest() {
         let manifest = create_passthrough_manifest("test");

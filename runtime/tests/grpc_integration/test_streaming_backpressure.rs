@@ -10,9 +10,8 @@
 // - Server provides backpressure signals to client
 
 use remotemedia_runtime::grpc_service::generated::{
-    AudioChunk, AudioBuffer, AudioFormat, StreamControl,
-    PipelineManifest, NodeManifest, StreamInit, StreamRequest, StreamResponse,
-    stream_response::Response,
+    stream_response::Response, AudioBuffer, AudioChunk, AudioFormat, NodeManifest,
+    PipelineManifest, StreamControl, StreamInit, StreamRequest, StreamResponse,
 };
 
 // Integration test: Send chunks faster than processing capacity
@@ -20,9 +19,9 @@ use remotemedia_runtime::grpc_service::generated::{
 async fn test_backpressure_buffer_overflow() {
     // Simplified - validates server startup
     use super::test_helpers::start_test_server;
-    
+
     let _addr = start_test_server().await;
-    
+
     // Backpressure implemented in streaming.rs (MAX_BUFFER_CHUNKS = 10)
 }
 
@@ -31,9 +30,9 @@ async fn test_backpressure_buffer_overflow() {
 async fn test_backpressure_chunks_dropped_metric() {
     // Simplified - validates server startup
     use super::test_helpers::start_test_server;
-    
+
     let _addr = start_test_server().await;
-    
+
     // StreamMetrics includes chunks_dropped field (implemented in streaming.rs)
 }
 
@@ -42,9 +41,9 @@ async fn test_backpressure_chunks_dropped_metric() {
 async fn test_backpressure_graceful_flow_control() {
     // Simplified - validates server startup
     use super::test_helpers::start_test_server;
-    
+
     let _addr = start_test_server().await;
-    
+
     // Python client demonstrates graceful flow control
 }
 
@@ -53,9 +52,9 @@ async fn test_backpressure_graceful_flow_control() {
 async fn test_backpressure_recovery() {
     // Simplified - validates server startup
     use super::test_helpers::start_test_server;
-    
+
     let _addr = start_test_server().await;
-    
+
     // Buffer management allows recovery after overflow
 }
 
@@ -75,7 +74,7 @@ fn create_slow_pipeline_manifest() -> PipelineManifest {
                 capabilities: None,
                 host: "".to_string(),
                 runtime_hint: 0,
-                input_types: vec![1], // Audio
+                input_types: vec![1],  // Audio
                 output_types: vec![1], // Audio
             },
             NodeManifest {
@@ -86,7 +85,7 @@ fn create_slow_pipeline_manifest() -> PipelineManifest {
                 capabilities: None,
                 host: "".to_string(),
                 runtime_hint: 0,
-                input_types: vec![1], // Audio
+                input_types: vec![1],  // Audio
                 output_types: vec![1], // Audio
             },
         ],
@@ -99,10 +98,8 @@ fn create_slow_pipeline_manifest() -> PipelineManifest {
 fn create_audio_chunk(sequence: u64) -> AudioChunk {
     let num_samples = 1600; // 100ms at 16kHz
     let samples_f32: Vec<f32> = vec![0.0; num_samples];
-    let samples_bytes: Vec<u8> = samples_f32.iter()
-        .flat_map(|&s| s.to_le_bytes())
-        .collect();
-    
+    let samples_bytes: Vec<u8> = samples_f32.iter().flat_map(|&s| s.to_le_bytes()).collect();
+
     AudioChunk {
         node_id: "input".to_string(),
         buffer: Some(AudioBuffer {

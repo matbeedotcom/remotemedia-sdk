@@ -10,14 +10,14 @@
 //! - Maintains state per session to handle partial chunks
 //! - Streaming output - emits chunks as they become available
 
+use crate::data::AudioBuffer as ProtoAudioBuffer;
 use crate::data::RuntimeData;
 use crate::error::{Error, Result};
 use crate::nodes::AsyncStreamingNode;
-use crate::data::AudioBuffer as ProtoAudioBuffer;
 use async_trait::async_trait;
-use tracing::info;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::info;
 
 /// Chunker state for a session
 #[derive(Debug, Clone)]
@@ -77,7 +77,10 @@ impl AudioChunkerNode {
                     })
                     .collect())
             }
-            _ => Err(Error::Execution(format!("AudioChunkerNode only supports F32 audio format (received format {})", audio_buf.format))),
+            _ => Err(Error::Execution(format!(
+                "AudioChunkerNode only supports F32 audio format (received format {})",
+                audio_buf.format
+            ))),
         }
     }
 
@@ -106,7 +109,7 @@ impl AsyncStreamingNode for AudioChunkerNode {
 
     async fn process(&self, _data: RuntimeData) -> Result<RuntimeData> {
         Err(Error::Execution(
-            "AudioChunkerNode requires streaming mode - use process_streaming() instead".into()
+            "AudioChunkerNode requires streaming mode - use process_streaming() instead".into(),
         ))
     }
 
@@ -120,16 +123,24 @@ impl AsyncStreamingNode for AudioChunkerNode {
         F: FnMut(RuntimeData) -> Result<()> + Send,
     {
         let (input_samples, input_sample_rate, input_channels) = match data {
-            RuntimeData::Audio { ref samples, sample_rate, channels } => {
-                (samples.clone(), sample_rate, channels)
+            RuntimeData::Audio {
+                ref samples,
+                sample_rate,
+                channels,
+            } => (samples.clone(), sample_rate, channels),
+            _ => {
+                return Err(Error::Execution(
+                    "AudioChunkerNode requires audio input".into(),
+                ))
             }
-            _ => return Err(Error::Execution("AudioChunkerNode requires audio input".into())),
         };
 
         // Get or create state for this session
         let session_key = session_id.unwrap_or_else(|| "default".to_string());
         let mut states = self.states.lock().await;
-        let state = states.entry(session_key).or_insert_with(ChunkerState::default);
+        let state = states
+            .entry(session_key)
+            .or_insert_with(ChunkerState::default);
 
         // Update state with current audio format
         state.sample_rate = input_sample_rate;

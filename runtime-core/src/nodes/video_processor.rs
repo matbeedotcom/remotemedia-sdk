@@ -26,8 +26,8 @@ impl VideoProcessorNode {
     /// Create new video processor node
     pub fn new(id: String, params: &str) -> Result<Self, Error> {
         // Parse params JSON for configuration
-        let config: serde_json::Value = serde_json::from_str(params)
-            .unwrap_or_else(|_| serde_json::json!({}));
+        let config: serde_json::Value =
+            serde_json::from_str(params).unwrap_or_else(|_| serde_json::json!({}));
 
         let confidence_threshold = config
             .get("confidence_threshold")
@@ -44,9 +44,14 @@ impl VideoProcessorNode {
     fn process_internal(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         // Extract video frame fields
         let (frame_number, width, height, timestamp_us) = match &data {
-            RuntimeData::Video { pixel_data, width, height, format, frame_number, timestamp_us } => {
-                (*frame_number, *width, *height, *timestamp_us)
-            }
+            RuntimeData::Video {
+                pixel_data,
+                width,
+                height,
+                format,
+                frame_number,
+                timestamp_us,
+            } => (*frame_number, *width, *height, *timestamp_us),
             _ => {
                 return Err(Error::InvalidInput {
                     message: "VideoProcessorNode expects VideoFrame input".into(),
@@ -137,9 +142,17 @@ mod tests {
 
     #[test]
     fn test_video_processing() {
-        let node = VideoProcessorNode::new("video".to_string(), r#"{"confidence_threshold": 0.5}"#).unwrap();
+        let node = VideoProcessorNode::new("video".to_string(), r#"{"confidence_threshold": 0.5}"#)
+            .unwrap();
         let frame = create_test_frame(0);
-        let input = RuntimeData::Video { pixel_data, width, height, format, frame_number, timestamp_us };
+        let input = RuntimeData::Video {
+            pixel_data,
+            width,
+            height,
+            format,
+            frame_number,
+            timestamp_us,
+        };
 
         let result = SyncStreamingNode::process(&node, input).unwrap();
         match result {
@@ -157,9 +170,17 @@ mod tests {
 
     #[test]
     fn test_detection_filtering_by_confidence() {
-        let node = VideoProcessorNode::new("video".to_string(), r#"{"confidence_threshold": 0.9}"#).unwrap();
+        let node = VideoProcessorNode::new("video".to_string(), r#"{"confidence_threshold": 0.9}"#)
+            .unwrap();
         let frame = create_test_frame(5);
-        let input = RuntimeData::Video { pixel_data, width, height, format, frame_number, timestamp_us };
+        let input = RuntimeData::Video {
+            pixel_data,
+            width,
+            height,
+            format,
+            frame_number,
+            timestamp_us,
+        };
 
         let result = SyncStreamingNode::process(&node, input).unwrap();
         match result {
@@ -179,7 +200,14 @@ mod tests {
         // Process 10 frames
         for i in 0..10 {
             let frame = create_test_frame(i);
-            let input = RuntimeData::Video { pixel_data, width, height, format, frame_number, timestamp_us };
+            let input = RuntimeData::Video {
+                pixel_data,
+                width,
+                height,
+                format,
+                frame_number,
+                timestamp_us,
+            };
 
             let result = SyncStreamingNode::process(&node, input).unwrap();
             match result {

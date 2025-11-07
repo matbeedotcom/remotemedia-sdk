@@ -18,9 +18,7 @@ pub struct IPCDataConverter {
 impl IPCDataConverter {
     /// Create a new IPC data converter for a session
     pub fn new(session_id: String) -> Self {
-        Self {
-            session_id,
-        }
+        Self { session_id }
     }
 
     /// Convert RuntimeData to shared memory format
@@ -73,6 +71,8 @@ impl DataBridge {
     /// Implementation in Phase 4 (US2).
     pub async fn transfer(&self, _data: Vec<u8>) -> Result<Vec<u8>> {
         // Placeholder - implementation in Phase 4 (US2)
-        Err(Error::Other("DataBridge::transfer not yet implemented".to_string()))
+        Err(Error::Other(
+            "DataBridge::transfer not yet implemented".to_string(),
+        ))
     }
 }

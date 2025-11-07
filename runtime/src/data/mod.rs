@@ -6,11 +6,11 @@
 // - Conversion functions: Proto ↔ Runtime
 // - Validation functions: Type checking and size validation
 
-pub mod runtime_data;
 pub mod conversions;
+pub mod runtime_data;
 pub mod validation;
 
 // Re-export main types for convenience
-pub use runtime_data::RuntimeData;
 pub use conversions::{convert_proto_to_runtime_data, convert_runtime_to_proto_data};
-pub use validation::{validate_video_frame, validate_tensor_size, validate_text_buffer};
+pub use runtime_data::RuntimeData;
+pub use validation::{validate_tensor_size, validate_text_buffer, validate_video_frame};

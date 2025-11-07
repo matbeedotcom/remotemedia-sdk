@@ -87,9 +87,7 @@ impl CalculatorNode {
             "multiply" => a * b,
             "divide" => {
                 if b == 0.0 {
-                    return Err(Error::Execution(
-                        "Division by zero".into()
-                    ));
+                    return Err(Error::Execution("Division by zero".into()));
                 }
                 a / b
             }

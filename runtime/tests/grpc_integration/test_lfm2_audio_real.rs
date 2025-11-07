@@ -7,16 +7,16 @@
 
 #![cfg(feature = "grpc-transport")]
 
-use remotemedia_runtime::grpc_service::generated::{
-    AudioBuffer, AudioFormat,
-};
+use remotemedia_runtime::grpc_service::generated::{AudioBuffer, AudioFormat};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 /// Load WAV file as raw bytes and parse header manually
-fn load_wav_file_raw(path: &Path) -> Result<(Vec<u8>, u32, u16, usize), Box<dyn std::error::Error>> {
+fn load_wav_file_raw(
+    path: &Path,
+) -> Result<(Vec<u8>, u32, u16, usize), Box<dyn std::error::Error>> {
     let mut file = File::open(path)?;
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
@@ -62,8 +62,13 @@ fn load_wav_file_raw(path: &Path) -> Result<(Vec<u8>, u32, u16, usize), Box<dyn 
             let data_end = data_start + chunk_size;
             let audio_data = buffer[data_start..data_end.min(buffer.len())].to_vec();
 
-            info!("Loaded WAV: {}Hz, {} channels, {} bits, {} bytes of audio data",
-                  sample_rate, channels, bits_per_sample, audio_data.len());
+            info!(
+                "Loaded WAV: {}Hz, {} channels, {} bits, {} bytes of audio data",
+                sample_rate,
+                channels,
+                bits_per_sample,
+                audio_data.len()
+            );
 
             let data_len = audio_data.len();
             return Ok((audio_data, sample_rate, channels, data_len));
@@ -104,8 +109,10 @@ async fn test_lfm2_audio_with_real_file() {
         }
     };
 
-    info!("Loaded audio file: {} bytes, {}Hz, {} channels",
-          data_size, sample_rate, channels);
+    info!(
+        "Loaded audio file: {} bytes, {}Hz, {} channels",
+        data_size, sample_rate, channels
+    );
 
     // Create AudioBuffer for testing
     let buffer = AudioBuffer {
@@ -124,7 +131,10 @@ async fn test_lfm2_audio_with_real_file() {
     info!("✓ Successfully loaded transcribe_demo.wav");
     info!("  Sample rate: {} Hz", sample_rate);
     info!("  Channels: {}", channels);
-    info!("  Duration: {:.2} seconds", buffer.num_samples as f64 / sample_rate as f64);
+    info!(
+        "  Duration: {:.2} seconds",
+        buffer.num_samples as f64 / sample_rate as f64
+    );
     info!("  Data size: {} bytes", data_size);
 
     // Test would normally send this to LFM2AudioNode via gRPC
@@ -134,11 +144,14 @@ async fn test_lfm2_audio_with_real_file() {
 
 #[tokio::test]
 async fn test_lfm2_audio_direct_processing() {
-    use remotemedia_runtime::nodes::{StreamingNodeFactory, python_streaming::PythonStreamingNode, AsyncNodeWrapper, StreamingNode};
+    use pyo3::Python;
     use remotemedia_runtime::data::RuntimeData;
+    use remotemedia_runtime::nodes::{
+        python_streaming::PythonStreamingNode, AsyncNodeWrapper, StreamingNode,
+        StreamingNodeFactory,
+    };
     use std::sync::Arc;
     use tokio::time::{timeout, Duration};
-    use pyo3::Python;
 
     // Initialize logging
     let _ = tracing_subscriber::fmt()
@@ -166,7 +179,10 @@ async fn test_lfm2_audio_direct_processing() {
         }
     };
 
-    info!("Loaded transcribe_demo.wav: {}Hz, {} channels", sample_rate, channels);
+    info!(
+        "Loaded transcribe_demo.wav: {}Hz, {} channels",
+        sample_rate, channels
+    );
 
     // Convert bytes to f32 samples (assuming 16-bit PCM)
     let mut audio_samples = Vec::new();
@@ -187,20 +203,19 @@ async fn test_lfm2_audio_direct_processing() {
     info!("Converted to {} f32 samples", audio_samples.len());
 
     // Convert f32 samples to bytes for AudioBuffer
-    let audio_bytes: Vec<u8> = audio_samples.iter()
+    let audio_bytes: Vec<u8> = audio_samples
+        .iter()
         .flat_map(|&s| s.to_le_bytes())
         .collect();
 
     // Create RuntimeData with AudioBuffer
-    let audio_data = RuntimeData::Audio(
-        AudioBuffer {
-            samples: audio_bytes,
-            sample_rate,
-            channels: 1, // Converted to mono
-            format: AudioFormat::F32 as i32,
-            num_samples: audio_samples.len() as u64,
-        }
-    );
+    let audio_data = RuntimeData::Audio(AudioBuffer {
+        samples: audio_bytes,
+        sample_rate,
+        channels: 1, // Converted to mono
+        format: AudioFormat::F32 as i32,
+        num_samples: audio_samples.len() as u64,
+    });
 
     // Create LFM2AudioNode
     let node = match PythonStreamingNode::new(
@@ -210,7 +225,7 @@ async fn test_lfm2_audio_direct_processing() {
             "device": "cpu",
             "max_new_tokens": 200,
             "audio_temperature": 0.7
-        })
+        }),
     ) {
         Ok(n) => Arc::new(n),
         Err(e) => {
@@ -240,8 +255,10 @@ async fn test_lfm2_audio_direct_processing() {
                     info!("  Sample rate: {} Hz", audio.sample_rate);
                     info!("  Channels: {}", audio.channels);
                     info!("  Samples: {} bytes", audio.samples.len());
-                    info!("  Duration: {:.2} seconds",
-                          audio.num_samples as f64 / audio.sample_rate as f64);
+                    info!(
+                        "  Duration: {:.2} seconds",
+                        audio.num_samples as f64 / audio.sample_rate as f64
+                    );
                 }
                 RuntimeData::Text(text) => {
                     info!("Generated text response:");
@@ -285,8 +302,10 @@ fn test_wav_file_loading() {
             info!("  Sample rate: {} Hz", rate);
             info!("  Channels: {}", ch);
             info!("  Data size: {} bytes", size);
-            info!("  Duration: ~{:.2} seconds",
-                  size as f64 / (rate as f64 * ch as f64 * 2.0)); // 2 bytes per sample
+            info!(
+                "  Duration: ~{:.2} seconds",
+                size as f64 / (rate as f64 * ch as f64 * 2.0)
+            ); // 2 bytes per sample
 
             assert!(rate > 0, "Sample rate should be positive");
             assert!(ch > 0, "Should have at least one channel");

@@ -9,8 +9,7 @@
 #![cfg(feature = "grpc-transport")]
 
 use remotemedia_runtime::grpc_service::generated::{
-    AudioBuffer, AudioFormat,
-    PipelineManifest, NodeManifest, StreamInit, StreamRequest,
+    AudioBuffer, AudioFormat, NodeManifest, PipelineManifest, StreamInit, StreamRequest,
 };
 
 // Test that LFM2AudioNode can be created and doesn't hang
@@ -64,7 +63,8 @@ async fn test_lfm2_audio_processing() {
     }
 
     // Convert to bytes
-    let audio_bytes: Vec<u8> = audio_samples.iter()
+    let audio_bytes: Vec<u8> = audio_samples
+        .iter()
         .flat_map(|&sample| sample.to_le_bytes())
         .collect();
 
@@ -78,7 +78,11 @@ async fn test_lfm2_audio_processing() {
     };
 
     // Verify buffer is correctly constructed
-    assert_eq!(buffer.samples.len(), num_samples * 4, "Buffer size should be samples * 4 bytes");
+    assert_eq!(
+        buffer.samples.len(),
+        num_samples * 4,
+        "Buffer size should be samples * 4 bytes"
+    );
     assert_eq!(buffer.sample_rate, 16000, "Sample rate should be 16000");
 
     info!("Audio buffer created successfully");
@@ -101,12 +105,12 @@ async fn test_lfm2_audio_resampling() {
 
     // Test various sample rates
     let test_sample_rates = vec![
-        8000,   // Low quality
-        16000,  // Standard for speech
-        22050,  // CD quality / 2
-        24000,  // LFM2 native rate
-        44100,  // CD quality
-        48000,  // Professional audio
+        8000,  // Low quality
+        16000, // Standard for speech
+        22050, // CD quality / 2
+        24000, // LFM2 native rate
+        44100, // CD quality
+        48000, // Professional audio
     ];
 
     for sample_rate in test_sample_rates {
@@ -122,7 +126,8 @@ async fn test_lfm2_audio_resampling() {
         }
 
         // Convert to bytes
-        let audio_bytes: Vec<u8> = audio_samples.iter()
+        let audio_bytes: Vec<u8> = audio_samples
+            .iter()
             .flat_map(|&sample| sample.to_le_bytes())
             .collect();
 
@@ -137,8 +142,12 @@ async fn test_lfm2_audio_resampling() {
 
         // Verify buffer is correctly sized
         let expected_size = num_samples * 4; // 4 bytes per F32 sample
-        assert_eq!(buffer.samples.len(), expected_size,
-                   "Buffer size mismatch for {}Hz", sample_rate);
+        assert_eq!(
+            buffer.samples.len(),
+            expected_size,
+            "Buffer size mismatch for {}Hz",
+            sample_rate
+        );
 
         info!("✓ {}Hz audio buffer created successfully", sample_rate);
     }
@@ -163,23 +172,22 @@ fn test_lfm2_audio_manifest_structure() {
     let manifest = PipelineManifest {
         version: "1.0".to_string(),
         metadata: None,
-        nodes: vec![
-            NodeManifest {
-                id: "lfm2_audio".to_string(),
-                node_type: "LFM2AudioNode".to_string(),
-                params: json!({
-                    "device": "cpu",
-                    "max_new_tokens": 100,
-                    "audio_temperature": 0.7
-                }).to_string(),
-                is_streaming: true,
-                capabilities: None,
-                host: String::new(),
-                runtime_hint: 0, // Native
-                input_types: vec![1], // Audio
-                output_types: vec![1, 5], // Audio and Text
-            },
-        ],
+        nodes: vec![NodeManifest {
+            id: "lfm2_audio".to_string(),
+            node_type: "LFM2AudioNode".to_string(),
+            params: json!({
+                "device": "cpu",
+                "max_new_tokens": 100,
+                "audio_temperature": 0.7
+            })
+            .to_string(),
+            is_streaming: true,
+            capabilities: None,
+            host: String::new(),
+            runtime_hint: 0,          // Native
+            input_types: vec![1],     // Audio
+            output_types: vec![1, 5], // Audio and Text
+        }],
         connections: vec![],
     };
 
@@ -190,11 +198,20 @@ fn test_lfm2_audio_manifest_structure() {
     assert!(manifest.nodes[0].is_streaming);
 
     // Verify node can handle audio input
-    assert!(manifest.nodes[0].input_types.contains(&1), "Node should accept audio input");
+    assert!(
+        manifest.nodes[0].input_types.contains(&1),
+        "Node should accept audio input"
+    );
 
     // Verify node can output audio and text
-    assert!(manifest.nodes[0].output_types.contains(&1), "Node should output audio");
-    assert!(manifest.nodes[0].output_types.contains(&5), "Node should output text");
+    assert!(
+        manifest.nodes[0].output_types.contains(&1),
+        "Node should output audio"
+    );
+    assert!(
+        manifest.nodes[0].output_types.contains(&5),
+        "Node should output text"
+    );
 
     info!("LFM2AudioNode manifest structure test passed");
 }
@@ -202,8 +219,8 @@ fn test_lfm2_audio_manifest_structure() {
 // Test StreamInit request construction for LFM2AudioNode
 #[test]
 fn test_lfm2_audio_stream_init() {
-    use std::collections::HashMap;
     use serde_json::json;
+    use std::collections::HashMap;
     use tracing::info;
 
     // Initialize logging
@@ -217,22 +234,21 @@ fn test_lfm2_audio_stream_init() {
     let manifest = PipelineManifest {
         version: "1.0".to_string(),
         metadata: None,
-        nodes: vec![
-            NodeManifest {
-                id: "lfm2".to_string(),
-                node_type: "LFM2AudioNode".to_string(),
-                params: json!({
-                    "device": "cpu",
-                    "max_new_tokens": 50
-                }).to_string(),
-                is_streaming: true,
-                capabilities: None,
-                host: String::new(),
-                runtime_hint: 0,
-                input_types: vec![1],
-                output_types: vec![1, 5],
-            },
-        ],
+        nodes: vec![NodeManifest {
+            id: "lfm2".to_string(),
+            node_type: "LFM2AudioNode".to_string(),
+            params: json!({
+                "device": "cpu",
+                "max_new_tokens": 50
+            })
+            .to_string(),
+            is_streaming: true,
+            capabilities: None,
+            host: String::new(),
+            runtime_hint: 0,
+            input_types: vec![1],
+            output_types: vec![1, 5],
+        }],
         connections: vec![],
     };
 
@@ -247,7 +263,9 @@ fn test_lfm2_audio_stream_init() {
 
     // Create StreamRequest
     let request = StreamRequest {
-        request: Some(remotemedia_runtime::grpc_service::generated::stream_request::Request::Init(init)),
+        request: Some(
+            remotemedia_runtime::grpc_service::generated::stream_request::Request::Init(init),
+        ),
     };
 
     // Verify request structure

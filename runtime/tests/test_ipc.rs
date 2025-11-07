@@ -4,8 +4,8 @@
 #[cfg(feature = "multiprocess")]
 mod tests {
     use remotemedia_runtime::python::multiprocess::{
+        data_transfer::{DataType, RuntimeData},
         ipc_channel::ChannelRegistry,
-        data_transfer::{RuntimeData, DataType},
     };
     use std::time::{Duration, Instant};
 
@@ -37,7 +37,10 @@ mod tests {
         registry.initialize().unwrap();
 
         // Create channel
-        let channel = registry.create_channel("test_channel", 100, true).await.unwrap();
+        let channel = registry
+            .create_channel("test_channel", 100, true)
+            .await
+            .unwrap();
         assert_eq!(channel.name, "test_channel");
         assert_eq!(channel.capacity, 100);
         assert!(channel.backpressure_enabled);
@@ -58,14 +61,17 @@ mod tests {
         let mut registry = ChannelRegistry::new();
         registry.initialize().unwrap();
 
-        let channel = registry.create_channel("pubsub_test", 10, false).await.unwrap();
+        let channel = registry
+            .create_channel("pubsub_test", 10, false)
+            .await
+            .unwrap();
 
         // Create publisher and subscriber
         let publisher = registry.create_publisher("pubsub_test").await.unwrap();
         let subscriber = registry.create_subscriber("pubsub_test").await.unwrap();
 
         // Publish data with very small payload to stay within iceoryx2 defaults
-        let data = RuntimeData::text("Hi", "s");  // Minimal payload
+        let data = RuntimeData::text("Hi", "s"); // Minimal payload
         publisher.publish(data).await.unwrap();
 
         // Small delay to allow message to propagate
@@ -88,14 +94,17 @@ mod tests {
         let mut registry = ChannelRegistry::new();
         registry.initialize().unwrap();
 
-        let channel = registry.create_channel("multi_msg", 50, false).await.unwrap();
+        let channel = registry
+            .create_channel("multi_msg", 50, false)
+            .await
+            .unwrap();
 
         let publisher = registry.create_publisher("multi_msg").await.unwrap();
         let subscriber = registry.create_subscriber("multi_msg").await.unwrap();
 
         // Send multiple small messages
         for i in 0..10 {
-            let data = RuntimeData::text(&format!("{}", i), "s");  // Minimal payload
+            let data = RuntimeData::text(&format!("{}", i), "s"); // Minimal payload
             publisher.publish(data).await.unwrap();
         }
 
@@ -122,10 +131,16 @@ mod tests {
         let mut registry = ChannelRegistry::new();
         registry.initialize().unwrap();
 
-        let channel = registry.create_channel("moderate_payload", 10, false).await.unwrap();
+        let channel = registry
+            .create_channel("moderate_payload", 10, false)
+            .await
+            .unwrap();
 
         let publisher = registry.create_publisher("moderate_payload").await.unwrap();
-        let subscriber = registry.create_subscriber("moderate_payload").await.unwrap();
+        let subscriber = registry
+            .create_subscriber("moderate_payload")
+            .await
+            .unwrap();
 
         // Create 1KB payload (well within defaults)
         let moderate_data = vec![0u8; 1024];
@@ -169,13 +184,16 @@ mod tests {
         let mut registry = ChannelRegistry::new();
         registry.initialize().unwrap();
 
-        let channel = registry.create_channel("stats_test", 10, false).await.unwrap();
+        let channel = registry
+            .create_channel("stats_test", 10, false)
+            .await
+            .unwrap();
 
         let publisher = registry.create_publisher("stats_test").await.unwrap();
         let subscriber = registry.create_subscriber("stats_test").await.unwrap();
 
         // Send data
-        let data = RuntimeData::text("x", "s");  // Minimal
+        let data = RuntimeData::text("x", "s"); // Minimal
         let bytes_len = data.to_bytes().len();
 
         publisher.publish(data).await.unwrap();
@@ -206,13 +224,19 @@ mod tests {
         let mut registry = ChannelRegistry::new();
         registry.initialize().unwrap();
 
-        let channel = registry.create_channel("empty_test", 10, false).await.unwrap();
+        let channel = registry
+            .create_channel("empty_test", 10, false)
+            .await
+            .unwrap();
 
         let subscriber = registry.create_subscriber("empty_test").await.unwrap();
 
         // Try to receive from empty channel
         let received = subscriber.receive().await.unwrap();
-        assert!(received.is_none(), "Should return None when no messages available");
+        assert!(
+            received.is_none(),
+            "Should return None when no messages available"
+        );
 
         registry.destroy_channel(channel).await.unwrap();
     }
@@ -222,7 +246,10 @@ mod tests {
         let mut registry = ChannelRegistry::new();
         registry.initialize().unwrap();
 
-        let channel = registry.create_channel("concurrent", 100, false).await.unwrap();
+        let channel = registry
+            .create_channel("concurrent", 100, false)
+            .await
+            .unwrap();
 
         // Create multiple publishers
         let pub1 = registry.create_publisher("concurrent").await.unwrap();
@@ -232,14 +259,14 @@ mod tests {
         // Publish from both using join to run concurrently
         let publish1 = async {
             for i in 0..5 {
-                let data = RuntimeData::text(&format!("{}", i), "s");  // Minimal
+                let data = RuntimeData::text(&format!("{}", i), "s"); // Minimal
                 pub1.publish(data).await.unwrap();
             }
         };
 
         let publish2 = async {
             for i in 0..5 {
-                let data = RuntimeData::text(&format!("{}", i), "s");  // Minimal
+                let data = RuntimeData::text(&format!("{}", i), "s"); // Minimal
                 pub2.publish(data).await.unwrap();
             }
         };
@@ -258,7 +285,10 @@ mod tests {
             }
         }
 
-        assert_eq!(received_count, 10, "Should receive all messages from both publishers");
+        assert_eq!(
+            received_count, 10,
+            "Should receive all messages from both publishers"
+        );
 
         registry.destroy_channel(channel).await.unwrap();
     }

@@ -7,8 +7,8 @@ use crate::data::RuntimeData;
 use crate::Error;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 
 /// Node execution status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,7 +102,10 @@ pub trait AsyncStreamingNode: Send + Sync {
     async fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error>;
 
     /// Process multi-input data asynchronously
-    async fn process_multi(&self, inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, Error> {
+    async fn process_multi(
+        &self,
+        inputs: HashMap<String, RuntimeData>,
+    ) -> Result<RuntimeData, Error> {
         // Default: extract first input and process
         if let Some((_name, data)) = inputs.into_iter().next() {
             self.process(data).await
@@ -165,7 +168,10 @@ pub trait StreamingNode: Send + Sync {
     async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error>;
 
     /// Process multi-input data asynchronously
-    async fn process_multi_async(&self, inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, Error>;
+    async fn process_multi_async(
+        &self,
+        inputs: HashMap<String, RuntimeData>,
+    ) -> Result<RuntimeData, Error>;
 
     /// Check if this node requires multiple inputs
     fn is_multi_input(&self) -> bool;
@@ -198,7 +204,10 @@ impl<T: SyncStreamingNode + 'static> StreamingNode for SyncNodeWrapper<T> {
         self.0.process(data)
     }
 
-    async fn process_multi_async(&self, inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, Error> {
+    async fn process_multi_async(
+        &self,
+        inputs: HashMap<String, RuntimeData>,
+    ) -> Result<RuntimeData, Error> {
         self.0.process_multi(inputs)
     }
 
@@ -209,7 +218,6 @@ impl<T: SyncStreamingNode + 'static> StreamingNode for SyncNodeWrapper<T> {
 
 /// Wrapper that makes an AsyncStreamingNode into a StreamingNode
 pub struct AsyncNodeWrapper<T: AsyncStreamingNode>(pub Arc<T>);
-
 
 #[async_trait::async_trait]
 impl<T: AsyncStreamingNode + 'static> StreamingNode for AsyncNodeWrapper<T> {
@@ -225,7 +233,10 @@ impl<T: AsyncStreamingNode + 'static> StreamingNode for AsyncNodeWrapper<T> {
         self.0.process(data).await
     }
 
-    async fn process_multi_async(&self, inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, Error> {
+    async fn process_multi_async(
+        &self,
+        inputs: HashMap<String, RuntimeData>,
+    ) -> Result<RuntimeData, Error> {
         self.0.process_multi(inputs).await
     }
 
@@ -240,9 +251,9 @@ impl<T: AsyncStreamingNode + 'static> StreamingNode for AsyncNodeWrapper<T> {
         mut callback: Box<dyn FnMut(RuntimeData) -> Result<(), Error> + Send>,
     ) -> Result<usize, Error> {
         // Create an adapter closure that calls the boxed callback
-        self.0.process_streaming(data, session_id, move |output_data| {
-            callback(output_data)
-        }).await
+        self.0
+            .process_streaming(data, session_id, move |output_data| callback(output_data))
+            .await
     }
 }
 
@@ -254,7 +265,12 @@ pub trait StreamingNodeFactory: Send + Sync {
     /// * `node_id` - Unique identifier for this node instance
     /// * `params` - Node initialization parameters
     /// * `session_id` - Optional session ID for multiprocess execution
-    fn create(&self, node_id: String, params: &Value, session_id: Option<String>) -> Result<Box<dyn StreamingNode>, Error>;
+    fn create(
+        &self,
+        node_id: String,
+        params: &Value,
+        session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error>;
 
     /// Get the node type this factory creates
     fn node_type(&self) -> &str;

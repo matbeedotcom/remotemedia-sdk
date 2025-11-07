@@ -137,7 +137,9 @@ impl NodeExecutor for PythonNodeExecutor {
 
         #[cfg(not(feature = "multiprocess"))]
         {
-            Err(Error::Execution("Multiprocess support not enabled".to_string()))
+            Err(Error::Execution(
+                "Multiprocess support not enabled".to_string(),
+            ))
         }
     }
 
@@ -153,7 +155,9 @@ impl NodeExecutor for PythonNodeExecutor {
 
         #[cfg(not(feature = "multiprocess"))]
         {
-            Err(Error::Execution("Multiprocess support not enabled".to_string()))
+            Err(Error::Execution(
+                "Multiprocess support not enabled".to_string(),
+            ))
         }
     }
 

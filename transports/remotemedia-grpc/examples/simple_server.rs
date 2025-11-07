@@ -18,7 +18,7 @@
 //! - `GRPC_JSON_LOGGING`: Enable JSON logging (default: true)
 //! - `RUST_LOG`: Logging level (default: "info")
 
-use remotemedia_grpc::{GrpcServer, ServiceConfig, init_tracing};
+use remotemedia_grpc::{init_tracing, GrpcServer, ServiceConfig};
 use remotemedia_runtime_core::transport::PipelineRunner;
 use std::sync::Arc;
 
@@ -32,7 +32,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🚀 RemoteMedia gRPC Server Example");
     println!("📍 Address: {}", config.bind_address);
-    println!("🔐 Auth: {}", if config.auth.require_auth { "enabled" } else { "disabled" });
+    println!(
+        "🔐 Auth: {}",
+        if config.auth.require_auth {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
     println!();
 
     // Create pipeline runner

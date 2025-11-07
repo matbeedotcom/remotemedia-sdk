@@ -4,14 +4,13 @@
 //! Provides manifest-to-runtime conversion and result serialization using PipelineRunner.
 
 use crate::{
-    auth::{check_auth, AuthConfig},
     adapters::{data_buffer_to_runtime_data, runtime_data_to_data_buffer},
+    auth::{check_auth, AuthConfig},
     generated::{
-        pipeline_execution_service_server::PipelineExecutionService, ExecuteRequest,
-        ExecuteResponse, ExecutionStatus, VersionRequest, VersionResponse, VersionInfo,
-        ErrorResponse, ErrorType, ExecutionMetrics as ProtoExecutionMetrics,
-        PipelineManifest as ProtoPipelineManifest,
-        ExecutionResult as ProtoExecutionResult,
+        pipeline_execution_service_server::PipelineExecutionService, ErrorResponse, ErrorType,
+        ExecuteRequest, ExecuteResponse, ExecutionMetrics as ProtoExecutionMetrics,
+        ExecutionResult as ProtoExecutionResult, ExecutionStatus,
+        PipelineManifest as ProtoPipelineManifest, VersionInfo, VersionRequest, VersionResponse,
     },
     limits::ResourceLimits,
     metrics::ServiceMetrics,
@@ -92,9 +91,8 @@ impl ExecutionServiceImpl {
         })
         .to_string();
 
-        serde_json::from_str(&json_str).map_err(|e| {
-            ServiceError::Validation(format!("Failed to parse manifest: {}", e))
-        })
+        serde_json::from_str(&json_str)
+            .map_err(|e| ServiceError::Validation(format!("Failed to parse manifest: {}", e)))
     }
 
     /// Validate manifest structure
@@ -116,8 +114,8 @@ impl ExecutionServiceImpl {
             memory_used_bytes: memory_bytes,
             serialization_time_ms: 0.0,
             node_metrics: HashMap::new(), // TODO: Get per-node metrics from runner
-            proto_to_runtime_ms: 0.0, // TODO: Measure conversion overhead
-            runtime_to_proto_ms: 0.0, // TODO: Measure conversion overhead
+            proto_to_runtime_ms: 0.0,     // TODO: Measure conversion overhead
+            runtime_to_proto_ms: 0.0,     // TODO: Measure conversion overhead
             data_type_breakdown: HashMap::new(),
         }
     }

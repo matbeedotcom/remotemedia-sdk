@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // This ensures it's registered before any blocking operations
     let shutdown_flag = Arc::new(AtomicBool::new(false));
     let shutdown_flag_handler = Arc::clone(&shutdown_flag);
-    
+
     ctrlc::set_handler(move || {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -52,16 +52,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .as_secs();
         eprintln!("\n🛑 [{}] Ctrl+C received! Setting shutdown flag...", timestamp);
         eprintln!("   [SIGNAL] Handler executing in thread: {:?}", std::thread::current().id());
-        
+
         let was_already_set = shutdown_flag_handler.swap(true, Ordering::SeqCst);
         if was_already_set {
             eprintln!("   [SIGNAL] ⚠️  Shutdown already in progress, forcing immediate exit");
             std::process::exit(0);
         }
-        
+
         eprintln!("   [SIGNAL] Shutdown flag set successfully");
         eprintln!("   [SIGNAL] Spawning watchdog thread for force-exit after 1s...");
-        
+
         // Give it a brief moment, then force exit if graceful shutdown fails
         // Use 1 second timeout to ensure responsiveness even with blocking operations
         std::thread::spawn(move || {
@@ -112,19 +112,22 @@ async fn async_main(shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::e
 
     // Create executor for pipeline execution
     let mut executor = Executor::new();
-    
+
     // Register built-in test nodes (PassThrough, Echo, Calculator, Add, Multiply)
     let builtin_registry = remotemedia_runtime::nodes::create_builtin_registry();
     executor.add_system_registry(Arc::new(builtin_registry));
-    info!("Built-in test nodes registered (PassThrough, Echo, CalculatorNode, AddNode, MultiplyNode)");
-    
+    info!(
+        "Built-in test nodes registered (PassThrough, Echo, CalculatorNode, AddNode, MultiplyNode)"
+    );
+
     // Register audio processing nodes (resample, VAD, format converter)
     let audio_registry = remotemedia_runtime::nodes::audio::create_audio_registry();
     executor.add_audio_registry(Arc::new(audio_registry));
     info!("Audio processing nodes registered (RustResampleNode, RustVADNode, RustFormatConverterNode)");
 
     // Register Python TTS nodes (KokoroTTSNode)
-    let python_tts_registry = remotemedia_runtime::nodes::python_nodes::create_python_tts_registry();
+    let python_tts_registry =
+        remotemedia_runtime::nodes::python_nodes::create_python_tts_registry();
     executor.add_user_registry(Arc::new(python_tts_registry));
     info!("Python TTS nodes registered (KokoroTTSNode)");
 
@@ -135,11 +138,12 @@ async fn async_main(shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::e
         nodes = ?node_types,
         "Available node types"
     );
-    
+
     // Update config to include node types
     let mut config = config;
-    config.version = remotemedia_runtime::grpc_service::version::VersionManager::from_node_types(node_types);
-    
+    config.version =
+        remotemedia_runtime::grpc_service::version::VersionManager::from_node_types(node_types);
+
     let executor = Arc::new(executor);
     info!("Pipeline executor initialized with all nodes");
 

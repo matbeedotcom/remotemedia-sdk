@@ -7,20 +7,22 @@
 //! - T057: End-to-end video streaming verification
 
 use remotemedia_runtime::grpc_service::generated::{
-    DataBuffer, DataChunk, JsonData, VideoFrame, TensorBuffer, TextBuffer,
-    data_buffer, PixelFormat, TensorDtype,
-    streaming_pipeline_service_client::StreamingPipelineServiceClient,
-    StreamRequest, StreamInit, StreamControl,
-    stream_request::Request as StreamRequestType,
+    data_buffer, stream_control::Command, stream_request::Request as StreamRequestType,
     stream_response::Response as StreamResponseType,
-    stream_control::Command,
-    PipelineManifest, ManifestMetadata, NodeManifest,
+    streaming_pipeline_service_client::StreamingPipelineServiceClient, DataBuffer, DataChunk,
+    JsonData, ManifestMetadata, NodeManifest, PipelineManifest, PixelFormat, StreamControl,
+    StreamInit, StreamRequest, TensorBuffer, TensorDtype, TextBuffer, VideoFrame,
 };
-use tonic::Request;
 use std::collections::HashMap;
+use tonic::Request;
 
 /// Helper to create a test manifest for a single node
-fn create_test_manifest(node_id: &str, node_type: &str, input_type: i32, output_type: i32) -> PipelineManifest {
+fn create_test_manifest(
+    node_id: &str,
+    node_type: &str,
+    input_type: i32,
+    output_type: i32,
+) -> PipelineManifest {
     PipelineManifest {
         version: "v1".to_string(),
         metadata: Some(ManifestMetadata {
@@ -73,7 +75,8 @@ async fn test_video_frame_streaming() -> Result<(), Box<dyn std::error::Error>> 
             resource_limits: None,
             expected_chunk_size: 0,
         })),
-    }).await?;
+    })
+    .await?;
 
     // Wait for StreamReady
     if let Some(resp) = response_stream.message().await? {
@@ -114,7 +117,8 @@ async fn test_video_frame_streaming() -> Result<(), Box<dyn std::error::Error>> 
 
         tx.send(StreamRequest {
             request: Some(StreamRequestType::DataChunk(data_chunk)),
-        }).await?;
+        })
+        .await?;
 
         // Receive result
         if let Some(resp) = response_stream.message().await? {
@@ -128,10 +132,13 @@ async fn test_video_frame_streaming() -> Result<(), Box<dyn std::error::Error>> 
                             let detection_json: serde_json::Value =
                                 serde_json::from_str(&json_data.json_payload)?;
 
-                            println!("Frame {}: {} detections",
-                                frame_num, detection_json["detection_count"]);
+                            println!(
+                                "Frame {}: {} detections",
+                                frame_num, detection_json["detection_count"]
+                            );
 
-                            detection_counts.push(detection_json["detection_count"].as_u64().unwrap());
+                            detection_counts
+                                .push(detection_json["detection_count"].as_u64().unwrap());
 
                             // Verify JSON structure
                             assert!(detection_json["frame_number"].is_u64());
@@ -154,7 +161,8 @@ async fn test_video_frame_streaming() -> Result<(), Box<dyn std::error::Error>> 
         request: Some(StreamRequestType::Control(StreamControl {
             command: Command::Close as i32,
         })),
-    }).await?;
+    })
+    .await?;
 
     // Verify we got detections for all frames
     assert_eq!(detection_counts.len(), 10);
@@ -193,7 +201,8 @@ async fn test_json_calculator_pipeline() -> Result<(), Box<dyn std::error::Error
             resource_limits: None,
             expected_chunk_size: 0,
         })),
-    }).await?;
+    })
+    .await?;
 
     // Wait for StreamReady
     if let Some(resp) = response_stream.message().await? {
@@ -207,10 +216,22 @@ async fn test_json_calculator_pipeline() -> Result<(), Box<dyn std::error::Error
 
     // Test different operations
     let test_cases = vec![
-        (serde_json::json!({"operation": "add", "operands": [10, 20]}), 30.0),
-        (serde_json::json!({"operation": "subtract", "operands": [50, 15]}), 35.0),
-        (serde_json::json!({"operation": "multiply", "operands": [7, 6]}), 42.0),
-        (serde_json::json!({"operation": "divide", "operands": [100, 4]}), 25.0),
+        (
+            serde_json::json!({"operation": "add", "operands": [10, 20]}),
+            30.0,
+        ),
+        (
+            serde_json::json!({"operation": "subtract", "operands": [50, 15]}),
+            35.0,
+        ),
+        (
+            serde_json::json!({"operation": "multiply", "operands": [7, 6]}),
+            42.0,
+        ),
+        (
+            serde_json::json!({"operation": "divide", "operands": [100, 4]}),
+            25.0,
+        ),
     ];
 
     for (seq, (input, expected_result)) in test_cases.iter().enumerate() {
@@ -234,7 +255,8 @@ async fn test_json_calculator_pipeline() -> Result<(), Box<dyn std::error::Error
 
         tx.send(StreamRequest {
             request: Some(StreamRequestType::DataChunk(data_chunk)),
-        }).await?;
+        })
+        .await?;
 
         // Receive result
         if let Some(resp) = response_stream.message().await? {
@@ -248,9 +270,11 @@ async fn test_json_calculator_pipeline() -> Result<(), Box<dyn std::error::Error
                             let actual_result = result_json["result"].as_f64().unwrap();
                             assert_eq!(actual_result, *expected_result);
 
-                            println!("✅ {}: result = {}",
+                            println!(
+                                "✅ {}: result = {}",
                                 result_json["operation"].as_str().unwrap(),
-                                actual_result);
+                                actual_result
+                            );
                         }
                     }
                 }
@@ -267,7 +291,8 @@ async fn test_json_calculator_pipeline() -> Result<(), Box<dyn std::error::Error
         request: Some(StreamRequestType::Control(StreamControl {
             command: Command::Close as i32,
         })),
-    }).await?;
+    })
+    .await?;
 
     println!("✅ All calculator operations completed successfully");
 
@@ -304,7 +329,8 @@ async fn test_tensor_streaming() -> Result<(), Box<dyn std::error::Error>> {
             resource_limits: None,
             expected_chunk_size: 0,
         })),
-    }).await?;
+    })
+    .await?;
 
     // Wait for StreamReady
     if let Some(resp) = response_stream.message().await? {
@@ -340,7 +366,8 @@ async fn test_tensor_streaming() -> Result<(), Box<dyn std::error::Error>> {
 
     tx.send(StreamRequest {
         request: Some(StreamRequestType::DataChunk(data_chunk)),
-    }).await?;
+    })
+    .await?;
 
     // Receive result
     if let Some(resp) = response_stream.message().await? {
@@ -352,8 +379,10 @@ async fn test_tensor_streaming() -> Result<(), Box<dyn std::error::Error>> {
                         assert_eq!(tensor_out.dtype, TensorDtype::F32 as i32);
                         assert_eq!(tensor_out.data.len(), embedding_size * 4);
 
-                        println!("✅ Tensor passthrough successful: shape={:?}, dtype={}",
-                            tensor_out.shape, tensor_out.dtype);
+                        println!(
+                            "✅ Tensor passthrough successful: shape={:?}, dtype={}",
+                            tensor_out.shape, tensor_out.dtype
+                        );
                     }
                 }
             }
@@ -369,7 +398,8 @@ async fn test_tensor_streaming() -> Result<(), Box<dyn std::error::Error>> {
         request: Some(StreamRequestType::Control(StreamControl {
             command: Command::Close as i32,
         })),
-    }).await?;
+    })
+    .await?;
 
     println!("✅ Tensor streaming test completed");
 
@@ -415,7 +445,8 @@ async fn test_video_streaming_with_metrics() -> Result<(), Box<dyn std::error::E
             resource_limits: None,
             expected_chunk_size: 0,
         })),
-    }).await?;
+    })
+    .await?;
 
     // Wait for ready
     let session_id = if let Some(resp) = response_stream.message().await? {
@@ -455,7 +486,8 @@ async fn test_video_streaming_with_metrics() -> Result<(), Box<dyn std::error::E
                 timestamp_ms: 0,
                 named_buffers: HashMap::new(),
             })),
-        }).await?;
+        })
+        .await?;
 
         // Collect responses (results + maybe metrics)
         while let Some(resp) = response_stream.message().await? {
@@ -464,7 +496,8 @@ async fn test_video_streaming_with_metrics() -> Result<(), Box<dyn std::error::E
                     // Extract detections
                     if let Some(output) = result.data_outputs.get("video_proc") {
                         if let Some(data_buffer::DataType::Json(json_data)) = &output.data_type {
-                            let json: serde_json::Value = serde_json::from_str(&json_data.json_payload)?;
+                            let json: serde_json::Value =
+                                serde_json::from_str(&json_data.json_payload)?;
                             total_detections += json["detection_count"].as_u64().unwrap();
                         }
                     }
@@ -472,10 +505,10 @@ async fn test_video_streaming_with_metrics() -> Result<(), Box<dyn std::error::E
                 }
                 Some(StreamResponseType::Metrics(metrics)) => {
                     received_metrics = true;
-                    println!("📊 Metrics: chunks={}, total_items={}, avg_latency={}ms",
-                        metrics.chunks_processed,
-                        metrics.total_items,
-                        metrics.average_latency_ms);
+                    println!(
+                        "📊 Metrics: chunks={}, total_items={}, avg_latency={}ms",
+                        metrics.chunks_processed, metrics.total_items, metrics.average_latency_ms
+                    );
                 }
                 Some(StreamResponseType::Error(err)) => {
                     panic!("Error: {}", err.message);
@@ -490,7 +523,8 @@ async fn test_video_streaming_with_metrics() -> Result<(), Box<dyn std::error::E
         request: Some(StreamRequestType::Control(StreamControl {
             command: Command::Close as i32,
         })),
-    }).await?;
+    })
+    .await?;
 
     // Final metrics
     if let Some(resp) = response_stream.message().await? {
@@ -516,8 +550,10 @@ async fn test_video_streaming_with_metrics() -> Result<(), Box<dyn std::error::E
         println!("ℹ️  No periodic metrics received (stream may have been too short)");
     }
 
-    println!("✅ End-to-end test complete: {} frames, {} total detections",
-        num_frames, total_detections);
+    println!(
+        "✅ End-to-end test complete: {} frames, {} total detections",
+        num_frames, total_detections
+    );
 
     Ok(())
 }
@@ -576,7 +612,8 @@ async fn test_multimodal_audio_video_to_text() -> Result<(), Box<dyn std::error:
             resource_limits: None,
             expected_chunk_size: 0,
         })),
-    }).await?;
+    })
+    .await?;
 
     // Wait for StreamReady
     if let Some(resp) = response_stream.message().await? {
@@ -622,7 +659,8 @@ async fn test_multimodal_audio_video_to_text() -> Result<(), Box<dyn std::error:
                 timestamp_ms: 0,
                 named_buffers,
             })),
-        }).await?;
+        })
+        .await?;
 
         // Receive result
         if let Some(resp) = response_stream.message().await? {
@@ -633,13 +671,19 @@ async fn test_multimodal_audio_video_to_text() -> Result<(), Box<dyn std::error:
                             Some(data_buffer::DataType::Text(text_buffer)) => {
                                 println!("  ✅ Text output: {} bytes", text_buffer.text_data.len());
                                 let preview = String::from_utf8_lossy(&text_buffer.text_data);
-                                println!("  📄 Preview: {}", &preview.chars().take(50).collect::<String>());
+                                println!(
+                                    "  📄 Preview: {}",
+                                    &preview.chars().take(50).collect::<String>()
+                                );
                             }
                             Some(data_buffer::DataType::Json(json_data)) => {
                                 println!("  ✅ JSON output: {}", json_data.json_payload);
                             }
                             _ => {
-                                println!("  ✅ Received output (type: {:?})", output.data_type.as_ref().map(|_| "DataBuffer"));
+                                println!(
+                                    "  ✅ Received output (type: {:?})",
+                                    output.data_type.as_ref().map(|_| "DataBuffer")
+                                );
                             }
                         }
                     }
@@ -657,7 +701,8 @@ async fn test_multimodal_audio_video_to_text() -> Result<(), Box<dyn std::error:
         request: Some(StreamRequestType::Control(StreamControl {
             command: Command::Close as i32,
         })),
-    }).await?;
+    })
+    .await?;
 
     // Wait for close confirmation
     if let Some(resp) = response_stream.message().await? {
@@ -702,7 +747,7 @@ async fn test_audio_video_synchronization() -> Result<(), Box<dyn std::error::Er
             host: String::new(),
             runtime_hint: 0,
             input_types: vec![1, 2], // AUDIO=1, VIDEO=2
-            output_types: vec![3], // JSON=3
+            output_types: vec![3],   // JSON=3
         }],
         connections: vec![],
     };
@@ -723,7 +768,8 @@ async fn test_audio_video_synchronization() -> Result<(), Box<dyn std::error::Er
             resource_limits: None,
             expected_chunk_size: 0,
         })),
-    }).await?;
+    })
+    .await?;
 
     // Wait for ready
     let session_id = if let Some(resp) = response_stream.message().await? {
@@ -750,10 +796,7 @@ async fn test_audio_video_synchronization() -> Result<(), Box<dyn std::error::Er
 
         // Create audio buffer (100ms @ 16kHz)
         let samples_f32 = vec![0.0f32; 1600]; // 100ms @ 16kHz
-        let samples_bytes: Vec<u8> = samples_f32
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect();
+        let samples_bytes: Vec<u8> = samples_f32.iter().flat_map(|f| f.to_le_bytes()).collect();
 
         let audio = AudioBuffer {
             samples: samples_bytes,
@@ -798,7 +841,8 @@ async fn test_audio_video_synchronization() -> Result<(), Box<dyn std::error::Er
                 timestamp_ms: 0,
                 named_buffers,
             })),
-        }).await?;
+        })
+        .await?;
 
         // Receive sync report
         if let Some(resp) = response_stream.message().await? {
@@ -806,12 +850,15 @@ async fn test_audio_video_synchronization() -> Result<(), Box<dyn std::error::Er
                 Some(StreamResponseType::Result(result)) => {
                     if let Some(output) = result.data_outputs.get("sync_node") {
                         if let Some(data_buffer::DataType::Json(json_data)) = &output.data_type {
-                            let report: serde_json::Value = serde_json::from_str(&json_data.json_payload)?;
+                            let report: serde_json::Value =
+                                serde_json::from_str(&json_data.json_payload)?;
 
-                            println!("  ✅ Sync Status: is_synced={}, quality={}, offset={}ms",
+                            println!(
+                                "  ✅ Sync Status: is_synced={}, quality={}, offset={}ms",
                                 report["sync_status"]["is_synced"],
                                 report["sync_status"]["quality"],
-                                report["sync_status"]["offset_ms"]);
+                                report["sync_status"]["offset_ms"]
+                            );
 
                             if let Some(rec) = report["recommendation"].as_str() {
                                 println!("  💡 Recommendation: {}", rec);
@@ -819,9 +866,13 @@ async fn test_audio_video_synchronization() -> Result<(), Box<dyn std::error::Er
 
                             // Validate expected results
                             let expected_synced = video_ts.abs() <= 20_000;
-                            let actual_synced = report["sync_status"]["is_synced"].as_bool().unwrap();
-                            assert_eq!(actual_synced, expected_synced,
-                                "Expected is_synced={} but got {}", expected_synced, actual_synced);
+                            let actual_synced =
+                                report["sync_status"]["is_synced"].as_bool().unwrap();
+                            assert_eq!(
+                                actual_synced, expected_synced,
+                                "Expected is_synced={} but got {}",
+                                expected_synced, actual_synced
+                            );
                         }
                     }
                 }
@@ -838,7 +889,8 @@ async fn test_audio_video_synchronization() -> Result<(), Box<dyn std::error::Er
         request: Some(StreamRequestType::Control(StreamControl {
             command: Command::Close as i32,
         })),
-    }).await?;
+    })
+    .await?;
 
     // Wait for close confirmation
     if let Some(resp) = response_stream.message().await? {

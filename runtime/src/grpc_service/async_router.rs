@@ -3,15 +3,17 @@
 //! This module replaces the blocking route_to_downstream with a truly
 //! asynchronous implementation that processes each yielded item immediately.
 
-use crate::data::{RuntimeData, convert_runtime_to_proto_data};
-use crate::grpc_service::streaming::{StreamSession};
-use crate::grpc_service::generated::{StreamResponse, stream_response::Response as StreamResponseType, ChunkResult};
+use crate::data::{convert_runtime_to_proto_data, RuntimeData};
+use crate::grpc_service::generated::{
+    stream_response::Response as StreamResponseType, ChunkResult, StreamResponse,
+};
+use crate::grpc_service::streaming::StreamSession;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
-use tracing::{info, error, debug};
 use tonic::Status;
+use tracing::{debug, error, info};
 
 /// Result type for routing operations
 type RouterResult = Result<(), Status>;
@@ -48,38 +50,45 @@ impl NodeRunner {
     ) -> RouterResult {
         if self.is_streaming {
             // Streaming node - emit multiple outputs
-            info!("🔄 Streaming node '{}' processing packet (seq: {})",
-                  self.node_id, packet.sequence);
+            info!(
+                "🔄 Streaming node '{}' processing packet (seq: {})",
+                self.node_id, packet.sequence
+            );
 
             let mut output_count = 0;
             let node_id = self.node_id.clone();
             let base_sequence = packet.sequence;
             let session_id = packet.session_id.clone();
 
-            let result = self.node.process_streaming_async(
-                packet.data,
-                session_id.clone(),
-                Box::new(move |output| {
-                    output_count += 1;
-                    let output_packet = DataPacket {
-                        data: output,
-                        from_node: node_id.clone(),
-                        session_id: session_id.clone(),
-                        sequence: base_sequence,
-                        sub_sequence: output_count,
-                    };
+            let result = self
+                .node
+                .process_streaming_async(
+                    packet.data,
+                    session_id.clone(),
+                    Box::new(move |output| {
+                        output_count += 1;
+                        let output_packet = DataPacket {
+                            data: output,
+                            from_node: node_id.clone(),
+                            session_id: session_id.clone(),
+                            sequence: base_sequence,
+                            sub_sequence: output_count,
+                        };
 
-                    debug!("📤 Node '{}' yielding output {} (seq: {}.{})",
-                           node_id, output_count, base_sequence, output_count);
+                        debug!(
+                            "📤 Node '{}' yielding output {} (seq: {}.{})",
+                            node_id, output_count, base_sequence, output_count
+                        );
 
-                    // Send immediately - this won't block on unbounded channel
-                    if let Err(e) = output_tx.send(output_packet) {
-                        error!("Failed to send output: {}", e);
-                        return Err(crate::Error::Execution("Channel closed".into()));
-                    }
-                    Ok(())
-                })
-            ).await;
+                        // Send immediately - this won't block on unbounded channel
+                        if let Err(e) = output_tx.send(output_packet) {
+                            error!("Failed to send output: {}", e);
+                            return Err(crate::Error::Execution("Channel closed".into()));
+                        }
+                        Ok(())
+                    }),
+                )
+                .await;
 
             match result {
                 Ok(count) => {
@@ -103,10 +112,13 @@ impl NodeRunner {
                         sub_sequence: 0,
                     };
 
-                    debug!("📤 Node '{}' emitting single output (seq: {})",
-                           self.node_id, packet.sequence);
+                    debug!(
+                        "📤 Node '{}' emitting single output (seq: {})",
+                        self.node_id, packet.sequence
+                    );
 
-                    output_tx.send(output_packet)
+                    output_tx
+                        .send(output_packet)
                         .map_err(|e| Status::internal(format!("Send failed: {}", e)))?;
                     Ok(())
                 }
@@ -169,7 +181,8 @@ impl AsyncRouter {
         };
 
         // Process the initial packet and any resulting packets
-        router_tx.send(initial_packet)
+        router_tx
+            .send(initial_packet)
             .map_err(|e| Status::internal(format!("Failed to send initial packet: {}", e)))?;
 
         // Process packets as they arrive (including those generated by streaming nodes)
@@ -179,10 +192,15 @@ impl AsyncRouter {
 
             if let Some((next_node_id, next_node)) = downstream_node {
                 // There's a downstream node - process through it
-                info!("🔀 Routing from '{}' → '{}'", packet.from_node, next_node_id);
+                info!(
+                    "🔀 Routing from '{}' → '{}'",
+                    packet.from_node, next_node_id
+                );
 
                 // Check if it's a streaming node
-                let is_streaming = self.registry.is_multi_output_streaming(&next_node.node_type());
+                let is_streaming = self
+                    .registry
+                    .is_multi_output_streaming(&next_node.node_type());
 
                 // Create a node runner
                 let runner = NodeRunner {
@@ -205,11 +223,12 @@ impl AsyncRouter {
                 });
 
                 self.tasks.push(task);
-
             } else {
                 // No downstream - this is a terminal node, send to client
-                info!("📤 Terminal output from '{}' (seq: {}.{})",
-                      packet.from_node, packet.sequence, packet.sub_sequence);
+                info!(
+                    "📤 Terminal output from '{}' (seq: {}.{})",
+                    packet.from_node, packet.sequence, packet.sub_sequence
+                );
 
                 self.send_to_client(packet).await?;
             }
@@ -232,7 +251,10 @@ impl AsyncRouter {
         let mut session = self.session.lock().await;
 
         // Find connection in manifest
-        let next_node_id = session.manifest.connections.iter()
+        let next_node_id = session
+            .manifest
+            .connections
+            .iter()
             .find(|c| c.from == from_node_id)
             .map(|c| c.to.clone());
 
@@ -245,14 +267,23 @@ impl AsyncRouter {
             } else {
                 // Create new node
                 session.cache_misses += 1;
-                let spec = session.manifest.nodes.iter()
+                let spec = session
+                    .manifest
+                    .nodes
+                    .iter()
                     .find(|n| n.id == next_id)
-                    .ok_or_else(|| Status::internal(format!("Node spec not found for '{}'", next_id)))?;
+                    .ok_or_else(|| {
+                        Status::internal(format!("Node spec not found for '{}'", next_id))
+                    })?;
 
                 // Pass session_id for multiprocess execution
                 let session_id = Some(session.session_id.clone());
-                let node = self.registry.create_node(&spec.node_type, next_id.clone(), &spec.params, session_id)
-                    .map_err(|e| Status::internal(format!("Failed to create node '{}': {}", next_id, e)))?;
+                let node = self
+                    .registry
+                    .create_node(&spec.node_type, next_id.clone(), &spec.params, session_id)
+                    .map_err(|e| {
+                        Status::internal(format!("Failed to create node '{}': {}", next_id, e))
+                    })?;
 
                 let arc_node = Arc::new(node);
                 session.node_cache.insert(next_id.clone(), arc_node.clone());
@@ -282,7 +313,8 @@ impl AsyncRouter {
             response: Some(StreamResponseType::Result(chunk_result)),
         };
 
-        self.client_tx.send(Ok(response))
+        self.client_tx
+            .send(Ok(response))
             .await
             .map_err(|_| Status::internal("Failed to send to client"))?;
 
@@ -301,8 +333,13 @@ pub async fn route_to_downstream_async(
     session_id: String,
     base_sequence: u64,
 ) -> Result<(), Status> {
-    info!("🚀 Starting async route_to_downstream from '{}'", from_node_id);
+    info!(
+        "🚀 Starting async route_to_downstream from '{}'",
+        from_node_id
+    );
 
     let mut router = AsyncRouter::new(streaming_registry, session, tx);
-    router.route_from_node(output_data, from_node_id, Some(session_id), base_sequence).await
+    router
+        .route_from_node(output_data, from_node_id, Some(session_id), base_sequence)
+        .await
 }

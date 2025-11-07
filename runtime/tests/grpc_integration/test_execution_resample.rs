@@ -6,8 +6,7 @@
 #![cfg(feature = "grpc-transport")]
 
 use remotemedia_runtime::grpc_service::generated::{
-    ExecuteRequest, PipelineManifest, AudioBuffer, AudioFormat, NodeManifest,
-    ExecutionStatus,
+    AudioBuffer, AudioFormat, ExecuteRequest, ExecutionStatus, NodeManifest, PipelineManifest,
 };
 
 #[tokio::test]
@@ -17,19 +16,17 @@ async fn test_resample_44100_to_16000() {
     let manifest = PipelineManifest {
         version: "1.0".to_string(),
         metadata: None,
-        nodes: vec![
-            NodeManifest {
-                id: "resample".to_string(),
-                node_type: "AudioResample".to_string(),
-                params: r#"{"target_sample_rate": 16000}"#.to_string(),
-                is_streaming: false,
-                capabilities: None,
-                host: String::new(),
-                runtime_hint: 0, // Native
-                input_types: vec![1], // Audio
-                output_types: vec![1], // Audio
-            },
-        ],
+        nodes: vec![NodeManifest {
+            id: "resample".to_string(),
+            node_type: "AudioResample".to_string(),
+            params: r#"{"target_sample_rate": 16000}"#.to_string(),
+            is_streaming: false,
+            capabilities: None,
+            host: String::new(),
+            runtime_hint: 0,       // Native
+            input_types: vec![1],  // Audio
+            output_types: vec![1], // Audio
+        }],
         connections: vec![],
     };
 
@@ -43,10 +40,7 @@ async fn test_resample_44100_to_16000() {
     }
 
     // Convert to bytes
-    let samples_bytes: Vec<u8> = samples_f32
-        .iter()
-        .flat_map(|f| f.to_le_bytes())
-        .collect();
+    let samples_bytes: Vec<u8> = samples_f32.iter().flat_map(|f| f.to_le_bytes()).collect();
 
     let audio_input = AudioBuffer {
         samples: samples_bytes,
@@ -65,11 +59,11 @@ async fn test_resample_44100_to_16000() {
 
     // TODO: Call ExecutePipeline service once implemented
     // let response = service.execute_pipeline(request).await.unwrap();
-    
+
     // Verify response
     // assert_eq!(response.status, ExecutionStatus::Success as i32);
     // assert!(response.data_outputs.contains_key("resample"));
-    
+
     // let output = &response.data_outputs["resample"];
     // Expected: 16000 samples for 1 second of 16kHz audio
     // assert_eq!(output.sample_rate, 16000);
@@ -83,8 +77,9 @@ fn test_resample_ratio_calculation() {
     let output_rate = 16000;
     let input_samples = 44100; // 1 second
 
-    let expected_output_samples = (input_samples as f64 * output_rate as f64 / input_rate as f64) as usize;
-    
+    let expected_output_samples =
+        (input_samples as f64 * output_rate as f64 / input_rate as f64) as usize;
+
     // Should be approximately 16000 samples
     assert!((expected_output_samples as i32 - 16000).abs() < 10);
 }

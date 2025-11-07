@@ -6,13 +6,13 @@
 //! without blocking other nodes.
 
 use crate::data::RuntimeData;
-use crate::nodes::{StreamingNode, AsyncStreamingNode};
+use crate::nodes::{AsyncStreamingNode, StreamingNode};
 use crate::Error;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
-use tracing::{info, error, debug};
+use tracing::{debug, error, info};
 
 /// Represents a single item flowing through the pipeline
 #[derive(Clone, Debug)]
@@ -62,10 +62,16 @@ impl AsyncNodeExecutor {
     /// Run the node executor in its own task
     /// This continuously processes items from the input queue
     pub async fn run(mut self) -> Result<(), Error> {
-        info!("🚀 AsyncNodeExecutor '{}' starting (streaming: {})", self.node_id, self.is_streaming);
+        info!(
+            "🚀 AsyncNodeExecutor '{}' starting (streaming: {})",
+            self.node_id, self.is_streaming
+        );
 
         while let Some(item) = self.input_rx.recv().await {
-            debug!("📥 Node '{}' received item {} (seq: {})", self.node_id, item.id, item.sequence);
+            debug!(
+                "📥 Node '{}' received item {} (seq: {})",
+                self.node_id, item.id, item.sequence
+            );
 
             if self.is_streaming {
                 // Streaming node - use callback to emit multiple outputs
@@ -75,39 +81,51 @@ impl AsyncNodeExecutor {
                 let sequence = item.sequence;
 
                 let mut output_count = 0;
-                let result = self.node.process_streaming_async(
-                    item.data,
-                    item.session_id.clone(),
-                    Box::new(move |output| {
-                        output_count += 1;
-                        let output_item = PipelineItem {
-                            id: format!("{}_output_{}", item_id, output_count),
-                            data: output,
-                            session_id: item.session_id.clone(),
-                            sequence: sequence * 1000 + output_count as u64, // Sub-sequence for ordering
-                        };
+                let result = self
+                    .node
+                    .process_streaming_async(
+                        item.data,
+                        item.session_id.clone(),
+                        Box::new(move |output| {
+                            output_count += 1;
+                            let output_item = PipelineItem {
+                                id: format!("{}_output_{}", item_id, output_count),
+                                data: output,
+                                session_id: item.session_id.clone(),
+                                sequence: sequence * 1000 + output_count as u64, // Sub-sequence for ordering
+                            };
 
-                        debug!("📤 Node '{}' emitting output {} (seq: {})",
-                               node_id, output_item.id, output_item.sequence);
+                            debug!(
+                                "📤 Node '{}' emitting output {} (seq: {})",
+                                node_id, output_item.id, output_item.sequence
+                            );
 
-                        // Send to all downstream nodes
-                        for tx in &output_txs {
-                            if let Err(e) = tx.send(output_item.clone()) {
-                                error!("Failed to send output from '{}': {}", node_id, e);
-                                return Err(Error::Execution(format!("Channel send failed: {}", e)));
+                            // Send to all downstream nodes
+                            for tx in &output_txs {
+                                if let Err(e) = tx.send(output_item.clone()) {
+                                    error!("Failed to send output from '{}': {}", node_id, e);
+                                    return Err(Error::Execution(format!(
+                                        "Channel send failed: {}",
+                                        e
+                                    )));
+                                }
                             }
-                        }
-                        Ok(())
-                    })
-                ).await;
+                            Ok(())
+                        }),
+                    )
+                    .await;
 
                 if let Err(e) = result {
-                    error!("Streaming node '{}' failed processing item {}: {}", self.node_id, item.id, e);
+                    error!(
+                        "Streaming node '{}' failed processing item {}: {}",
+                        self.node_id, item.id, e
+                    );
                 }
 
-                info!("✅ Node '{}' streamed {} outputs for item {}",
-                      self.node_id, output_count, item.id);
-
+                info!(
+                    "✅ Node '{}' streamed {} outputs for item {}",
+                    self.node_id, output_count, item.id
+                );
             } else {
                 // Non-streaming node - single output
                 match self.node.process_async(item.data).await {
@@ -119,8 +137,10 @@ impl AsyncNodeExecutor {
                             sequence: item.sequence,
                         };
 
-                        debug!("📤 Node '{}' emitting single output {} (seq: {})",
-                               self.node_id, output_item.id, output_item.sequence);
+                        debug!(
+                            "📤 Node '{}' emitting single output {} (seq: {})",
+                            self.node_id, output_item.id, output_item.sequence
+                        );
 
                         // Send to all downstream nodes
                         for tx in &self.output_txs {
@@ -130,13 +150,19 @@ impl AsyncNodeExecutor {
                         }
                     }
                     Err(e) => {
-                        error!("Node '{}' failed processing item {}: {}", self.node_id, item.id, e);
+                        error!(
+                            "Node '{}' failed processing item {}: {}",
+                            self.node_id, item.id, e
+                        );
                     }
                 }
             }
         }
 
-        info!("🛑 AsyncNodeExecutor '{}' shutting down (input channel closed)", self.node_id);
+        info!(
+            "🛑 AsyncNodeExecutor '{}' shutting down (input channel closed)",
+            self.node_id
+        );
         Ok(())
     }
 }
@@ -171,7 +197,10 @@ impl AsyncPipelineBuilder {
 
     /// Connect two nodes
     pub fn connect(&mut self, from: String, to: String) -> &mut Self {
-        self.connections.entry(from).or_insert_with(Vec::new).push(to);
+        self.connections
+            .entry(from)
+            .or_insert_with(Vec::new)
+            .push(to);
         self
     }
 
@@ -199,7 +228,9 @@ impl AsyncPipelineBuilder {
             node_inputs.insert(node_id.clone(), rx);
 
             // Store the sender for upstream nodes to use
-            if let Some(upstream_nodes) = self.connections.iter()
+            if let Some(upstream_nodes) = self
+                .connections
+                .iter()
                 .filter(|(_, downstream)| downstream.contains(node_id))
                 .map(|(upstream, _)| upstream.clone())
                 .collect::<Vec<_>>()
@@ -230,7 +261,8 @@ impl AsyncPipelineBuilder {
 
         // Add client output for terminal nodes
         for terminal in &self.terminal_nodes {
-            node_outputs.entry(terminal.clone())
+            node_outputs
+                .entry(terminal.clone())
                 .or_insert_with(Vec::new)
                 .push(client_tx.clone());
         }
@@ -240,7 +272,9 @@ impl AsyncPipelineBuilder {
         for (node_id, node) in self.nodes {
             if let Some(input_rx) = node_inputs.remove(&node_id) {
                 let output_txs = node_outputs.remove(&node_id).unwrap_or_default();
-                let is_streaming = self.streaming_types.iter()
+                let is_streaming = self
+                    .streaming_types
+                    .iter()
                     .any(|t| node.node_type().contains(t));
 
                 let executor = AsyncNodeExecutor::new(
@@ -286,7 +320,10 @@ impl AsyncPipeline {
             tx.send(item)
                 .map_err(|e| Error::Execution(format!("Failed to send input: {}", e)))?;
         } else {
-            return Err(Error::Execution(format!("No input sender for node '{}'", node_id)));
+            return Err(Error::Execution(format!(
+                "No input sender for node '{}'",
+                node_id
+            )));
         }
         Ok(())
     }

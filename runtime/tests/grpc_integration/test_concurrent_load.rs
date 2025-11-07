@@ -12,11 +12,12 @@
 #![cfg(feature = "grpc-transport")]
 
 use remotemedia_runtime::grpc_service::generated::{
-    pipeline_execution_service_client::PipelineExecutionServiceClient, AudioFormat, ExecuteRequest,
-    ManifestMetadata, NodeManifest, PipelineManifest, DataBuffer, data_buffer, AudioBuffer, JsonData,
+    data_buffer, pipeline_execution_service_client::PipelineExecutionServiceClient, AudioBuffer,
+    AudioFormat, DataBuffer, ExecuteRequest, JsonData, ManifestMetadata, NodeManifest,
+    PipelineManifest,
 };
-use std::time::{Duration, Instant};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tokio::time::timeout;
 
 /// Helper to create a simple test manifest
@@ -36,8 +37,8 @@ fn create_test_manifest(id_suffix: usize) -> PipelineManifest {
             capabilities: None,
             host: String::new(),
             runtime_hint: 0,
-                input_types: vec![1], // Audio
-                output_types: vec![1], // Audio
+            input_types: vec![1],  // Audio
+            output_types: vec![1], // Audio
         }],
         connections: vec![],
     }
@@ -71,20 +72,20 @@ fn create_execute_request(id_suffix: usize) -> ExecuteRequest {
 async fn test_100_concurrent_requests() {
     // Start test server
     let server_addr = crate::grpc_integration::test_helpers::start_test_server().await;
-    
+
     // Give server time to start
     tokio::time::sleep(Duration::from_millis(100)).await;
-    
+
     println!("=== T031: Load Test - 100 Concurrent Requests ===");
-    
+
     let start_time = Instant::now();
-    
+
     // Spawn 100 concurrent tasks
     let mut handles = vec![];
-    
+
     for i in 0..100 {
         let addr = server_addr.clone();
-        
+
         let handle = tokio::spawn(async move {
             // Connect client
             let mut client = timeout(
@@ -94,24 +95,25 @@ async fn test_100_concurrent_requests() {
             .await
             .expect("Connection timeout")
             .expect("Failed to connect");
-            
+
             // Create request
             let request = tonic::Request::new(create_execute_request(i));
-            
+
             // Execute pipeline
             let response = timeout(Duration::from_secs(5), client.execute_pipeline(request))
                 .await
                 .expect("Request timeout")
                 .expect("RPC failed");
-            
+
             let response = response.into_inner();
-            
+
             // Verify response
             use remotemedia_runtime::grpc_service::generated::execute_response::Outcome;
             match response.outcome {
                 Some(Outcome::Result(result)) => {
                     assert_eq!(
-                        result.status, 1, // EXECUTION_STATUS_SUCCESS
+                        result.status,
+                        1, // EXECUTION_STATUS_SUCCESS
                         "Client {}: Execution failed",
                         i
                     );
@@ -123,17 +125,17 @@ async fn test_100_concurrent_requests() {
                     panic!("Client {}: No result or error in response", i);
                 }
             }
-            
+
             i // Return client ID for tracking
         });
-        
+
         handles.push(handle);
     }
-    
+
     // Wait for all tasks to complete
     let mut successful = 0;
     let mut failed = 0;
-    
+
     for (i, handle) in handles.into_iter().enumerate() {
         match handle.await {
             Ok(client_id) => {
@@ -148,16 +150,16 @@ async fn test_100_concurrent_requests() {
             }
         }
     }
-    
+
     let elapsed = start_time.elapsed();
-    
+
     println!("\n=== Load Test Results ===");
     println!("  Total requests: 100");
     println!("  Successful: {}", successful);
     println!("  Failed: {}", failed);
     println!("  Total time: {:?}", elapsed);
     println!("  Average latency: {:?}", elapsed / 100);
-    
+
     // Assertions
     assert_eq!(
         successful, 100,
@@ -165,14 +167,14 @@ async fn test_100_concurrent_requests() {
         successful
     );
     assert_eq!(failed, 0, "Expected 0 failures, got {}", failed);
-    
+
     // Performance check: 100 requests should complete in reasonable time
     assert!(
         elapsed < Duration::from_secs(30),
         "100 concurrent requests took too long: {:?}",
         elapsed
     );
-    
+
     println!("\n✅ T031 PASSED: All 100 concurrent requests succeeded");
 }
 
@@ -181,9 +183,9 @@ async fn test_concurrent_with_audio_input() {
     // Start test server
     let server_addr = crate::grpc_integration::test_helpers::start_test_server().await;
     tokio::time::sleep(Duration::from_millis(100)).await;
-    
+
     println!("\n=== T031b: Concurrent Requests with Audio Input ===");
-    
+
     // Create test audio buffer (1 second at 16kHz, mono, f32)
     let sample_rate = 16000;
     let duration_sec = 1;
@@ -191,25 +193,22 @@ async fn test_concurrent_with_audio_input() {
     let samples: Vec<f32> = (0..num_samples)
         .map(|i| (i as f32 * 440.0 * 2.0 * std::f32::consts::PI / sample_rate as f32).sin() * 0.5)
         .collect();
-    
-    let audio_bytes: Vec<u8> = samples
-        .iter()
-        .flat_map(|&f| f.to_le_bytes())
-        .collect();
-    
+
+    let audio_bytes: Vec<u8> = samples.iter().flat_map(|&f| f.to_le_bytes()).collect();
+
     let start_time = Instant::now();
     let mut handles = vec![];
-    
+
     // Spawn 50 concurrent requests with audio (more expensive operation)
     for i in 0..50 {
         let addr = server_addr.clone();
         let audio_data = audio_bytes.clone();
-        
+
         let handle = tokio::spawn(async move {
             let mut client = PipelineExecutionServiceClient::connect(format!("http://{}", addr))
                 .await
                 .expect("Failed to connect");
-            
+
             // Create manifest with PassThrough node
             let manifest = PipelineManifest {
                 version: "v1".to_string(),
@@ -226,12 +225,12 @@ async fn test_concurrent_with_audio_input() {
                     capabilities: None,
                     host: String::new(),
                     runtime_hint: 0,
-                input_types: vec![1], // Audio
-                output_types: vec![1], // Audio
+                    input_types: vec![1],  // Audio
+                    output_types: vec![1], // Audio
                 }],
                 connections: vec![],
             };
-            
+
             let audio_buffer = AudioBuffer {
                 samples: audio_data,
                 sample_rate: 16000,
@@ -255,22 +254,25 @@ async fn test_concurrent_with_audio_input() {
                 resource_limits: None,
                 client_version: "test-v1".to_string(),
             });
-            
+
             let response = timeout(Duration::from_secs(10), client.execute_pipeline(request))
                 .await
                 .expect("Request timeout")
                 .expect("RPC failed");
-            
+
             let result = response.into_inner();
             use remotemedia_runtime::grpc_service::generated::execute_response::Outcome;
-            assert!(matches!(result.outcome, Some(Outcome::Result(_))), "No successful result");
-            
+            assert!(
+                matches!(result.outcome, Some(Outcome::Result(_))),
+                "No successful result"
+            );
+
             i
         });
-        
+
         handles.push(handle);
     }
-    
+
     // Wait for completion
     let mut successful = 0;
     for handle in handles {
@@ -278,15 +280,15 @@ async fn test_concurrent_with_audio_input() {
             successful += 1;
         }
     }
-    
+
     let elapsed = start_time.elapsed();
-    
+
     println!("\n=== Audio Load Test Results ===");
     println!("  Total requests: 50");
     println!("  Successful: {}", successful);
     println!("  Total time: {:?}", elapsed);
-    
+
     assert_eq!(successful, 50, "Expected 50 successful audio requests");
-    
+
     println!("\n✅ T031b PASSED: All 50 concurrent audio requests succeeded");
 }

@@ -36,7 +36,8 @@ mod ipc_tests {
 
         // Initialize the node (spawns Python process)
         println!("🚀 Initializing executor with EchoNode...");
-        executor.initialize(&ctx)
+        executor
+            .initialize(&ctx)
             .await
             .expect("Failed to initialize node");
         println!("✅ Executor initialized");
@@ -82,9 +83,7 @@ mod ipc_tests {
         }
 
         // Cleanup
-        executor.cleanup()
-            .await
-            .expect("Failed to cleanup");
+        executor.cleanup().await.expect("Failed to cleanup");
     }
 
     /// Test IPC communication with audio data
@@ -106,7 +105,8 @@ mod ipc_tests {
         };
 
         // Initialize
-        executor.initialize(&ctx)
+        executor
+            .initialize(&ctx)
             .await
             .expect("Failed to initialize node");
 
@@ -114,10 +114,7 @@ mod ipc_tests {
 
         // Create test audio data
         let samples: Vec<f32> = (0..1000).map(|i| (i as f32) * 0.001).collect();
-        let samples_bytes: Vec<u8> = samples
-            .iter()
-            .flat_map(|&f| f.to_le_bytes())
-            .collect();
+        let samples_bytes: Vec<u8> = samples.iter().flat_map(|&f| f.to_le_bytes()).collect();
 
         let audio_input = RuntimeData::Audio(AudioBuffer {
             samples: samples_bytes,
@@ -157,9 +154,7 @@ mod ipc_tests {
         }
 
         // Cleanup
-        executor.cleanup()
-            .await
-            .expect("Failed to cleanup");
+        executor.cleanup().await.expect("Failed to cleanup");
     }
 
     /// Test that IPC channels are properly created with correct names
@@ -167,7 +162,9 @@ mod ipc_tests {
     async fn test_ipc_channel_creation() {
         // Create and initialize channel registry directly
         let mut registry = ChannelRegistry::new();
-        registry.initialize().expect("Failed to initialize channel registry");
+        registry
+            .initialize()
+            .expect("Failed to initialize channel registry");
 
         // Create test channels
         let channel = registry
@@ -194,17 +191,13 @@ mod ipc_tests {
         let test_data = IPCData::text("Test message", "test_session");
 
         println!("📤 Publishing test message...");
-        publisher
-            .publish(test_data)
-            .expect("Failed to publish");
+        publisher.publish(test_data).expect("Failed to publish");
 
         // Give it a moment
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         println!("📥 Attempting to receive...");
-        let received = subscriber
-            .receive()
-            .expect("Failed to receive");
+        let received = subscriber.receive().expect("Failed to receive");
 
         assert!(received.is_some(), "Should receive published data");
         if let Some(data) = received {
@@ -213,4 +206,3 @@ mod ipc_tests {
         }
     }
 }
-

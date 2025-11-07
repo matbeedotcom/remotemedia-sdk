@@ -3,13 +3,13 @@
 //! Provides a simple MockTransport that implements PipelineTransport
 //! for testing core functionality without real transport overhead.
 
-use remotemedia_runtime_core::transport::{
-    PipelineTransport, StreamSession, TransportData, PipelineRunner,
-};
+use async_trait::async_trait;
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::manifest::Manifest;
+use remotemedia_runtime_core::transport::{
+    PipelineRunner, PipelineTransport, StreamSession, TransportData,
+};
 use remotemedia_runtime_core::{Error, Result};
-use async_trait::async_trait;
 use std::sync::Arc;
 
 /// Mock transport for testing
@@ -59,10 +59,7 @@ impl PipelineTransport for MockTransport {
         Ok(output)
     }
 
-    async fn stream(
-        &self,
-        manifest: Arc<Manifest>,
-    ) -> Result<Box<dyn StreamSession>> {
+    async fn stream(&self, manifest: Arc<Manifest>) -> Result<Box<dyn StreamSession>> {
         let session = self.runner.create_stream_session(manifest).await?;
         Ok(Box::new(session))
     }

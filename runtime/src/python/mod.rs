@@ -34,7 +34,9 @@ pub use ffi::*;
 pub use cpython_executor::CPythonNodeExecutor;
 
 pub use node_executor::PythonNodeInstance;
-pub use runtime_data_py::{py_to_runtime_data, runtime_data_to_py, runtime_data_to_py_with_session, PyRuntimeData};
+pub use runtime_data_py::{
+    py_to_runtime_data, runtime_data_to_py, runtime_data_to_py_with_session, PyRuntimeData,
+};
 // pub use cpython_node::{CPythonNodeFactory, inputs_to_pydict, pydict_to_outputs};  // Archived in v0.2.1
 
 /// Multiprocess execution support modules (requires multiprocess feature)
@@ -50,11 +52,11 @@ pub mod multiprocess {
     pub mod process_manager;
 
     // Re-export commonly used types
+    pub use data_transfer::{DataType, RuntimeData};
+    pub use ipc_channel::{ChannelHandle, ChannelRegistry};
     pub use multiprocess_executor::{
-        MultiprocessExecutor, MultiprocessConfig, SessionState, SessionStatus,
-        InitProgress, InitStatus
+        InitProgress, InitStatus, MultiprocessConfig, MultiprocessExecutor, SessionState,
+        SessionStatus,
     };
     pub use process_manager::ProcessManager;
-    pub use data_transfer::{RuntimeData, DataType};
-    pub use ipc_channel::{ChannelRegistry, ChannelHandle};
 }

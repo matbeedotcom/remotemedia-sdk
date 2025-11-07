@@ -10,9 +10,9 @@
 // - StreamReady response contains session_id and buffer config
 
 use remotemedia_runtime::grpc_service::generated::{
-    AudioChunk, ChunkResult, StreamControl, StreamInit, StreamRequest, StreamResponse,
-    StreamReady, StreamMetrics, StreamClosed, stream_control::Command,
-    PipelineManifest, NodeManifest, AudioBuffer, AudioFormat, DataBuffer, data_buffer, JsonData,
+    data_buffer, stream_control::Command, AudioBuffer, AudioChunk, AudioFormat, ChunkResult,
+    DataBuffer, JsonData, NodeManifest, PipelineManifest, StreamClosed, StreamControl, StreamInit,
+    StreamMetrics, StreamReady, StreamRequest, StreamResponse,
 };
 use std::collections::HashMap;
 
@@ -23,19 +23,17 @@ fn test_stream_request_construction() {
     let manifest = PipelineManifest {
         version: "1.0.0".to_string(),
         metadata: None, // Optional
-        nodes: vec![
-            NodeManifest {
-                id: "input".to_string(),
-                node_type: "audio_input".to_string(),
-                params: "{}".to_string(),
-                is_streaming: true,
-                capabilities: None, // Optional
-                host: "".to_string(),
-                runtime_hint: 0, // RUNTIME_HINT_UNSPECIFIED
-                input_types: vec![],
-                output_types: vec![],
-            },
-        ],
+        nodes: vec![NodeManifest {
+            id: "input".to_string(),
+            node_type: "audio_input".to_string(),
+            params: "{}".to_string(),
+            is_streaming: true,
+            capabilities: None, // Optional
+            host: "".to_string(),
+            runtime_hint: 0, // RUNTIME_HINT_UNSPECIFIED
+            input_types: vec![],
+            output_types: vec![],
+        }],
         connections: vec![],
     };
 
@@ -48,7 +46,9 @@ fn test_stream_request_construction() {
     };
 
     let request = StreamRequest {
-        request: Some(remotemedia_runtime::grpc_service::generated::stream_request::Request::Init(init)),
+        request: Some(
+            remotemedia_runtime::grpc_service::generated::stream_request::Request::Init(init),
+        ),
     };
 
     // Verify we can extract the init message
@@ -68,9 +68,7 @@ fn test_audio_chunk_construction() {
     // Create audio buffer with F32 format (4 bytes per sample)
     // 1600 samples = 6400 bytes
     let samples_f32: Vec<f32> = vec![0.0; 1600];
-    let samples_bytes: Vec<u8> = samples_f32.iter()
-        .flat_map(|&s| s.to_le_bytes())
-        .collect();
+    let samples_bytes: Vec<u8> = samples_f32.iter().flat_map(|&s| s.to_le_bytes()).collect();
 
     let buffer = AudioBuffer {
         samples: samples_bytes,
@@ -88,11 +86,17 @@ fn test_audio_chunk_construction() {
     };
 
     let request = StreamRequest {
-        request: Some(remotemedia_runtime::grpc_service::generated::stream_request::Request::AudioChunk(chunk)),
+        request: Some(
+            remotemedia_runtime::grpc_service::generated::stream_request::Request::AudioChunk(
+                chunk,
+            ),
+        ),
     };
 
     match request.request {
-        Some(remotemedia_runtime::grpc_service::generated::stream_request::Request::AudioChunk(c)) => {
+        Some(
+            remotemedia_runtime::grpc_service::generated::stream_request::Request::AudioChunk(c),
+        ) => {
             assert_eq!(c.node_id, "input");
             assert_eq!(c.sequence, 42);
             assert_eq!(c.timestamp_ms, 4200);
@@ -114,7 +118,9 @@ fn test_stream_control_construction() {
     };
 
     let request = StreamRequest {
-        request: Some(remotemedia_runtime::grpc_service::generated::stream_request::Request::Control(control)),
+        request: Some(
+            remotemedia_runtime::grpc_service::generated::stream_request::Request::Control(control),
+        ),
     };
 
     match request.request {
@@ -142,7 +148,9 @@ fn test_stream_response_construction() {
     };
 
     let response = StreamResponse {
-        response: Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Ready(ready)),
+        response: Some(
+            remotemedia_runtime::grpc_service::generated::stream_response::Response::Ready(ready),
+        ),
     };
 
     match response.response {
@@ -159,9 +167,7 @@ fn test_stream_response_construction() {
 #[test]
 fn test_chunk_result_construction() {
     let samples_f32: Vec<f32> = vec![0.0; 1600];
-    let samples_bytes: Vec<u8> = samples_f32.iter()
-        .flat_map(|&s| s.to_le_bytes())
-        .collect();
+    let samples_bytes: Vec<u8> = samples_f32.iter().flat_map(|&s| s.to_le_bytes()).collect();
 
     let buffer = AudioBuffer {
         samples: samples_bytes,
@@ -191,11 +197,15 @@ fn test_chunk_result_construction() {
     };
 
     let response = StreamResponse {
-        response: Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Result(result)),
+        response: Some(
+            remotemedia_runtime::grpc_service::generated::stream_response::Response::Result(result),
+        ),
     };
 
     match response.response {
-        Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Result(r)) => {
+        Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Result(
+            r,
+        )) => {
             assert_eq!(r.sequence, 42);
             assert_eq!(r.processing_time_ms, 12.5);
             assert_eq!(r.total_items_processed, 67200);
@@ -225,11 +235,17 @@ fn test_stream_metrics_construction() {
     };
 
     let response = StreamResponse {
-        response: Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Metrics(metrics)),
+        response: Some(
+            remotemedia_runtime::grpc_service::generated::stream_response::Response::Metrics(
+                metrics,
+            ),
+        ),
     };
 
     match response.response {
-        Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Metrics(m)) => {
+        Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Metrics(
+            m,
+        )) => {
             assert_eq!(m.session_id, "session-123");
             assert_eq!(m.chunks_processed, 100);
             assert_eq!(m.average_latency_ms, 35.2);
@@ -252,11 +268,15 @@ fn test_stream_closed_construction() {
     };
 
     let response = StreamResponse {
-        response: Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Closed(closed)),
+        response: Some(
+            remotemedia_runtime::grpc_service::generated::stream_response::Response::Closed(closed),
+        ),
     };
 
     match response.response {
-        Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Closed(c)) => {
+        Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Closed(
+            c,
+        )) => {
             assert_eq!(c.session_id, "session-123");
             assert_eq!(c.reason, "Client requested close");
         }

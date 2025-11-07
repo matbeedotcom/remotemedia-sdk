@@ -10,8 +10,7 @@
 // - P95 latency is <80ms
 
 use remotemedia_runtime::grpc_service::generated::{
-    AudioChunk, AudioBuffer, AudioFormat, ChunkResult,
-    PipelineManifest, NodeManifest, StreamInit,
+    AudioBuffer, AudioChunk, AudioFormat, ChunkResult, NodeManifest, PipelineManifest, StreamInit,
 };
 use std::time::Instant;
 
@@ -20,9 +19,9 @@ use std::time::Instant;
 async fn test_streaming_latency_measurement() {
     // Simplified - validates server startup
     use super::test_helpers::start_test_server;
-    
+
     let _addr = start_test_server().await;
-    
+
     // Python client tests demonstrate <50ms latency (actual: ~0.04ms avg)
 }
 
@@ -31,9 +30,9 @@ async fn test_streaming_latency_measurement() {
 async fn test_chunk_result_timing() {
     // Simplified - validates server startup
     use super::test_helpers::start_test_server;
-    
+
     let _addr = start_test_server().await;
-    
+
     // Python client validates ChunkResult timing fields
 }
 
@@ -42,9 +41,9 @@ async fn test_chunk_result_timing() {
 async fn test_latency_multi_node_pipeline() {
     // Simplified - validates server startup
     use super::test_helpers::start_test_server;
-    
+
     let _addr = start_test_server().await;
-    
+
     // Python client demonstrates multi-node streaming performance
 }
 
@@ -53,13 +52,13 @@ async fn test_latency_multi_node_pipeline() {
 fn calculate_latency_stats(latencies: &[std::time::Duration]) -> LatencyStats {
     let mut sorted = latencies.to_vec();
     sorted.sort();
-    
+
     let sum: std::time::Duration = sorted.iter().sum();
     let avg = sum / sorted.len() as u32;
-    
+
     let p50_idx = (sorted.len() as f64 * 0.50) as usize;
     let p95_idx = (sorted.len() as f64 * 0.95) as usize;
-    
+
     LatencyStats {
         average: avg,
         p50: sorted[p50_idx],
@@ -93,7 +92,7 @@ fn create_passthrough_manifest() -> PipelineManifest {
                 capabilities: None,
                 host: "".to_string(),
                 runtime_hint: 0,
-                input_types: vec![1], // Audio
+                input_types: vec![1],  // Audio
                 output_types: vec![1], // Audio
             },
             NodeManifest {
@@ -104,7 +103,7 @@ fn create_passthrough_manifest() -> PipelineManifest {
                 capabilities: None,
                 host: "".to_string(),
                 runtime_hint: 0,
-                input_types: vec![1], // Audio
+                input_types: vec![1],  // Audio
                 output_types: vec![1], // Audio
             },
         ],

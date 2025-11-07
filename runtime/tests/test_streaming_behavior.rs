@@ -2,10 +2,10 @@
 //! processes chunks immediately as they arrive
 
 use remotemedia_runtime::data::RuntimeData;
-use remotemedia_runtime::grpc_service::session_router::{SessionRouter, DataPacket};
+use remotemedia_runtime::grpc_service::generated::{stream_response, StreamResponse};
+use remotemedia_runtime::grpc_service::session_router::{DataPacket, SessionRouter};
 use remotemedia_runtime::grpc_service::streaming::StreamSession;
-use remotemedia_runtime::grpc_service::generated::{StreamResponse, stream_response};
-use remotemedia_runtime::manifest::{Manifest, NodeSpec, Connection};
+use remotemedia_runtime::manifest::{Connection, Manifest, NodeSpec};
 use remotemedia_runtime::nodes::StreamingNodeRegistry;
 use serde_json::json;
 use std::sync::Arc;
@@ -102,7 +102,12 @@ async fn test_chunks_are_routed_immediately() {
                     let arrival = ChunkTiming {
                         timestamp: Instant::now(),
                         sequence: chunk.sequence,
-                        from_node: chunk.data_outputs.keys().next().unwrap_or(&"unknown".to_string()).clone(),
+                        from_node: chunk
+                            .data_outputs
+                            .keys()
+                            .next()
+                            .unwrap_or(&"unknown".to_string())
+                            .clone(),
                     };
 
                     let elapsed = arrival.timestamp.duration_since(test_start);
@@ -165,7 +170,9 @@ async fn test_chunks_are_routed_immediately() {
     // Calculate delays
     if timings.len() >= 2 {
         for i in 1..timings.len() {
-            let gap = timings[i].timestamp.duration_since(timings[i - 1].timestamp);
+            let gap = timings[i]
+                .timestamp
+                .duration_since(timings[i - 1].timestamp);
             info!(
                 "Gap between chunk {} and {}: {:.3}s",
                 i - 1,

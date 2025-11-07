@@ -12,13 +12,13 @@ use std::time::Duration;
 pub struct ResourceLimits {
     /// Maximum memory allocation per execution (bytes)
     pub max_memory_bytes: u64,
-    
+
     /// Maximum execution timeout
     pub max_timeout: Duration,
-    
+
     /// Maximum audio buffer size (total samples across all channels)
     pub max_audio_samples: u64,
-    
+
     /// Maximum concurrent executions
     pub max_concurrent_executions: usize,
 }
@@ -26,9 +26,9 @@ pub struct ResourceLimits {
 impl Default for ResourceLimits {
     fn default() -> Self {
         Self {
-            max_memory_bytes: 100_000_000, // 100 MB default
+            max_memory_bytes: 100_000_000,       // 100 MB default
             max_timeout: Duration::from_secs(5), // 5 second default
-            max_audio_samples: 10_000_000, // ~200MB stereo F32
+            max_audio_samples: 10_000_000,       // ~200MB stereo F32
             max_concurrent_executions: 1000,
         }
     }
@@ -145,7 +145,10 @@ mod tests {
         let limits = ResourceLimits::default();
         let result = limits.check_memory(200_000_000);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), LimitError::MemoryExceeded { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            LimitError::MemoryExceeded { .. }
+        ));
     }
 
     #[test]
@@ -159,7 +162,10 @@ mod tests {
         let limits = ResourceLimits::default();
         let result = limits.check_timeout(Duration::from_secs(10));
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), LimitError::TimeoutExceeded { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            LimitError::TimeoutExceeded { .. }
+        ));
     }
 
     #[test]
@@ -181,18 +187,13 @@ mod tests {
 
     #[test]
     fn test_proto_conversion() {
-        let limits = ResourceLimits::new(
-            50_000_000,
-            Duration::from_secs(3),
-            5_000_000,
-            500,
-        );
-        
+        let limits = ResourceLimits::new(50_000_000, Duration::from_secs(3), 5_000_000, 500);
+
         let proto = limits.to_proto();
         assert_eq!(proto.max_memory_bytes, 50_000_000);
         assert_eq!(proto.max_timeout_ms, 3000);
         assert_eq!(proto.max_audio_samples, 5_000_000);
-        
+
         let restored = ResourceLimits::from_proto(&proto);
         assert_eq!(restored.max_memory_bytes, 50_000_000);
         assert_eq!(restored.max_timeout, Duration::from_secs(3));

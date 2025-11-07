@@ -18,16 +18,15 @@
 
 use remotemedia_runtime::grpc_service::generated::{
     pipeline_execution_service_client::PipelineExecutionServiceClient,
-    streaming_pipeline_service_client::StreamingPipelineServiceClient,
-    AudioBuffer as ProtoAudioBuffer, AudioFormat as ProtoAudioFormat, ExecuteRequest,
-    VersionRequest, NodeManifest, PipelineManifest, ManifestMetadata,
-    StreamRequest, StreamInit, AudioChunk,
     stream_request::Request as StreamRequestType,
+    streaming_pipeline_service_client::StreamingPipelineServiceClient,
+    AudioBuffer as ProtoAudioBuffer, AudioChunk, AudioFormat as ProtoAudioFormat, ExecuteRequest,
+    ManifestMetadata, NodeManifest, PipelineManifest, StreamInit, StreamRequest, VersionRequest,
 };
 use std::time::Instant;
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::Request;
 use tracing::{error, info};
-use tokio_stream::wrappers::ReceiverStream;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -39,8 +38,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let command = args.get(1).map(|s| s.as_str()).unwrap_or("version");
 
-    let server_addr = std::env::var("GRPC_SERVER_ADDR")
-        .unwrap_or_else(|_| "http://[::1]:50051".to_string());
+    let server_addr =
+        std::env::var("GRPC_SERVER_ADDR").unwrap_or_else(|_| "http://[::1]:50051".to_string());
 
     info!("Connecting to server at {}", server_addr);
 
@@ -72,12 +71,15 @@ async fn test_get_version(server_addr: &str) -> Result<(), Box<dyn std::error::E
     let latency = start.elapsed();
 
     let response_data = response.into_inner();
-    
+
     if let Some(version_info) = response_data.version_info {
         info!("✅ GetVersion successful");
         info!("   Protocol version: {}", version_info.protocol_version);
         info!("   Runtime version: {}", version_info.runtime_version);
-        info!("   Supported nodes: {} types", version_info.supported_node_types.len());
+        info!(
+            "   Supported nodes: {} types",
+            version_info.supported_node_types.len()
+        );
         info!("   Compatible: {}", response_data.compatible);
         info!("   Latency: {:?}", latency);
     } else {
@@ -107,8 +109,8 @@ async fn test_execute_pipeline(server_addr: &str) -> Result<(), Box<dyn std::err
             is_streaming: false,
             capabilities: None,
             host: String::new(),
-            runtime_hint: 0, // RUNTIME_HINT_UNSPECIFIED
-            input_types: vec![4], // DATA_TYPE_HINT_JSON
+            runtime_hint: 0,       // RUNTIME_HINT_UNSPECIFIED
+            input_types: vec![4],  // DATA_TYPE_HINT_JSON
             output_types: vec![4], // DATA_TYPE_HINT_JSON
         }],
         connections: vec![],
@@ -121,7 +123,7 @@ async fn test_execute_pipeline(server_addr: &str) -> Result<(), Box<dyn std::err
     });
 
     // Create DataBuffer with JSON data
-    use remotemedia_runtime::grpc_service::generated::{DataBuffer, JsonData, data_buffer};
+    use remotemedia_runtime::grpc_service::generated::{data_buffer, DataBuffer, JsonData};
     let json_buffer = DataBuffer {
         data_type: Some(data_buffer::DataType::Json(JsonData {
             json_payload: input_data.to_string(),
@@ -145,24 +147,30 @@ async fn test_execute_pipeline(server_addr: &str) -> Result<(), Box<dyn std::err
     let latency = start.elapsed();
 
     let execute_response = response.into_inner();
-    
+
     match execute_response.outcome {
-        Some(remotemedia_runtime::grpc_service::generated::execute_response::Outcome::Result(result)) => {
+        Some(remotemedia_runtime::grpc_service::generated::execute_response::Outcome::Result(
+            result,
+        )) => {
             info!("✅ ExecutePipeline successful");
             info!("   Data outputs: {}", result.data_outputs.len());
             info!("   Data outputs: {}", result.data_outputs.len());
-            
+
             if let Some(metrics) = result.metrics {
                 info!("   Execution time: {:.2}ms", metrics.wall_time_ms);
                 info!("   Memory used: {} bytes", metrics.memory_used_bytes);
                 info!("   Nodes executed: {}", metrics.node_metrics.len());
-                info!("   Serialization overhead: {:.2}%", 
-                    (metrics.serialization_time_ms / metrics.wall_time_ms) * 100.0);
+                info!(
+                    "   Serialization overhead: {:.2}%",
+                    (metrics.serialization_time_ms / metrics.wall_time_ms) * 100.0
+                );
             }
-            
+
             info!("   Total latency: {:?}", latency);
         }
-        Some(remotemedia_runtime::grpc_service::generated::execute_response::Outcome::Error(error)) => {
+        Some(remotemedia_runtime::grpc_service::generated::execute_response::Outcome::Error(
+            error,
+        )) => {
             error!("❌ ExecutePipeline failed: {:?}", error.error_type);
             error!("   Message: {}", error.message);
             if !error.context.is_empty() {
@@ -197,8 +205,8 @@ async fn test_streaming_pipeline(server_addr: &str) -> Result<(), Box<dyn std::e
             is_streaming: true,
             capabilities: None,
             host: String::new(),
-            runtime_hint: 4, // RuntimeHint::Auto
-            input_types: vec![1], // DATA_TYPE_HINT_AUDIO
+            runtime_hint: 4,       // RuntimeHint::Auto
+            input_types: vec![1],  // DATA_TYPE_HINT_AUDIO
             output_types: vec![1], // DATA_TYPE_HINT_AUDIO
         }],
         connections: vec![],
@@ -218,23 +226,41 @@ async fn test_streaming_pipeline(server_addr: &str) -> Result<(), Box<dyn std::e
             client_version: "v1".to_string(),
             expected_chunk_size: 1600,
         })),
-    }).await?;
+    })
+    .await?;
 
     // Start streaming
     let start_time = Instant::now();
-    let mut response_stream = client.stream_pipeline(Request::new(request_stream)).await?.into_inner();
+    let mut response_stream = client
+        .stream_pipeline(Request::new(request_stream))
+        .await?
+        .into_inner();
 
     // Read ready response
     if let Some(response) = response_stream.message().await? {
         match response.response {
-            Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Ready(ready)) => {
+            Some(
+                remotemedia_runtime::grpc_service::generated::stream_response::Response::Ready(
+                    ready,
+                ),
+            ) => {
                 info!("✅ Stream ready!");
                 info!("   Session ID: {}", ready.session_id);
-                info!("   Recommended chunk size: {} samples", ready.recommended_chunk_size);
+                info!(
+                    "   Recommended chunk size: {} samples",
+                    ready.recommended_chunk_size
+                );
                 info!("   Max buffer latency: {}ms", ready.max_buffer_latency_ms);
             }
-            Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Error(error)) => {
-                error!("❌ Received error instead of StreamReady: {}", error.message);
+            Some(
+                remotemedia_runtime::grpc_service::generated::stream_response::Response::Error(
+                    error,
+                ),
+            ) => {
+                error!(
+                    "❌ Received error instead of StreamReady: {}",
+                    error.message
+                );
                 return Ok(());
             }
             other => {
@@ -247,7 +273,7 @@ async fn test_streaming_pipeline(server_addr: &str) -> Result<(), Box<dyn std::e
     // Send 5 audio chunks (100ms each at 16kHz)
     let chunk_size = 1600;
     info!("Sending {} audio chunks...", 5);
-    
+
     for seq in 0u64..5 {
         // Create test audio chunk (sine wave)
         let mut samples = Vec::with_capacity(chunk_size);
@@ -277,7 +303,8 @@ async fn test_streaming_pipeline(server_addr: &str) -> Result<(), Box<dyn std::e
 
         tx.send(StreamRequest {
             request: Some(StreamRequestType::AudioChunk(chunk)),
-        }).await?;
+        })
+        .await?;
 
         info!("   Sent chunk {} ({}ms)", seq, seq * 100);
 
@@ -309,16 +336,19 @@ async fn test_streaming_pipeline(server_addr: &str) -> Result<(), Box<dyn std::e
     info!("Closing stream...");
     tx.send(StreamRequest {
         request: Some(StreamRequestType::Control(
-            remotemedia_runtime::grpc_service::generated::StreamControl {
-                command: 1,
-            }
+            remotemedia_runtime::grpc_service::generated::StreamControl { command: 1 },
         )),
-    }).await?;
+    })
+    .await?;
 
     // Read final responses
     while let Some(response) = response_stream.message().await? {
         match response.response {
-            Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Closed(closed)) => {
+            Some(
+                remotemedia_runtime::grpc_service::generated::stream_response::Response::Closed(
+                    closed,
+                ),
+            ) => {
                 info!("✅ Stream closed successfully");
                 if let Some(metrics) = closed.final_metrics {
                     info!("   Execution time: {:.2}ms", metrics.wall_time_ms);
@@ -326,7 +356,11 @@ async fn test_streaming_pipeline(server_addr: &str) -> Result<(), Box<dyn std::e
                 }
                 break;
             }
-            Some(remotemedia_runtime::grpc_service::generated::stream_response::Response::Error(error)) => {
+            Some(
+                remotemedia_runtime::grpc_service::generated::stream_response::Response::Error(
+                    error,
+                ),
+            ) => {
                 error!("❌ Stream error: {}", error.message);
                 break;
             }

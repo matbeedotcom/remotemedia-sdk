@@ -3,63 +3,64 @@
 //! This module provides conversion functions between runtime-core's RuntimeData
 //! and the gRPC Protobuf DataBuffer types.
 
+use crate::generated::data_buffer::DataType;
+use crate::generated::{
+    AudioBuffer, AudioFormat, BinaryBuffer, DataBuffer, JsonData, PixelFormat, TensorBuffer,
+    TensorDtype, TextBuffer, VideoFrame,
+};
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::transport::TransportData;
-use crate::generated::{
-    DataBuffer, AudioBuffer, VideoFrame, TensorBuffer, JsonData, TextBuffer, BinaryBuffer,
-    AudioFormat, PixelFormat, TensorDtype,
-};
-use crate::generated::data_buffer::DataType;
 
 /// Convert runtime-core RuntimeData to Protobuf DataBuffer
 pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
     let data_type = match data {
-        RuntimeData::Audio { samples, sample_rate, channels } => {
-            DataType::Audio(AudioBuffer {
-                samples: samples.iter().flat_map(|f| f.to_le_bytes()).collect(),
-                sample_rate: *sample_rate,
-                channels: *channels,
-                format: AudioFormat::F32 as i32,
-                num_samples: samples.len() as u64,
-            })
-        }
-        RuntimeData::Video { pixel_data, width, height, format, frame_number, timestamp_us } => {
-            DataType::Video(VideoFrame {
-                pixel_data: pixel_data.clone(),
-                width: *width,
-                height: *height,
-                format: *format,
-                frame_number: *frame_number,
-                timestamp_us: *timestamp_us,
-            })
-        }
+        RuntimeData::Audio {
+            samples,
+            sample_rate,
+            channels,
+        } => DataType::Audio(AudioBuffer {
+            samples: samples.iter().flat_map(|f| f.to_le_bytes()).collect(),
+            sample_rate: *sample_rate,
+            channels: *channels,
+            format: AudioFormat::F32 as i32,
+            num_samples: samples.len() as u64,
+        }),
+        RuntimeData::Video {
+            pixel_data,
+            width,
+            height,
+            format,
+            frame_number,
+            timestamp_us,
+        } => DataType::Video(VideoFrame {
+            pixel_data: pixel_data.clone(),
+            width: *width,
+            height: *height,
+            format: *format,
+            frame_number: *frame_number,
+            timestamp_us: *timestamp_us,
+        }),
         RuntimeData::Tensor { data, shape, dtype } => {
             DataType::Tensor(TensorBuffer {
                 data: data.clone(),
                 shape: shape.iter().map(|&s| s as u64).collect(),
                 dtype: *dtype,
-                layout: String::new(),  // Empty layout - nodes document expected layout
+                layout: String::new(), // Empty layout - nodes document expected layout
             })
         }
-        RuntimeData::Json(value) => {
-            DataType::Json(JsonData {
-                json_payload: serde_json::to_string(value).unwrap_or_default(),
-                schema_type: String::new(),
-            })
-        }
-        RuntimeData::Text(s) => {
-            DataType::Text(TextBuffer {
-                text_data: s.as_bytes().to_vec(),
-                encoding: "utf-8".to_string(),
-                language: String::new(),
-            })
-        }
-        RuntimeData::Binary(bytes) => {
-            DataType::Binary(BinaryBuffer {
-                data: bytes.clone(),
-                mime_type: "application/octet-stream".to_string(),
-            })
-        }
+        RuntimeData::Json(value) => DataType::Json(JsonData {
+            json_payload: serde_json::to_string(value).unwrap_or_default(),
+            schema_type: String::new(),
+        }),
+        RuntimeData::Text(s) => DataType::Text(TextBuffer {
+            text_data: s.as_bytes().to_vec(),
+            encoding: "utf-8".to_string(),
+            language: String::new(),
+        }),
+        RuntimeData::Binary(bytes) => DataType::Binary(BinaryBuffer {
+            data: bytes.clone(),
+            mime_type: "application/octet-stream".to_string(),
+        }),
     };
 
     DataBuffer {
@@ -85,32 +86,26 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
                 channels: audio.channels,
             })
         }
-        Some(DataType::Video(video)) => {
-            Some(RuntimeData::Video {
-                pixel_data: video.pixel_data.clone(),
-                width: video.width,
-                height: video.height,
-                format: video.format,
-                frame_number: video.frame_number,
-                timestamp_us: video.timestamp_us,
-            })
-        }
-        Some(DataType::Tensor(tensor)) => {
-            Some(RuntimeData::Tensor {
-                data: tensor.data.clone(),
-                shape: tensor.shape.iter().map(|&s| s as i32).collect(),
-                dtype: tensor.dtype,
-            })
-        }
-        Some(DataType::Json(json)) => {
-            serde_json::from_str(&json.json_payload).ok().map(RuntimeData::Json)
-        }
-        Some(DataType::Text(text)) => {
-            String::from_utf8(text.text_data.clone()).ok().map(RuntimeData::Text)
-        }
-        Some(DataType::Binary(bin)) => {
-            Some(RuntimeData::Binary(bin.data.clone()))
-        }
+        Some(DataType::Video(video)) => Some(RuntimeData::Video {
+            pixel_data: video.pixel_data.clone(),
+            width: video.width,
+            height: video.height,
+            format: video.format,
+            frame_number: video.frame_number,
+            timestamp_us: video.timestamp_us,
+        }),
+        Some(DataType::Tensor(tensor)) => Some(RuntimeData::Tensor {
+            data: tensor.data.clone(),
+            shape: tensor.shape.iter().map(|&s| s as i32).collect(),
+            dtype: tensor.dtype,
+        }),
+        Some(DataType::Json(json)) => serde_json::from_str(&json.json_payload)
+            .ok()
+            .map(RuntimeData::Json),
+        Some(DataType::Text(text)) => String::from_utf8(text.text_data.clone())
+            .ok()
+            .map(RuntimeData::Text),
+        Some(DataType::Binary(bin)) => Some(RuntimeData::Binary(bin.data.clone())),
         _ => None,
     }
 }
@@ -121,7 +116,9 @@ pub fn transport_data_to_data_buffer(data: &TransportData) -> DataBuffer {
 
     // Add sequence number to metadata if present
     if let Some(seq) = data.sequence {
-        buffer.metadata.insert("sequence".to_string(), seq.to_string());
+        buffer
+            .metadata
+            .insert("sequence".to_string(), seq.to_string());
     }
 
     // Add transport metadata
@@ -146,7 +143,8 @@ pub fn data_buffer_to_transport_data(buffer: &DataBuffer) -> Option<TransportDat
 
     // Copy metadata
     for (key, value) in &buffer.metadata {
-        if key != "sequence" {  // Don't duplicate sequence in metadata
+        if key != "sequence" {
+            // Don't duplicate sequence in metadata
             transport_data.metadata.insert(key.clone(), value.clone());
         }
     }

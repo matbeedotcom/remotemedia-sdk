@@ -7,16 +7,15 @@
 
 use crate::grpc_service::{
     auth::{check_auth, AuthConfig},
-    generated::{
-        pipeline_execution_service_server::PipelineExecutionService, ExecuteRequest,
-        ExecuteResponse, ExecutionStatus, VersionRequest, VersionResponse,
-        AudioBuffer as ProtoAudioBuffer, AudioFormat as ProtoAudioFormat,
-        ErrorResponse, ErrorType, ExecutionMetrics as ProtoExecutionMetrics,
-        NodeMetrics as ProtoNodeMetrics, NodeResult, NodeStatus,
-        PipelineManifest as ProtoPipelineManifest, Connection as ProtoConnection,
-        ExecutionResult as ProtoExecutionResult,
-    },
     executor_registry::{ExecutorRegistry, ExecutorType},
+    generated::{
+        pipeline_execution_service_server::PipelineExecutionService,
+        AudioBuffer as ProtoAudioBuffer, AudioFormat as ProtoAudioFormat,
+        Connection as ProtoConnection, ErrorResponse, ErrorType, ExecuteRequest, ExecuteResponse,
+        ExecutionMetrics as ProtoExecutionMetrics, ExecutionResult as ProtoExecutionResult,
+        ExecutionStatus, NodeMetrics as ProtoNodeMetrics, NodeResult, NodeStatus,
+        PipelineManifest as ProtoPipelineManifest, VersionRequest, VersionResponse,
+    },
     limits::ResourceLimits,
     metrics::ServiceMetrics,
     version::VersionManager,
@@ -24,7 +23,7 @@ use crate::grpc_service::{
 };
 use crate::{
     audio::AudioBuffer,
-    executor::{Executor, ExecutorConfig, executor_bridge::*},
+    executor::{executor_bridge::*, Executor, ExecutorConfig},
     manifest::Manifest,
 };
 use std::collections::HashMap;
@@ -136,9 +135,8 @@ impl ExecutionServiceImpl {
         })
         .to_string();
 
-        serde_json::from_str(&json_str).map_err(|e| {
-            ServiceError::Validation(format!("Failed to parse manifest: {}", e))
-        })
+        serde_json::from_str(&json_str)
+            .map_err(|e| ServiceError::Validation(format!("Failed to parse manifest: {}", e)))
     }
 
     /// Convert protobuf AudioBuffer to runtime AudioBuffer
@@ -243,7 +241,8 @@ impl ExecutionServiceImpl {
                     .as_slice()
                     .iter()
                     .flat_map(|&sample| {
-                        let i_sample = (sample * 2147483648.0).clamp(-2147483648.0, 2147483647.0) as i32;
+                        let i_sample =
+                            (sample * 2147483648.0).clamp(-2147483648.0, 2147483647.0) as i32;
                         i_sample.to_le_bytes()
                     })
                     .collect()
@@ -260,10 +259,7 @@ impl ExecutionServiceImpl {
     }
 
     /// Validate manifest structure
-    fn validate_manifest(
-        &self,
-        manifest: &Manifest,
-    ) -> Result<(), ServiceError> {
+    fn validate_manifest(&self, manifest: &Manifest) -> Result<(), ServiceError> {
         // Check version
         if manifest.version.is_empty() {
             return Err(ServiceError::Validation(
@@ -316,7 +312,6 @@ impl ExecutionServiceImpl {
     }
 }
 
-
 /// Session execution context for managing executor instances and node assignments
 ///
 /// Public for testing purposes
@@ -353,7 +348,10 @@ impl SessionExecutionContext {
             node_id,
             executor_type
         );
-        self.node_assignments.write().await.insert(node_id, executor_type);
+        self.node_assignments
+            .write()
+            .await
+            .insert(node_id, executor_type);
     }
 
     /// Get executor type for a node
@@ -385,23 +383,34 @@ impl SessionExecutionContext {
 
         // Create native bridge if needed
         if needs_native {
-            let bridge = Arc::new(NativeExecutorBridge::new(native_executor)) as Arc<dyn ExecutorBridge>;
+            let bridge =
+                Arc::new(NativeExecutorBridge::new(native_executor)) as Arc<dyn ExecutorBridge>;
             bridges.insert(ExecutorType::Native, bridge);
-            tracing::info!("Session {}: Native executor bridge created", self.session_id);
+            tracing::info!(
+                "Session {}: Native executor bridge created",
+                self.session_id
+            );
         }
 
         // Create multiprocess bridge if needed
         if needs_multiprocess {
             // Create session in multiprocess executor
-            multiprocess_executor.create_session(self.session_id.clone()).await
-                .map_err(|e| ServiceError::Internal(format!("Failed to create multiprocess session: {}", e)))?;
+            multiprocess_executor
+                .create_session(self.session_id.clone())
+                .await
+                .map_err(|e| {
+                    ServiceError::Internal(format!("Failed to create multiprocess session: {}", e))
+                })?;
 
             let bridge = Arc::new(MultiprocessExecutorBridge::new(
                 multiprocess_executor,
                 self.session_id.clone(),
             )) as Arc<dyn ExecutorBridge>;
             bridges.insert(ExecutorType::Multiprocess, bridge);
-            tracing::info!("Session {}: Multiprocess executor bridge created", self.session_id);
+            tracing::info!(
+                "Session {}: Multiprocess executor bridge created",
+                self.session_id
+            );
         }
 
         Ok(())
@@ -416,9 +425,13 @@ impl SessionExecutionContext {
         let mut bridges = self.executor_bridges.write().await;
 
         // Only native executor available
-        let bridge = Arc::new(NativeExecutorBridge::new(native_executor)) as Arc<dyn ExecutorBridge>;
+        let bridge =
+            Arc::new(NativeExecutorBridge::new(native_executor)) as Arc<dyn ExecutorBridge>;
         bridges.insert(ExecutorType::Native, bridge);
-        tracing::info!("Session {}: Native executor bridge created", self.session_id);
+        tracing::info!(
+            "Session {}: Native executor bridge created",
+            self.session_id
+        );
 
         Ok(())
     }
@@ -426,7 +439,11 @@ impl SessionExecutionContext {
     /// Initialize all assigned nodes
     pub async fn initialize_nodes(&self, manifest: &Manifest) -> Result<(), ServiceError> {
         let node_count = self.node_assignments.read().await.len();
-        tracing::info!("Session {}: Initializing {} nodes", self.session_id, node_count);
+        tracing::info!(
+            "Session {}: Initializing {} nodes",
+            self.session_id,
+            node_count
+        );
 
         let bridges = self.executor_bridges.read().await;
         let assignments = self.node_assignments.read().await;
@@ -434,7 +451,9 @@ impl SessionExecutionContext {
         for node in &manifest.nodes {
             if let Some(&executor_type) = assignments.get(&node.id) {
                 if let Some(bridge) = bridges.get(&executor_type) {
-                    bridge.initialize_node(&node.id, &node.node_type, &node.params).await
+                    bridge
+                        .initialize_node(&node.id, &node.node_type, &node.params)
+                        .await
                         .map_err(|e| ServiceError::NodeExecution {
                             node_id: node.id.clone(),
                             message: format!("Initialization failed: {}", e),
@@ -467,9 +486,19 @@ impl SessionExecutionContext {
 
         // Terminate multiprocess session if exists
         if let Some(mp_executor) = multiprocess_executor {
-            mp_executor.terminate_session(&self.session_id).await
-                .map_err(|e| ServiceError::Internal(format!("Failed to terminate multiprocess session: {}", e)))?;
-            tracing::info!("Session {}: Multiprocess session terminated", self.session_id);
+            mp_executor
+                .terminate_session(&self.session_id)
+                .await
+                .map_err(|e| {
+                    ServiceError::Internal(format!(
+                        "Failed to terminate multiprocess session: {}",
+                        e
+                    ))
+                })?;
+            tracing::info!(
+                "Session {}: Multiprocess session terminated",
+                self.session_id
+            );
         }
 
         Ok(())
@@ -515,12 +544,18 @@ impl SessionExecutionContext {
         native_executor: Arc<Executor>,
         _multiprocess_executor: Arc<crate::python::multiprocess::MultiprocessExecutor>,
     ) -> Result<HashMap<String, crate::data::RuntimeData>, ServiceError> {
-        tracing::info!("Session {}: Executing pipeline with {} nodes", self.session_id, manifest.nodes.len());
+        tracing::info!(
+            "Session {}: Executing pipeline with {} nodes",
+            self.session_id,
+            manifest.nodes.len()
+        );
 
         // Check if we have any multiprocess nodes
         let has_multiprocess = {
             let assignments = self.node_assignments.read().await;
-            assignments.values().any(|&et| et == ExecutorType::Multiprocess)
+            assignments
+                .values()
+                .any(|&et| et == ExecutorType::Multiprocess)
         };
 
         if has_multiprocess {
@@ -528,11 +563,13 @@ impl SessionExecutionContext {
         }
 
         // Execute with session ID - this enables multiprocess execution for Python nodes
-        native_executor.execute_with_runtime_data_and_session(
-            manifest,
-            runtime_inputs,
-            Some(self.session_id.clone())
-        ).await
+        native_executor
+            .execute_with_runtime_data_and_session(
+                manifest,
+                runtime_inputs,
+                Some(self.session_id.clone()),
+            )
+            .await
             .map_err(|e| ServiceError::NodeExecution {
                 node_id: "pipeline".to_string(),
                 message: format!("Pipeline execution failed: {}", e),
@@ -547,9 +584,14 @@ impl SessionExecutionContext {
         runtime_inputs: HashMap<String, crate::data::RuntimeData>,
         native_executor: Arc<Executor>,
     ) -> Result<HashMap<String, crate::data::RuntimeData>, ServiceError> {
-        tracing::info!("Session {}: Executing pipeline with native executor only", self.session_id);
+        tracing::info!(
+            "Session {}: Executing pipeline with native executor only",
+            self.session_id
+        );
 
-        native_executor.execute_with_runtime_data(manifest, runtime_inputs).await
+        native_executor
+            .execute_with_runtime_data(manifest, runtime_inputs)
+            .await
             .map_err(|e| ServiceError::NodeExecution {
                 node_id: "pipeline".to_string(),
                 message: format!("Pipeline execution failed: {}", e),
@@ -582,7 +624,7 @@ impl PipelineExecutionService for ExecutionServiceImpl {
                 self.metrics
                     .record_request_end("ExecutePipeline", "error", start_time);
                 self.metrics.record_error("validation");
-                
+
                 // T038: Return validation errors as Error outcome, not gRPC Status
                 let error_response = ErrorResponse {
                     error_type: ErrorType::Validation as i32,
@@ -591,11 +633,15 @@ impl PipelineExecutionService for ExecutionServiceImpl {
                     context: "Manifest deserialization failed".to_string(),
                     stack_trace: String::new(),
                 };
-                
+
                 let response = ExecuteResponse {
-                    outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
+                    outcome: Some(
+                        crate::grpc_service::generated::execute_response::Outcome::Error(
+                            error_response,
+                        ),
+                    ),
                 };
-                
+
                 return Ok(Response::new(response));
             }
         };
@@ -606,8 +652,12 @@ impl PipelineExecutionService for ExecutionServiceImpl {
 
         // Assign each node to appropriate executor based on node type
         for node in &manifest.nodes {
-            let executor_type = self.executor_registry.get_executor_for_node(&node.node_type);
-            session_ctx.assign_node(node.id.clone(), executor_type).await;
+            let executor_type = self
+                .executor_registry
+                .get_executor_for_node(&node.node_type);
+            session_ctx
+                .assign_node(node.id.clone(), executor_type)
+                .await;
             tracing::info!(
                 "Node '{}' (type: {}) assigned to {:?} executor",
                 node.id,
@@ -618,18 +668,23 @@ impl PipelineExecutionService for ExecutionServiceImpl {
 
         // Initialize executors for this session
         #[cfg(feature = "multiprocess")]
-        session_ctx.initialize_executors(
-            Arc::clone(&self.executor),
-            Arc::clone(&self.multiprocess_executor),
-        ).await.map_err(|e| Status::internal(format!("Failed to initialize executors: {}", e)))?;
+        session_ctx
+            .initialize_executors(
+                Arc::clone(&self.executor),
+                Arc::clone(&self.multiprocess_executor),
+            )
+            .await
+            .map_err(|e| Status::internal(format!("Failed to initialize executors: {}", e)))?;
 
         #[cfg(not(feature = "multiprocess"))]
-        session_ctx.initialize_executors(Arc::clone(&self.executor))
+        session_ctx
+            .initialize_executors(Arc::clone(&self.executor))
             .await
             .map_err(|e| Status::internal(format!("Failed to initialize executors: {}", e)))?;
 
         // Initialize all nodes
-        session_ctx.initialize_nodes(&manifest)
+        session_ctx
+            .initialize_nodes(&manifest)
             .await
             .map_err(|e| Status::internal(format!("Failed to initialize nodes: {}", e)))?;
 
@@ -638,7 +693,7 @@ impl PipelineExecutionService for ExecutionServiceImpl {
             self.metrics
                 .record_request_end("ExecutePipeline", "error", start_time);
             self.metrics.record_error("validation");
-            
+
             // T038: Return validation errors as Error outcome, not gRPC Status
             let error_response = ErrorResponse {
                 error_type: ErrorType::Validation as i32,
@@ -647,11 +702,15 @@ impl PipelineExecutionService for ExecutionServiceImpl {
                 context: "Manifest validation failed".to_string(),
                 stack_trace: String::new(),
             };
-            
+
             let response = ExecuteResponse {
-                outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
+                outcome: Some(
+                    crate::grpc_service::generated::execute_response::Outcome::Error(
+                        error_response,
+                    ),
+                ),
             };
-            
+
             return Ok(Response::new(response));
         }
 
@@ -669,14 +728,21 @@ impl PipelineExecutionService for ExecutionServiceImpl {
 
                     let error_response = ErrorResponse {
                         error_type: ErrorType::Validation as i32,
-                        message: format!("Input data conversion failed for node '{}': {}", node_id, e),
+                        message: format!(
+                            "Input data conversion failed for node '{}': {}",
+                            node_id, e
+                        ),
                         failing_node_id: node_id.clone(),
                         context: "Data buffer conversion failed".to_string(),
                         stack_trace: String::new(),
                     };
 
                     let response = ExecuteResponse {
-                        outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
+                        outcome: Some(
+                            crate::grpc_service::generated::execute_response::Outcome::Error(
+                                error_response,
+                            ),
+                        ),
                     };
 
                     return Ok(Response::new(response));
@@ -700,12 +766,16 @@ impl PipelineExecutionService for ExecutionServiceImpl {
 
         #[cfg(feature = "multiprocess")]
         let execution_task = tokio::spawn(async move {
-            session_ctx_clone.execute_pipeline(&manifest, runtime_inputs, executor, mp_executor).await
+            session_ctx_clone
+                .execute_pipeline(&manifest, runtime_inputs, executor, mp_executor)
+                .await
         });
 
         #[cfg(not(feature = "multiprocess"))]
         let execution_task = tokio::spawn(async move {
-            session_ctx_clone.execute_pipeline(&manifest, runtime_inputs, executor).await
+            session_ctx_clone
+                .execute_pipeline(&manifest, runtime_inputs, executor)
+                .await
         });
 
         // Execute pipeline
@@ -733,7 +803,11 @@ impl PipelineExecutionService for ExecutionServiceImpl {
                 };
 
                 let response = ExecuteResponse {
-                    outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
+                    outcome: Some(
+                        crate::grpc_service::generated::execute_response::Outcome::Error(
+                            error_response,
+                        ),
+                    ),
                 };
 
                 return Ok(Response::new(response));
@@ -754,7 +828,11 @@ impl PipelineExecutionService for ExecutionServiceImpl {
                 };
 
                 let response = ExecuteResponse {
-                    outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
+                    outcome: Some(
+                        crate::grpc_service::generated::execute_response::Outcome::Error(
+                            error_response,
+                        ),
+                    ),
                 };
 
                 return Ok(Response::new(response));
@@ -784,7 +862,11 @@ impl PipelineExecutionService for ExecutionServiceImpl {
         };
 
         let response = ExecuteResponse {
-            outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Result(exec_result_proto)),
+            outcome: Some(
+                crate::grpc_service::generated::execute_response::Outcome::Result(
+                    exec_result_proto,
+                ),
+            ),
         };
 
         self.metrics
@@ -792,16 +874,21 @@ impl PipelineExecutionService for ExecutionServiceImpl {
 
         // Cleanup session resources (spec 002)
         #[cfg(feature = "multiprocess")]
-        session_ctx.cleanup(Some(Arc::clone(&self.multiprocess_executor)))
+        session_ctx
+            .cleanup(Some(Arc::clone(&self.multiprocess_executor)))
             .await
             .map_err(|e| Status::internal(format!("Session cleanup failed: {}", e)))?;
 
         #[cfg(not(feature = "multiprocess"))]
-        session_ctx.cleanup()
+        session_ctx
+            .cleanup()
             .await
             .map_err(|e| Status::internal(format!("Session cleanup failed: {}", e)))?;
 
-        tracing::info!("Session {} completed and cleaned up", session_ctx.session_id());
+        tracing::info!(
+            "Session {} completed and cleaned up",
+            session_ctx.session_id()
+        );
 
         Ok(Response::new(response))
     }

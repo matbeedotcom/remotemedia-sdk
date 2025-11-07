@@ -25,6 +25,7 @@
 #![warn(clippy::all)]
 
 // Core modules
+pub mod adapters;
 pub mod auth;
 pub mod execution;
 pub mod limits;
@@ -32,7 +33,6 @@ pub mod metrics;
 pub mod server;
 pub mod streaming;
 pub mod version;
-pub mod adapters;
 
 // Session and routing modules
 pub mod async_pipeline;
@@ -52,30 +52,25 @@ pub mod generated {
 
 // Re-export key types for convenience
 pub use generated::{
-    AudioBuffer, AudioFormat, DataBuffer, TextBuffer, BinaryBuffer,
-    ErrorResponse, ErrorType, ExecutionMetrics, ExecutionStatus,
-    NodeMetrics, NodeResult, NodeStatus, ResourceLimits, VersionInfo,
+    AudioBuffer, AudioFormat, BinaryBuffer, DataBuffer, ErrorResponse, ErrorType, ExecutionMetrics,
+    ExecutionStatus, NodeMetrics, NodeResult, NodeStatus, ResourceLimits, TextBuffer, VersionInfo,
 };
 
 // Service traits
 pub use generated::{
     pipeline_execution_service_server::{PipelineExecutionService, PipelineExecutionServiceServer},
-    streaming_pipeline_service_server::{
-        StreamingPipelineService, StreamingPipelineServiceServer,
-    },
+    streaming_pipeline_service_server::{StreamingPipelineService, StreamingPipelineServiceServer},
 };
 
 // Re-export adapter functions
 pub use adapters::{
-    runtime_data_to_data_buffer,
-    data_buffer_to_runtime_data,
+    data_buffer_to_runtime_data, data_buffer_to_transport_data, runtime_data_to_data_buffer,
     transport_data_to_data_buffer,
-    data_buffer_to_transport_data,
 };
 
 // Re-export main server types for convenience
-pub use server::GrpcServer;
 pub use execution::ExecutionServiceImpl;
+pub use server::GrpcServer;
 pub use streaming::StreamingServiceImpl;
 
 /// Error type for gRPC service operations
@@ -91,7 +86,7 @@ pub enum ServiceError {
         /// Node ID that failed
         node_id: String,
         /// Error message
-        message: String
+        message: String,
     },
 
     /// Resource limit exceeded
@@ -141,8 +136,8 @@ impl Default for ServiceConfig {
 impl ServiceConfig {
     /// Load configuration from environment variables
     pub fn from_env() -> Self {
-        let bind_address = std::env::var("GRPC_BIND_ADDRESS")
-            .unwrap_or_else(|_| "0.0.0.0:50051".to_string());
+        let bind_address =
+            std::env::var("GRPC_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:50051".to_string());
 
         let require_auth = std::env::var("GRPC_REQUIRE_AUTH")
             .map(|v| v.to_lowercase() == "true")
@@ -182,10 +177,9 @@ impl ServiceConfig {
 
 /// Initialize tracing/logging
 pub fn init_tracing(json_logging: bool) {
-    use tracing_subscriber::{fmt, EnvFilter, prelude::*};
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     if json_logging {
         tracing_subscriber::registry()

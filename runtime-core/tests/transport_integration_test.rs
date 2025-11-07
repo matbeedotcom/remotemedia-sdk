@@ -5,18 +5,21 @@
 
 mod mock_transport;
 
-use remotemedia_runtime_core::transport::{
-    PipelineRunner, TransportData, PipelineTransport, StreamSession,
-};
+use mock_transport::MockTransport;
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::manifest::Manifest;
+use remotemedia_runtime_core::transport::{
+    PipelineRunner, PipelineTransport, StreamSession, TransportData,
+};
 use std::sync::Arc;
-use mock_transport::MockTransport;
 
 #[tokio::test]
 async fn test_pipeline_runner_creation() {
     let runner = PipelineRunner::new();
-    assert!(runner.is_ok(), "PipelineRunner should initialize successfully");
+    assert!(
+        runner.is_ok(),
+        "PipelineRunner should initialize successfully"
+    );
 }
 
 #[tokio::test]
@@ -86,7 +89,11 @@ async fn test_streaming_send_and_receive() {
 
     let data = output.unwrap();
     match data.data {
-        RuntimeData::Audio { samples, sample_rate, channels } => {
+        RuntimeData::Audio {
+            samples,
+            sample_rate,
+            channels,
+        } => {
             assert_eq!(samples.len(), 3);
             assert_eq!(sample_rate, 16000);
             assert_eq!(channels, 1);
@@ -102,7 +109,8 @@ async fn test_streaming_send_and_receive() {
 #[tokio::test]
 async fn test_session_close_idempotency() {
     let runner = PipelineRunner::new().unwrap();
-    let manifest = Arc::new(Manifest::from_json(r#"{"version":"v1","nodes":[],"connections":[]}"#).unwrap());
+    let manifest =
+        Arc::new(Manifest::from_json(r#"{"version":"v1","nodes":[],"connections":[]}"#).unwrap());
 
     let mut session = runner.create_stream_session(manifest).await.unwrap();
 
@@ -118,7 +126,8 @@ async fn test_session_close_idempotency() {
 #[tokio::test]
 async fn test_send_after_close_fails() {
     let runner = PipelineRunner::new().unwrap();
-    let manifest = Arc::new(Manifest::from_json(r#"{"version":"v1","nodes":[],"connections":[]}"#).unwrap());
+    let manifest =
+        Arc::new(Manifest::from_json(r#"{"version":"v1","nodes":[],"connections":[]}"#).unwrap());
 
     let mut session = runner.create_stream_session(manifest).await.unwrap();
 
@@ -136,7 +145,8 @@ async fn test_send_after_close_fails() {
 async fn test_mock_transport_trait_implementation() {
     let transport = MockTransport::new().unwrap();
 
-    let manifest = Arc::new(Manifest::from_json(r#"{"version":"v1","nodes":[],"connections":[]}"#).unwrap());
+    let manifest =
+        Arc::new(Manifest::from_json(r#"{"version":"v1","nodes":[],"connections":[]}"#).unwrap());
     let input = TransportData::new(RuntimeData::Text("via trait".into()));
 
     // Call via trait
@@ -160,11 +170,18 @@ async fn test_transport_data_builder_pattern() {
 #[tokio::test]
 async fn test_multiple_concurrent_sessions() {
     let runner = PipelineRunner::new().unwrap();
-    let manifest = Arc::new(Manifest::from_json(r#"{"version":"v1","nodes":[],"connections":[]}"#).unwrap());
+    let manifest =
+        Arc::new(Manifest::from_json(r#"{"version":"v1","nodes":[],"connections":[]}"#).unwrap());
 
     // Create multiple sessions concurrently
-    let session1 = runner.create_stream_session(Arc::clone(&manifest)).await.unwrap();
-    let session2 = runner.create_stream_session(Arc::clone(&manifest)).await.unwrap();
+    let session1 = runner
+        .create_stream_session(Arc::clone(&manifest))
+        .await
+        .unwrap();
+    let session2 = runner
+        .create_stream_session(Arc::clone(&manifest))
+        .await
+        .unwrap();
     let session3 = runner.create_stream_session(manifest).await.unwrap();
 
     // All should have unique IDs

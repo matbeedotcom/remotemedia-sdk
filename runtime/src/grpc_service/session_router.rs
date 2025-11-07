@@ -3,16 +3,18 @@
 //! This module implements a persistent router that runs for the entire session,
 //! continuously processing chunks from the client and routing them through the pipeline.
 
-use crate::data::{RuntimeData, convert_runtime_to_proto_data};
+use crate::data::{convert_runtime_to_proto_data, RuntimeData};
+use crate::grpc_service::generated::{
+    stream_response::Response as StreamResponseType, ChunkResult, StreamResponse,
+};
 use crate::grpc_service::streaming::StreamSession;
-use crate::grpc_service::generated::{StreamResponse, stream_response::Response as StreamResponseType, ChunkResult};
 use crate::nodes::StreamingNode;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
-use tracing::{info, error, debug, warn};
 use tonic::Status;
+use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "multiprocess")]
 use crate::python::multiprocess::MultiprocessExecutor;
@@ -126,21 +128,38 @@ impl SessionRouter {
     pub async fn pre_initialize_all_nodes(&mut self) -> Result<(), Status> {
         let node_specs: Vec<(String, String)> = {
             let session = self.session.lock().await;
-            session.manifest.nodes.iter()
+            session
+                .manifest
+                .nodes
+                .iter()
                 .map(|n| (n.id.clone(), n.node_type.clone()))
                 .collect()
         };
 
         let total_nodes = node_specs.len();
-        info!("🔥 Pre-initializing {} nodes for session '{}'...", total_nodes, self.session_id);
-        info!("   Node list: {:?}", node_specs.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>());
+        info!(
+            "🔥 Pre-initializing {} nodes for session '{}'...",
+            total_nodes, self.session_id
+        );
+        info!(
+            "   Node list: {:?}",
+            node_specs
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>()
+        );
 
         // Send initialization start message to client (non-blocking fire-and-forget)
         let _ = self.client_tx.try_send(Ok({
             use crate::data::RuntimeData;
-            use crate::grpc_service::generated::{StreamResponse, stream_response::Response as StreamResponseType};
+            use crate::grpc_service::generated::{
+                stream_response::Response as StreamResponseType, StreamResponse,
+            };
 
-            let status_text = format!("[_system] status=initializing message=Initializing {} nodes...", total_nodes);
+            let status_text = format!(
+                "[_system] status=initializing message=Initializing {} nodes...",
+                total_nodes
+            );
             let status_data = RuntimeData::Text(status_text);
             let proto_data = convert_runtime_to_proto_data(status_data);
 
@@ -160,26 +179,39 @@ impl SessionRouter {
         for (idx, (node_id, node_type)) in node_specs.iter().enumerate() {
             let progress = ((idx + 1) * 100) / total_nodes;
 
-            info!("   📦 [{}/{}] Initializing {} (type: {})...",
-                  idx + 1, total_nodes, node_id, node_type);
+            info!(
+                "   📦 [{}/{}] Initializing {} (type: {})...",
+                idx + 1,
+                total_nodes,
+                node_id,
+                node_type
+            );
 
             // Send "initializing" status to client
             self.send_status_update(
                 &node_id,
                 "initializing",
-                &format!("Loading {} ({}/{})", node_type, idx + 1, total_nodes)
+                &format!("Loading {} ({}/{})", node_type, idx + 1, total_nodes),
             );
 
             match self.get_or_create_node(&node_id).await {
                 Ok(node) => {
-                    info!("   📦 [{}/{}] Node created, calling initialize()...",
-                          idx + 1, total_nodes);
+                    info!(
+                        "   📦 [{}/{}] Node created, calling initialize()...",
+                        idx + 1,
+                        total_nodes
+                    );
 
                     // 🔥 Actually call initialize() to load models
                     match node.initialize().await {
                         Ok(_) => {
-                            info!("   ✅ [{}/{}] {} initialized successfully ({}% complete)",
-                                  idx + 1, total_nodes, node_id, progress);
+                            info!(
+                                "   ✅ [{}/{}] {} initialized successfully ({}% complete)",
+                                idx + 1,
+                                total_nodes,
+                                node_id,
+                                progress
+                            );
 
                             // Query node status
                             let status = node.get_status();
@@ -188,49 +220,67 @@ impl SessionRouter {
                             self.send_status_update(
                                 &node_id,
                                 status.as_str(),
-                                &format!("{} ready ({}/{})", node_type, idx + 1, total_nodes)
+                                &format!("{} ready ({}/{})", node_type, idx + 1, total_nodes),
                             );
                         }
                         Err(init_err) => {
-                            error!("   ❌ [{}/{}] Failed to initialize {}: {}",
-                                   idx + 1, total_nodes, node_id, init_err);
+                            error!(
+                                "   ❌ [{}/{}] Failed to initialize {}: {}",
+                                idx + 1,
+                                total_nodes,
+                                node_id,
+                                init_err
+                            );
 
                             // Send "error" status to client
                             self.send_status_update(
                                 &node_id,
                                 "error",
-                                &format!("Initialization failed: {}", init_err)
+                                &format!("Initialization failed: {}", init_err),
                             );
 
-                            return Err(Status::internal(
-                                format!("Failed to initialize node '{}': {}", node_id, init_err)
-                            ));
+                            return Err(Status::internal(format!(
+                                "Failed to initialize node '{}': {}",
+                                node_id, init_err
+                            )));
                         }
                     }
                 }
                 Err(e) => {
-                    error!("   ❌ [{}/{}] Failed to initialize {}: {}",
-                           idx + 1, total_nodes, node_id, e);
+                    error!(
+                        "   ❌ [{}/{}] Failed to initialize {}: {}",
+                        idx + 1,
+                        total_nodes,
+                        node_id,
+                        e
+                    );
 
                     // Send "error" status to client
                     self.send_status_update(
                         &node_id,
                         "error",
-                        &format!("Failed to initialize {}: {}", node_type, e)
+                        &format!("Failed to initialize {}: {}", node_type, e),
                     );
 
-                    return Err(Status::internal(
-                        format!("Failed to pre-initialize node '{}': {}", node_id, e)
-                    ));
+                    return Err(Status::internal(format!(
+                        "Failed to pre-initialize node '{}': {}",
+                        node_id, e
+                    )));
                 }
             }
         }
 
-        info!("✅ All {} nodes pre-initialized and ready for streaming", total_nodes);
+        info!(
+            "✅ All {} nodes pre-initialized and ready for streaming",
+            total_nodes
+        );
 
         // Send completion message to client
-        self.send_status_update("_system", "ready",
-            &format!("All {} nodes ready for streaming", total_nodes));
+        self.send_status_update(
+            "_system",
+            "ready",
+            &format!("All {} nodes ready for streaming", total_nodes),
+        );
 
         Ok(())
     }
@@ -238,7 +288,9 @@ impl SessionRouter {
     /// Send a status update message to the client (non-blocking)
     fn send_status_update(&self, node_id: &str, status: &str, message: &str) {
         use crate::data::RuntimeData;
-        use crate::grpc_service::generated::{StreamResponse, stream_response::Response as StreamResponseType};
+        use crate::grpc_service::generated::{
+            stream_response::Response as StreamResponseType, StreamResponse,
+        };
 
         // Create status message as text
         let status_text = format!("[{}] status={} message={}", node_id, status, message);
@@ -268,7 +320,10 @@ impl SessionRouter {
 
     /// Start the router - this runs until the session ends
     pub fn start(mut self) -> JoinHandle<()> {
-        info!("🚀 Starting session router for session '{}'", self.session_id);
+        info!(
+            "🚀 Starting session router for session '{}'",
+            self.session_id
+        );
 
         self.running = true;
         let session_id = self.session_id.clone();
@@ -376,7 +431,7 @@ impl SessionRouter {
         // Clone what we need for the task
         let node_id_clone = node_id.clone();
         let session_id = self.session_id.clone();
-        let router_tx = self.input_tx.clone();  // Send outputs back to router
+        let router_tx = self.input_tx.clone(); // Send outputs back to router
 
         // Check if this is a multiprocess node and set up continuous output draining
         #[cfg(feature = "multiprocess")]
@@ -388,7 +443,10 @@ impl SessionRouter {
 
         // Spawn the node task
         let task = tokio::spawn(async move {
-            info!("⚡ Node '{}' task started (streaming: {})", node_id_clone, is_streaming);
+            info!(
+                "⚡ Node '{}' task started (streaming: {})",
+                node_id_clone, is_streaming
+            );
 
             // For multiprocess nodes, set up continuous output draining
             #[cfg(feature = "multiprocess")]
@@ -398,10 +456,19 @@ impl SessionRouter {
                     let (output_tx, mut output_rx) = tokio::sync::mpsc::unbounded_channel();
 
                     // Register callback with IPC thread
-                    if let Err(e) = executor.register_output_callback(&node_id_clone, &session_id, output_tx).await {
-                        error!("Failed to register output callback for node '{}': {}", node_id_clone, e);
+                    if let Err(e) = executor
+                        .register_output_callback(&node_id_clone, &session_id, output_tx)
+                        .await
+                    {
+                        error!(
+                            "Failed to register output callback for node '{}': {}",
+                            node_id_clone, e
+                        );
                     } else {
-                        info!("✅ Registered continuous output callback for multiprocess node '{}'", node_id_clone);
+                        info!(
+                            "✅ Registered continuous output callback for multiprocess node '{}'",
+                            node_id_clone
+                        );
 
                         // Spawn background task to drain outputs and forward to router
                         let router_tx_for_drain = router_tx.clone();
@@ -435,14 +502,20 @@ impl SessionRouter {
                                     }
                                 }
                             }
-                            info!("Output draining task ended for node '{}'", node_id_for_drain);
+                            info!(
+                                "Output draining task ended for node '{}'",
+                                node_id_for_drain
+                            );
                         });
                     }
                 }
             }
 
             while let Some(packet) = input_rx.recv().await {
-                debug!("📦 Node '{}' processing packet (seq: {})", node_id_clone, packet.sequence);
+                debug!(
+                    "📦 Node '{}' processing packet (seq: {})",
+                    node_id_clone, packet.sequence
+                );
 
                 if is_streaming {
                     // Streaming node - spawn processing in background for pipelined execution
@@ -460,28 +533,35 @@ impl SessionRouter {
                         let session_id_for_cb = session_id_for_task.clone();
                         let router_tx_for_cb = router_tx_for_task.clone();
 
-                        let result = node_clone.process_streaming_async(
-                            packet_data,
-                            Some(session_id_for_task.clone()),
-                            Box::new(move |output| {
-                                output_count += 1;
-                                let output_packet = DataPacket {
-                                    data: output,
-                                    from_node: node_id_for_cb.clone(),
-                                    to_node: None,
-                                    session_id: session_id_for_cb.clone(),
-                                    sequence: packet_sequence,
-                                    sub_sequence: output_count,
-                                };
+                        let result = node_clone
+                            .process_streaming_async(
+                                packet_data,
+                                Some(session_id_for_task.clone()),
+                                Box::new(move |output| {
+                                    output_count += 1;
+                                    let output_packet = DataPacket {
+                                        data: output,
+                                        from_node: node_id_for_cb.clone(),
+                                        to_node: None,
+                                        session_id: session_id_for_cb.clone(),
+                                        sequence: packet_sequence,
+                                        sub_sequence: output_count,
+                                    };
 
-                                // Send output back to router for further routing
-                                if let Err(e) = router_tx_for_cb.send(output_packet) {
-                                    error!("Failed to send output from '{}': {}", node_id_for_cb, e);
-                                    return Err(crate::Error::Execution("Channel closed".into()));
-                                }
-                                Ok(())
-                            })
-                        ).await;
+                                    // Send output back to router for further routing
+                                    if let Err(e) = router_tx_for_cb.send(output_packet) {
+                                        error!(
+                                            "Failed to send output from '{}': {}",
+                                            node_id_for_cb, e
+                                        );
+                                        return Err(crate::Error::Execution(
+                                            "Channel closed".into(),
+                                        ));
+                                    }
+                                    Ok(())
+                                }),
+                            )
+                            .await;
 
                         match result {
                             Ok(count) => {
@@ -525,7 +605,10 @@ impl SessionRouter {
     }
 
     /// Get or create a node
-    async fn get_or_create_node(&self, node_id: &str) -> Result<Arc<Box<dyn StreamingNode>>, Status> {
+    async fn get_or_create_node(
+        &self,
+        node_id: &str,
+    ) -> Result<Arc<Box<dyn StreamingNode>>, Status> {
         let mut session = self.session.lock().await;
 
         // Check cache first
@@ -537,17 +620,29 @@ impl SessionRouter {
 
         // Create new node
         session.cache_misses += 1;
-        let spec = session.manifest.nodes.iter()
+        let spec = session
+            .manifest
+            .nodes
+            .iter()
             .find(|n| n.id == node_id)
             .ok_or_else(|| Status::internal(format!("Node spec not found for '{}'", node_id)))?;
 
         // Pass session_id for multiprocess execution
         let session_id = Some(session.session_id.clone());
-        let node = self.registry.create_node(&spec.node_type, node_id.to_string(), &spec.params, session_id)
+        let node = self
+            .registry
+            .create_node(
+                &spec.node_type,
+                node_id.to_string(),
+                &spec.params,
+                session_id,
+            )
             .map_err(|e| Status::internal(format!("Failed to create node '{}': {}", node_id, e)))?;
 
         let arc_node = Arc::new(node);
-        session.node_cache.insert(node_id.to_string(), arc_node.clone());
+        session
+            .node_cache
+            .insert(node_id.to_string(), arc_node.clone());
 
         Ok(arc_node)
     }
@@ -556,7 +651,10 @@ impl SessionRouter {
     async fn get_downstream_nodes(&self, from_node_id: &str) -> Result<Vec<String>, Status> {
         let session = self.session.lock().await;
 
-        let downstream: Vec<String> = session.manifest.connections.iter()
+        let downstream: Vec<String> = session
+            .manifest
+            .connections
+            .iter()
             .filter(|c| c.from == from_node_id)
             .map(|c| c.to.clone())
             .collect();
@@ -567,7 +665,10 @@ impl SessionRouter {
     /// Get node type from node ID
     async fn get_node_type(&self, node_id: &str) -> String {
         let session = self.session.lock().await;
-        session.manifest.nodes.iter()
+        session
+            .manifest
+            .nodes
+            .iter()
             .find(|n| n.id == node_id)
             .map(|n| n.node_type.clone())
             .unwrap_or_else(|| "unknown".to_string())
@@ -575,8 +676,10 @@ impl SessionRouter {
 
     /// Send a packet to the client
     async fn send_to_client(&self, packet: DataPacket) -> Result<(), Status> {
-        debug!("📤 Sending to client from '{}' (seq: {}.{})",
-               packet.from_node, packet.sequence, packet.sub_sequence);
+        debug!(
+            "📤 Sending to client from '{}' (seq: {}.{})",
+            packet.from_node, packet.sequence, packet.sub_sequence
+        );
 
         let output_buffer = convert_runtime_to_proto_data(packet.data);
 
@@ -594,7 +697,8 @@ impl SessionRouter {
             response: Some(StreamResponseType::Result(chunk_result)),
         };
 
-        self.client_tx.send(Ok(response))
+        self.client_tx
+            .send(Ok(response))
             .await
             .map_err(|_| Status::internal("Failed to send to client"))?;
 
@@ -633,7 +737,8 @@ impl SessionRouter {
             sub_sequence: 0,
         };
 
-        self.input_tx.send(packet)
+        self.input_tx
+            .send(packet)
             .map_err(|e| format!("Failed to feed chunk: {}", e))
     }
 }

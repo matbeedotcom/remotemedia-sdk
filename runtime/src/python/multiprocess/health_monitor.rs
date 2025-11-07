@@ -6,10 +6,10 @@
 use crate::{Error, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
 use std::time::{Duration, Instant};
+use tokio::sync::{mpsc, RwLock};
 
-use super::process_manager::{ProcessHandle, ProcessStatus, ExitReason};
+use super::process_manager::{ExitReason, ProcessHandle, ProcessStatus};
 
 /// Process health event types
 #[derive(Debug, Clone)]
@@ -363,14 +363,16 @@ mod tests {
         let event_received_clone = event_received.clone();
 
         // Register event handler
-        monitor.on_event(move |event| {
-            if matches!(event, ProcessEvent::ProcessStarted { .. }) {
-                let event_received = event_received_clone.clone();
-                tokio::spawn(async move {
-                    *event_received.write().await = true;
-                });
-            }
-        }).await;
+        monitor
+            .on_event(move |event| {
+                if matches!(event, ProcessEvent::ProcessStarted { .. }) {
+                    let event_received = event_received_clone.clone();
+                    tokio::spawn(async move {
+                        *event_received.write().await = true;
+                    });
+                }
+            })
+            .await;
 
         // Send a process started event
         let _ = monitor.event_sender.send(ProcessEvent::ProcessStarted {

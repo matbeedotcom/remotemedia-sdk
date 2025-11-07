@@ -6,7 +6,7 @@
 #![cfg(feature = "grpc-transport")]
 
 use remotemedia_runtime::grpc_service::generated::{
-    ExecuteRequest, PipelineManifest, AudioBuffer, AudioFormat, NodeManifest,
+    AudioBuffer, AudioFormat, ExecuteRequest, NodeManifest, PipelineManifest,
 };
 use std::time::Instant;
 
@@ -17,19 +17,17 @@ async fn test_execution_latency() {
     let manifest = PipelineManifest {
         version: "1.0".to_string(),
         metadata: None,
-        nodes: vec![
-            NodeManifest {
-                id: "resample".to_string(),
-                node_type: "AudioResample".to_string(),
-                params: r#"{"target_sample_rate": 16000}"#.to_string(),
-                is_streaming: false,
-                capabilities: None,
-                host: String::new(),
-                runtime_hint: 0,
-                input_types: vec![1], // Audio
-                output_types: vec![1], // Audio
-            },
-        ],
+        nodes: vec![NodeManifest {
+            id: "resample".to_string(),
+            node_type: "AudioResample".to_string(),
+            params: r#"{"target_sample_rate": 16000}"#.to_string(),
+            is_streaming: false,
+            capabilities: None,
+            host: String::new(),
+            runtime_hint: 0,
+            input_types: vec![1],  // Audio
+            output_types: vec![1], // Audio
+        }],
         connections: vec![],
     };
 

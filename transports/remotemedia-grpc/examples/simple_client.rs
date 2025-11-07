@@ -16,8 +16,7 @@
 //! ```
 
 use remotemedia_grpc::generated::{
-    pipeline_execution_service_client::PipelineExecutionServiceClient,
-    VersionRequest,
+    pipeline_execution_service_client::PipelineExecutionServiceClient, VersionRequest,
 };
 
 #[tokio::main]
@@ -26,8 +25,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // Connect to server
-    let server_addr = std::env::var("GRPC_SERVER_ADDR")
-        .unwrap_or_else(|_| "http://[::1]:50051".to_string());
+    let server_addr =
+        std::env::var("GRPC_SERVER_ADDR").unwrap_or_else(|_| "http://[::1]:50051".to_string());
 
     println!("📡 Connecting to: {}", server_addr);
     let mut client = PipelineExecutionServiceClient::connect(server_addr).await?;
@@ -48,7 +47,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("   Protocol: {}", info.protocol_version);
         println!("   Runtime: {}", info.runtime_version);
         println!("   Supported protocols: {:?}", info.supported_protocols);
-        println!("   Node types: {} registered", info.supported_node_types.len());
+        println!(
+            "   Node types: {} registered",
+            info.supported_node_types.len()
+        );
     }
     println!("   Compatible: {}", version_response.compatible);
     if !version_response.compatibility_message.is_empty() {

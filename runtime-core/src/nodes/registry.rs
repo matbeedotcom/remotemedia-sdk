@@ -61,12 +61,12 @@ pub struct NodeRegistry {
 }
 
 /// Multi-tier composite registry that chains multiple registries
-/// 
+///
 /// Searches registries in order (first match wins):
 /// 1. User registry (custom nodes, highest priority)
 /// 2. Audio registry (audio processing nodes)
 /// 3. System registry (built-in nodes, lowest priority)
-/// 
+///
 /// This allows layering and override semantics:
 /// - User can override system nodes
 /// - Audio nodes isolated from user nodes
@@ -74,7 +74,7 @@ pub struct NodeRegistry {
 pub struct CompositeRegistry {
     /// Ordered list of registries (searched first-to-last)
     registries: Vec<Arc<NodeRegistry>>,
-    
+
     /// Optional names for debugging
     names: Vec<String>,
 }
@@ -190,13 +190,13 @@ impl CompositeRegistry {
             names: Vec::new(),
         }
     }
-    
+
     /// Add a registry with optional name
     pub fn add_registry(&mut self, registry: Arc<NodeRegistry>, name: Option<&str>) {
         self.registries.push(registry);
         self.names.push(name.unwrap_or("unnamed").to_string());
     }
-    
+
     /// Create node from first registry that has the type
     pub fn create_node(
         &self,
@@ -213,19 +213,19 @@ impl CompositeRegistry {
                     registry.has_rust_impl(node_type) || registry.has_python_impl(node_type)
                 }
             };
-            
+
             if has_node {
                 return registry.create_node(node_type, hint, params);
             }
         }
-        
+
         Err(Error::Execution(format!(
             "No implementation available for node type: {} (searched {} registries)",
             node_type,
             self.registries.len()
         )))
     }
-    
+
     /// List all node types from all registries (deduplicated)
     pub fn list_node_types(&self) -> Vec<String> {
         let mut types: Vec<String> = self
@@ -237,17 +237,21 @@ impl CompositeRegistry {
         types.dedup();
         types
     }
-    
+
     /// Check if any registry has Rust implementation
     pub fn has_rust_impl(&self, node_type: &str) -> bool {
-        self.registries.iter().any(|reg| reg.has_rust_impl(node_type))
+        self.registries
+            .iter()
+            .any(|reg| reg.has_rust_impl(node_type))
     }
-    
+
     /// Check if any registry has Python implementation
     pub fn has_python_impl(&self, node_type: &str) -> bool {
-        self.registries.iter().any(|reg| reg.has_python_impl(node_type))
+        self.registries
+            .iter()
+            .any(|reg| reg.has_python_impl(node_type))
     }
-    
+
     /// Get registry names for debugging
     pub fn registry_names(&self) -> &[String] {
         &self.names

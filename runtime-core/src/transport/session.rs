@@ -3,8 +3,8 @@
 use crate::transport::TransportData;
 use crate::{Error, Result};
 use async_trait::async_trait;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
 /// Streaming session handle for stateful pipeline interactions
@@ -151,13 +151,10 @@ impl StreamSession for StreamSessionHandle {
         }
 
         // Send the core RuntimeData to the router
-        self.inner
-            .input_tx
-            .send(data.data)
-            .map_err(|_| {
-                self.inner.active.store(false, Ordering::Release);
-                Error::Execution(format!("Session {} channel closed", self.session_id))
-            })?;
+        self.inner.input_tx.send(data.data).map_err(|_| {
+            self.inner.active.store(false, Ordering::Release);
+            Error::Execution(format!("Session {} channel closed", self.session_id))
+        })?;
 
         Ok(())
     }

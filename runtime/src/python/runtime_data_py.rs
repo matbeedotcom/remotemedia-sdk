@@ -4,7 +4,7 @@
 //! directly with RuntimeData instead of going through JSON serialization.
 
 use crate::data::RuntimeData;
-use crate::grpc_service::generated::{AudioBuffer, VideoFrame, TensorBuffer};
+use crate::grpc_service::generated::{AudioBuffer, TensorBuffer, VideoFrame};
 use prost::bytes::Bytes;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
@@ -38,9 +38,7 @@ impl PyRuntimeData {
     fn json(py: Python, value: Bound<'_, PyAny>) -> PyResult<Self> {
         // Convert Python object to JSON string then parse
         let json_module = py.import("json")?;
-        let json_str: String = json_module
-            .call_method1("dumps", (value,))?
-            .extract()?;
+        let json_str: String = json_module.call_method1("dumps", (value,))?.extract()?;
         let json_value: serde_json::Value = serde_json::from_str(&json_str)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid JSON: {}", e)))?;
 
@@ -132,8 +130,12 @@ impl PyRuntimeData {
         match &self.inner {
             RuntimeData::Json(value) => {
                 // Convert JSON to string then parse in Python
-                let json_str = serde_json::to_string(value)
-                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialization error: {}", e)))?;
+                let json_str = serde_json::to_string(value).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "JSON serialization error: {}",
+                        e
+                    ))
+                })?;
                 let json_module = py.import("json")?;
                 let py_obj = json_module.call_method1("loads", (json_str,))?;
                 Ok(Some(py_obj.into()))
@@ -236,14 +238,14 @@ fn audio_to_numpy(py: Python, data: &PyRuntimeData) -> PyResult<PyObject> {
             };
 
             // Create numpy array from bytes
-            let array = numpy.call_method1(
-                "frombuffer",
-                (py_bytes, numpy.getattr(dtype)?),
-            )?;
+            let array = numpy.call_method1("frombuffer", (py_bytes, numpy.getattr(dtype)?))?;
 
             // Reshape if multi-channel
             let reshaped = if buf.channels > 1 {
-                let shape = (buf.num_samples as usize / buf.channels as usize, buf.channels as usize);
+                let shape = (
+                    buf.num_samples as usize / buf.channels as usize,
+                    buf.channels as usize,
+                );
                 array.call_method1("reshape", (shape,))?
             } else {
                 array
@@ -258,7 +260,10 @@ fn audio_to_numpy(py: Python, data: &PyRuntimeData) -> PyResult<PyObject> {
 }
 
 /// Register the RuntimeData Python module
-pub fn register_runtime_data_module(py: Python, parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn register_runtime_data_module(
+    py: Python,
+    parent_module: &Bound<'_, PyModule>,
+) -> PyResult<()> {
     let runtime_data_module = PyModule::new(py, "runtime_data")?;
 
     runtime_data_module.add_class::<PyRuntimeData>()?;
@@ -284,7 +289,10 @@ pub fn runtime_data_to_py(data: RuntimeData) -> PyRuntimeData {
 }
 
 /// Helper function to convert Rust RuntimeData to Python PyRuntimeData with session_id
-pub fn runtime_data_to_py_with_session(data: RuntimeData, session_id: Option<String>) -> PyRuntimeData {
+pub fn runtime_data_to_py_with_session(
+    data: RuntimeData,
+    session_id: Option<String>,
+) -> PyRuntimeData {
     PyRuntimeData {
         inner: data,
         session_id,

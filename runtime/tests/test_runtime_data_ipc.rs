@@ -2,7 +2,9 @@
 
 #[cfg(all(test, feature = "multiprocess"))]
 mod runtime_data_ipc_tests {
-    use remotemedia_runtime::python::multiprocess::{ChannelRegistry, data_transfer::RuntimeData as IPCData};
+    use remotemedia_runtime::python::multiprocess::{
+        data_transfer::RuntimeData as IPCData, ChannelRegistry,
+    };
     use std::process::{Command, Stdio};
     use std::time::Duration;
 
@@ -27,7 +29,10 @@ mod runtime_data_ipc_tests {
             .unwrap()
             .join("test_ipc_subscriber_runtime_data.py");
 
-        println!("🐍 Spawning Python RuntimeData subscriber: {:?}", python_script);
+        println!(
+            "🐍 Spawning Python RuntimeData subscriber: {:?}",
+            python_script
+        );
 
         let mut python_child = Command::new("python")
             .arg(python_script)
@@ -76,7 +81,10 @@ mod runtime_data_ipc_tests {
                     assert!(stdout.contains("RECEIVED"), "Should receive IPC message");
                     assert!(stdout.contains("Text RuntimeData"), "Should parse as Text");
                     assert!(stdout.contains(test_text), "Should contain our message");
-                    assert!(stdout.contains("is_text(): True"), "RuntimeData.is_text() should work");
+                    assert!(
+                        stdout.contains("is_text(): True"),
+                        "RuntimeData.is_text() should work"
+                    );
                     assert!(stdout.contains("SUCCESS"), "Should report success");
 
                     println!("✅ All assertions passed!");
@@ -155,7 +163,10 @@ mod runtime_data_ipc_tests {
 
                     assert!(output.status.success(), "Python process should succeed");
                     assert!(stdout.contains("RECEIVED"), "Should receive IPC message");
-                    assert!(stdout.contains("Audio RuntimeData"), "Should parse as Audio");
+                    assert!(
+                        stdout.contains("Audio RuntimeData"),
+                        "Should parse as Audio"
+                    );
                     assert!(stdout.contains("1000 samples"), "Should have 1000 samples");
                     assert!(stdout.contains("SUCCESS"), "Should report success");
 
