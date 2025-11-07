@@ -3,10 +3,11 @@
 //! This module implements a persistent router that runs for the entire session,
 //! continuously processing chunks from the client and routing them through the pipeline.
 
-use crate::data::{RuntimeData, convert_runtime_to_proto_data};
-use crate::grpc_service::streaming::StreamSession;
-use crate::grpc_service::generated::{StreamResponse, stream_response::Response as StreamResponseType, ChunkResult};
-use crate::nodes::StreamingNode;
+use remotemedia_runtime_core::data::RuntimeData;
+use crate::adapters::runtime_data_to_data_buffer;
+use crate::streaming::StreamSession;
+use crate::generated::{StreamResponse, stream_response::Response as StreamResponseType, ChunkResult};
+use remotemedia_runtime_core::nodes::StreamingNode;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
@@ -15,7 +16,7 @@ use tracing::{info, error, debug, warn};
 use tonic::Status;
 
 #[cfg(feature = "multiprocess")]
-use crate::python::multiprocess::MultiprocessExecutor;
+use remotemedia_runtime_core::python::multiprocess::MultiprocessExecutor;
 
 /// Represents a data packet flowing through the pipeline
 #[derive(Clone, Debug)]
@@ -137,12 +138,12 @@ impl SessionRouter {
 
         // Send initialization start message to client (non-blocking fire-and-forget)
         let _ = self.client_tx.try_send(Ok({
-            use crate::data::RuntimeData;
-            use crate::grpc_service::generated::{StreamResponse, stream_response::Response as StreamResponseType};
+            use remotemedia_runtime_core::data::RuntimeData;
+            use crate::generated::{StreamResponse, stream_response::Response as StreamResponseType};
 
             let status_text = format!("[_system] status=initializing message=Initializing {} nodes...", total_nodes);
             let status_data = RuntimeData::Text(status_text);
-            let proto_data = convert_runtime_to_proto_data(status_data);
+            let proto_data = runtime_data_to_data_buffer(&status_data);
 
             let mut data_outputs = HashMap::new();
             data_outputs.insert("_status".to_string(), proto_data);
@@ -237,15 +238,15 @@ impl SessionRouter {
 
     /// Send a status update message to the client (non-blocking)
     fn send_status_update(&self, node_id: &str, status: &str, message: &str) {
-        use crate::data::RuntimeData;
-        use crate::grpc_service::generated::{StreamResponse, stream_response::Response as StreamResponseType};
+        use remotemedia_runtime_core::data::RuntimeData;
+        use crate::generated::{StreamResponse, stream_response::Response as StreamResponseType};
 
         // Create status message as text
         let status_text = format!("[{}] status={} message={}", node_id, status, message);
         let status_data = RuntimeData::Text(status_text);
 
         // Convert to proto
-        let proto_data = convert_runtime_to_proto_data(status_data);
+        let proto_data = runtime_data_to_data_buffer(&status_data);
 
         // Create ChunkResult with status info
         let mut data_outputs = HashMap::new();
@@ -477,7 +478,7 @@ impl SessionRouter {
                                 // Send output back to router for further routing
                                 if let Err(e) = router_tx_for_cb.send(output_packet) {
                                     error!("Failed to send output from '{}': {}", node_id_for_cb, e);
-                                    return Err(crate::Error::Execution("Channel closed".into()));
+                                    return Err(remotemedia_runtime_core::Error::Execution("Channel closed".into()));
                                 }
                                 Ok(())
                             })
@@ -578,7 +579,7 @@ impl SessionRouter {
         debug!("📤 Sending to client from '{}' (seq: {}.{})",
                packet.from_node, packet.sequence, packet.sub_sequence);
 
-        let output_buffer = convert_runtime_to_proto_data(packet.data);
+        let output_buffer = runtime_data_to_data_buffer(&packet.data);
 
         let mut data_outputs = HashMap::new();
         data_outputs.insert(packet.from_node, output_buffer);

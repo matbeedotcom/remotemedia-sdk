@@ -75,8 +75,8 @@ impl VersionManager {
     }
 
     /// Convert to protobuf VersionInfo
-    pub fn to_proto(&self) -> crate::grpc_service::VersionInfo {
-        crate::grpc_service::VersionInfo {
+    pub fn to_proto(&self) -> crate::VersionInfo {
+        crate::VersionInfo {
             protocol_version: PROTOCOL_VERSION.to_string(),
             runtime_version: RUNTIME_VERSION.to_string(),
             supported_node_types: self.supported_node_types.clone(),

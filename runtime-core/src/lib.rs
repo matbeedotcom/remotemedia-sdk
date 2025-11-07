@@ -131,8 +131,12 @@ pub mod data {
             width: u32,
             /// Frame height
             height: u32,
-            /// Frame number/timestamp
+            /// Pixel format (0=unspecified, 1=RGB24, 2=RGBA32, 3=YUV420P)
+            format: i32,
+            /// Frame number/sequence
             frame_number: u64,
+            /// Timestamp in microseconds
+            timestamp_us: u64,
         },
         /// Tensor data
         Tensor {

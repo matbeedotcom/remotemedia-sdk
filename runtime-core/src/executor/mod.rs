@@ -30,8 +30,9 @@ use crate::manifest::Manifest;
 use crate::nodes::{NodeRegistry, CompositeRegistry};
 use crate::executor::node_executor::{NodeContext, NodeExecutor};
 use crate::{Error, Result};
-use pyo3::prelude::*;
-use pyo3::types::PyAny;
+// NOTE: pyo3 imports removed - Python FFI belongs in FFI transport crate
+// use pyo3::prelude::*;
+// use pyo3::types::PyAny;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -39,54 +40,9 @@ use tokio::sync::RwLock;
 
 pub use runtime_selector::{RuntimeSelector, SelectedRuntime};
 
-/// Cache for Python objects to avoid unnecessary serialization
-/// when passing data between Python nodes
-#[derive(Clone)]
-pub struct PyObjectCache {
-    objects: Arc<Mutex<HashMap<String, Py<PyAny>>>>,
-    next_id: Arc<Mutex<u64>>,
-}
-
-impl PyObjectCache {
-    pub fn new() -> Self {
-        Self {
-            objects: Arc::new(Mutex::new(HashMap::new())),
-            next_id: Arc::new(Mutex::new(0)),
-        }
-    }
-
-    /// Store a Python object and return its cache ID
-    pub fn store(&self, obj: Py<PyAny>) -> String {
-        let mut next_id = self.next_id.lock().unwrap();
-        let id = format!("pyobj_{}", *next_id);
-        *next_id += 1;
-
-        let mut objects = self.objects.lock().unwrap();
-        objects.insert(id.clone(), obj);
-
-        tracing::info!("Stored Python object in cache with ID: {}", id);
-        id
-    }
-
-    /// Retrieve a Python object by ID
-    pub fn get(&self, id: &str) -> Option<Py<PyAny>> {
-        let objects = self.objects.lock().unwrap();
-        Python::attach(|py| objects.get(id).map(|obj| obj.clone_ref(py)))
-    }
-
-    /// Check if an ID exists in the cache
-    pub fn contains(&self, id: &str) -> bool {
-        let objects = self.objects.lock().unwrap();
-        objects.contains_key(id)
-    }
-
-    /// Clear all cached objects
-    pub fn clear(&self) {
-        let mut objects = self.objects.lock().unwrap();
-        objects.clear();
-        tracing::info!("Cleared Python object cache");
-    }
-}
+// NOTE: PyObjectCache removed - Python FFI belongs in FFI transport crate
+// This cache was used for passing Python objects between nodes without serialization
+// It will be moved to remotemedia-ffi transport crate
 
 /// Represents a node in the pipeline graph
 #[derive(Debug, Clone)]
@@ -275,8 +231,7 @@ pub struct Executor {
     /// Runtime selector for Python nodes (Phase 1.10.6)
     runtime_selector: RuntimeSelector,
 
-    /// Cache for Python objects to avoid serialization between Python nodes
-    py_cache: PyObjectCache,
+    // NOTE: py_cache removed - Python FFI belongs in FFI transport crate
 
     /// Pipeline metrics collection
     metrics: Arc<RwLock<PipelineMetrics>>,
@@ -309,15 +264,15 @@ impl Executor {
 
     /// Create a new executor with custom configuration
     pub fn with_config(config: ExecutorConfig) -> Self {
-        // Initialize Python interpreter if not already initialized (for gRPC server usage)
-        #[cfg(feature = "grpc-transport")]
-        {
-            pyo3::prepare_freethreaded_python();
-        }
+        // NOTE: Python interpreter initialization removed - belongs in FFI transport
+        // #[cfg(feature = "grpc-transport")]
+        // {
+        //     pyo3::prepare_freethreaded_python();
+        // }
 
         // Create default system registry (empty for now, will be populated via add_system_registry)
         let composite = CompositeRegistry::new();
-        
+
         // System registry will be added by caller via add_system_registry()
         // This allows for lazy initialization and custom registration
 
@@ -326,7 +281,7 @@ impl Executor {
             registry: composite,
             builtin_nodes: NodeRegistry::default(),
             runtime_selector: RuntimeSelector::new(),
-            py_cache: PyObjectCache::new(),
+            // py_cache removed - belongs in FFI transport
             metrics: Arc::new(RwLock::new(PipelineMetrics::new("pipeline"))),
         }
     }
@@ -360,10 +315,7 @@ impl Executor {
         types
     }
 
-    /// Get a reference to the Python object cache
-    pub fn py_cache(&self) -> &PyObjectCache {
-        &self.py_cache
-    }
+    // NOTE: py_cache() method removed - Python FFI belongs in FFI transport crate
 
     /// Execute a pipeline synchronously (for WASM compatibility)
     ///

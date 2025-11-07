@@ -245,48 +245,33 @@ impl AsyncStreamingNode for SileroVADNode {
         #[cfg(feature = "silero-vad")]
         {
             // Extract audio from RuntimeData
-            let audio_buf = match &data {
-                RuntimeData::Audio(buf) => buf,
+            let (audio_samples, audio_sample_rate, audio_channels) = match &data {
+                RuntimeData::Audio { samples, sample_rate, channels } => {
+                    (samples.clone(), *sample_rate, *channels)
+                }
                 _ => return Err(Error::Execution("SileroVADNode requires audio input".into())),
             };
 
-            // Convert audio bytes to f32 samples
-            let samples: Vec<f32> = match audio_buf.format {
-                1 => {
-                    // F32 format
-                    let sample_count = audio_buf.samples.len() / 4;
-                    (0..sample_count)
-                        .map(|i| {
-                            let offset = i * 4;
-                            f32::from_le_bytes([
-                                audio_buf.samples[offset],
-                                audio_buf.samples[offset + 1],
-                                audio_buf.samples[offset + 2],
-                                audio_buf.samples[offset + 3],
-                            ])
-                        })
-                        .collect()
-                }
-                _ => return Err(Error::Execution("SileroVADNode requires F32 audio format".into())),
-            };
+            // Samples are already f32 in RuntimeData
+            let samples = audio_samples;
 
             // Resample if needed
-            let resampled = if audio_buf.sample_rate != self.sampling_rate {
+            let resampled = if audio_sample_rate != self.sampling_rate {
                 tracing::debug!(
                     "Resampling from {}Hz to {}Hz",
-                    audio_buf.sample_rate,
+                    audio_sample_rate,
                     self.sampling_rate
                 );
-                self.resample_audio(&samples, audio_buf.sample_rate, self.sampling_rate)
+                self.resample_audio(&samples, audio_sample_rate, self.sampling_rate)
             } else {
                 samples
             };
 
             // Convert to mono if stereo
-            let mono: Vec<f32> = if audio_buf.channels > 1 {
+            let mono: Vec<f32> = if audio_channels > 1 {
                 resampled
-                    .chunks(audio_buf.channels as usize)
-                    .map(|chunk| chunk.iter().sum::<f32>() / audio_buf.channels as f32)
+                    .chunks(audio_channels as usize)
+                    .map(|chunk| chunk.iter().sum::<f32>() / audio_channels as f32)
                     .collect()
             } else {
                 resampled

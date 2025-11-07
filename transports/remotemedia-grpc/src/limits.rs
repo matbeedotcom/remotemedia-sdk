@@ -3,8 +3,6 @@
 //! Implements memory cap, timeout enforcement, buffer size validation.
 //! Prevents resource exhaustion and denial-of-service attacks.
 
-#![cfg(feature = "grpc-transport")]
-
 use std::time::Duration;
 
 /// Resource limit configuration
@@ -84,8 +82,8 @@ impl ResourceLimits {
     }
 
     /// Convert to protobuf ResourceLimits
-    pub fn to_proto(&self) -> crate::grpc_service::ResourceLimits {
-        crate::grpc_service::ResourceLimits {
+    pub fn to_proto(&self) -> crate::ResourceLimits {
+        crate::ResourceLimits {
             max_memory_bytes: self.max_memory_bytes,
             max_timeout_ms: self.max_timeout.as_millis() as u64,
             max_audio_samples: self.max_audio_samples,
@@ -93,7 +91,7 @@ impl ResourceLimits {
     }
 
     /// Create from protobuf ResourceLimits
-    pub fn from_proto(proto: &crate::grpc_service::ResourceLimits) -> Self {
+    pub fn from_proto(proto: &crate::ResourceLimits) -> Self {
         Self {
             max_memory_bytes: proto.max_memory_bytes,
             max_timeout: Duration::from_millis(proto.max_timeout_ms),

@@ -33,12 +33,14 @@ impl AsyncStreamingNode for ResampleStreamingNode {
 
     async fn process(&self, data: RuntimeData) -> Result<RuntimeData> {
         // if not audio, passthrough
-        if data.data_type() != DataTypeHint::Audio {
+        if data.data_type() != "audio" {
             return Ok(data);
         }
-        // Extract audio buffer
-        let audio_buf = match &data {
-            RuntimeData::Audio(buf) => buf,
+        // Extract audio data
+        let (f32_samples, input_sample_rate, input_channels) = match &data {
+            RuntimeData::Audio { samples, sample_rate, channels } => {
+                (samples.clone(), *sample_rate, *channels)
+            }
             _ => {
                 return Err(Error::InvalidInput {
                     message: format!("Expected Audio, got {:?}", data.data_type()),
@@ -47,14 +49,6 @@ impl AsyncStreamingNode for ResampleStreamingNode {
                 });
             }
         };
-
-        // Convert protobuf AudioBuffer to AudioData
-        // Extract f32 samples from bytes
-        let f32_samples: Vec<f32> = audio_buf
-            .samples
-            .chunks_exact(4)
-            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-            .collect();
 
         // Lock and process - need to chunk input for FftFixedIn resampler
         let mut inner = self.inner.lock().await;
@@ -67,8 +61,8 @@ impl AsyncStreamingNode for ResampleStreamingNode {
             // Small enough to process directly
             let audio_data = AudioData::new(
                 crate::audio::buffer::AudioBuffer::new_f32(f32_samples),
-                audio_buf.sample_rate,
-                audio_buf.channels as usize,
+                input_sample_rate,
+                input_channels as usize,
             );
 
             let resampled = inner.process_audio(audio_data)?;
@@ -85,15 +79,12 @@ impl AsyncStreamingNode for ResampleStreamingNode {
                 .flat_map(|&f| f.to_le_bytes())
                 .collect();
 
-            let output_buf = AudioBuffer {
-                samples: bytes,
+            // Return resampled audio as RuntimeData
+            return Ok(RuntimeData::Audio {
+                samples: f32_samples.to_vec(),
                 sample_rate: resampled.sample_rate,
                 channels: resampled.channels as u32,
-                format: 1,
-                num_samples,
-            };
-
-            return Ok(RuntimeData::Audio(output_buf));
+            });
         }
 
         // Large buffer - process in chunks
@@ -112,8 +103,8 @@ impl AsyncStreamingNode for ResampleStreamingNode {
 
             let chunk_data = AudioData::new(
                 crate::audio::buffer::AudioBuffer::new_f32(chunk_vec),
-                audio_buf.sample_rate,
-                audio_buf.channels as usize,
+                input_sample_rate,
+                input_channels as usize,
             );
 
             let resampled_chunk = inner.process_audio(chunk_data)?;
@@ -125,27 +116,17 @@ impl AsyncStreamingNode for ResampleStreamingNode {
 
         drop(inner); // Release lock
 
-        let num_samples = all_output_samples.len() as u64;
+        let num_samples = all_output_samples.len();
         tracing::info!("Resampling complete: {} input samples -> {} output samples", total_samples, num_samples);
-
-        // Convert f32 samples to bytes
-        let bytes: Vec<u8> = all_output_samples
-            .iter()
-            .flat_map(|&f| f.to_le_bytes())
-            .collect();
 
         // Use stored target rate
         let target_rate = self.target_rate;
 
-        // Convert back to RuntimeData
-        let output_buf = AudioBuffer {
-            samples: bytes,
+        // Return resampled audio
+        Ok(RuntimeData::Audio {
+            samples: all_output_samples,
             sample_rate: target_rate,
-            channels: audio_buf.channels,
-            format: 1, // AUDIO_FORMAT_F32 per protobuf enum
-            num_samples,
-        };
-
-        Ok(RuntimeData::Audio(output_buf))
+            channels: input_channels,
+        })
     }
 }

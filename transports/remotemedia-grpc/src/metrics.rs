@@ -3,8 +3,6 @@
 //! Tracks request counters, latency histograms, active connections gauge.
 //! Metrics exposed at /metrics HTTP endpoint.
 
-#![cfg(feature = "grpc-transport")]
-
 use prometheus::{
     CounterVec, HistogramOpts, HistogramVec, IntGauge, IntGaugeVec, Opts, Registry,
 };
