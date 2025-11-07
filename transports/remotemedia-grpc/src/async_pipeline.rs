@@ -5,9 +5,9 @@
 //! This allows each node to process as many inputs as it can handle
 //! without blocking other nodes.
 
-use crate::data::RuntimeData;
-use crate::nodes::{StreamingNode, AsyncStreamingNode};
-use crate::Error;
+use remotemedia_runtime_core::data::RuntimeData;
+use remotemedia_runtime_core::nodes::{StreamingNode, AsyncStreamingNode};
+use remotemedia_runtime_core::{Error, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};

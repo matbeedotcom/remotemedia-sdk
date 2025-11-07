@@ -5,7 +5,7 @@
 
 #![cfg(feature = "grpc-transport")]
 
-use crate::grpc_service::{
+use crate::{
     auth::{check_auth, AuthConfig},
     generated::{
         pipeline_execution_service_server::PipelineExecutionService, ExecuteRequest,
@@ -593,7 +593,7 @@ impl PipelineExecutionService for ExecutionServiceImpl {
                 };
                 
                 let response = ExecuteResponse {
-                    outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
+                    outcome: Some(crate::generated::execute_response::Outcome::Error(error_response)),
                 };
                 
                 return Ok(Response::new(response));
@@ -649,7 +649,7 @@ impl PipelineExecutionService for ExecutionServiceImpl {
             };
             
             let response = ExecuteResponse {
-                outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
+                outcome: Some(crate::generated::execute_response::Outcome::Error(error_response)),
             };
             
             return Ok(Response::new(response));
@@ -676,7 +676,7 @@ impl PipelineExecutionService for ExecutionServiceImpl {
                     };
 
                     let response = ExecuteResponse {
-                        outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
+                        outcome: Some(crate::generated::execute_response::Outcome::Error(error_response)),
                     };
 
                     return Ok(Response::new(response));
@@ -733,7 +733,7 @@ impl PipelineExecutionService for ExecutionServiceImpl {
                 };
 
                 let response = ExecuteResponse {
-                    outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
+                    outcome: Some(crate::generated::execute_response::Outcome::Error(error_response)),
                 };
 
                 return Ok(Response::new(response));
@@ -754,7 +754,7 @@ impl PipelineExecutionService for ExecutionServiceImpl {
                 };
 
                 let response = ExecuteResponse {
-                    outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Error(error_response)),
+                    outcome: Some(crate::generated::execute_response::Outcome::Error(error_response)),
                 };
 
                 return Ok(Response::new(response));
@@ -784,7 +784,7 @@ impl PipelineExecutionService for ExecutionServiceImpl {
         };
 
         let response = ExecuteResponse {
-            outcome: Some(crate::grpc_service::generated::execute_response::Outcome::Result(exec_result_proto)),
+            outcome: Some(crate::generated::execute_response::Outcome::Result(exec_result_proto)),
         };
 
         self.metrics

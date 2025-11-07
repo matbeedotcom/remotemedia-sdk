@@ -28,6 +28,14 @@ pub enum Error {
     #[error("IPC error: {0}")]
     IpcError(String),
 
+    /// Transport error (for compatibility)
+    #[error("Transport error: {0}")]
+    Transport(String),
+
+    /// WASM error (for compatibility, not used in core)
+    #[error("WASM error: {0}")]
+    Wasm(String),
+
     /// I/O error
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

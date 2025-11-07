@@ -22,19 +22,20 @@
 //! - Bounded buffer to prevent memory bloat
 //! - Backpressure via STREAM_ERROR_BUFFER_OVERFLOW
 
-use crate::audio::AudioBuffer as RuntimeAudioBuffer;
-use crate::data::RuntimeData;
-use crate::executor::Executor;
-use crate::manifest::Manifest;
-use crate::grpc_service::generated::{
+use remotemedia_runtime_core::audio::AudioBuffer as RuntimeAudioBuffer;
+use remotemedia_runtime_core::data::RuntimeData;
+use remotemedia_runtime_core::executor::Executor;
+use remotemedia_runtime_core::manifest::Manifest;
+use remotemedia_runtime_core::nodes::{StreamingNode, python_streaming::PythonStreamingNode, StreamingNodeRegistry, streaming_registry::create_default_streaming_registry};
+use crate::generated::{
     AudioChunk, AudioBuffer as ProtoAudioBuffer, ChunkResult, ErrorResponse, ErrorType, ExecutionMetrics, StreamClosed,
     StreamControl, StreamInit, StreamMetrics, StreamReady, StreamRequest, StreamResponse,
     stream_control::Command, stream_request::Request as StreamRequestType,
     stream_response::Response as StreamResponseType,
 };
-use crate::grpc_service::metrics::ServiceMetrics;
-use crate::grpc_service::{ServiceConfig, ServiceError};
-use crate::grpc_service::session_router::{SessionRouter, DataPacket};
+use crate::metrics::ServiceMetrics;
+use crate::{ServiceConfig, ServiceError};
+use crate::session_router::{SessionRouter, DataPacket};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -61,9 +62,9 @@ const METRICS_UPDATE_INTERVAL: u64 = 10;
 
 /// Node cache entry with timestamp for TTL management
 struct CachedNode {
-    node: Arc<Box<dyn crate::nodes::StreamingNode>>,
+    node: Arc<Box<dyn StreamingNode>>,
     /// For Python streaming nodes, store the unwrapped instance to access process_streaming()
-    py_streaming_node: Option<Arc<crate::nodes::python_streaming::PythonStreamingNode>>,
+    py_streaming_node: Option<Arc<PythonStreamingNode>>,
     last_used: Instant,
 }
 
@@ -82,7 +83,7 @@ pub struct StreamingServiceImpl {
     metrics: Arc<ServiceMetrics>,
 
     /// Streaming node registry
-    streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
+    streaming_registry: Arc<StreamingNodeRegistry>,
 
     /// Global node cache (shared across all sessions)
     /// Key: "{node_type}:{json_params_hash}", Value: cached node with timestamp
@@ -97,7 +98,7 @@ impl StreamingServiceImpl {
     /// Create new streaming service instance
     pub fn new(config: ServiceConfig, executor: Arc<Executor>, metrics: Arc<ServiceMetrics>) -> Self {
         // Create default streaming node registry
-        let streaming_registry = Arc::new(crate::nodes::streaming_registry::create_default_streaming_registry());
+        let streaming_registry = Arc::new(create_default_streaming_registry());
 
         let global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>> = Arc::new(RwLock::new(HashMap::new()));
 
@@ -199,7 +200,7 @@ pub(crate) struct StreamSession {
     /// Node cache: reuses initialized nodes across chunks
     /// Key: node_id, Value: cached StreamingNode instance
     /// This prevents expensive re-initialization (e.g., ML model loading)
-    pub(crate) node_cache: HashMap<String, Arc<Box<dyn crate::nodes::StreamingNode>>>,
+    pub(crate) node_cache: HashMap<String, Arc<Box<dyn StreamingNode>>>,
 
     /// Cache hits for this session (Feature 005)
     pub(crate) cache_hits: u64,
@@ -392,7 +393,7 @@ impl StreamSession {
 }
 
 #[tonic::async_trait]
-impl crate::grpc_service::StreamingPipelineService for StreamingServiceImpl {
+impl crate::StreamingPipelineService for StreamingServiceImpl {
     type StreamPipelineStream = tokio_stream::wrappers::ReceiverStream<Result<StreamResponse, Status>>;
 
     async fn stream_pipeline(
@@ -480,7 +481,7 @@ async fn handle_stream(
     sessions: Arc<RwLock<HashMap<String, Arc<Mutex<StreamSession>>>>>,
     executor: Arc<Executor>,
     metrics: Arc<ServiceMetrics>,
-    streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
+    streaming_registry: Arc<StreamingNodeRegistry>,
     global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>>,
     #[cfg(feature = "multiprocess")]
     multiprocess_executor: Option<Arc<crate::python::multiprocess::MultiprocessExecutor>>,
@@ -586,7 +587,7 @@ async fn handle_stream(
                         info!("Sending ChunkResult: sequence={}, data_outputs count={}",
                             chunk_result.sequence, chunk_result.data_outputs.len());
                         for (node_id, data_buffer) in &chunk_result.data_outputs {
-                            use crate::grpc_service::generated::data_buffer::DataType;
+                            use crate::generated::data_buffer::DataType;
                             match &data_buffer.data_type {
                                 Some(DataType::Audio(audio)) => {
                                     info!("ChunkResult output[{}]: Audio with {} bytes", node_id, audio.samples.len());
@@ -643,17 +644,17 @@ async fn handle_stream(
                 let mut sess_guard = sess.lock().await;
                 if let Some(router_input) = &sess_guard.router_input {
                     // Convert DataBuffer to RuntimeData
-                    use crate::data::convert_proto_to_runtime_data;
+                    use crate::adapters::data_buffer_to_runtime_data;
 
                     let runtime_data = if let Some(buffer) = data_chunk.buffer {
-                        convert_proto_to_runtime_data(buffer)
-                            .map_err(|e| ServiceError::Validation(format!("Data conversion failed: {}", e)))?
+                        data_buffer_to_runtime_data(&buffer)
+                            .ok_or_else(|| ServiceError::Validation("Data conversion failed".to_string()))?
                     } else if !data_chunk.named_buffers.is_empty() {
                         // For multi-input, just use the first buffer for now
                         let (_, buffer) = data_chunk.named_buffers.into_iter().next()
                             .ok_or_else(|| ServiceError::Validation("No input data provided".to_string()))?;
-                        convert_proto_to_runtime_data(buffer)
-                            .map_err(|e| ServiceError::Validation(format!("Data conversion failed: {}", e)))?
+                        data_buffer_to_runtime_data(&buffer)
+                            .ok_or_else(|| ServiceError::Validation("Data conversion failed".to_string()))?
                     } else {
                         return Err(ServiceError::Validation("DataChunk must have buffer or named_buffers".to_string()));
                     };
@@ -857,8 +858,8 @@ async fn handle_audio_chunk(
     for (node_id, buffer) in result_buffers {
         let proto_buffer = convert_runtime_to_proto_audio(&buffer);
         // Wrap audio buffer in DataBuffer
-        let data_buffer = crate::grpc_service::generated::DataBuffer {
-            data_type: Some(crate::grpc_service::generated::data_buffer::DataType::Audio(proto_buffer)),
+        let data_buffer = crate::generated::DataBuffer {
+            data_type: Some(crate::generated::data_buffer::DataType::Audio(proto_buffer)),
             metadata: HashMap::new(),
         };
         data_outputs.insert(node_id, data_buffer);
@@ -879,13 +880,13 @@ async fn route_to_downstream(
     output_data: RuntimeData,
     from_node_id: String,
     session: Arc<Mutex<StreamSession>>,
-    streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
+    streaming_registry: Arc<StreamingNodeRegistry>,
     tx: tokio::sync::mpsc::Sender<Result<StreamResponse, Status>>,
     session_id: String,
     base_sequence: u64,
 ) -> Result<(), ServiceError> {
     // USE THE NEW ASYNC ROUTER FOR TRUE STREAMING
-    use crate::grpc_service::async_router::route_to_downstream_async;
+    use crate::async_router::route_to_downstream_async;
 
     return route_to_downstream_async(
         output_data,
@@ -900,9 +901,9 @@ async fn route_to_downstream(
 
 /// Handle DataChunk message with multi-output support (for streaming generators)
 async fn handle_data_chunk_multi(
-    chunk: crate::grpc_service::generated::DataChunk,
+    chunk: crate::generated::DataChunk,
     session: Arc<Mutex<StreamSession>>,
-    streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
+    streaming_registry: Arc<StreamingNodeRegistry>,
     metrics: Arc<ServiceMetrics>,
     tx: tokio::sync::mpsc::Sender<Result<StreamResponse, Status>>,
     global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>>,
@@ -916,7 +917,7 @@ async fn handle_data_chunk_multi(
     };
 
     // Get or create node from cache (global cache with TTL)
-    let (node, py_streaming_node): (Arc<Box<dyn crate::nodes::StreamingNode>>, Option<Arc<crate::nodes::python_streaming::PythonStreamingNode>>) = {
+    let (node, py_streaming_node): (Arc<Box<dyn StreamingNode>>, Option<Arc<PythonStreamingNode>>) = {
         let mut sess = session.lock().await;
         sess.validate_sequence(chunk.sequence)?;
 
@@ -973,7 +974,7 @@ async fn handle_data_chunk_multi(
             // Check if this is a Python node via the registry
             // Python nodes need special handling to preserve the unwrapped instance for caching
             let (new_node, py_streaming_node) = if streaming_registry.is_python_node(&node_type) {
-                use crate::nodes::{python_streaming::PythonStreamingNode, AsyncNodeWrapper};
+                use remotemedia_runtime_core::nodes::{python_streaming::PythonStreamingNode, AsyncNodeWrapper};
 
                 info!("🐍 Creating Python streaming node: {} with session {}", node_type, session_id);
 
@@ -987,7 +988,7 @@ async fn handle_data_chunk_multi(
                 // info!("✅ Python streaming node '{}' initialized successfully", chunk.node_id);
 
                 let py_node_arc = Arc::new(py_node);
-                let wrapped: Box<dyn crate::nodes::StreamingNode> = Box::new(AsyncNodeWrapper(Arc::clone(&py_node_arc)));
+                let wrapped: Box<dyn StreamingNode> = Box::new(AsyncNodeWrapper(Arc::clone(&py_node_arc)));
 
                 (wrapped, Some(py_node_arc))
             } else {
@@ -1024,7 +1025,7 @@ async fn handle_data_chunk_multi(
     };
 
     // Convert DataBuffer(s) to RuntimeData
-    use crate::data::convert_proto_to_runtime_data;
+    use crate::adapters::data_buffer_to_runtime_data;
 
     let (runtime_data_map, data_type, item_count) = if !chunk.named_buffers.is_empty() {
         // Multi-input mode
@@ -1033,10 +1034,10 @@ async fn handle_data_chunk_multi(
         let mut types = Vec::new();
 
         for (name, data_buffer) in chunk.named_buffers {
-            let runtime_data = convert_proto_to_runtime_data(data_buffer)
-                .map_err(|e| ServiceError::Validation(format!("Data conversion failed for '{}': {}", name, e)))?;
+            let runtime_data = data_buffer_to_runtime_data(&data_buffer)
+                .ok_or_else(|| ServiceError::Validation(format!("Data conversion failed for '{}'", name)))?;
 
-            types.push(runtime_data.type_name());
+            types.push(runtime_data.data_type());
             total_items += runtime_data.item_count() as u64;
             map.insert(name, runtime_data);
         }
@@ -1050,10 +1051,10 @@ async fn handle_data_chunk_multi(
         (map, combined_type, total_items)
     } else if let Some(data_buffer) = chunk.buffer {
         // Single-input mode
-        let runtime_data = convert_proto_to_runtime_data(data_buffer)
-            .map_err(|e| ServiceError::Validation(format!("Data conversion failed: {}", e)))?;
+        let runtime_data = data_buffer_to_runtime_data(&data_buffer)
+            .ok_or_else(|| ServiceError::Validation("Data conversion failed".to_string()))?;
 
-        let data_type = runtime_data.type_name().to_string();
+        let data_type = runtime_data.data_type().to_string();
         let item_count = runtime_data.item_count() as u64;
 
         let mut map = HashMap::new();
@@ -1084,7 +1085,7 @@ async fn handle_data_chunk_multi(
         // Multi-yield streaming node - use callback for incremental sending
         info!("🎙️ Detected multi-yield streaming node '{}', using streaming iteration", node_type);
 
-        use crate::data::convert_runtime_to_proto_data;
+        use crate::adapters::runtime_data_to_data_buffer;
 
         // USE THE CACHED NODE instead of creating a new one!
         // The 'node' variable already contains our globally cached instance
@@ -1144,7 +1145,7 @@ async fn handle_data_chunk_multi(
                 // Unbounded channels don't have try_send, just use send which never blocks
                 if let Err(e) = chunk_tx_clone.send(output_data) {
                     error!("Failed to send chunk to channel: {:?}", e);
-                    return Err(crate::Error::Execution("Failed to enqueue chunk".to_string()));
+                    return Err(remotemedia_runtime_core::Error::Execution("Failed to enqueue chunk".to_string()));
                 }
                 info!("📨 Chunk sent to channel successfully");
                 Ok(())
@@ -1174,12 +1175,12 @@ async fn handle_data_chunk_multi(
         debug!("✅ Completed streaming {} chunks", output_count);
     } else {
         // Regular node - single output
-        use crate::data::convert_runtime_to_proto_data;
+        use crate::adapters::runtime_data_to_data_buffer;
 
         let output = node.process_async(input_data).await
             .map_err(|e| ServiceError::Internal(format!("Node execution failed: {}", e)))?;
 
-        let output_buffer = convert_runtime_to_proto_data(output);
+        let output_buffer = runtime_data_to_data_buffer(&output);
         let mut data_outputs = HashMap::new();
         data_outputs.insert(chunk.node_id.clone(), output_buffer);
 
@@ -1246,7 +1247,7 @@ async fn handle_stream_control(
 
 /// Helper: Deserialize protobuf PipelineManifest to runtime Manifest
 fn deserialize_manifest_from_proto(
-    proto: &crate::grpc_service::generated::PipelineManifest,
+    proto: &crate::generated::PipelineManifest,
 ) -> Result<Manifest, ServiceError> {
     // Convert to JSON for existing Manifest parser
     let json_str = serde_json::json!({
@@ -1294,8 +1295,8 @@ fn deserialize_manifest_from_proto(
 fn convert_proto_to_runtime_audio(
     proto: &ProtoAudioBuffer,
 ) -> Result<RuntimeAudioBuffer, ServiceError> {
-    use crate::audio::AudioFormat;
-    use crate::grpc_service::generated::AudioFormat as ProtoAudioFormat;
+    use remotemedia_runtime_core::audio::AudioFormat;
+    use crate::generated::AudioFormat as ProtoAudioFormat;
 
     // Convert format and decode bytes to f32 samples
     let samples: Vec<f32> = match ProtoAudioFormat::try_from(proto.format) {
@@ -1348,8 +1349,8 @@ fn convert_proto_to_runtime_audio(
 
 /// Helper: Convert runtime AudioBuffer to protobuf AudioBuffer
 fn convert_runtime_to_proto_audio(buffer: &RuntimeAudioBuffer) -> ProtoAudioBuffer {
-    use crate::audio::AudioFormat;
-    use crate::grpc_service::generated::AudioFormat as ProtoAudioFormat;
+    use remotemedia_runtime_core::audio::AudioFormat;
+    use crate::generated::AudioFormat as ProtoAudioFormat;
 
     let format = match buffer.format() {
         AudioFormat::F32 => ProtoAudioFormat::F32 as i32,

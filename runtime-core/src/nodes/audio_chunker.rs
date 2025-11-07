@@ -119,13 +119,12 @@ impl AsyncStreamingNode for AudioChunkerNode {
     where
         F: FnMut(RuntimeData) -> Result<()> + Send,
     {
-        let audio_buf = match data {
-            RuntimeData::Audio(ref buf) => buf,
+        let (input_samples, input_sample_rate, input_channels) = match data {
+            RuntimeData::Audio { ref samples, sample_rate, channels } => {
+                (samples.clone(), sample_rate, channels)
+            }
             _ => return Err(Error::Execution("AudioChunkerNode requires audio input".into())),
         };
-
-        // Convert audio to f32 samples
-        let new_samples = self.samples_to_f32(audio_buf)?;
 
         // Get or create state for this session
         let session_key = session_id.unwrap_or_else(|| "default".to_string());
@@ -133,12 +132,12 @@ impl AsyncStreamingNode for AudioChunkerNode {
         let state = states.entry(session_key).or_insert_with(ChunkerState::default);
 
         // Update state with current audio format
-        state.sample_rate = audio_buf.sample_rate;
-        state.channels = audio_buf.channels;
-        state.format = audio_buf.format;
+        state.sample_rate = input_sample_rate;
+        state.channels = input_channels;
+        state.format = 1; // F32
 
-        // Add new samples to buffer
-        state.buffer.extend_from_slice(&new_samples);
+        // Add new samples to buffer (already f32)
+        state.buffer.extend_from_slice(&input_samples);
 
         let mut output_count = 0;
 
@@ -147,17 +146,18 @@ impl AsyncStreamingNode for AudioChunkerNode {
             // Extract one chunk
             let chunk: Vec<f32> = state.buffer.drain(..self.chunk_size).collect();
 
-            // Convert back to ProtoAudioBuffer
-            let chunk_audio = self.f32_to_audio_buffer(&chunk, state);
-
-            // Emit chunk
-            callback(RuntimeData::Audio(chunk_audio))?;
+            // Emit chunk with current state's format
+            callback(RuntimeData::Audio {
+                samples: chunk,
+                sample_rate: state.sample_rate,
+                channels: state.channels,
+            })?;
             output_count += 1;
         }
 
         tracing::debug!(
             "AudioChunker: processed {} samples, emitted {} chunks, {} samples buffered",
-            new_samples.len(),
+            input_samples.len(),
             output_count,
             state.buffer.len()
         );

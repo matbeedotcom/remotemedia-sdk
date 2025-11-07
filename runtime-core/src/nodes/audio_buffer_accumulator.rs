@@ -284,9 +284,9 @@ impl AudioBufferAccumulatorNode {
             return Ok(None);
         }
 
-        // Convert accumulated samples to bytes
-        let sample_bytes = self.convert_f32_to_bytes(&state.accumulated_samples);
-        let num_samples = state.accumulated_samples.len() as u64;
+        // Get accumulated samples
+        let samples = state.accumulated_samples.clone();
+        let num_samples = samples.len();
 
         tracing::info!(
             "[AudioBuffer] Session {}: Flushing buffer - {}ms, {} samples",
@@ -295,21 +295,20 @@ impl AudioBufferAccumulatorNode {
             num_samples
         );
 
-        // Create audio output
-        let audio_output = ProtoAudioBuffer {
-            samples: sample_bytes,
-            sample_rate: state.sample_rate,
-            channels: state.channels,
-            format: 1, // F32
-            num_samples,
-        };
+        // Save format info before clearing
+        let sample_rate = state.sample_rate;
+        let channels = state.channels;
 
         // Clear buffer
         state.accumulated_samples.clear();
         state.is_speaking = false;
         state.chunks_accumulated = 0;
 
-        Ok(Some(RuntimeData::Audio(audio_output)))
+        Ok(Some(RuntimeData::Audio {
+            samples,
+            sample_rate,
+            channels,
+        }))
     }
 }
 
@@ -342,9 +341,16 @@ impl AsyncStreamingNode for AudioBufferAccumulatorNode {
         let mut pending = self.pending_audio.lock().await;
 
         let output = match &data {
-            RuntimeData::Audio(audio_buf) => {
-                // Handle audio chunk
-                self.handle_audio_chunk(audio_buf, &session_key, &mut states, &mut pending).await?
+            RuntimeData::Audio { samples, sample_rate, channels } => {
+                // Handle audio chunk - convert to buffer format expected by handler
+                let audio_buf = crate::data::AudioBuffer {
+                    samples: samples.iter().flat_map(|f| f.to_le_bytes()).collect(),
+                    sample_rate: *sample_rate,
+                    channels: *channels,
+                    format: 1, // F32
+                    num_samples: samples.len() as u64,
+                };
+                self.handle_audio_chunk(&audio_buf, &session_key, &mut states, &mut pending).await?
             }
             RuntimeData::Json(json_value) => {
                 // Handle VAD event

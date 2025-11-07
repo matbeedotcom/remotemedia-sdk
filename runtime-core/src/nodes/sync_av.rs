@@ -61,11 +61,11 @@ impl SynchronizedAudioVideoNode {
 
         // Extract timing information
         let (audio_timestamp_us, audio_sample_rate, audio_num_samples) = match audio_data {
-            RuntimeData::Audio(buf) => {
-                // Calculate audio timestamp from sample count if not explicitly provided
-                // For now, we'll use a simple approach - in production this would come from the buffer metadata
-                let duration_us = (buf.num_samples as f64 / buf.sample_rate as f64 * 1_000_000.0) as i64;
-                (0i64, buf.sample_rate, buf.num_samples)
+            RuntimeData::Audio { samples, sample_rate, channels } => {
+                // Calculate audio timestamp from sample count
+                let num_samples = samples.len() as u64;
+                let duration_us = (num_samples as f64 / (*sample_rate as f64) * 1_000_000.0) as i64;
+                (0i64, *sample_rate, num_samples)
             }
             _ => {
                 return Err(Error::InvalidInput {
@@ -77,11 +77,11 @@ impl SynchronizedAudioVideoNode {
         };
 
         let (video_timestamp_us, video_frame_num, video_width, video_height) = match video_data {
-            RuntimeData::Video(frame) => (
-                frame.timestamp_us as i64,
-                frame.frame_number,
-                frame.width,
-                frame.height,
+            RuntimeData::Video { pixel_data, width, height, format, frame_number, timestamp_us } => (
+                *timestamp_us as i64,
+                *frame_number,
+                *width,
+                *height,
             ),
             _ => {
                 return Err(Error::InvalidInput {

@@ -155,10 +155,24 @@ impl PipelineRunnerInner {
         manifest: Arc<crate::manifest::Manifest>,
         input: TransportData,
     ) -> Result<TransportData> {
-        // Execute via real Executor (no conversion needed - same RuntimeData)
-        let output_data = self.executor
-            .execute(&manifest, input.data)
+        // Find the first input node from manifest
+        let first_node_id = manifest.nodes.first()
+            .map(|n| n.id.as_str())
+            .ok_or_else(|| crate::Error::InvalidManifest("No nodes in manifest".to_string()))?;
+
+        // Create inputs HashMap for Executor
+        let mut runtime_inputs = std::collections::HashMap::new();
+        runtime_inputs.insert(first_node_id.to_string(), input.data);
+
+        // Execute via real Executor
+        let output_map = self.executor
+            .execute_with_runtime_data(&manifest, runtime_inputs)
             .await?;
+
+        // Extract output from last node
+        let output_data = output_map.into_values()
+            .next()
+            .ok_or_else(|| crate::Error::Execution("No output from pipeline".to_string()))?;
 
         // Wrap in TransportData, preserve metadata
         let mut output = TransportData::new(output_data);

@@ -93,6 +93,10 @@ pub enum ServiceError {
     #[error("Resource limit exceeded: {0}")]
     ResourceLimit(String),
 
+    /// Internal service error
+    #[error("Internal error: {0}")]
+    Internal(String),
+
     /// Core runtime error
     #[error("Runtime error: {0}")]
     Runtime(#[from] remotemedia_runtime_core::Error),

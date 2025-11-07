@@ -5,7 +5,7 @@
 
 #![cfg(feature = "grpc-transport")]
 
-use crate::grpc_service::{
+use crate::{
     auth::AuthConfig,
     execution::ExecutionServiceImpl,
     streaming::StreamingServiceImpl,
@@ -17,7 +17,7 @@ use crate::grpc_service::{
     executor_registry::{ExecutorRegistry, ExecutorType, PatternRule},
     ServiceConfig,
 };
-use crate::executor::Executor;
+use remotemedia_runtime_core::executor::Executor;
 use std::sync::Arc;
 use tonic::{service::LayerExt as _, transport::Server};
 use tracing::{info, warn};
@@ -108,7 +108,7 @@ impl GrpcServer {
         // Create multiprocess executor (spec 002)
         #[cfg(feature = "multiprocess")]
         let multiprocess_executor = {
-            use crate::python::multiprocess::{MultiprocessExecutor, MultiprocessConfig};
+            use remotemedia_runtime_core::python::multiprocess::{MultiprocessExecutor, MultiprocessConfig};
 
             let config = MultiprocessConfig::from_default_file()
                 .map_err(|e| format!("Failed to load multiprocess config: {}", e))?;
@@ -238,7 +238,7 @@ impl GrpcServer {
         // Create multiprocess executor (spec 002)
         #[cfg(feature = "multiprocess")]
         let multiprocess_executor_2 = {
-            use crate::python::multiprocess::{MultiprocessExecutor, MultiprocessConfig};
+            use remotemedia_runtime_core::python::multiprocess::{MultiprocessExecutor, MultiprocessConfig};
 
             let config = MultiprocessConfig::from_default_file()
                 .map_err(|e| format!("Failed to load multiprocess config: {}", e))?;

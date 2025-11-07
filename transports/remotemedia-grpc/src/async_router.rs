@@ -3,9 +3,11 @@
 //! This module replaces the blocking route_to_downstream with a truly
 //! asynchronous implementation that processes each yielded item immediately.
 
-use crate::data::{RuntimeData, convert_runtime_to_proto_data};
-use crate::grpc_service::streaming::{StreamSession};
-use crate::grpc_service::generated::{StreamResponse, stream_response::Response as StreamResponseType, ChunkResult};
+use remotemedia_runtime_core::data::RuntimeData;
+use remotemedia_runtime_core::nodes::{StreamingNode, StreamingNodeRegistry};
+use crate::adapters::runtime_data_to_data_buffer;
+use crate::streaming::{StreamSession};
+use crate::generated::{StreamResponse, stream_response::Response as StreamResponseType, ChunkResult};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
@@ -34,7 +36,7 @@ struct DataPacket {
 /// Node runner that processes items asynchronously
 struct NodeRunner {
     node_id: String,
-    node: Arc<Box<dyn crate::nodes::StreamingNode>>,
+    node: Arc<Box<dyn StreamingNode>>,
     is_streaming: bool,
     session_id: Option<String>,
 }
@@ -75,7 +77,7 @@ impl NodeRunner {
                     // Send immediately - this won't block on unbounded channel
                     if let Err(e) = output_tx.send(output_packet) {
                         error!("Failed to send output: {}", e);
-                        return Err(crate::Error::Execution("Channel closed".into()));
+                        return Err(remotemedia_runtime_core::Error::Execution("Channel closed".into()));
                     }
                     Ok(())
                 })
@@ -122,7 +124,7 @@ impl NodeRunner {
 /// Async router that manages the pipeline execution
 pub struct AsyncRouter {
     /// Registry for creating nodes
-    registry: Arc<crate::nodes::StreamingNodeRegistry>,
+    registry: Arc<StreamingNodeRegistry>,
     /// Active sessions
     session: Arc<Mutex<StreamSession>>,
     /// Client output sender
@@ -134,7 +136,7 @@ pub struct AsyncRouter {
 impl AsyncRouter {
     /// Create a new async router
     pub fn new(
-        registry: Arc<crate::nodes::StreamingNodeRegistry>,
+        registry: Arc<StreamingNodeRegistry>,
         session: Arc<Mutex<StreamSession>>,
         client_tx: mpsc::Sender<Result<StreamResponse, Status>>,
     ) -> Self {
@@ -228,7 +230,7 @@ impl AsyncRouter {
     async fn get_downstream_node(
         &self,
         from_node_id: &str,
-    ) -> Result<Option<(String, Arc<Box<dyn crate::nodes::StreamingNode>>)>, Status> {
+    ) -> Result<Option<(String, Arc<Box<dyn StreamingNode>>)>, Status> {
         let mut session = self.session.lock().await;
 
         // Find connection in manifest
@@ -266,7 +268,7 @@ impl AsyncRouter {
     /// Send a packet to the client
     async fn send_to_client(&self, packet: DataPacket) -> RouterResult {
         debug!("Converting RuntimeData to proto...");
-        let output_buffer = convert_runtime_to_proto_data(packet.data);
+        let output_buffer = runtime_data_to_data_buffer(&packet.data);
 
         let mut data_outputs = HashMap::new();
         data_outputs.insert(packet.from_node, output_buffer);
@@ -296,7 +298,7 @@ pub async fn route_to_downstream_async(
     output_data: RuntimeData,
     from_node_id: String,
     session: Arc<Mutex<StreamSession>>,
-    streaming_registry: Arc<crate::nodes::StreamingNodeRegistry>,
+    streaming_registry: Arc<StreamingNodeRegistry>,
     tx: mpsc::Sender<Result<StreamResponse, Status>>,
     session_id: String,
     base_sequence: u64,

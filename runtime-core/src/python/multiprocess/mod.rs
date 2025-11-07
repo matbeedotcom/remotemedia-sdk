@@ -6,4 +6,4 @@ pub mod ipc_channel;
 pub mod multiprocess_executor;
 pub mod process_manager;
 
-pub use multiprocess_executor::MultiprocessExecutor;
+pub use multiprocess_executor::{MultiprocessExecutor, MultiprocessConfig, InitStatus, SessionState};

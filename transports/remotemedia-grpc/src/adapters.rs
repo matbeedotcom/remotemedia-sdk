@@ -5,7 +5,10 @@
 
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::transport::TransportData;
-use crate::generated::{DataBuffer, AudioBuffer, TextBuffer, BinaryBuffer, AudioFormat};
+use crate::generated::{
+    DataBuffer, AudioBuffer, VideoFrame, TensorBuffer, JsonData, TextBuffer, BinaryBuffer,
+    AudioFormat, PixelFormat, TensorDtype,
+};
 use crate::generated::data_buffer::DataType;
 
 /// Convert runtime-core RuntimeData to Protobuf DataBuffer
@@ -18,6 +21,28 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
                 channels: *channels,
                 format: AudioFormat::F32le as i32,
                 num_samples: samples.len() as u64,
+            })
+        }
+        RuntimeData::Video { pixel_data, width, height, format, frame_number, timestamp_us } => {
+            DataType::Video(VideoFrame {
+                pixel_data: pixel_data.clone(),
+                width: *width,
+                height: *height,
+                format: *format,
+                frame_number: *frame_number,
+                timestamp_us: *timestamp_us,
+            })
+        }
+        RuntimeData::Tensor { data, shape, dtype } => {
+            DataType::Tensor(TensorBuffer {
+                data: data.clone(),
+                shape: shape.clone(),
+                dtype: *dtype,
+            })
+        }
+        RuntimeData::Json(value) => {
+            DataType::Json(JsonData {
+                content: serde_json::to_string(value).unwrap_or_default(),
             })
         }
         RuntimeData::Text(s) => {
@@ -56,6 +81,26 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
                 sample_rate: audio.sample_rate,
                 channels: audio.channels,
             })
+        }
+        Some(DataType::Video(video)) => {
+            Some(RuntimeData::Video {
+                pixel_data: video.pixel_data.clone(),
+                width: video.width,
+                height: video.height,
+                format: video.format,
+                frame_number: video.frame_number,
+                timestamp_us: video.timestamp_us,
+            })
+        }
+        Some(DataType::Tensor(tensor)) => {
+            Some(RuntimeData::Tensor {
+                data: tensor.data.clone(),
+                shape: tensor.shape.clone(),
+                dtype: tensor.dtype,
+            })
+        }
+        Some(DataType::Json(json)) => {
+            serde_json::from_str(&json.content).ok().map(RuntimeData::Json)
         }
         Some(DataType::Text(text)) => {
             Some(RuntimeData::Text(text.content.clone()))

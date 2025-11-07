@@ -3,8 +3,6 @@
 //! Implements API token validation via tower interceptor.
 //! Tokens are passed in gRPC metadata as "authorization: Bearer <token>".
 
-#![cfg(feature = "grpc-transport")]
-
 use tonic::{Request, Status};
 use std::collections::HashSet;
 use std::sync::Arc;

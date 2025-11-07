@@ -578,20 +578,13 @@ impl MultiprocessExecutor {
 
         match data {
             MainRD::Text(text) => IPCRuntimeData::text(text, session_id),
-            MainRD::Audio(audio) => {
-                // Convert bytes to f32 samples based on format
-                // For now, only handle F32 format
-                if audio.format == crate::data::AudioFormat::F32 as i32 {
-                    // Convert bytes to f32 slice for IPC transfer
-                    let samples_f32: Vec<f32> = audio.samples
-                        .chunks_exact(4)
-                        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                        .collect();
-                    IPCRuntimeData::audio(&samples_f32, audio.sample_rate, audio.channels as u16, session_id)
-                } else {
-                    // For other formats, convert to text for now
-                    IPCRuntimeData::text(&format!("Unsupported audio format: {}", audio.format), session_id)
-                }
+            MainRD::Audio { samples, sample_rate, channels } => {
+                // RuntimeData::Audio has inline f32 samples, convert directly
+                IPCRuntimeData::audio(samples, *sample_rate, *channels as u16, session_id)
+            }
+            MainRD::Binary(bytes) => {
+                // Binary data
+                IPCRuntimeData::text(&format!("Binary data: {} bytes", bytes.len()), session_id)
             }
             _ => {
                 // For now, convert unsupported types to text representation
@@ -612,17 +605,18 @@ impl MultiprocessExecutor {
                 Ok(MainRD::Text(text))
             }
             DataType::Audio => {
-                // IPC payload is already in bytes (f32 samples as little-endian bytes)
-                let num_samples = (ipc_data.payload.len() / 4) as u64; // 4 bytes per f32 sample
+                // IPC payload is f32 samples as little-endian bytes
+                let samples: Vec<f32> = ipc_data.payload
+                    .chunks_exact(4)
+                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    .collect();
 
-                // Create audio buffer using the grpc_service types
-                Ok(MainRD::Audio(crate::data::AudioBuffer {
-                    samples: ipc_data.payload,
+                // Create audio with inline fields
+                Ok(MainRD::Audio {
+                    samples,
                     sample_rate: 24000, // TODO: Extract from IPC metadata
                     channels: 1,        // TODO: Extract from IPC metadata
-                    format: crate::data::AudioFormat::F32 as i32,
-                    num_samples,
-                }))
+                })
             }
             _ => Err(Error::Execution(format!("Unsupported IPC data type: {:?}", ipc_data.data_type)))
         }
