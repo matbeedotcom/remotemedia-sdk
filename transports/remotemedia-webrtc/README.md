@@ -160,12 +160,12 @@ If you're interested in implementing WebRTC support:
 
 ## Implementation Status
 
-**Current Phase**: Phase 1 - Project Setup ✅
+**Current Phase**: Phase 2 - Signaling & Peer Foundation ✅
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| Phase 1 | ✅ Complete | Crate structure, config, error types |
-| Phase 2 | 🔄 Pending | Signaling protocol and peer connections |
+| Phase 1 | ✅ Complete | Crate structure, config, error types (12 tests) |
+| Phase 2 | ✅ Complete | Signaling protocol and peer connections (39 tests) |
 | Phase 3 | 📋 Planned | Point-to-point video (User Story 1) |
 | Phase 4 | 📋 Planned | Multi-peer A/V synchronization (User Story 2) |
 | Phase 5 | 📋 Planned | Pipeline integration |
