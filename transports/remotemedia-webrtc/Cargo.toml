@@ -12,12 +12,16 @@ repository.workspace = true
 name = "remotemedia_webrtc"
 crate-type = ["rlib"]
 
+[[bin]]
+name = "webrtc_server"
+path = "src/bin/webrtc_server.rs"
+
 [dependencies]
 # Core runtime
 remotemedia-runtime-core = { path = "../../runtime-core" }
 
 # WebRTC peer connections, ICE, DTLS, SRTP
-webrtc = "0.9"
+webrtc = "0.14.0"
 
 # WebSocket signaling client
 tokio-tungstenite = "0.21"
@@ -45,10 +49,15 @@ async-trait = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+
+# Server utilities
+ctrlc = "3.4"
+num_cpus = "1.16"
 
 [dev-dependencies]
 tokio-test = "0.4"
