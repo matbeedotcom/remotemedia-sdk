@@ -32,7 +32,7 @@
 //! - `RUST_LOG`: Logging level (default: `info`, options: `trace`, `debug`, `info`, `warn`, `error`)
 
 use remotemedia_runtime_core::executor::Executor;
-use remotemedia_grpc::{server::GrpcServer, ServiceConfig};
+use remotemedia_grpc::{server::GrpcServer, ServiceConfig, init_tracing};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::{error, info};
@@ -112,17 +112,17 @@ async fn async_main(shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::e
     let mut executor = Executor::new();
     
     // Register built-in test nodes (PassThrough, Echo, Calculator, Add, Multiply)
-    let builtin_registry = remotemedia_runtime::nodes::create_builtin_registry();
+    let builtin_registry = remotemedia_runtime_core::nodes::create_builtin_registry();
     executor.add_system_registry(Arc::new(builtin_registry));
     info!("Built-in test nodes registered (PassThrough, Echo, CalculatorNode, AddNode, MultiplyNode)");
     
     // Register audio processing nodes (resample, VAD, format converter)
-    let audio_registry = remotemedia_runtime::nodes::audio::create_audio_registry();
+    let audio_registry = remotemedia_runtime_core::nodes::audio::create_audio_registry();
     executor.add_audio_registry(Arc::new(audio_registry));
     info!("Audio processing nodes registered (RustResampleNode, RustVADNode, RustFormatConverterNode)");
 
     // Register Python TTS nodes (KokoroTTSNode)
-    let python_tts_registry = remotemedia_runtime::nodes::python_nodes::create_python_tts_registry();
+    let python_tts_registry = remotemedia_runtime_core::nodes::python_nodes::create_python_tts_registry();
     executor.add_user_registry(Arc::new(python_tts_registry));
     info!("Python TTS nodes registered (KokoroTTSNode)");
 
@@ -134,10 +134,10 @@ async fn async_main(shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::e
         "Available node types"
     );
     
-    // Update config to include node types
-    let mut config = config;
-    config.version = remotemedia_runtime::grpc_service::version::VersionManager::from_node_types(node_types);
-    
+    // Note: Version management moved to version.rs module
+    // TODO: Re-enable version tracking if needed
+    // let version = remotemedia_grpc::version::VersionManager::from_node_types(node_types);
+
     let executor = Arc::new(executor);
     info!("Pipeline executor initialized with all nodes");
 

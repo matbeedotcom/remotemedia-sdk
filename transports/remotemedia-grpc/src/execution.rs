@@ -3,8 +3,6 @@
 //! Implements PipelineExecutionService trait for ExecutePipeline RPC.
 //! Provides manifest-to-runtime conversion and result serialization.
 
-#![cfg(feature = "grpc-transport")]
-
 use crate::{
     auth::{check_auth, AuthConfig},
     generated::{
