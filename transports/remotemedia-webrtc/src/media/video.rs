@@ -62,8 +62,8 @@ impl Default for VideoEncoderConfig {
 
 /// Video encoder (VP9)
 ///
-/// Note: This implementation is a placeholder. The actual VP9 encoder
-/// will be implemented when the `codecs` feature is enabled.
+/// Note: VP9 encoding requires native libvpx bindings. The implementation provides
+/// the correct structure but full codec integration requires additional FFI work.
 pub struct VideoEncoder {
     config: VideoEncoderConfig,
     frame_count: u64,
@@ -85,6 +85,12 @@ impl VideoEncoder {
             ));
         }
 
+        if config.width % 2 != 0 || config.height % 2 != 0 {
+            return Err(Error::InvalidConfig(
+                "VP9 requires even dimensions for I420 format".to_string(),
+            ));
+        }
+
         Ok(Self {
             config,
             frame_count: 0,
@@ -99,7 +105,7 @@ impl VideoEncoder {
     ///
     /// # Returns
     ///
-    /// Encoded VP9 packet as bytes
+    /// Encoded VP9 packet as bytes (RTP payload)
     #[cfg(not(feature = "codecs"))]
     pub fn encode(&mut self, _frame: &VideoFrame) -> Result<Vec<u8>> {
         Err(Error::EncodingError(
@@ -115,39 +121,96 @@ impl VideoEncoder {
     ///
     /// # Returns
     ///
-    /// Encoded VP9 packet as bytes
+    /// Encoded VP9 packet as bytes (RTP payload)
+    ///
+    /// # Implementation Note
+    ///
+    /// This is a structural placeholder. Full VP9 encoding requires:
+    /// 1. Native libvpx bindings (vpx-sys or direct FFI)
+    /// 2. Image format conversion for I420
+    /// 3. Keyframe management and RTP packetization
+    /// 4. Rate control and bitrate management
+    ///
+    /// For production use, consider webrtc-rs built-in video codecs or
+    /// integrate with a higher-level VP9 encoder library.
     #[cfg(feature = "codecs")]
     pub fn encode(&mut self, frame: &VideoFrame) -> Result<Vec<u8>> {
+        if frame.format != VideoFormat::I420 {
+            return Err(Error::EncodingError(
+                "VP9 encoder only supports I420 format".to_string(),
+            ));
+        }
+
+        if frame.width != self.config.width || frame.height != self.config.height {
+            return Err(Error::EncodingError(
+                format!("Frame dimensions ({}x{}) don't match encoder config ({}x{})",
+                    frame.width, frame.height, self.config.width, self.config.height)
+            ));
+        }
+
         self.frame_count += 1;
 
-        // TODO: Implement actual VP9 encoding
-        // This will be implemented when the vpx crate is properly integrated
-        let _ = frame;
+        // TODO: Implement native VP9 encoding via vpx-sys FFI
+        // Required steps:
+        // 1. Initialize vpx_codec_ctx_t with VP9 encoder interface
+        // 2. Configure bitrate, framerate, keyframe interval
+        // 3. Wrap frame.data as vpx_image_t (I420 planes: Y, U, V)
+        // 4. Call vpx_codec_encode() with appropriate flags
+        // 5. Retrieve encoded packets via vpx_codec_get_cx_data()
+        // 6. Return packet data as Vec<u8>
+
         Err(Error::EncodingError(
-            "VP9 encoding not yet implemented".to_string(),
+            "VP9 native encoding not yet implemented - requires vpx-sys FFI integration".to_string(),
         ))
+    }
+
+    /// Get the current frame count
+    pub fn frame_count(&self) -> u64 {
+        self.frame_count
+    }
+
+    /// Check if next frame should be a keyframe
+    pub fn should_force_keyframe(&self) -> bool {
+        self.frame_count % self.config.keyframe_interval as u64 == 0
     }
 }
 
 /// Video decoder (VP9)
 ///
-/// Note: This implementation is a placeholder. The actual VP9 decoder
-/// will be implemented when the `codecs` feature is enabled.
+/// Note: VP9 decoding requires native libvpx bindings. The implementation provides
+/// the correct structure but full codec integration requires additional FFI work.
 pub struct VideoDecoder {
     config: VideoEncoderConfig,
+    frame_count: u64,
 }
 
 impl VideoDecoder {
     /// Create a new video decoder
     pub fn new(config: VideoEncoderConfig) -> Result<Self> {
-        Ok(Self { config })
+        // Validate configuration
+        if config.width == 0 || config.height == 0 {
+            return Err(Error::InvalidConfig(
+                "Video dimensions must be greater than 0".to_string(),
+            ));
+        }
+
+        if config.width % 2 != 0 || config.height % 2 != 0 {
+            return Err(Error::InvalidConfig(
+                "VP9 requires even dimensions for I420 format".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            config,
+            frame_count: 0,
+        })
     }
 
     /// Decode VP9 packet to video frame
     ///
     /// # Arguments
     ///
-    /// * `payload` - Encoded VP9 packet
+    /// * `payload` - Encoded VP9 packet (RTP payload)
     ///
     /// # Returns
     ///
@@ -163,19 +226,48 @@ impl VideoDecoder {
     ///
     /// # Arguments
     ///
-    /// * `payload` - Encoded VP9 packet
+    /// * `payload` - Encoded VP9 packet (RTP payload)
     ///
     /// # Returns
     ///
     /// Decoded video frame (I420 format)
+    ///
+    /// # Implementation Note
+    ///
+    /// This is a structural placeholder. Full VP9 decoding requires:
+    /// 1. Native libvpx bindings (vpx-sys or direct FFI)
+    /// 2. Initialize vpx_codec_ctx_t with VP9 decoder interface
+    /// 3. Feed compressed data via vpx_codec_decode()
+    /// 4. Retrieve decoded image via vpx_codec_get_frame()
+    /// 5. Convert vpx_image_t to VideoFrame with I420 data
+    ///
+    /// For production use, consider webrtc-rs built-in video codecs or
+    /// integrate with a higher-level VP9 decoder library.
     #[cfg(feature = "codecs")]
     pub fn decode(&mut self, payload: &[u8]) -> Result<VideoFrame> {
-        // TODO: Implement actual VP9 decoding
-        // This will be implemented when the vpx crate is properly integrated
-        let _ = payload;
+        if payload.is_empty() {
+            return Err(Error::EncodingError("Empty payload for VP9 decoding".to_string()));
+        }
+
+        self.frame_count += 1;
+
+        // TODO: Implement native VP9 decoding via vpx-sys FFI
+        // Required steps:
+        // 1. Initialize vpx_codec_ctx_t with VP9 decoder interface (once)
+        // 2. Call vpx_codec_decode() with payload data
+        // 3. Retrieve decoded frame via vpx_codec_get_frame()
+        // 4. Extract Y, U, V planes from vpx_image_t
+        // 5. Copy/construct VideoFrame with I420 data
+        // 6. Handle keyframes and inter-frames appropriately
+
         Err(Error::EncodingError(
-            "VP9 decoding not yet implemented".to_string(),
+            "VP9 native decoding not yet implemented - requires vpx-sys FFI integration".to_string(),
         ))
+    }
+
+    /// Get the current frame count
+    pub fn frame_count(&self) -> u64 {
+        self.frame_count
     }
 }
 

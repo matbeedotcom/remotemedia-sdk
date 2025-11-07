@@ -49,14 +49,28 @@ anyhow = { workspace = true }
 
 # Utilities
 uuid = { workspace = true }
-ctrlc = "3.4"
-num_cpus = "1.16"
+ctrlc = { version = "3.4", optional = true }  # Only needed for server binary
+num_cpus = { version = "1.16", optional = true }  # Only needed for server binary
 
 [build-dependencies]
 tonic-build = { workspace = true }
 prost-build = { workspace = true }
 tonic-prost-build = { workspace = true }
 
+[features]
+# Default features: basic gRPC pipeline execution and streaming
+default = ["server"]
+
+# Server feature: includes dependencies needed to run grpc-server binary
+server = ["ctrlc", "num_cpus"]
+
+# WebRTC signaling service (adds gRPC-based WebRTC signaling)
+webrtc-signaling = []
+
+# Full feature: everything enabled
+full = ["server", "webrtc-signaling"]
+
 [[bin]]
 name = "grpc-server"
 path = "bin/grpc-server.rs"
+required-features = ["server"]
