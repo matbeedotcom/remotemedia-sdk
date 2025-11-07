@@ -20,6 +20,7 @@ fn compile_protos() {
                 "protos/common.proto",
                 "protos/execution.proto",
                 "protos/streaming.proto",
+                "protos/webrtc_signaling.proto",
             ],
             &["protos/"],
         )

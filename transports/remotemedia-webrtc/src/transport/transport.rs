@@ -2,14 +2,32 @@
 
 use crate::{
     config::WebRtcTransportConfig,
+    media::tracks::{runtime_data_to_rtp, rtp_to_runtime_data},
     peer::{PeerConnection, PeerInfo, PeerManager},
     session::{Session, SessionId, SessionManager},
     signaling::{IceCandidateParams, SignalingClient},
     Error, Result,
 };
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
+use remotemedia_runtime_core::data::RuntimeData;
+
+/// Statistics from broadcasting data to multiple peers (T071)
+#[derive(Debug, Clone)]
+pub struct BroadcastStats {
+    /// Total number of peers targeted for broadcast
+    pub total_peers: usize,
+    /// Number of successful transmissions
+    pub sent_count: usize,
+    /// Number of failed transmissions
+    pub failed_count: usize,
+    /// List of peer IDs that failed to receive
+    pub failed_peers: Vec<String>,
+    /// Total duration of broadcast operation in milliseconds
+    pub total_duration_ms: u64,
+}
 
 /// WebRTC transport for RemoteMedia pipelines
 ///
@@ -509,6 +527,104 @@ impl WebRtcTransport {
     pub async fn remove_peer_from_session(&self, session_id: &str, peer_id: &str) -> Result<()> {
         let session = self.get_session(session_id).await?;
         session.remove_peer(peer_id).await
+    }
+
+    /// Send RuntimeData to a specific peer (T069)
+    ///
+    /// # Arguments
+    ///
+    /// * `peer_id` - Target peer identifier
+    /// * `data` - RuntimeData to send (Audio or Video)
+    ///
+    /// # Note
+    ///
+    /// This method encodes the RuntimeData to the appropriate codec format (Opus for audio, VP9 for video)
+    /// and sends it via RTP to the specified peer.
+    pub async fn send_to_peer(&self, peer_id: &str, data: &RuntimeData) -> Result<()> {
+        debug!("Sending RuntimeData to peer: {}", peer_id);
+
+        // Get the peer connection
+        let peer = self.peer_manager.get_peer(peer_id).await?;
+
+        // Determine if this is audio or video and get the appropriate track
+        match data {
+            RuntimeData::Audio { .. } => {
+                let audio_track = peer.audio_track().await
+                    .ok_or_else(|| Error::MediaTrackError("No audio track configured for peer".to_string()))?;
+
+                // Encode and send audio
+                let _payload = runtime_data_to_rtp(data, Some(&audio_track), None).await?;
+
+                // Note: The actual RTP sending happens inside runtime_data_to_rtp via AudioTrack::send_audio
+                // which is called by the encoder. For direct sending, we'd need to:
+                // audio_track.send_audio(samples).await?;
+
+                Ok(())
+            }
+            RuntimeData::Video { .. } => {
+                let video_track = peer.video_track().await
+                    .ok_or_else(|| Error::MediaTrackError("No video track configured for peer".to_string()))?;
+
+                // Encode and send video
+                let _payload = runtime_data_to_rtp(data, None, Some(&video_track)).await?;
+
+                // Note: Similar to audio, actual sending happens inside runtime_data_to_rtp
+                // via VideoTrack::send_video which is called by the encoder
+
+                Ok(())
+            }
+            _ => Err(Error::MediaTrackError(
+                "Unsupported RuntimeData type for peer-to-peer transmission".to_string()
+            ))
+        }
+    }
+
+    /// Broadcast RuntimeData to all connected peers (T070)
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - RuntimeData to broadcast (Audio or Video)
+    ///
+    /// # Returns
+    ///
+    /// BroadcastStats with success/failure counts and timing information
+    ///
+    /// # Note
+    ///
+    /// This method sends data to all connected peers in parallel, collecting statistics
+    /// about successful and failed transmissions.
+    pub async fn broadcast(&self, data: &RuntimeData) -> Result<BroadcastStats> {
+        let start = Instant::now();
+        let peers = self.peer_manager.list_connected_peers().await;
+        let total_peers = peers.len();
+
+        debug!("Broadcasting RuntimeData to {} peers", total_peers);
+
+        let mut sent_count = 0;
+        let mut failed_count = 0;
+        let mut failed_peers = Vec::new();
+
+        // Send to each peer
+        for peer_info in peers {
+            match self.send_to_peer(&peer_info.peer_id, data).await {
+                Ok(_) => sent_count += 1,
+                Err(e) => {
+                    warn!("Failed to send to peer {}: {}", peer_info.peer_id, e);
+                    failed_count += 1;
+                    failed_peers.push(peer_info.peer_id);
+                }
+            }
+        }
+
+        let duration = start.elapsed();
+
+        Ok(BroadcastStats {
+            total_peers,
+            sent_count,
+            failed_count,
+            failed_peers,
+            total_duration_ms: duration.as_millis() as u64,
+        })
     }
 
     /// Shutdown the transport

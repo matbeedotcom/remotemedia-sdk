@@ -14,6 +14,13 @@ use crate::{
     streaming::StreamingServiceImpl,
     ServiceConfig,
 };
+
+#[cfg(feature = "webrtc-signaling")]
+use crate::{
+    generated::webrtc::web_rtc_signaling_server::WebRtcSignalingServer,
+    webrtc_signaling::WebRtcSignalingService,
+};
+
 use remotemedia_runtime_core::transport::PipelineRunner;
 use std::sync::Arc;
 use tonic::{service::LayerExt as _, transport::Server};
@@ -136,6 +143,15 @@ impl GrpcServer {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let addr: std::net::SocketAddr = self.config.bind_address.parse()?;
 
+        #[cfg(feature = "webrtc-signaling")]
+        info!(
+            %addr,
+            auth_required = self.config.auth.require_auth,
+            max_memory_mb = self.config.limits.max_memory_bytes / 1_000_000,
+            "Starting gRPC server with shutdown flag (including WebRTC signaling)"
+        );
+
+        #[cfg(not(feature = "webrtc-signaling"))]
         info!(
             %addr,
             auth_required = self.config.auth.require_auth,
@@ -158,6 +174,14 @@ impl GrpcServer {
             Arc::clone(&self.runner),
         );
 
+        // Create WebRTC signaling service (only if feature enabled)
+        #[cfg(feature = "webrtc-signaling")]
+        let webrtc_signaling_service = {
+            let service = WebRtcSignalingService::new();
+            info!("WebRTC signaling service initialized");
+            service
+        };
+
         // Wrap services with gRPC-Web and CORS support using tower ServiceBuilder
         let execution_service = tower::ServiceBuilder::new()
             .layer(tower_http::cors::CorsLayer::permissive())
@@ -179,8 +203,19 @@ impl GrpcServer {
                     .max_encoding_message_size(10 * 1024 * 1024), // 10MB
             );
 
+        #[cfg(feature = "webrtc-signaling")]
+        let webrtc_signaling_service = tower::ServiceBuilder::new()
+            .layer(tower_http::cors::CorsLayer::permissive())
+            .layer(tonic_web::GrpcWebLayer::new())
+            .into_inner()
+            .named_layer(
+                WebRtcSignalingServer::new(webrtc_signaling_service)
+                    .max_decoding_message_size(1 * 1024 * 1024) // 1MB for signaling messages
+                    .max_encoding_message_size(1 * 1024 * 1024), // 1MB
+            );
+
         // T037: Configure connection pooling and HTTP/2 keepalive for concurrent clients
-        let server = Server::builder()
+        let mut server = Server::builder()
             // Allow many concurrent requests per connection
             .concurrency_limit_per_connection(256)
             // TCP keepalive to detect dead connections
@@ -197,6 +232,12 @@ impl GrpcServer {
             .trace_fn(|_| tracing::info_span!("grpc_request"))
             .add_service(execution_service)
             .add_service(streaming_service);
+
+        // Add WebRTC signaling service if feature enabled
+        #[cfg(feature = "webrtc-signaling")]
+        {
+            server = server.add_service(webrtc_signaling_service);
+        }
 
         info!("gRPC server listening on {}", addr);
 

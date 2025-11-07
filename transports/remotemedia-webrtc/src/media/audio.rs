@@ -30,11 +30,10 @@ impl Default for AudioEncoderConfig {
 }
 
 /// Audio encoder (Opus)
-///
-/// Note: This implementation is a placeholder. The actual Opus encoder
-/// will be implemented when the `codecs` feature is enabled.
 pub struct AudioEncoder {
     config: AudioEncoderConfig,
+    #[cfg(feature = "codecs")]
+    encoder: opus::Encoder,
 }
 
 impl AudioEncoder {
@@ -53,6 +52,38 @@ impl AudioEncoder {
             ));
         }
 
+        if config.complexity > 10 {
+            return Err(Error::InvalidConfig(
+                "Opus complexity must be 0-10".to_string(),
+            ));
+        }
+
+        #[cfg(feature = "codecs")]
+        {
+            // Create Opus encoder
+            let channels = match config.channels {
+                1 => opus::Channels::Mono,
+                2 => opus::Channels::Stereo,
+                _ => unreachable!(),
+            };
+
+            let mut encoder = opus::Encoder::new(
+                config.sample_rate,
+                channels,
+                opus::Application::Voip,
+            ).map_err(|e| Error::EncodingError(format!("Failed to create Opus encoder: {:?}", e)))?;
+
+            // Configure encoder
+            encoder.set_bitrate(opus::Bitrate::Bits(config.bitrate as i32))
+                .map_err(|e| Error::EncodingError(format!("Failed to set bitrate: {:?}", e)))?;
+
+            encoder.set_complexity(config.complexity as i32)
+                .map_err(|e| Error::EncodingError(format!("Failed to set complexity: {:?}", e)))?;
+
+            Ok(Self { config, encoder })
+        }
+
+        #[cfg(not(feature = "codecs"))]
         Ok(Self { config })
     }
 
@@ -64,7 +95,7 @@ impl AudioEncoder {
     ///
     /// # Returns
     ///
-    /// Encoded Opus packet as bytes
+    /// Encoded Opus packet as bytes (RTP payload)
     #[cfg(not(feature = "codecs"))]
     pub fn encode(&mut self, _samples: &[f32]) -> Result<Vec<u8>> {
         Err(Error::EncodingError(
@@ -80,29 +111,63 @@ impl AudioEncoder {
     ///
     /// # Returns
     ///
-    /// Encoded Opus packet as bytes
+    /// Encoded Opus packet as bytes (RTP payload)
     #[cfg(feature = "codecs")]
     pub fn encode(&mut self, samples: &[f32]) -> Result<Vec<u8>> {
-        // TODO: Implement actual Opus encoding
-        // This will be implemented when the opus crate is properly integrated
-        let _ = samples;
-        Err(Error::EncodingError(
-            "Opus encoding not yet implemented".to_string(),
-        ))
+        // Opus expects samples in range -1.0 to 1.0
+        // Allocate buffer for encoded output (max Opus packet size)
+        const MAX_PACKET_SIZE: usize = 4000;
+        let mut output = vec![0u8; MAX_PACKET_SIZE];
+
+        // Encode the samples
+        let len = self.encoder.encode_float(samples, &mut output)
+            .map_err(|e| Error::EncodingError(format!("Opus encoding failed: {:?}", e)))?;
+
+        // Truncate to actual encoded size
+        output.truncate(len);
+        Ok(output)
     }
 }
 
 /// Audio decoder (Opus)
-///
-/// Note: This implementation is a placeholder. The actual Opus decoder
-/// will be implemented when the `codecs` feature is enabled.
 pub struct AudioDecoder {
     config: AudioEncoderConfig,
+    #[cfg(feature = "codecs")]
+    decoder: opus::Decoder,
 }
 
 impl AudioDecoder {
     /// Create a new audio decoder
     pub fn new(config: AudioEncoderConfig) -> Result<Self> {
+        // Validate configuration
+        if config.sample_rate != 48000 && config.sample_rate != 24000 && config.sample_rate != 16000 {
+            return Err(Error::InvalidConfig(
+                "Opus sample rate must be 48000, 24000, or 16000 Hz".to_string(),
+            ));
+        }
+
+        if config.channels != 1 && config.channels != 2 {
+            return Err(Error::InvalidConfig(
+                "Opus supports 1 (mono) or 2 (stereo) channels".to_string(),
+            ));
+        }
+
+        #[cfg(feature = "codecs")]
+        {
+            // Create Opus decoder
+            let channels = match config.channels {
+                1 => opus::Channels::Mono,
+                2 => opus::Channels::Stereo,
+                _ => unreachable!(),
+            };
+
+            let decoder = opus::Decoder::new(config.sample_rate, channels)
+                .map_err(|e| Error::EncodingError(format!("Failed to create Opus decoder: {:?}", e)))?;
+
+            Ok(Self { config, decoder })
+        }
+
+        #[cfg(not(feature = "codecs"))]
         Ok(Self { config })
     }
 
@@ -110,11 +175,11 @@ impl AudioDecoder {
     ///
     /// # Arguments
     ///
-    /// * `payload` - Encoded Opus packet
+    /// * `payload` - Encoded Opus packet (RTP payload)
     ///
     /// # Returns
     ///
-    /// Decoded audio samples as f32 (range -1.0 to 1.0)
+    /// Decoded audio samples as f32 (range -1.0 to 1.0) at 48kHz
     #[cfg(not(feature = "codecs"))]
     pub fn decode(&mut self, _payload: &[u8]) -> Result<Vec<f32>> {
         Err(Error::EncodingError(
@@ -126,19 +191,26 @@ impl AudioDecoder {
     ///
     /// # Arguments
     ///
-    /// * `payload` - Encoded Opus packet
+    /// * `payload` - Encoded Opus packet (RTP payload)
     ///
     /// # Returns
     ///
-    /// Decoded audio samples as f32 (range -1.0 to 1.0)
+    /// Decoded audio samples as f32 (range -1.0 to 1.0) at 48kHz
     #[cfg(feature = "codecs")]
     pub fn decode(&mut self, payload: &[u8]) -> Result<Vec<f32>> {
-        // TODO: Implement actual Opus decoding
-        // This will be implemented when the opus crate is properly integrated
-        let _ = payload;
-        Err(Error::EncodingError(
-            "Opus decoding not yet implemented".to_string(),
-        ))
+        // Opus frame size: typically 2.5, 5, 10, 20, 40, or 60 ms
+        // At 48kHz, 20ms = 960 samples per channel
+        // Max frame size for Opus is 120ms @ 48kHz = 5760 samples per channel
+        const MAX_FRAME_SIZE: usize = 5760;
+        let mut output = vec![0f32; MAX_FRAME_SIZE * self.config.channels as usize];
+
+        // Decode the packet
+        let len = self.decoder.decode_float(payload, &mut output, false)
+            .map_err(|e| Error::EncodingError(format!("Opus decoding failed: {:?}", e)))?;
+
+        // Truncate to actual decoded size
+        output.truncate(len * self.config.channels as usize);
+        Ok(output)
     }
 }
 
