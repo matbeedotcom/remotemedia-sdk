@@ -26,8 +26,8 @@ impl VideoProcessorNode {
     /// Create new video processor node
     pub fn new(id: String, params: &str) -> Result<Self, Error> {
         // Parse params JSON for configuration
-        let config: serde_json::Value = serde_json::from_str(params)
-            .unwrap_or_else(|_| serde_json::json!({}));
+        let config: serde_json::Value =
+            serde_json::from_str(params).unwrap_or_else(|_| serde_json::json!({}));
 
         let confidence_threshold = config
             .get("confidence_threshold")
@@ -135,7 +135,8 @@ mod tests {
 
     #[test]
     fn test_video_processing() {
-        let node = VideoProcessorNode::new("video".to_string(), r#"{"confidence_threshold": 0.5}"#).unwrap();
+        let node = VideoProcessorNode::new("video".to_string(), r#"{"confidence_threshold": 0.5}"#)
+            .unwrap();
         let frame = create_test_frame(0);
         let input = RuntimeData::Video(frame);
 
@@ -155,7 +156,8 @@ mod tests {
 
     #[test]
     fn test_detection_filtering_by_confidence() {
-        let node = VideoProcessorNode::new("video".to_string(), r#"{"confidence_threshold": 0.9}"#).unwrap();
+        let node = VideoProcessorNode::new("video".to_string(), r#"{"confidence_threshold": 0.9}"#)
+            .unwrap();
         let frame = create_test_frame(5);
         let input = RuntimeData::Video(frame);
 

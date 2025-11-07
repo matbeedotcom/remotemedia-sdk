@@ -1,9 +1,12 @@
 // Conversion functions: Protobuf ↔ RuntimeData
 // Feature: 004-generic-streaming
 
+use crate::data::validation::{validate_tensor_size, validate_text_buffer, validate_video_frame};
 use crate::data::RuntimeData;
-use crate::data::validation::{validate_video_frame, validate_tensor_size, validate_text_buffer};
-use crate::grpc_service::generated::{DataBuffer, data_buffer, AudioBuffer, VideoFrame, TensorBuffer, JsonData, TextBuffer, BinaryBuffer};
+use crate::grpc_service::generated::{
+    data_buffer, AudioBuffer, BinaryBuffer, DataBuffer, JsonData, TensorBuffer, TextBuffer,
+    VideoFrame,
+};
 use crate::Error;
 use prost::bytes::Bytes;
 use std::time::Instant;
@@ -25,45 +28,43 @@ pub fn convert_proto_to_runtime_data(proto: DataBuffer) -> Result<RuntimeData, E
     let start = Instant::now();
 
     let result = match proto.data_type {
-        Some(data_buffer::DataType::Audio(buf)) => {
-            Ok(RuntimeData::Audio(buf))
-        },
+        Some(data_buffer::DataType::Audio(buf)) => Ok(RuntimeData::Audio(buf)),
         Some(data_buffer::DataType::Video(frame)) => {
             // Validate video frame dimensions
             validate_video_frame(&frame)?;
             Ok(RuntimeData::Video(frame))
-        },
+        }
         Some(data_buffer::DataType::Tensor(tensor)) => {
             // Validate tensor size matches shape * dtype
             validate_tensor_size(&tensor)?;
             Ok(RuntimeData::Tensor(tensor))
-        },
+        }
         Some(data_buffer::DataType::Json(json_data)) => {
             // Parse JSON string into serde_json::Value
-            let value = serde_json::from_str(&json_data.json_payload)
-                .map_err(|e| Error::InvalidInput {
-                    message: format!("JSON parsing failed at line {}, column {}: {}",
-                        e.line(), e.column(), e),
+            let value =
+                serde_json::from_str(&json_data.json_payload).map_err(|e| Error::InvalidInput {
+                    message: format!(
+                        "JSON parsing failed at line {}, column {}: {}",
+                        e.line(),
+                        e.column(),
+                        e
+                    ),
                     node_id: String::new(),
                     context: json_data.schema_type.clone(),
                 })?;
             Ok(RuntimeData::Json(value))
-        },
+        }
         Some(data_buffer::DataType::Text(text_buf)) => {
             // Validate UTF-8 encoding
             let text = validate_text_buffer(&text_buf)?;
             Ok(RuntimeData::Text(text))
-        },
-        Some(data_buffer::DataType::Binary(bin)) => {
-            Ok(RuntimeData::Binary(Bytes::from(bin.data)))
-        },
-        None => {
-            Err(Error::InvalidInput {
-                message: "DataBuffer has no data_type variant set".into(),
-                node_id: String::new(),
-                context: "Expected exactly one of: audio, video, tensor, json, text, binary".into(),
-            })
-        },
+        }
+        Some(data_buffer::DataType::Binary(bin)) => Ok(RuntimeData::Binary(Bytes::from(bin.data))),
+        None => Err(Error::InvalidInput {
+            message: "DataBuffer has no data_type variant set".into(),
+            node_id: String::new(),
+            context: "Expected exactly one of: audio, video, tensor, json, text, binary".into(),
+        }),
     };
 
     let elapsed = start.elapsed();
@@ -85,7 +86,8 @@ pub fn convert_proto_to_runtime_data(proto: DataBuffer) -> Result<RuntimeData, E
 pub fn convert_runtime_to_proto_data(runtime: RuntimeData) -> DataBuffer {
     let start = Instant::now();
 
-    tracing::info!("convert_runtime_to_proto_data: Converting RuntimeData type={}",
+    tracing::info!(
+        "convert_runtime_to_proto_data: Converting RuntimeData type={}",
         match &runtime {
             RuntimeData::Audio(b) => format!("Audio({} samples)", b.num_samples),
             RuntimeData::Video(_) => "Video".to_string(),
@@ -101,7 +103,7 @@ pub fn convert_runtime_to_proto_data(runtime: RuntimeData) -> DataBuffer {
             tracing::info!("convert_runtime_to_proto_data: Audio buffer: samples={} bytes, sample_rate={}, channels={}, format={}, num_samples={}",
                 buf.samples.len(), buf.sample_rate, buf.channels, buf.format, buf.num_samples);
             data_buffer::DataType::Audio(buf)
-        },
+        }
         RuntimeData::Video(frame) => data_buffer::DataType::Video(frame),
         RuntimeData::Tensor(tensor) => data_buffer::DataType::Tensor(tensor),
         RuntimeData::Json(value) => data_buffer::DataType::Json(JsonData {
@@ -182,7 +184,7 @@ mod tests {
             RuntimeData::Audio(buf) => {
                 assert_eq!(buf.sample_rate, 16000);
                 assert_eq!(buf.num_samples, 400);
-            },
+            }
             _ => panic!("Expected audio"),
         }
 
@@ -190,7 +192,7 @@ mod tests {
         match back_to_proto.data_type {
             Some(data_buffer::DataType::Audio(buf)) => {
                 assert_eq!(buf.sample_rate, 16000);
-            },
+            }
             _ => panic!("Expected audio"),
         }
     }
@@ -210,7 +212,7 @@ mod tests {
             RuntimeData::Json(value) => {
                 assert_eq!(value["operation"], "add");
                 assert_eq!(value["operands"][0], 10);
-            },
+            }
             _ => panic!("Expected JSON"),
         }
     }
@@ -255,7 +257,7 @@ mod tests {
         match runtime {
             RuntimeData::Text(s) => {
                 assert_eq!(s, "Hello, 世界!");
-            },
+            }
             _ => panic!("Expected text"),
         }
     }

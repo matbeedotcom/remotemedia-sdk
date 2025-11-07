@@ -29,11 +29,8 @@ fn setup_python_environment() {
 
         if python_client_path.exists() {
             let path_str = python_client_path.to_str().unwrap();
-            let append_code = CString::new(format!(
-                "import sys; sys.path.insert(0, r'{}')",
-                path_str
-            ))
-            .unwrap();
+            let append_code =
+                CString::new(format!("import sys; sys.path.insert(0, r'{}')", path_str)).unwrap();
             py.run(&append_code, None, None).unwrap();
 
             println!("Added to Python path: {}", path_str);
@@ -84,7 +81,7 @@ async fn test_vad_with_real_audio() {
                 ..Default::default()
             },
         ],
-        connections: vec![],  // Single-node test for now
+        connections: vec![], // Single-node test for now
     };
 
     // Create executor
@@ -143,7 +140,8 @@ result = (audio_data, sr)
         json!([audio_vec, sr])
     });
 
-    println!("Generated test audio with {} samples",
+    println!(
+        "Generated test audio with {} samples",
         input_audio.as_array().unwrap()[0].as_array().unwrap().len()
     );
 
@@ -226,16 +224,12 @@ async fn test_audio_transform_node() {
     let executor = Executor::new();
 
     // Create test audio: 16kHz mono
-    let test_audio = vec![
-        json!([
-            [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],  // 8 samples at 16kHz
-            16000  // sample rate
-        ])
-    ];
+    let test_audio = vec![json!([
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], // 8 samples at 16kHz
+        16000                                     // sample rate
+    ])];
 
-    let result = executor
-        .execute_with_input(&manifest, test_audio)
-        .await;
+    let result = executor.execute_with_input(&manifest, test_audio).await;
 
     match result {
         Ok(exec_result) => {
@@ -279,12 +273,10 @@ async fn test_extract_audio_data_node() {
     let executor = Executor::new();
 
     // Create test input: (audio_data, sample_rate) tuple
-    let test_input = vec![
-        json!([
-            [1.0, 2.0, 3.0, 4.0, 5.0],  // audio samples
-            16000  // sample rate
-        ])
-    ];
+    let test_input = vec![json!([
+        [1.0, 2.0, 3.0, 4.0, 5.0], // audio samples
+        16000                      // sample rate
+    ])];
 
     let result = executor
         .execute_with_input(&manifest, test_input)
@@ -326,7 +318,7 @@ async fn test_audio_nodes_with_runtime_auto_detection() {
             params: json!({}),
             capabilities: None,
             host: None,
-            runtime_hint: None,  // Let auto-detection work
+            runtime_hint: None, // Let auto-detection work
             ..Default::default()
         }],
         connections: vec![],
@@ -428,8 +420,10 @@ result = [audio_data, sr]
         json!([audio_vec, sr])
     });
 
-    println!("Generated VAD test audio with {} samples",
-        test_audio.as_array().unwrap()[0].as_array().unwrap().len());
+    println!(
+        "Generated VAD test audio with {} samples",
+        test_audio.as_array().unwrap()[0].as_array().unwrap().len()
+    );
 
     println!("Note: Input format is array [audio_data, sample_rate], VAD expects tuple");
 
@@ -481,4 +475,3 @@ result = [audio_data, sr]
         }
     }
 }
-

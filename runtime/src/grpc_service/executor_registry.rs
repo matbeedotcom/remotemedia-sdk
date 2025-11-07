@@ -5,8 +5,8 @@
 
 #![cfg(feature = "grpc-transport")]
 
-use std::collections::HashMap;
 use regex::Regex;
+use std::collections::HashMap;
 
 /// Type of executor for node execution
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -100,7 +100,8 @@ impl ExecutorRegistry {
     ///
     /// This takes highest priority over pattern matching.
     pub fn register_explicit(&mut self, node_type: impl Into<String>, executor_type: ExecutorType) {
-        self.explicit_mappings.insert(node_type.into(), executor_type);
+        self.explicit_mappings
+            .insert(node_type.into(), executor_type);
     }
 
     /// Register a pattern-based matching rule
@@ -108,7 +109,8 @@ impl ExecutorRegistry {
     /// Rules are evaluated in priority order (highest first).
     pub fn register_pattern(&mut self, rule: PatternRule) {
         // Insert in sorted order by priority (descending)
-        let insert_pos = self.pattern_rules
+        let insert_pos = self
+            .pattern_rules
             .iter()
             .position(|r| r.priority < rule.priority)
             .unwrap_or(self.pattern_rules.len());

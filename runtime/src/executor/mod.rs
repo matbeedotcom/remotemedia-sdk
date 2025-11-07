@@ -16,8 +16,8 @@ pub mod runtime_selector;
 pub mod scheduler;
 
 // Multiprocess integration modules (spec 002)
-pub mod executor_bridge;
 pub mod data_conversion;
+pub mod executor_bridge;
 
 // Re-export key types for convenience
 pub use error::ExecutionErrorExt;
@@ -26,9 +26,9 @@ pub use metrics::{NodeMetrics, PipelineMetrics};
 pub use retry::RetryPolicy;
 pub use scheduler::{ExecutionContext, Scheduler};
 
-use crate::manifest::Manifest;
-use crate::nodes::{NodeRegistry, CompositeRegistry};
 use crate::executor::node_executor::{NodeContext, NodeExecutor};
+use crate::manifest::Manifest;
+use crate::nodes::{CompositeRegistry, NodeRegistry};
 use crate::{Error, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
@@ -268,7 +268,7 @@ pub struct Executor {
 
     /// Composite node registry (multi-tier: user, audio, system)
     registry: CompositeRegistry,
-    
+
     /// Built-in nodes registry (simple nodes using old trait)
     builtin_nodes: NodeRegistry,
 
@@ -317,7 +317,7 @@ impl Executor {
 
         // Create default system registry (empty for now, will be populated via add_system_registry)
         let composite = CompositeRegistry::new();
-        
+
         // System registry will be added by caller via add_system_registry()
         // This allows for lazy initialization and custom registration
 
@@ -335,22 +335,22 @@ impl Executor {
     pub fn add_system_registry(&mut self, registry: Arc<crate::nodes::registry::NodeRegistry>) {
         self.registry.add_registry(registry, Some("system"));
     }
-    
+
     /// Add an audio-level registry (medium priority)
     pub fn add_audio_registry(&mut self, registry: Arc<crate::nodes::registry::NodeRegistry>) {
         self.registry.add_registry(registry, Some("audio"));
     }
-    
+
     /// Add a user-level registry (highest priority)
     pub fn add_user_registry(&mut self, registry: Arc<crate::nodes::registry::NodeRegistry>) {
         self.registry.add_registry(registry, Some("user"));
     }
-    
+
     /// Get reference to built-in nodes (old simple registry)
     pub fn builtin_nodes(&self) -> &NodeRegistry {
         &self.builtin_nodes
     }
-    
+
     /// List all registered node types from all tiers
     pub fn list_all_node_types(&self) -> Vec<String> {
         let mut types = self.builtin_nodes.node_types();
@@ -488,17 +488,14 @@ impl Executor {
         // This includes audio nodes (resample, VAD, format converter) and test nodes
         let node_types = self.registry.list_node_types();
         if node_types.contains(&node_manifest.node_type) {
-            tracing::info!(
-                "Creating node {} from composite registry",
-                node_manifest.id
-            );
+            tracing::info!("Creating node {} from composite registry", node_manifest.id);
             return self.registry.create_node(
                 &node_manifest.node_type,
                 crate::nodes::RuntimeHint::Auto,
                 node_manifest.params.clone(),
             );
         }
-        
+
         // Not in composite registry - return descriptive error
         // Note: Built-in nodes (PassThrough, Echo, etc.) were using old trait
         // and have been deprecated in favor of composite registry nodes
@@ -574,7 +571,8 @@ impl Executor {
         manifest: &Manifest,
         runtime_inputs: HashMap<String, crate::data::RuntimeData>,
     ) -> Result<HashMap<String, crate::data::RuntimeData>> {
-        self.execute_with_runtime_data_and_session(manifest, runtime_inputs, None).await
+        self.execute_with_runtime_data_and_session(manifest, runtime_inputs, None)
+            .await
     }
 
     /// Execute pipeline with RuntimeData inputs and optional session ID
@@ -604,7 +602,12 @@ impl Executor {
         let nodes: HashMap<String, Box<dyn crate::nodes::StreamingNode>> = {
             let mut n = HashMap::new();
             for node_spec in &manifest.nodes {
-                tracing::debug!("Creating node: {} (type: {}) for session: {:?}", node_spec.id, node_spec.node_type, session_id);
+                tracing::debug!(
+                    "Creating node: {} (type: {}) for session: {:?}",
+                    node_spec.id,
+                    node_spec.node_type,
+                    session_id
+                );
 
                 // Inject session_id into params for multiprocess execution (spec 002)
                 let mut params_with_session = node_spec.params.clone();
@@ -637,32 +640,36 @@ impl Executor {
 
         // Process nodes in topological order
         for node_id in &graph.execution_order {
-            let node = nodes.get(node_id.as_str())
+            let node = nodes
+                .get(node_id.as_str())
                 .ok_or_else(|| Error::Execution(format!("Node not found: {}", node_id)))?;
 
             // Collect inputs for this node
-            let input_data_list: Vec<crate::data::RuntimeData> = if all_node_outputs.contains_key(node_id.as_str()) {
-                // This node has direct inputs (source node)
-                all_node_outputs.get(node_id.as_str()).unwrap().clone()
-            } else {
-                // Get inputs from predecessor nodes via connections
-                let mut inputs = Vec::new();
-                for conn in manifest.connections.iter().filter(|c| c.to == *node_id) {
-                    if let Some(predecessor_outputs) = all_node_outputs.get(&conn.from) {
-                        inputs.extend(predecessor_outputs.clone());
+            let input_data_list: Vec<crate::data::RuntimeData> =
+                if all_node_outputs.contains_key(node_id.as_str()) {
+                    // This node has direct inputs (source node)
+                    all_node_outputs.get(node_id.as_str()).unwrap().clone()
+                } else {
+                    // Get inputs from predecessor nodes via connections
+                    let mut inputs = Vec::new();
+                    for conn in manifest.connections.iter().filter(|c| c.to == *node_id) {
+                        if let Some(predecessor_outputs) = all_node_outputs.get(&conn.from) {
+                            inputs.extend(predecessor_outputs.clone());
+                        }
                     }
-                }
 
-                if inputs.is_empty() {
-                    return Err(Error::Execution(
-                        format!("No inputs for node {}", node_id)
-                    ));
-                }
+                    if inputs.is_empty() {
+                        return Err(Error::Execution(format!("No inputs for node {}", node_id)));
+                    }
 
-                inputs
-            };
+                    inputs
+                };
 
-            tracing::debug!("Node {} processing {} input(s)", node_id, input_data_list.len());
+            tracing::debug!(
+                "Node {} processing {} input(s)",
+                node_id,
+                input_data_list.len()
+            );
 
             // Collect all outputs from this node
             let collected_outputs = Arc::new(Mutex::new(Vec::new()));
@@ -677,7 +684,8 @@ impl Executor {
                     Ok(())
                 });
 
-                node.process_streaming_async(input_data.clone(), None, callback).await?;
+                node.process_streaming_async(input_data.clone(), None, callback)
+                    .await?;
             }
 
             let outputs = {
@@ -686,9 +694,7 @@ impl Executor {
             };
 
             if outputs.is_empty() {
-                return Err(Error::Execution(
-                    format!("No output from node {}", node_id)
-                ));
+                return Err(Error::Execution(format!("No output from node {}", node_id)));
             }
 
             tracing::debug!("Node {} total outputs: {}", node_id, outputs.len());
@@ -696,10 +702,10 @@ impl Executor {
         }
 
         // Return only the outputs from leaf nodes (nodes with no outgoing connections)
-        let leaf_nodes: Vec<String> = graph.execution_order.iter()
-            .filter(|node_id| {
-                !manifest.connections.iter().any(|c| &c.from == *node_id)
-            })
+        let leaf_nodes: Vec<String> = graph
+            .execution_order
+            .iter()
+            .filter(|node_id| !manifest.connections.iter().any(|c| &c.from == *node_id))
             .cloned()
             .collect();
 
@@ -731,7 +737,9 @@ impl Executor {
     ) -> Result<HashMap<String, crate::audio::AudioBuffer>> {
         use crate::audio::buffer::{AudioBuffer as AudioBufferNew, AudioData};
         use crate::nodes::audio::fast::FastAudioNode;
-        use crate::nodes::audio::{FastResampleNode, FastVADNode, FastFormatConverter, ResampleQuality};
+        use crate::nodes::audio::{
+            FastFormatConverter, FastResampleNode, FastVADNode, ResampleQuality,
+        };
 
         tracing::info!(
             "Executing fast pipeline: {} with {} buffer inputs",
@@ -749,28 +757,44 @@ impl Executor {
         for node_spec in &manifest.nodes {
             let fast_node: Box<dyn FastAudioNode> = match node_spec.node_type.as_str() {
                 "RustResampleNode" => {
-                    let source_rate = node_spec.params["source_rate"].as_u64().unwrap_or(48000) as u32;
-                    let target_rate = node_spec.params["target_rate"].as_u64().unwrap_or(48000) as u32;
+                    let source_rate =
+                        node_spec.params["source_rate"].as_u64().unwrap_or(48000) as u32;
+                    let target_rate =
+                        node_spec.params["target_rate"].as_u64().unwrap_or(48000) as u32;
                     let quality = ResampleQuality::High;
                     let channels = node_spec.params["channels"].as_u64().unwrap_or(1) as usize;
-                    
-                    Box::new(FastResampleNode::new(source_rate, target_rate, quality, channels)?)
+
+                    Box::new(FastResampleNode::new(
+                        source_rate,
+                        target_rate,
+                        quality,
+                        channels,
+                    )?)
                 }
                 "RustVADNode" => {
-                    let sample_rate = node_spec.params["sample_rate"].as_u64().unwrap_or(48000) as u32;
-                    let frame_duration_ms = node_spec.params["frame_duration_ms"].as_u64().unwrap_or(30) as u32;
-                    let energy_threshold = node_spec.params["energy_threshold"].as_f64().unwrap_or(0.01) as f32;
-                    
-                    Box::new(FastVADNode::new(sample_rate, frame_duration_ms, energy_threshold))
+                    let sample_rate =
+                        node_spec.params["sample_rate"].as_u64().unwrap_or(48000) as u32;
+                    let frame_duration_ms =
+                        node_spec.params["frame_duration_ms"].as_u64().unwrap_or(30) as u32;
+                    let energy_threshold = node_spec.params["energy_threshold"]
+                        .as_f64()
+                        .unwrap_or(0.01) as f32;
+
+                    Box::new(FastVADNode::new(
+                        sample_rate,
+                        frame_duration_ms,
+                        energy_threshold,
+                    ))
                 }
                 "RustFormatConverterNode" => {
-                    let target_format_str = node_spec.params["target_format"].as_str().unwrap_or("f32");
+                    let target_format_str =
+                        node_spec.params["target_format"].as_str().unwrap_or("f32");
                     let target_format = match target_format_str {
                         "i16" => crate::audio::buffer::AudioFormat::I16,
                         "i32" => crate::audio::buffer::AudioFormat::I32,
                         _ => crate::audio::buffer::AudioFormat::F32,
                     };
-                    
+
                     Box::new(FastFormatConverter::new(target_format))
                 }
                 other => {
@@ -794,9 +818,9 @@ impl Executor {
             })?;
 
             // Get input for this node
-            let input_buffer = current_buffers.get(node_id).ok_or_else(|| {
-                Error::Execution(format!("No input buffer for node {}", node_id))
-            })?;
+            let input_buffer = current_buffers
+                .get(node_id)
+                .ok_or_else(|| Error::Execution(format!("No input buffer for node {}", node_id)))?;
 
             // Convert AudioBuffer to AudioData
             let audio_data = AudioData::new(
@@ -818,7 +842,9 @@ impl Executor {
                     crate::audio::AudioFormat::F32,
                 )
             } else {
-                return Err(Error::Execution("Fast audio nodes must output F32 format".into()));
+                return Err(Error::Execution(
+                    "Fast audio nodes must output F32 format".into(),
+                ));
             };
 
             // Store output for next node or as final result

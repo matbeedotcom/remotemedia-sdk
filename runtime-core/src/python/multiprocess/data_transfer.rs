@@ -29,7 +29,8 @@ impl RuntimeData {
                 samples.as_ptr() as *const u8,
                 samples.len() * std::mem::size_of::<f32>(),
             )
-        }.to_vec();
+        }
+        .to_vec();
 
         Self {
             data_type: DataType::Audio,
@@ -110,8 +111,14 @@ impl RuntimeData {
             return Err("Invalid timestamp".to_string());
         }
         let timestamp = u64::from_le_bytes([
-            bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3],
-            bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7],
+            bytes[pos],
+            bytes[pos + 1],
+            bytes[pos + 2],
+            bytes[pos + 3],
+            bytes[pos + 4],
+            bytes[pos + 5],
+            bytes[pos + 6],
+            bytes[pos + 7],
         ]);
         pos += 8;
 
@@ -119,7 +126,9 @@ impl RuntimeData {
         if pos + 4 > bytes.len() {
             return Err("Invalid payload length".to_string());
         }
-        let payload_len = u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]) as usize;
+        let payload_len =
+            u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]])
+                as usize;
         pos += 4;
         if pos + payload_len > bytes.len() {
             return Err("Invalid payload".to_string());

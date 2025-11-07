@@ -7,11 +7,11 @@
 //! - 1.11.4: Branching and merging support
 //! - 1.11.5: Complex pipeline topologies
 
+use pyo3::types::PyAnyMethods;
 use remotemedia_runtime::{
     executor::Executor,
     manifest::{Connection, Manifest, ManifestMetadata, NodeManifest, RuntimeHint},
 };
-use pyo3::types::PyAnyMethods;
 use serde_json::json;
 use std::ffi::CString;
 
@@ -31,11 +31,8 @@ fn setup_python_environment() {
 
         if python_client_path.exists() {
             let path_str = python_client_path.to_str().unwrap();
-            let append_code = CString::new(format!(
-                "import sys; sys.path.insert(0, r'{}')",
-                path_str
-            ))
-            .unwrap();
+            let append_code =
+                CString::new(format!("import sys; sys.path.insert(0, r'{}')", path_str)).unwrap();
             py.run(&append_code, None, None).unwrap();
             println!("Added to Python path: {}", path_str);
         }
@@ -246,13 +243,20 @@ sys.modules['remotemedia.nodes'].StreamingGeneratorNode = StreamingGeneratorNode
 
     // 2. Each item should have a timestamp (proves async execution)
     for i in 0..5 {
-        assert!(outputs[i]["timestamp"].is_number(), "Expected timestamp for yield {}", i);
+        assert!(
+            outputs[i]["timestamp"].is_number(),
+            "Expected timestamp for yield {}",
+            i
+        );
     }
 
     // 3. Timestamps should be different (proves items were yielded at different times)
     let ts0 = outputs[0]["timestamp"].as_f64().unwrap();
     let ts4 = outputs[4]["timestamp"].as_f64().unwrap();
-    assert!(ts4 > ts0, "Last item should have later timestamp than first item");
+    assert!(
+        ts4 > ts0,
+        "Last item should have later timestamp than first item"
+    );
 
     println!("✓ Test 1.11.2: Async generator streaming with delays verified!");
     println!("  - {} items yielded asynchronously", outputs.len());
@@ -827,4 +831,3 @@ sys.modules['remotemedia.nodes'].Level3Node = Level3Node
 
     println!("✓ Test 1.11.5: Multi-level DAG passed!");
 }
-

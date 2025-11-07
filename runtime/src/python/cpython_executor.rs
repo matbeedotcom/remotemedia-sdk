@@ -45,12 +45,18 @@ fn sanitize_params_for_logging(params: &Value) -> String {
                     // Check if this is audio/binary data
                     if key == "samples" || key == "data" || key == "buffer" {
                         if let Some(obj) = value.as_object() {
-                            if obj.contains_key("type") && obj.get("type").and_then(|v| v.as_str()) == Some("Buffer") {
+                            if obj.contains_key("type")
+                                && obj.get("type").and_then(|v| v.as_str()) == Some("Buffer")
+                            {
                                 // This is a Node.js Buffer - show size instead of all bytes
-                                if let Some(data_array) = obj.get("data").and_then(|v| v.as_array()) {
+                                if let Some(data_array) = obj.get("data").and_then(|v| v.as_array())
+                                {
                                     sanitized.insert(
                                         key.clone(),
-                                        Value::String(format!("<Buffer: {} bytes>", data_array.len()))
+                                        Value::String(format!(
+                                            "<Buffer: {} bytes>",
+                                            data_array.len()
+                                        )),
                                     );
                                     continue;
                                 }
@@ -61,7 +67,7 @@ fn sanitize_params_for_logging(params: &Value) -> String {
                             if arr.len() > 100 {
                                 sanitized.insert(
                                     key.clone(),
-                                    Value::String(format!("<Array: {} items>", arr.len()))
+                                    Value::String(format!("<Array: {} items>", arr.len())),
                                 );
                                 continue;
                             }
@@ -81,11 +87,12 @@ fn sanitize_params_for_logging(params: &Value) -> String {
                     Value::Array(arr.iter().map(|v| sanitize_value(v, depth + 1)).collect())
                 }
             }
-            _ => val.clone()
+            _ => val.clone(),
         }
     }
 
-    serde_json::to_string_pretty(&sanitize_value(params, 0)).unwrap_or_else(|_| "<serialization_error>".to_string())
+    serde_json::to_string_pretty(&sanitize_value(params, 0))
+        .unwrap_or_else(|_| "<serialization_error>".to_string())
 }
 
 /// Commands sent to the dedicated Python worker thread
@@ -171,7 +178,10 @@ impl CPythonNodeExecutor {
 
         // Hold GIL for entire thread lifetime (CUDA-safe: same thread state always!)
         Python::attach(|py| {
-            tracing::info!("[Worker-{}] GIL acquired persistently for thread lifetime", node_type);
+            tracing::info!(
+                "[Worker-{}] GIL acquired persistently for thread lifetime",
+                node_type
+            );
 
             let mut instance: Option<Py<PyAny>> = None;
             let mut event_loop: Option<Py<PyAny>> = None;
@@ -179,7 +189,11 @@ impl CPythonNodeExecutor {
             // Process commands in this thread's persistent Python context
             while let Ok(command) = command_rx.recv() {
                 match command {
-                    WorkerCommand::Initialize { params, node_id, result_tx } => {
+                    WorkerCommand::Initialize {
+                        params,
+                        node_id,
+                        result_tx,
+                    } => {
                         let result = Self::handle_initialize(
                             py,
                             &node_type,
@@ -190,18 +204,18 @@ impl CPythonNodeExecutor {
                         );
                         let _ = result_tx.send(result);
                     }
-                    WorkerCommand::ProcessStreaming { input, session_id, result_tx } => {
+                    WorkerCommand::ProcessStreaming {
+                        input,
+                        session_id,
+                        result_tx,
+                    } => {
                         if let (Some(ref inst), Some(ref evloop)) = (&instance, &event_loop) {
                             Self::handle_process_streaming(
-                                py,
-                                inst,
-                                evloop,
-                                input,
-                                session_id,
-                                result_tx,
+                                py, inst, evloop, input, session_id, result_tx,
                             );
                         } else {
-                            let _ = result_tx.send(Err(Error::Execution("Node not initialized".to_string())));
+                            let _ = result_tx
+                                .send(Err(Error::Execution("Node not initialized".to_string())));
                         }
                     }
                     WorkerCommand::Cleanup { result_tx } => {
@@ -219,7 +233,10 @@ impl CPythonNodeExecutor {
                 }
             }
 
-            tracing::info!("[Worker-{}] Thread exiting, releasing persistent GIL", node_type);
+            tracing::info!(
+                "[Worker-{}] Thread exiting, releasing persistent GIL",
+                node_type
+            );
         });
     }
 
@@ -235,9 +252,11 @@ impl CPythonNodeExecutor {
         tracing::info!("[Worker-{}] Initializing node: {}", node_type, node_id);
 
         // Load class
-        let nodes_module = py.import("remotemedia.nodes")
+        let nodes_module = py
+            .import("remotemedia.nodes")
             .map_err(|e| Error::Execution(format!("Failed to import remotemedia.nodes: {}", e)))?;
-        let class = nodes_module.getattr(node_type)
+        let class = nodes_module
+            .getattr(node_type)
             .map_err(|e| Error::Execution(format!("Failed to get class {}: {}", node_type, e)))?;
 
         // Merge node_id into params
@@ -251,48 +270,64 @@ impl CPythonNodeExecutor {
         // Create instance
         let py_params = json_to_python(py, &params_with_id)
             .map_err(|e| Error::Execution(format!("Failed to convert params: {}", e)))?;
-        let kwargs = py_params.downcast::<PyDict>()
+        let kwargs = py_params
+            .downcast::<PyDict>()
             .map_err(|e| Error::Execution(format!("Params not a dict: {}", e)))?;
 
-        let inst = class.call((), Some(kwargs))
+        let inst = class
+            .call((), Some(kwargs))
             .map_err(|e| Error::Execution(format!("Failed to instantiate: {}", e)))?;
 
         // Log params but sanitize large binary data to avoid verbose output
         let sanitized_params = sanitize_params_for_logging(&params_with_id);
-        tracing::info!("Instantiated CPython node: {} with params: {}", node_type, sanitized_params);
+        tracing::info!(
+            "Instantiated CPython node: {} with params: {}",
+            node_type,
+            sanitized_params
+        );
 
         // Call initialize() if exists
-        if inst.hasattr("initialize")
+        if inst
+            .hasattr("initialize")
             .map_err(|e| Error::Execution(format!("hasattr failed: {}", e)))?
         {
             tracing::info!("Calling initialize() on CPython node: {}", node_type);
 
-            let init_result = inst.call_method0("initialize")
+            let init_result = inst
+                .call_method0("initialize")
                 .map_err(|e| Error::Execution(format!("initialize() failed: {}", e)))?;
 
             // Check if it's a coroutine
-            let inspect = py.import("inspect")
+            let inspect = py
+                .import("inspect")
                 .map_err(|e| Error::Execution(format!("Failed to import inspect: {}", e)))?;
-            let is_coroutine = inspect.call_method1("iscoroutine", (&init_result,))
+            let is_coroutine = inspect
+                .call_method1("iscoroutine", (&init_result,))
                 .and_then(|v| v.extract::<bool>())
                 .map_err(|e| Error::Execution(format!("Failed to check coroutine: {}", e)))?;
 
             if is_coroutine {
                 // Create event loop if not exists
                 if event_loop.is_none() {
-                    let asyncio = py.import("asyncio")
-                        .map_err(|e| Error::Execution(format!("Failed to import asyncio: {}", e)))?;
-                    let loop_obj = asyncio.call_method0("new_event_loop")
-                        .map_err(|e| Error::Execution(format!("Failed to create event loop: {}", e)))?;
-                    asyncio.call_method1("set_event_loop", (&loop_obj,))
-                        .map_err(|e| Error::Execution(format!("Failed to set event loop: {}", e)))?;
+                    let asyncio = py.import("asyncio").map_err(|e| {
+                        Error::Execution(format!("Failed to import asyncio: {}", e))
+                    })?;
+                    let loop_obj = asyncio.call_method0("new_event_loop").map_err(|e| {
+                        Error::Execution(format!("Failed to create event loop: {}", e))
+                    })?;
+                    asyncio
+                        .call_method1("set_event_loop", (&loop_obj,))
+                        .map_err(|e| {
+                            Error::Execution(format!("Failed to set event loop: {}", e))
+                        })?;
                     *event_loop = Some(loop_obj.unbind());
                 }
 
                 // Run async initialize
                 if let Some(ref evloop_py) = event_loop {
                     let evloop = evloop_py.bind(py);
-                    evloop.call_method1("run_until_complete", (init_result,))
+                    evloop
+                        .call_method1("run_until_complete", (init_result,))
                         .map_err(|e| Error::Execution(format!("Async initialize failed: {}", e)))?;
                 }
             }
@@ -300,11 +335,14 @@ impl CPythonNodeExecutor {
 
         // Ensure event loop exists
         if event_loop.is_none() {
-            let asyncio = py.import("asyncio")
+            let asyncio = py
+                .import("asyncio")
                 .map_err(|e| Error::Execution(format!("Failed to import asyncio: {}", e)))?;
-            let loop_obj = asyncio.call_method0("new_event_loop")
+            let loop_obj = asyncio
+                .call_method0("new_event_loop")
                 .map_err(|e| Error::Execution(format!("Failed to create event loop: {}", e)))?;
-            asyncio.call_method1("set_event_loop", (&loop_obj,))
+            asyncio
+                .call_method1("set_event_loop", (&loop_obj,))
                 .map_err(|e| Error::Execution(format!("Failed to set event loop: {}", e)))?;
             *event_loop = Some(loop_obj.unbind());
         }
@@ -333,14 +371,17 @@ impl CPythonNodeExecutor {
         let py_runtime_data = match Py::new(py, py_runtime_data_struct) {
             Ok(data) => data,
             Err(e) => {
-                let _ = result_tx.send(Err(Error::Execution(format!("Failed to create RuntimeData: {}", e))));
+                let _ = result_tx.send(Err(Error::Execution(format!(
+                    "Failed to create RuntimeData: {}",
+                    e
+                ))));
                 return;
             }
         };
 
         // Call process() to get async generator
         let process_result = match inst.call_method1("process", (py_runtime_data,)) {
-            Ok(res) => res.unbind(),  // Unbind for reuse across iterations
+            Ok(res) => res.unbind(), // Unbind for reuse across iterations
             Err(e) => {
                 let _ = result_tx.send(Err(Error::Execution(format!("process() failed: {}", e))));
                 return;
@@ -366,17 +407,24 @@ async def _get_next_item(agen):
         traceback.print_exc()
         raise
 "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         if let Err(e) = py.run(&code, None, None) {
-            let _ = result_tx.send(Err(Error::Execution(format!("Failed to define get_next: {}", e))));
+            let _ = result_tx.send(Err(Error::Execution(format!(
+                "Failed to define get_next: {}",
+                e
+            ))));
             return;
         }
 
         let locals = match py.eval(&std::ffi::CString::new("locals()").unwrap(), None, None) {
             Ok(l) => l,
             Err(e) => {
-                let _ = result_tx.send(Err(Error::Execution(format!("Failed to get locals: {}", e))));
+                let _ = result_tx.send(Err(Error::Execution(format!(
+                    "Failed to get locals: {}",
+                    e
+                ))));
                 return;
             }
         };
@@ -384,7 +432,10 @@ async def _get_next_item(agen):
         let get_next_fn = match locals.get_item("_get_next_item") {
             Ok(f) => f,
             Err(e) => {
-                let _ = result_tx.send(Err(Error::Execution(format!("Failed to get get_next: {}", e))));
+                let _ = result_tx.send(Err(Error::Execution(format!(
+                    "Failed to get get_next: {}",
+                    e
+                ))));
                 return;
             }
         };
@@ -403,7 +454,10 @@ async def _get_next_item(agen):
             let get_next_coro = match get_next_fn.call1((gen,)) {
                 Ok(c) => c,
                 Err(e) => {
-                    let _ = result_tx.send(Err(Error::Execution(format!("Failed to call get_next: {}", e))));
+                    let _ = result_tx.send(Err(Error::Execution(format!(
+                        "Failed to call get_next: {}",
+                        e
+                    ))));
                     return;
                 }
             };
@@ -420,7 +474,10 @@ async def _get_next_item(agen):
             let has_value: bool = match result_tuple.get_item(0).and_then(|v| v.extract()) {
                 Ok(v) => v,
                 Err(e) => {
-                    let _ = result_tx.send(Err(Error::Execution(format!("Failed to extract has_value: {}", e))));
+                    let _ = result_tx.send(Err(Error::Execution(format!(
+                        "Failed to extract has_value: {}",
+                        e
+                    ))));
                     return;
                 }
             };
@@ -434,7 +491,8 @@ async def _get_next_item(agen):
             let py_item = match result_tuple.get_item(1) {
                 Ok(item) => item,
                 Err(e) => {
-                    let _ = result_tx.send(Err(Error::Execution(format!("Failed to get item: {}", e))));
+                    let _ =
+                        result_tx.send(Err(Error::Execution(format!("Failed to get item: {}", e))));
                     return;
                 }
             };
@@ -497,7 +555,8 @@ async def _get_next_item(agen):
         }
 
         // Create result channel
-        let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel::<Result<RuntimeData>>();
+        let (result_tx, mut result_rx) =
+            tokio::sync::mpsc::unbounded_channel::<Result<RuntimeData>>();
 
         // Send processing command to dedicated worker thread
         let command = WorkerCommand::ProcessStreaming {
@@ -506,7 +565,8 @@ async def _get_next_item(agen):
             result_tx,
         };
 
-        self.command_tx.as_ref()
+        self.command_tx
+            .as_ref()
             .ok_or_else(|| Error::Execution("Worker thread not available".to_string()))?
             .send(command)
             .map_err(|e| Error::Execution(format!("Failed to send command to worker: {}", e)))?;
@@ -518,12 +578,19 @@ async def _get_next_item(agen):
             match result {
                 Ok(runtime_data) => {
                     chunk_count += 1;
-                    tracing::info!("Yielded item {}: type={:?}", chunk_count, runtime_data.data_type());
+                    tracing::info!(
+                        "Yielded item {}: type={:?}",
+                        chunk_count,
+                        runtime_data.data_type()
+                    );
                     tracing::info!("📤 Calling callback for chunk {}", chunk_count);
 
                     callback(runtime_data)?;
 
-                    tracing::info!("✅ Callback completed successfully for item {}", chunk_count);
+                    tracing::info!(
+                        "✅ Callback completed successfully for item {}",
+                        chunk_count
+                    );
                     tokio::task::yield_now().await;
                 }
                 Err(e) => {
@@ -561,13 +628,15 @@ impl NodeExecutor for CPythonNodeExecutor {
             result_tx,
         };
 
-        self.command_tx.as_ref()
+        self.command_tx
+            .as_ref()
             .ok_or_else(|| Error::Execution("Worker thread not available".to_string()))?
             .send(command)
             .map_err(|e| Error::Execution(format!("Failed to send init command: {}", e)))?;
 
         // Wait for initialization result
-        let result = result_rx.recv()
+        let result = result_rx
+            .recv()
             .map_err(|e| Error::Execution(format!("Worker thread closed: {}", e)))??;
 
         self.initialized = true;
@@ -576,7 +645,7 @@ impl NodeExecutor for CPythonNodeExecutor {
 
     async fn process(&mut self, _input: Value) -> Result<Vec<Value>> {
         Err(Error::Execution(
-            "Non-streaming process not implemented for worker architecture".to_string()
+            "Non-streaming process not implemented for worker architecture".to_string(),
         ))
     }
 

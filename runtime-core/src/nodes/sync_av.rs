@@ -61,7 +61,11 @@ impl SynchronizedAudioVideoNode {
 
         // Extract timing information
         let (audio_timestamp_us, audio_sample_rate, audio_num_samples) = match audio_data {
-            RuntimeData::Audio { samples, sample_rate, channels } => {
+            RuntimeData::Audio {
+                samples,
+                sample_rate,
+                channels,
+            } => {
                 // Calculate audio timestamp from sample count
                 let num_samples = samples.len() as u64;
                 let duration_us = (num_samples as f64 / (*sample_rate as f64) * 1_000_000.0) as i64;
@@ -77,12 +81,14 @@ impl SynchronizedAudioVideoNode {
         };
 
         let (video_timestamp_us, video_frame_num, video_width, video_height) = match video_data {
-            RuntimeData::Video { pixel_data, width, height, format, frame_number, timestamp_us } => (
-                *timestamp_us as i64,
-                *frame_number,
-                *width,
-                *height,
-            ),
+            RuntimeData::Video {
+                pixel_data,
+                width,
+                height,
+                format,
+                frame_number,
+                timestamp_us,
+            } => (*timestamp_us as i64, *frame_number, *width, *height),
             _ => {
                 return Err(Error::InvalidInput {
                     message: "'video' input must be VideoFrame".to_string(),
@@ -146,7 +152,6 @@ impl SynchronizedAudioVideoNode {
         // Return JSON output
         Ok(RuntimeData::Json(sync_report))
     }
-
 }
 
 impl SyncStreamingNode for SynchronizedAudioVideoNode {
@@ -156,7 +161,8 @@ impl SyncStreamingNode for SynchronizedAudioVideoNode {
 
     fn process(&self, _input: RuntimeData) -> Result<RuntimeData> {
         Err(Error::InvalidInput {
-            message: "SynchronizedAudioVideoNode requires multi-input via named_buffers".to_string(),
+            message: "SynchronizedAudioVideoNode requires multi-input via named_buffers"
+                .to_string(),
             node_id: self.node_id.clone(),
             context: "Use process_multi() method with both audio and video inputs".to_string(),
         })
@@ -185,9 +191,7 @@ mod tests {
         // Create audio buffer
         use crate::data::{AudioBuffer, AudioFormat};
         let samples_f32 = vec![0.0f32; 1600];
-        let samples_bytes: Vec<u8> = samples_f32.iter()
-            .flat_map(|&f| f.to_le_bytes())
-            .collect();
+        let samples_bytes: Vec<u8> = samples_f32.iter().flat_map(|&f| f.to_le_bytes()).collect();
 
         let audio = RuntimeData::Audio(AudioBuffer {
             samples: samples_bytes,
@@ -198,7 +202,7 @@ mod tests {
         });
 
         // Create video frame with matching timestamp
-        use crate::data::{VideoFrame, PixelFormat};
+        use crate::data::{PixelFormat, VideoFrame};
         let video = RuntimeData::Video(VideoFrame {
             pixel_data: vec![0u8; 320 * 240 * 3],
             width: 320,
@@ -224,16 +228,14 @@ mod tests {
 
     #[test]
     fn test_sync_av_drift() {
-        use crate::data::{AudioBuffer, AudioFormat, VideoFrame, PixelFormat};
+        use crate::data::{AudioBuffer, AudioFormat, PixelFormat, VideoFrame};
 
         let node = SynchronizedAudioVideoNode::new("sync1".to_string(), "{}").unwrap();
 
         let mut inputs = HashMap::new();
 
         let samples_f32 = vec![0.0f32; 1600];
-        let samples_bytes: Vec<u8> = samples_f32.iter()
-            .flat_map(|&f| f.to_le_bytes())
-            .collect();
+        let samples_bytes: Vec<u8> = samples_f32.iter().flat_map(|&f| f.to_le_bytes()).collect();
 
         let audio = RuntimeData::Audio(AudioBuffer {
             samples: samples_bytes,

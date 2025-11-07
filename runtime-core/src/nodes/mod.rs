@@ -1,7 +1,7 @@
 //! Node type implementations
 //!
 //! This module contains the core node execution logic and lifecycle management.
-//! 
+//!
 //! **Note**: The NodeExecutor trait here is DEPRECATED and kept only for backward compatibility.
 //! All new code should use `executor::node_executor::NodeExecutor` instead.
 //! Built-in nodes have been migrated to the new trait. This old trait definition
@@ -47,7 +47,7 @@ pub use audio_resample_streaming::ResampleStreamingNode;
 pub mod text_collector;
 pub use text_collector::TextCollectorNode;
 
-pub use registry::{NodeFactory as NodeFactoryTrait, RuntimeHint, CompositeRegistry};
+pub use registry::{CompositeRegistry, NodeFactory as NodeFactoryTrait, RuntimeHint};
 pub use streaming_node::{
     AsyncNodeWrapper, AsyncStreamingNode, StreamingNode, StreamingNodeFactory,
     StreamingNodeRegistry, SyncNodeWrapper, SyncStreamingNode,
@@ -620,64 +620,116 @@ struct AddNodeFactory;
 struct MultiplyNodeFactory;
 
 impl NodeFactoryTrait for PassThroughNodeFactory {
-    fn create(&self, _params: Value) -> Result<Box<dyn crate::executor::node_executor::NodeExecutor>> {
+    fn create(
+        &self,
+        _params: Value,
+    ) -> Result<Box<dyn crate::executor::node_executor::NodeExecutor>> {
         Ok(Box::new(PassThroughNodeNew))
     }
-    fn node_type(&self) -> &str { "PassThrough" }
+    fn node_type(&self) -> &str {
+        "PassThrough"
+    }
 }
 
 impl NodeFactoryTrait for EchoNodeFactory {
-    fn create(&self, _params: Value) -> Result<Box<dyn crate::executor::node_executor::NodeExecutor>> {
+    fn create(
+        &self,
+        _params: Value,
+    ) -> Result<Box<dyn crate::executor::node_executor::NodeExecutor>> {
         Ok(Box::new(EchoNodeNew::new()))
     }
-    fn node_type(&self) -> &str { "Echo" }
+    fn node_type(&self) -> &str {
+        "Echo"
+    }
 }
 
 impl NodeFactoryTrait for CalculatorNodeFactory {
-    fn create(&self, _params: Value) -> Result<Box<dyn crate::executor::node_executor::NodeExecutor>> {
+    fn create(
+        &self,
+        _params: Value,
+    ) -> Result<Box<dyn crate::executor::node_executor::NodeExecutor>> {
         Ok(Box::new(CalculatorNodeNew::new()))
     }
-    fn node_type(&self) -> &str { "CalculatorNode" }
+    fn node_type(&self) -> &str {
+        "CalculatorNode"
+    }
 }
 
 impl NodeFactoryTrait for AddNodeFactory {
-    fn create(&self, _params: Value) -> Result<Box<dyn crate::executor::node_executor::NodeExecutor>> {
+    fn create(
+        &self,
+        _params: Value,
+    ) -> Result<Box<dyn crate::executor::node_executor::NodeExecutor>> {
         Ok(Box::new(AddNodeNew::new()))
     }
-    fn node_type(&self) -> &str { "AddNode" }
+    fn node_type(&self) -> &str {
+        "AddNode"
+    }
 }
 
 impl NodeFactoryTrait for MultiplyNodeFactory {
-    fn create(&self, _params: Value) -> Result<Box<dyn crate::executor::node_executor::NodeExecutor>> {
+    fn create(
+        &self,
+        _params: Value,
+    ) -> Result<Box<dyn crate::executor::node_executor::NodeExecutor>> {
         Ok(Box::new(MultiplyNodeNew::new()))
     }
-    fn node_type(&self) -> &str { "MultiplyNode" }
+    fn node_type(&self) -> &str {
+        "MultiplyNode"
+    }
 }
 
 // New trait implementations (wrapping old trait implementations)
 struct PassThroughNodeNew;
-struct EchoNodeNew { inner: EchoNode }
-struct CalculatorNodeNew { inner: CalculatorNode }
-struct AddNodeNew { inner: AddNode }
-struct MultiplyNodeNew { inner: MultiplyNode }
+struct EchoNodeNew {
+    inner: EchoNode,
+}
+struct CalculatorNodeNew {
+    inner: CalculatorNode,
+}
+struct AddNodeNew {
+    inner: AddNode,
+}
+struct MultiplyNodeNew {
+    inner: MultiplyNode,
+}
 
 impl EchoNodeNew {
-    fn new() -> Self { Self { inner: EchoNode::new() } }
+    fn new() -> Self {
+        Self {
+            inner: EchoNode::new(),
+        }
+    }
 }
 impl CalculatorNodeNew {
-    fn new() -> Self { Self { inner: CalculatorNode::new() } }
+    fn new() -> Self {
+        Self {
+            inner: CalculatorNode::new(),
+        }
+    }
 }
 impl AddNodeNew {
-    fn new() -> Self { Self { inner: AddNode::new() } }
+    fn new() -> Self {
+        Self {
+            inner: AddNode::new(),
+        }
+    }
 }
 impl MultiplyNodeNew {
-    fn new() -> Self { Self { inner: MultiplyNode::new() } }
+    fn new() -> Self {
+        Self {
+            inner: MultiplyNode::new(),
+        }
+    }
 }
 
 // Implement new trait by delegating to old implementations
 #[async_trait]
 impl crate::executor::node_executor::NodeExecutor for PassThroughNodeNew {
-    async fn initialize(&mut self, ctx: &crate::executor::node_executor::NodeContext) -> Result<()> {
+    async fn initialize(
+        &mut self,
+        ctx: &crate::executor::node_executor::NodeContext,
+    ) -> Result<()> {
         let old_ctx = NodeContext {
             node_id: ctx.node_id.clone(),
             node_type: ctx.node_type.clone(),
@@ -697,7 +749,10 @@ impl crate::executor::node_executor::NodeExecutor for PassThroughNodeNew {
 
 #[async_trait]
 impl crate::executor::node_executor::NodeExecutor for EchoNodeNew {
-    async fn initialize(&mut self, ctx: &crate::executor::node_executor::NodeContext) -> Result<()> {
+    async fn initialize(
+        &mut self,
+        ctx: &crate::executor::node_executor::NodeContext,
+    ) -> Result<()> {
         let old_ctx = NodeContext {
             node_id: ctx.node_id.clone(),
             node_type: ctx.node_type.clone(),
@@ -717,7 +772,10 @@ impl crate::executor::node_executor::NodeExecutor for EchoNodeNew {
 
 #[async_trait]
 impl crate::executor::node_executor::NodeExecutor for CalculatorNodeNew {
-    async fn initialize(&mut self, ctx: &crate::executor::node_executor::NodeContext) -> Result<()> {
+    async fn initialize(
+        &mut self,
+        ctx: &crate::executor::node_executor::NodeContext,
+    ) -> Result<()> {
         let old_ctx = NodeContext {
             node_id: ctx.node_id.clone(),
             node_type: ctx.node_type.clone(),
@@ -737,7 +795,10 @@ impl crate::executor::node_executor::NodeExecutor for CalculatorNodeNew {
 
 #[async_trait]
 impl crate::executor::node_executor::NodeExecutor for AddNodeNew {
-    async fn initialize(&mut self, ctx: &crate::executor::node_executor::NodeContext) -> Result<()> {
+    async fn initialize(
+        &mut self,
+        ctx: &crate::executor::node_executor::NodeContext,
+    ) -> Result<()> {
         let old_ctx = NodeContext {
             node_id: ctx.node_id.clone(),
             node_type: ctx.node_type.clone(),
@@ -757,7 +818,10 @@ impl crate::executor::node_executor::NodeExecutor for AddNodeNew {
 
 #[async_trait]
 impl crate::executor::node_executor::NodeExecutor for MultiplyNodeNew {
-    async fn initialize(&mut self, ctx: &crate::executor::node_executor::NodeContext) -> Result<()> {
+    async fn initialize(
+        &mut self,
+        ctx: &crate::executor::node_executor::NodeContext,
+    ) -> Result<()> {
         let old_ctx = NodeContext {
             node_id: ctx.node_id.clone(),
             node_type: ctx.node_type.clone(),

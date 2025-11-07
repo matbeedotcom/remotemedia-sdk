@@ -20,7 +20,10 @@ pub fn extract_runtime_data(py: Python, py_obj: &Bound<'_, PyAny>) -> Result<Run
     }
 
     // Try to extract as PyRuntimeData object first
-    if let Ok(data_type) = py_obj.call_method0("data_type").and_then(|v| v.extract::<String>()) {
+    if let Ok(data_type) = py_obj
+        .call_method0("data_type")
+        .and_then(|v| v.extract::<String>())
+    {
         // This is a PyRuntimeData object with proper methods
         return match data_type.as_str() {
             "text" => extract_text(py_obj),
@@ -38,12 +41,14 @@ pub fn extract_runtime_data(py: Python, py_obj: &Bound<'_, PyAny>) -> Result<Run
     // This allows Python nodes to yield plain dicts, strings, etc. without wrapping them
     if py_obj.is_instance_of::<pyo3::types::PyString>() {
         // String -> Text
-        let text: String = py_obj.extract()
+        let text: String = py_obj
+            .extract()
             .map_err(|e| Error::Execution(format!("Failed to extract string: {}", e)))?;
         Ok(RuntimeData::Text(text))
     } else if py_obj.is_instance_of::<PyDict>() || py_obj.is_instance_of::<pyo3::types::PyList>() {
         // Dict or List -> JSON
-        let json_module = py.import("json")
+        let json_module = py
+            .import("json")
             .map_err(|e| Error::Execution(format!("Failed to import json: {}", e)))?;
         let json_str: String = json_module
             .call_method1("dumps", (py_obj,))
@@ -53,7 +58,8 @@ pub fn extract_runtime_data(py: Python, py_obj: &Bound<'_, PyAny>) -> Result<Run
         Ok(RuntimeData::Json(json_value))
     } else if py_obj.is_instance_of::<pyo3::types::PyBytes>() {
         // Bytes -> Binary
-        let bytes: Vec<u8> = py_obj.extract()
+        let bytes: Vec<u8> = py_obj
+            .extract()
             .map_err(|e| Error::Execution(format!("Failed to extract bytes: {}", e)))?;
         Ok(RuntimeData::Binary(prost::bytes::Bytes::from(bytes)))
     } else if let Ok(num) = py_obj.extract::<i64>() {
@@ -65,7 +71,9 @@ pub fn extract_runtime_data(py: Python, py_obj: &Bound<'_, PyAny>) -> Result<Run
             .ok_or_else(|| Error::Execution(format!("Invalid float value: {}", num)))?;
         Ok(RuntimeData::Json(serde_json::Value::Number(json_num)))
     } else {
-        let type_name = py_obj.get_type().name()
+        let type_name = py_obj
+            .get_type()
+            .name()
             .map(|s| s.to_string())
             .unwrap_or_else(|_| "unknown".to_string());
         Err(Error::Execution(format!(
@@ -89,25 +97,31 @@ fn extract_text(py_obj: &Bound<'_, PyAny>) -> Result<RuntimeData> {
 fn extract_audio(py_obj: &Bound<'_, PyAny>) -> Result<RuntimeData> {
     tracing::info!("extract_audio: Starting audio extraction from Python object");
 
-    let audio_tuple_opt = py_obj
-        .call_method0("as_audio")
-        .map_err(|e| {
-            tracing::error!("extract_audio: Failed to call as_audio(): {}", e);
-            Error::Execution(format!("Failed to call as_audio(): {}", e))
-        })?;
+    let audio_tuple_opt = py_obj.call_method0("as_audio").map_err(|e| {
+        tracing::error!("extract_audio: Failed to call as_audio(): {}", e);
+        Error::Execution(format!("Failed to call as_audio(): {}", e))
+    })?;
 
     tracing::info!("extract_audio: as_audio() called successfully, extracting tuple...");
 
-    let (samples, sample_rate, channels, format_str, num_samples): (Vec<u8>, u32, u32, String, u64) = audio_tuple_opt
-        .extract()
-        .map_err(|e| {
-            tracing::error!("extract_audio: Failed to extract audio tuple: {}", e);
-            Error::Execution(format!("Failed to extract audio tuple: {}", e))
-        })?;
+    let (samples, sample_rate, channels, format_str, num_samples): (
+        Vec<u8>,
+        u32,
+        u32,
+        String,
+        u64,
+    ) = audio_tuple_opt.extract().map_err(|e| {
+        tracing::error!("extract_audio: Failed to extract audio tuple: {}", e);
+        Error::Execution(format!("Failed to extract audio tuple: {}", e))
+    })?;
 
     tracing::info!(
         "extract_audio: Extracted audio - {} samples, {}Hz, {} channels, format: {}, bytes: {}",
-        num_samples, sample_rate, channels, format_str, samples.len()
+        num_samples,
+        sample_rate,
+        channels,
+        format_str,
+        samples.len()
     );
 
     let format = match format_str.as_str() {

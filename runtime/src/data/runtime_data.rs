@@ -1,7 +1,7 @@
 // RuntimeData enum: In-memory representation of all data types
 // Feature: 004-generic-streaming
 
-use crate::grpc_service::generated::{AudioBuffer, VideoFrame, TensorBuffer, DataTypeHint};
+use crate::grpc_service::generated::{AudioBuffer, DataTypeHint, TensorBuffer, VideoFrame};
 use prost::bytes::Bytes;
 use std::fmt;
 
@@ -73,16 +73,16 @@ impl RuntimeData {
             RuntimeData::Tensor(t) => {
                 // Product of all dimensions
                 t.shape.iter().map(|&d| d as usize).product()
-            },
+            }
             RuntimeData::Json(value) => {
                 match value {
                     serde_json::Value::Array(arr) => arr.len(),
                     serde_json::Value::Object(obj) => obj.len(),
                     _ => 1, // Primitives count as 1
                 }
-            },
+            }
             RuntimeData::Text(s) => s.chars().count(), // Unicode character count
-            RuntimeData::Binary(b) => b.len(), // Byte count
+            RuntimeData::Binary(b) => b.len(),         // Byte count
         }
     }
 
@@ -94,10 +94,8 @@ impl RuntimeData {
             RuntimeData::Tensor(t) => t.data.len(),
             RuntimeData::Json(value) => {
                 // Approximate JSON size by serializing
-                serde_json::to_string(value)
-                    .map(|s| s.len())
-                    .unwrap_or(0)
-            },
+                serde_json::to_string(value).map(|s| s.len()).unwrap_or(0)
+            }
             RuntimeData::Text(s) => s.len(), // UTF-8 byte length
             RuntimeData::Binary(b) => b.len(),
         }
@@ -128,8 +126,16 @@ impl RuntimeData {
 impl fmt::Display for RuntimeData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RuntimeData::Audio(buf) => write!(f, "Audio({} samples @ {}Hz)", buf.num_samples, buf.sample_rate),
-            RuntimeData::Video(frame) => write!(f, "Video({}x{} frame #{})", frame.width, frame.height, frame.frame_number),
+            RuntimeData::Audio(buf) => write!(
+                f,
+                "Audio({} samples @ {}Hz)",
+                buf.num_samples, buf.sample_rate
+            ),
+            RuntimeData::Video(frame) => write!(
+                f,
+                "Video({}x{} frame #{})",
+                frame.width, frame.height, frame.frame_number
+            ),
             RuntimeData::Tensor(t) => write!(f, "Tensor(shape={:?})", t.shape),
             RuntimeData::Json(_) => write!(f, "Json({} items)", self.item_count()),
             RuntimeData::Text(s) => write!(f, "Text({} chars)", s.chars().count()),

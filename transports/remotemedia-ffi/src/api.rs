@@ -6,13 +6,13 @@
 //! Uses PipelineRunner from runtime-core for transport-agnostic execution.
 
 use super::marshal::{json_to_python, python_to_json};
-use remotemedia_runtime_core::{
-    manifest::Manifest,
-    transport::{PipelineRunner, TransportData},
-    data::RuntimeData,
-};
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
+use remotemedia_runtime_core::{
+    data::RuntimeData,
+    manifest::Manifest,
+    transport::{PipelineRunner, TransportData},
+};
 use std::sync::Arc;
 
 /// Execute a pipeline from a JSON manifest
@@ -69,7 +69,11 @@ pub fn execute_pipeline(
         Python::attach(|py| {
             // Convert RuntimeData to JSON for Python marshaling
             let output_json = match &output.data {
-                RuntimeData::Audio { samples, sample_rate, channels } => {
+                RuntimeData::Audio {
+                    samples,
+                    sample_rate,
+                    channels,
+                } => {
                     serde_json::json!({
                         "type": "audio",
                         "samples": samples,
@@ -174,7 +178,11 @@ pub fn execute_pipeline_with_input<'py>(
         Python::attach(|py| {
             // Convert RuntimeData to JSON for Python marshaling
             let output_json = match &output.data {
-                RuntimeData::Audio { samples, sample_rate, channels } => {
+                RuntimeData::Audio {
+                    samples,
+                    sample_rate,
+                    channels,
+                } => {
                     serde_json::json!({
                         "type": "audio",
                         "samples": samples,

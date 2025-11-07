@@ -2,10 +2,10 @@
 //! rather than batching them all together.
 
 use super::test_helpers::*;
-use remotemedia_runtime::manifest::{Manifest, NodeSpec};
 use remotemedia_runtime::grpc_service::generated::{
     stream_request, stream_response, DataChunk, StreamInit, StreamRequest,
 };
+use remotemedia_runtime::manifest::{Manifest, NodeSpec};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -36,16 +36,14 @@ async fn test_streaming_is_truly_incremental() {
     // Create a simple manifest with a Python streaming node (simulated)
     let manifest = Manifest {
         version: "1.0".to_string(),
-        nodes: vec![
-            NodeSpec {
-                id: "test_streaming".to_string(),
-                node_type: "TestStreamingNode".to_string(),
-                params: json!({
-                    "chunk_count": 5,
-                    "chunk_delay_ms": 200, // 200ms between chunks
-                }),
-            },
-        ],
+        nodes: vec![NodeSpec {
+            id: "test_streaming".to_string(),
+            node_type: "TestStreamingNode".to_string(),
+            params: json!({
+                "chunk_count": 5,
+                "chunk_delay_ms": 200, // 200ms between chunks
+            }),
+        }],
         connections: vec![],
         inputs: vec!["test_streaming".to_string()],
         outputs: vec!["test_streaming".to_string()],
@@ -152,10 +150,7 @@ async fn test_streaming_is_truly_incremental() {
 
     // Verify chunks arrived incrementally (not all at once)
     // If all chunks arrived at once, gaps would be < 10ms
-    let significant_gaps = time_gaps
-        .iter()
-        .filter(|gap| gap.as_millis() > 50)
-        .count();
+    let significant_gaps = time_gaps.iter().filter(|gap| gap.as_millis() > 50).count();
 
     // Calculate statistics
     if !arrivals.is_empty() && arrivals.len() > 1 {
@@ -212,12 +207,10 @@ async fn test_lfm2_audio_streaming_timing() {
                 }),
             },
         ],
-        connections: vec![
-            Connection {
-                from: "audio_chunker".to_string(),
-                to: "lfm2_audio".to_string(),
-            },
-        ],
+        connections: vec![Connection {
+            from: "audio_chunker".to_string(),
+            to: "lfm2_audio".to_string(),
+        }],
         inputs: vec!["audio_chunker".to_string()],
         outputs: vec!["lfm2_audio".to_string()],
     };
@@ -242,8 +235,10 @@ async fn test_lfm2_audio_streaming_timing() {
             if let Some(stream_response::Response::Result(chunk_result)) = response.response {
                 if first_chunk_time.is_none() {
                     first_chunk_time = Some(arrival_time);
-                    info!("First chunk arrived at {:.3}s",
-                          arrival_time.duration_since(test_start).as_secs_f64());
+                    info!(
+                        "First chunk arrived at {:.3}s",
+                        arrival_time.duration_since(test_start).as_secs_f64()
+                    );
                 }
                 last_chunk_time = Some(arrival_time);
                 chunk_count += 1;
@@ -316,22 +311,36 @@ async fn test_lfm2_audio_streaming_timing() {
                 .timestamp
                 .duration_since(arrivals[i - 1].timestamp);
 
-            info!("LFM2 chunk {} → {}: {:.3}s gap",
-                  i - 1, i, gap.as_secs_f64());
+            info!(
+                "LFM2 chunk {} → {}: {:.3}s gap",
+                i - 1,
+                i,
+                gap.as_secs_f64()
+            );
         }
 
         // Calculate if chunks are streaming or batched
-        let first_to_last = arrivals.last().unwrap().timestamp
+        let first_to_last = arrivals
+            .last()
+            .unwrap()
+            .timestamp
             .duration_since(arrivals[0].timestamp);
 
         if first_to_last.as_secs_f64() > 1.0 && arrivals.len() > 2 {
-            info!("✅ LFM2 chunks arrived over {:.3}s - STREAMING confirmed!",
-                  first_to_last.as_secs_f64());
+            info!(
+                "✅ LFM2 chunks arrived over {:.3}s - STREAMING confirmed!",
+                first_to_last.as_secs_f64()
+            );
         } else {
-            info!("⚠️ LFM2 chunks arrived within {:.3}s - might be batched",
-                  first_to_last.as_secs_f64());
+            info!(
+                "⚠️ LFM2 chunks arrived within {:.3}s - might be batched",
+                first_to_last.as_secs_f64()
+            );
         }
     } else {
-        info!("⚠️ Only {} chunk(s) received - cannot verify streaming", arrivals.len());
+        info!(
+            "⚠️ Only {} chunk(s) received - cannot verify streaming",
+            arrivals.len()
+        );
     }
 }

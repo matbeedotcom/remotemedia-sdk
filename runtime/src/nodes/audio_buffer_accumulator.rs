@@ -13,11 +13,10 @@
 /// - VAD events (from SileroVAD)
 ///
 /// When speech ends (is_speech_end=true), it outputs the accumulated audio buffer.
-
 use crate::data::RuntimeData;
 use crate::error::{Error, Result};
-use crate::nodes::AsyncStreamingNode;
 use crate::grpc_service::generated::AudioBuffer as ProtoAudioBuffer;
+use crate::nodes::AsyncStreamingNode;
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -109,7 +108,10 @@ impl AudioBufferAccumulatorNode {
                     })
                     .collect())
             }
-            _ => Err(Error::Execution(format!("Unsupported audio format: {} (expected 1=F32 or 2=I16)", audio_buf.format))),
+            _ => Err(Error::Execution(format!(
+                "Unsupported audio format: {} (expected 1=F32 or 2=I16)",
+                audio_buf.format
+            ))),
         }
     }
 
@@ -131,7 +133,9 @@ impl AudioBufferAccumulatorNode {
         let samples = self.convert_audio_to_f32(audio_buf)?;
 
         // Get or create state for this session
-        let state = states.entry(session_id.to_string()).or_insert_with(BufferState::default);
+        let state = states
+            .entry(session_id.to_string())
+            .or_insert_with(BufferState::default);
 
         // Check if we're currently speaking (have received speech_start)
         if state.is_speaking {
@@ -149,7 +153,8 @@ impl AudioBufferAccumulatorNode {
             );
 
             // Check if we've hit the maximum duration (safety limit)
-            let duration_ms = (state.accumulated_samples.len() as f32 / state.sample_rate as f32 * 1000.0) as u32;
+            let duration_ms =
+                (state.accumulated_samples.len() as f32 / state.sample_rate as f32 * 1000.0) as u32;
             if duration_ms >= self.max_utterance_duration_ms {
                 tracing::warn!(
                     "[AudioBuffer] Session {}: Hit max duration {}ms, forcing output",
@@ -193,8 +198,14 @@ impl AudioBufferAccumulatorNode {
         states: &mut std::collections::HashMap<String, BufferState>,
         pending: &mut std::collections::HashMap<String, Vec<(Vec<f32>, u32, u32)>>,
     ) -> Result<Option<RuntimeData>> {
-        let is_speech_start = vad_json.get("is_speech_start").and_then(|v| v.as_bool()).unwrap_or(false);
-        let is_speech_end = vad_json.get("is_speech_end").and_then(|v| v.as_bool()).unwrap_or(false);
+        let is_speech_start = vad_json
+            .get("is_speech_start")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let is_speech_end = vad_json
+            .get("is_speech_end")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         tracing::debug!(
             "[AudioBuffer] Session {}: VAD event - start={}, end={}",
@@ -205,7 +216,9 @@ impl AudioBufferAccumulatorNode {
 
         if is_speech_start {
             // Start accumulating audio
-            let state = states.entry(session_id.to_string()).or_insert_with(BufferState::default);
+            let state = states
+                .entry(session_id.to_string())
+                .or_insert_with(BufferState::default);
             state.is_speaking = true;
             state.accumulated_samples.clear();
             state.chunks_accumulated = 0;
@@ -225,7 +238,10 @@ impl AudioBufferAccumulatorNode {
                     state.chunks_accumulated += 1;
                 }
             } else {
-                tracing::info!("[AudioBuffer] Session {}: Speech started, no pending chunks", session_id);
+                tracing::info!(
+                    "[AudioBuffer] Session {}: Speech started, no pending chunks",
+                    session_id
+                );
             }
 
             Ok(None)
@@ -262,7 +278,11 @@ impl AudioBufferAccumulatorNode {
         }
     }
 
-    fn flush_buffer(&self, state: &mut BufferState, session_id: &str) -> Result<Option<RuntimeData>> {
+    fn flush_buffer(
+        &self,
+        state: &mut BufferState,
+        session_id: &str,
+    ) -> Result<Option<RuntimeData>> {
         if state.accumulated_samples.is_empty() {
             tracing::debug!("[AudioBuffer] Session {}: No samples to flush", session_id);
             state.is_speaking = false;
@@ -270,7 +290,8 @@ impl AudioBufferAccumulatorNode {
         }
 
         // Check minimum duration
-        let duration_ms = (state.accumulated_samples.len() as f32 / state.sample_rate as f32 * 1000.0) as u32;
+        let duration_ms =
+            (state.accumulated_samples.len() as f32 / state.sample_rate as f32 * 1000.0) as u32;
         if duration_ms < self.min_utterance_duration_ms {
             tracing::debug!(
                 "[AudioBuffer] Session {}: Utterance too short ({}ms < {}ms), discarding",
@@ -323,7 +344,8 @@ impl AsyncStreamingNode for AudioBufferAccumulatorNode {
         // Simplified non-streaming version - not recommended
         // Use process_streaming for full buffering functionality
         Err(Error::Execution(
-            "AudioBufferAccumulatorNode requires streaming mode - use process_streaming() instead".into()
+            "AudioBufferAccumulatorNode requires streaming mode - use process_streaming() instead"
+                .into(),
         ))
     }
 
@@ -344,11 +366,13 @@ impl AsyncStreamingNode for AudioBufferAccumulatorNode {
         let output = match &data {
             RuntimeData::Audio(audio_buf) => {
                 // Handle audio chunk
-                self.handle_audio_chunk(audio_buf, &session_key, &mut states, &mut pending).await?
+                self.handle_audio_chunk(audio_buf, &session_key, &mut states, &mut pending)
+                    .await?
             }
             RuntimeData::Json(json_value) => {
                 // Handle VAD event
-                self.handle_vad_event(json_value, &session_key, &mut states, &mut pending).await?
+                self.handle_vad_event(json_value, &session_key, &mut states, &mut pending)
+                    .await?
             }
             _ => {
                 tracing::warn!("[AudioBuffer] Received unexpected data type");
@@ -372,7 +396,8 @@ impl AsyncStreamingNode for AudioBufferAccumulatorNode {
 impl AudioBufferAccumulatorNode {
     /// Initialize the audio buffer accumulator
     pub async fn initialize(&mut self) -> Result<()> {
-        tracing::info!("[AudioBufferAccumulator] Initialized (min={}ms, max={}ms)",
+        tracing::info!(
+            "[AudioBufferAccumulator] Initialized (min={}ms, max={}ms)",
             self.min_utterance_duration_ms,
             self.max_utterance_duration_ms
         );

@@ -11,7 +11,6 @@
 /// - Special tokens like <|text_end|>
 ///
 /// When a sentence boundary is detected (. ! ? , ; :), it outputs the accumulated text.
-
 use crate::data::RuntimeData;
 use crate::error::{Error, Result};
 use crate::nodes::AsyncStreamingNode;
@@ -62,7 +61,8 @@ impl TextCollectorNode {
         // Default: [.!?;\n]+ (no commas - we want to keep them in sentences)
         let boundary_chars = if let Some(pattern) = split_pattern {
             // Simple parsing: extract characters from pattern like [.!?;\n]+
-            pattern.chars()
+            pattern
+                .chars()
                 .filter(|c| !['[', ']', '+', '\\', 'n', 'r', 't'].contains(c))
                 .collect()
         } else {
@@ -126,7 +126,7 @@ impl AsyncStreamingNode for TextCollectorNode {
 
     async fn process(&self, _data: RuntimeData) -> Result<RuntimeData> {
         Err(Error::Execution(
-            "TextCollectorNode requires streaming mode - use process_streaming() instead".into()
+            "TextCollectorNode requires streaming mode - use process_streaming() instead".into(),
         ))
     }
 
@@ -143,21 +143,28 @@ impl AsyncStreamingNode for TextCollectorNode {
 
         // Only process text data
         let text_chunk = match &data {
-            RuntimeData::Text(text_string) => {
-                text_string.clone()
-            }
+            RuntimeData::Text(text_string) => text_string.clone(),
             _ => {
                 // Pass through non-text data unchanged
-                tracing::debug!("[TextCollector] Passing through non-text data: {:?}", data.data_type());
+                tracing::debug!(
+                    "[TextCollector] Passing through non-text data: {:?}",
+                    data.data_type()
+                );
                 callback(data)?;
                 return Ok(1);
             }
         };
 
-        tracing::debug!("[TextCollector] Session {}: Received text chunk: '{}'", session_key, text_chunk);
+        tracing::debug!(
+            "[TextCollector] Session {}: Received text chunk: '{}'",
+            session_key,
+            text_chunk
+        );
 
         let mut states = self.states.lock().await;
-        let state = states.entry(session_key.clone()).or_insert_with(TextBufferState::default);
+        let state = states
+            .entry(session_key.clone())
+            .or_insert_with(TextBufferState::default);
 
         // Check for special end tokens
         let has_text_end = text_chunk.contains("<|text_end|>");
@@ -187,7 +194,11 @@ impl AsyncStreamingNode for TextCollectorNode {
 
         // Yield complete sentences
         for sentence in sentences {
-            tracing::info!("[TextCollector] Session {}: Yielding sentence: '{}'", session_key, sentence);
+            tracing::info!(
+                "[TextCollector] Session {}: Yielding sentence: '{}'",
+                session_key,
+                sentence
+            );
             callback(RuntimeData::Text(sentence))?;
             output_count += 1;
         }
@@ -211,12 +222,18 @@ impl AsyncStreamingNode for TextCollectorNode {
 
             // Pass through end tokens
             if has_text_end {
-                tracing::info!("[TextCollector] Session {}: Passing through <|text_end|>", session_key);
+                tracing::info!(
+                    "[TextCollector] Session {}: Passing through <|text_end|>",
+                    session_key
+                );
                 callback(RuntimeData::Text("<|text_end|>".to_string()))?;
                 output_count += 1;
             }
             if has_audio_end {
-                tracing::info!("[TextCollector] Session {}: Passing through <|audio_end|>", session_key);
+                tracing::info!(
+                    "[TextCollector] Session {}: Passing through <|audio_end|>",
+                    session_key
+                );
                 callback(RuntimeData::Text("<|audio_end|>".to_string()))?;
                 output_count += 1;
             }

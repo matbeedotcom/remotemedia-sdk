@@ -5,9 +5,7 @@
 
 #![cfg(feature = "grpc-transport")]
 
-use prometheus::{
-    CounterVec, HistogramOpts, HistogramVec, IntGauge, IntGaugeVec, Opts, Registry,
-};
+use prometheus::{CounterVec, HistogramOpts, HistogramVec, IntGauge, IntGaugeVec, Opts, Registry};
 use std::sync::Arc;
 
 /// Prometheus metrics for gRPC service
@@ -139,7 +137,7 @@ impl ServiceMetrics {
             )
             .buckets(vec![
                 0.001, 0.005, 0.01, 0.025, // 1ms, 5ms, 10ms, 25ms
-                0.05, // 50ms (target threshold)
+                0.05,  // 50ms (target threshold)
                 0.1, 0.25, 0.5, 1.0, // 100ms, 250ms, 500ms, 1s
             ]),
             &["session_id"],
@@ -155,10 +153,7 @@ impl ServiceMetrics {
 
         // Feature 005 - Node cache metrics
         let node_cache_hits_total = CounterVec::new(
-            Opts::new(
-                "remotemedia_node_cache_hits_total",
-                "Total node cache hits",
-            ),
+            Opts::new("remotemedia_node_cache_hits_total", "Total node cache hits"),
             &["node_type"],
         )?;
 
@@ -256,7 +251,9 @@ impl ServiceMetrics {
 
     /// Remove execution memory tracking
     pub fn clear_execution_memory(&self, execution_id: &str) {
-        let _ = self.execution_memory_bytes.remove_label_values(&[execution_id]);
+        let _ = self
+            .execution_memory_bytes
+            .remove_label_values(&[execution_id]);
     }
 
     // Phase 5 - Streaming metrics methods (T057)
@@ -336,7 +333,9 @@ mod tests {
         metrics.record_request_end("ExecutePipeline", "success", start);
 
         // Verify counter incremented by checking the metric value
-        let counter = metrics.requests_total.with_label_values(&["ExecutePipeline", "success"]);
+        let counter = metrics
+            .requests_total
+            .with_label_values(&["ExecutePipeline", "success"]);
         assert!(counter.get() > 0.0);
     }
 
@@ -348,7 +347,9 @@ mod tests {
         metrics.record_error("execution");
 
         // Verify error counters incremented
-        let validation_errors = metrics.execution_errors_total.with_label_values(&["validation"]);
+        let validation_errors = metrics
+            .execution_errors_total
+            .with_label_values(&["validation"]);
         assert!(validation_errors.get() > 0.0);
     }
 
@@ -360,7 +361,9 @@ mod tests {
         metrics.record_samples_processed("VAD", 16000);
 
         // Verify samples counter incremented
-        let resample_samples = metrics.audio_samples_processed.with_label_values(&["AudioResample"]);
+        let resample_samples = metrics
+            .audio_samples_processed
+            .with_label_values(&["AudioResample"]);
         assert!(resample_samples.get() >= 44100.0);
     }
 
@@ -372,7 +375,9 @@ mod tests {
         metrics.set_execution_memory("exec-456", 5_000_000); // 5MB
 
         // Verify memory gauge set correctly
-        let exec_456_mem = metrics.execution_memory_bytes.with_label_values(&["exec-456"]);
+        let exec_456_mem = metrics
+            .execution_memory_bytes
+            .with_label_values(&["exec-456"]);
         assert_eq!(exec_456_mem.get(), 5_000_000);
 
         metrics.clear_execution_memory("exec-123");
@@ -390,4 +395,3 @@ mod tests {
         assert_eq!(metrics.active_connections.get(), 1);
     }
 }
-

@@ -3,12 +3,11 @@
 
 use remotemedia_runtime::grpc_service::{
     generated::{
-        streaming_pipeline_service_server::StreamingPipelineService,
-        stream_request::Request as StreamRequestType,
+        data_buffer, stream_request::Request as StreamRequestType,
         stream_response::Response as StreamResponseType,
-        AudioBuffer, ChunkResult, DataBuffer, DataChunk, ManifestProto, NodeProto,
-        ConnectionProto, StreamInit, StreamRequest, StreamResponse,
-        data_buffer, AudioFormat,
+        streaming_pipeline_service_server::StreamingPipelineService, AudioBuffer, AudioFormat,
+        ChunkResult, ConnectionProto, DataBuffer, DataChunk, ManifestProto, NodeProto, StreamInit,
+        StreamRequest, StreamResponse,
     },
     ServiceConfig,
 };
@@ -17,7 +16,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 /// Test data structure to track chunk arrivals
 #[derive(Debug, Clone)]
@@ -76,12 +75,8 @@ async fn test_lfm2_audio_streaming_is_incremental() {
 
                 for (node_id, data_buffer) in &chunk_result.data_outputs {
                     let data_size = match &data_buffer.data_type {
-                        Some(data_buffer::DataType::Audio(audio)) => {
-                            audio.samples.len()
-                        }
-                        Some(data_buffer::DataType::Text(text)) => {
-                            text.text_data.len()
-                        }
+                        Some(data_buffer::DataType::Audio(audio)) => audio.samples.len(),
+                        Some(data_buffer::DataType::Text(text)) => text.text_data.len(),
                         _ => 0,
                     };
 
@@ -186,10 +181,7 @@ async fn test_lfm2_audio_streaming_is_incremental() {
 
     // Verify chunks arrived incrementally (not all at once)
     // If all chunks arrived at once, gaps would be < 10ms
-    let significant_gaps = time_gaps
-        .iter()
-        .filter(|gap| gap.as_millis() > 50)
-        .count();
+    let significant_gaps = time_gaps.iter().filter(|gap| gap.as_millis() > 50).count();
 
     assert!(
         significant_gaps > 0,
@@ -237,7 +229,8 @@ fn create_test_manifest() -> ManifestProto {
                 params: json!({
                     "chunk_size": 512,
                     "sample_rate": 16000,
-                }).to_string(),
+                })
+                .to_string(),
             },
             NodeProto {
                 id: "lfm2_audio".to_string(),
@@ -245,15 +238,14 @@ fn create_test_manifest() -> ManifestProto {
                 params: json!({
                     "model_path": "models/lfm2-audio",
                     "streaming": true,
-                }).to_string(),
+                })
+                .to_string(),
             },
         ],
-        connections: vec![
-            ConnectionProto {
-                from: "audio_input".to_string(),
-                to: "lfm2_audio".to_string(),
-            },
-        ],
+        connections: vec![ConnectionProto {
+            from: "audio_input".to_string(),
+            to: "lfm2_audio".to_string(),
+        }],
         inputs: vec!["audio_input".to_string()],
         outputs: vec!["lfm2_audio".to_string()],
     }
@@ -277,14 +269,12 @@ fn create_test_audio_chunk() -> DataChunk {
         sequence: 0,
         node_id: "audio_input".to_string(),
         buffer: Some(DataBuffer {
-            data_type: Some(
-                data_buffer::DataType::Audio(AudioBuffer {
-                    samples,
-                    format: AudioFormat::F32le as i32,
-                    channels: 1,
-                    sample_rate: 16000,
-                })
-            ),
+            data_type: Some(data_buffer::DataType::Audio(AudioBuffer {
+                samples,
+                format: AudioFormat::F32le as i32,
+                channels: 1,
+                sample_rate: 16000,
+            })),
         }),
         named_buffers: Default::default(),
     }

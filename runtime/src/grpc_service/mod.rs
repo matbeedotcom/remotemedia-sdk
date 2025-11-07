@@ -61,9 +61,7 @@ pub use generated::{
 // Service traits
 pub use generated::{
     pipeline_execution_service_server::{PipelineExecutionService, PipelineExecutionServiceServer},
-    streaming_pipeline_service_server::{
-        StreamingPipelineService, StreamingPipelineServiceServer,
-    },
+    streaming_pipeline_service_server::{StreamingPipelineService, StreamingPipelineServiceServer},
 };
 
 /// Error type for gRPC service operations
@@ -98,9 +96,7 @@ impl From<ServiceError> for tonic::Status {
             }
             ServiceError::ResourceLimit(msg) => tonic::Status::new(Code::ResourceExhausted, msg),
             ServiceError::Authentication(msg) => tonic::Status::new(Code::Unauthenticated, msg),
-            ServiceError::VersionMismatch(msg) => {
-                tonic::Status::new(Code::FailedPrecondition, msg)
-            }
+            ServiceError::VersionMismatch(msg) => tonic::Status::new(Code::FailedPrecondition, msg),
             ServiceError::Internal(msg) => tonic::Status::new(Code::Internal, msg),
         }
     }
@@ -116,12 +112,8 @@ impl ServiceError {
                 message,
             } => (ErrorType::NodeExecution as i32, message.clone()),
             ServiceError::ResourceLimit(msg) => (ErrorType::ResourceLimit as i32, msg.clone()),
-            ServiceError::Authentication(msg) => {
-                (ErrorType::Authentication as i32, msg.clone())
-            }
-            ServiceError::VersionMismatch(msg) => {
-                (ErrorType::VersionMismatch as i32, msg.clone())
-            }
+            ServiceError::Authentication(msg) => (ErrorType::Authentication as i32, msg.clone()),
+            ServiceError::VersionMismatch(msg) => (ErrorType::VersionMismatch as i32, msg.clone()),
             ServiceError::Internal(msg) => (ErrorType::Internal as i32, msg.clone()),
         };
 
@@ -140,16 +132,16 @@ impl ServiceError {
 pub struct ServiceConfig {
     /// Server bind address
     pub bind_address: String,
-    
+
     /// Authentication configuration
     pub auth: auth::AuthConfig,
-    
+
     /// Resource limits
     pub limits: limits::ResourceLimits,
-    
+
     /// Version manager
     pub version: version::VersionManager,
-    
+
     /// Enable JSON structured logging
     pub json_logging: bool,
 
@@ -177,12 +169,12 @@ impl ServiceConfig {
     /// Create from environment variables
     pub fn from_env() -> Self {
         let mut config = Self::default();
-        
+
         // GRPC_BIND_ADDRESS="0.0.0.0:50051"
         if let Ok(addr) = std::env::var("GRPC_BIND_ADDRESS") {
             config.bind_address = addr;
         }
-        
+
         // GRPC_AUTH_TOKENS="token1,token2,token3"
         if let Ok(tokens_str) = std::env::var("GRPC_AUTH_TOKENS") {
             let tokens: Vec<String> = tokens_str
@@ -192,28 +184,28 @@ impl ServiceConfig {
                 .collect();
             config.auth = auth::AuthConfig::new(tokens, true);
         }
-        
+
         // GRPC_REQUIRE_AUTH="false" (default: true)
         if let Ok(require_str) = std::env::var("GRPC_REQUIRE_AUTH") {
             if require_str.to_lowercase() == "false" {
                 config.auth.require_auth = false;
             }
         }
-        
+
         // GRPC_MAX_MEMORY_MB="200" (default: 100)
         if let Ok(mem_str) = std::env::var("GRPC_MAX_MEMORY_MB") {
             if let Ok(mem_mb) = mem_str.parse::<u64>() {
                 config.limits.max_memory_bytes = mem_mb * 1_000_000;
             }
         }
-        
+
         // GRPC_MAX_TIMEOUT_SEC="10" (default: 5)
         if let Ok(timeout_str) = std::env::var("GRPC_MAX_TIMEOUT_SEC") {
             if let Ok(timeout_sec) = timeout_str.parse::<u64>() {
                 config.limits.max_timeout = std::time::Duration::from_secs(timeout_sec);
             }
         }
-        
+
         // GRPC_JSON_LOGGING="false" (default: true)
         if let Ok(json_str) = std::env::var("GRPC_JSON_LOGGING") {
             config.json_logging = json_str.to_lowercase() != "false";
@@ -221,11 +213,14 @@ impl ServiceConfig {
 
         // GPT5_CODEX_PREVIEW="false" (default: true)
         // Also accept legacy/alternative name ENABLE_GPT5_CODEX_PREVIEW
-        if let Ok(flag) = std::env::var("GPT5_CODEX_PREVIEW").or_else(|_| std::env::var("ENABLE_GPT5_CODEX_PREVIEW")) {
+        if let Ok(flag) = std::env::var("GPT5_CODEX_PREVIEW")
+            .or_else(|_| std::env::var("ENABLE_GPT5_CODEX_PREVIEW"))
+        {
             let flag_lc = flag.to_lowercase();
-            config.enable_gpt5_codex_preview = !(flag_lc == "false" || flag_lc == "0" || flag_lc == "off");
+            config.enable_gpt5_codex_preview =
+                !(flag_lc == "false" || flag_lc == "0" || flag_lc == "off");
         }
-        
+
         config
     }
 }
@@ -233,7 +228,7 @@ impl ServiceConfig {
 /// Initialize tracing subscriber with JSON or pretty formatting
 pub fn init_tracing(json_format: bool) {
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-    
+
     if json_format {
         // JSON structured logging for production
         tracing_subscriber::registry()

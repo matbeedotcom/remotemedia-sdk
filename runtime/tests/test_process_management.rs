@@ -2,8 +2,8 @@
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
     use std::process::Command;
+    use std::time::Duration;
 
     /// Test that we can spawn multiple Python processes
     #[test]
@@ -37,10 +37,12 @@ mod tests {
     /// Test process lifecycle states
     #[test]
     fn test_process_lifecycle() {
-        use remotemedia_runtime::python::multiprocess::process_manager::{ProcessStatus, ProcessHandle};
+        use remotemedia_runtime::python::multiprocess::process_manager::{
+            ProcessHandle, ProcessStatus,
+        };
         use std::sync::Arc;
-        use tokio::sync::RwLock;
         use std::time::Instant;
+        use tokio::sync::RwLock;
 
         // Create a mock process handle
         let handle = ProcessHandle {
@@ -80,7 +82,9 @@ mod tests {
     /// Test health monitoring
     #[test]
     fn test_health_monitoring() {
-        use remotemedia_runtime::python::multiprocess::health_monitor::{HealthMonitor, ProcessHealthStats};
+        use remotemedia_runtime::python::multiprocess::health_monitor::{
+            HealthMonitor, ProcessHealthStats,
+        };
         use std::time::Instant;
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -118,8 +122,8 @@ mod tests {
     /// Test concurrent execution simulation
     #[test]
     fn test_concurrent_execution() {
-        use std::thread;
         use std::sync::{Arc, Mutex};
+        use std::thread;
         use std::time::Instant;
 
         // Simulate concurrent execution of multiple nodes
@@ -148,8 +152,11 @@ mod tests {
         let final_count = *counter.lock().unwrap();
 
         assert_eq!(final_count, 3, "All nodes should have completed");
-        assert!(elapsed < Duration::from_millis(200),
-                "Concurrent execution should be faster than sequential (took {:?})", elapsed);
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "Concurrent execution should be faster than sequential (took {:?})",
+            elapsed
+        );
 
         println!("Concurrent execution completed in {:?}", elapsed);
     }

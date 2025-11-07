@@ -15,9 +15,7 @@ struct ChunkMetrics {
 #[tokio::test]
 async fn test_streaming_demonstration() {
     // Initialize logging
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .try_init();
+    let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
 
     info!("=== Streaming Architecture Test Demo ===");
 
@@ -38,7 +36,11 @@ async fn test_streaming_demonstration() {
 
         while let Some((seq, sent_time)) = input_rx.recv().await {
             let received_time = Instant::now();
-            info!("Processor: Received chunk {} (latency: {:?})", seq, received_time - sent_time);
+            info!(
+                "Processor: Received chunk {} (latency: {:?})",
+                seq,
+                received_time - sent_time
+            );
 
             // Simulate some processing time
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -64,8 +66,11 @@ async fn test_streaming_demonstration() {
             m.sent_at[seq as usize] = sent_time;
             m.received_at[seq as usize] = final_time;
 
-            info!("Client: Received chunk {} (end-to-end latency: {:?})",
-                  seq, final_time - sent_time);
+            info!(
+                "Client: Received chunk {} (end-to-end latency: {:?})",
+                seq,
+                final_time - sent_time
+            );
         }
     });
 
@@ -104,13 +109,15 @@ async fn test_streaming_demonstration() {
     if m.received_at.len() >= 2 {
         // Calculate gaps between chunk arrivals
         for i in 1..m.received_at.len() {
-            let gap = m.received_at[i] - m.received_at[i-1];
-            info!("Gap between chunk {} and {}: {:?}", i-1, i, gap);
+            let gap = m.received_at[i] - m.received_at[i - 1];
+            info!("Gap between chunk {} and {}: {:?}", i - 1, i, gap);
 
             // In a streaming system, gaps should be ~100ms (our send interval)
             // Not all at once (which would show gaps < 20ms)
-            assert!(gap.as_millis() >= 80,
-                   "Chunks arrived too close together - not streaming!");
+            assert!(
+                gap.as_millis() >= 80,
+                "Chunks arrived too close together - not streaming!"
+            );
         }
 
         // Calculate end-to-end latency for each chunk
@@ -119,8 +126,10 @@ async fn test_streaming_demonstration() {
             info!("Chunk {} end-to-end latency: {:?}", i, latency);
 
             // Latency should be low (< 50ms for our simple processing)
-            assert!(latency.as_millis() < 50,
-                   "High latency detected - possible batching!");
+            assert!(
+                latency.as_millis() < 50,
+                "High latency detected - possible batching!"
+            );
         }
     }
 

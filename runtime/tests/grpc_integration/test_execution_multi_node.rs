@@ -6,8 +6,8 @@
 #![cfg(feature = "grpc-transport")]
 
 use remotemedia_runtime::grpc_service::generated::{
-    ExecuteRequest, PipelineManifest, AudioBuffer, AudioFormat, NodeManifest,
-    Connection, ExecutionStatus, DataBuffer, data_buffer,
+    data_buffer, AudioBuffer, AudioFormat, Connection, DataBuffer, ExecuteRequest, ExecutionStatus,
+    NodeManifest, PipelineManifest,
 };
 use std::collections::HashMap;
 
@@ -27,7 +27,7 @@ async fn test_multi_node_pipeline() {
                 capabilities: None,
                 host: String::new(),
                 runtime_hint: 0,
-                input_types: vec![1], // Audio
+                input_types: vec![1],  // Audio
                 output_types: vec![1], // Audio
             },
             NodeManifest {
@@ -38,16 +38,14 @@ async fn test_multi_node_pipeline() {
                 capabilities: None,
                 host: String::new(),
                 runtime_hint: 0,
-                input_types: vec![1], // Audio
+                input_types: vec![1],  // Audio
                 output_types: vec![1], // Audio
             },
         ],
-        connections: vec![
-            Connection {
-                from: "resample".to_string(),
-                to: "vad".to_string(),
-            },
-        ],
+        connections: vec![Connection {
+            from: "resample".to_string(),
+            to: "vad".to_string(),
+        }],
     };
 
     // Create input audio
@@ -80,11 +78,11 @@ async fn test_multi_node_pipeline() {
 
     // TODO: Call ExecutePipeline service once implemented
     // let response = service.execute_pipeline(request).await.unwrap();
-    
+
     // Verify response
     // assert_eq!(response.status, ExecutionStatus::Success as i32);
     // assert!(response.result.is_some());
-    
+
     // Verify node execution order in metrics
     // let metrics = response.metrics.unwrap();
     // assert!(metrics.node_metrics.contains_key("resample"));

@@ -21,7 +21,7 @@ pub const BUILD_TIMESTAMP: &str = "2025-10-28T00:00:00Z"; // TODO: Use build-tim
 pub struct VersionManager {
     /// Supported protocol versions
     supported_protocols: HashSet<String>,
-    
+
     /// Registered node types
     supported_node_types: Vec<String>,
 }
@@ -44,7 +44,7 @@ impl VersionManager {
     }
 
     /// Create version manager from node type list
-    /// 
+    ///
     /// This populates supported node types from all registry tiers.
     pub fn from_node_types(node_types: Vec<String>) -> Self {
         Self {
@@ -136,10 +136,12 @@ mod tests {
     fn test_version_info_proto() {
         let vm = VersionManager::from_node_types(vec!["AudioResample".to_string()]);
         let proto = vm.to_proto();
-        
+
         assert_eq!(proto.protocol_version, "v1");
         assert_eq!(proto.runtime_version, RUNTIME_VERSION);
-        assert!(proto.supported_node_types.contains(&"AudioResample".to_string()));
+        assert!(proto
+            .supported_node_types
+            .contains(&"AudioResample".to_string()));
         assert!(proto.supported_protocols.contains(&"v1".to_string()));
     }
 
@@ -149,7 +151,7 @@ mod tests {
             vec!["v1".to_string(), "v2".to_string()],
             vec!["CustomNode".to_string()],
         );
-        
+
         assert!(vm.is_protocol_supported("v1"));
         assert!(vm.is_protocol_supported("v2"));
         assert!(vm.is_node_type_supported("CustomNode"));

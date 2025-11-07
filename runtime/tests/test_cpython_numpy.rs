@@ -345,4 +345,3 @@ class Matrix2DProcessor:
         panic!("Expected array output, got: {:?}", result.outputs);
     }
 }
-

@@ -64,7 +64,8 @@ impl SynchronizedAudioVideoNode {
             RuntimeData::Audio(buf) => {
                 // Calculate audio timestamp from sample count if not explicitly provided
                 // For now, we'll use a simple approach - in production this would come from the buffer metadata
-                let duration_us = (buf.num_samples as f64 / buf.sample_rate as f64 * 1_000_000.0) as i64;
+                let duration_us =
+                    (buf.num_samples as f64 / buf.sample_rate as f64 * 1_000_000.0) as i64;
                 (0i64, buf.sample_rate, buf.num_samples)
             }
             _ => {
@@ -146,7 +147,6 @@ impl SynchronizedAudioVideoNode {
         // Return JSON output
         Ok(RuntimeData::Json(sync_report))
     }
-
 }
 
 impl SyncStreamingNode for SynchronizedAudioVideoNode {
@@ -156,7 +156,8 @@ impl SyncStreamingNode for SynchronizedAudioVideoNode {
 
     fn process(&self, _input: RuntimeData) -> Result<RuntimeData> {
         Err(Error::InvalidInput {
-            message: "SynchronizedAudioVideoNode requires multi-input via named_buffers".to_string(),
+            message: "SynchronizedAudioVideoNode requires multi-input via named_buffers"
+                .to_string(),
             node_id: self.node_id.clone(),
             context: "Use process_multi() method with both audio and video inputs".to_string(),
         })
@@ -185,9 +186,7 @@ mod tests {
         // Create audio buffer
         use crate::grpc_service::generated::{AudioBuffer, AudioFormat};
         let samples_f32 = vec![0.0f32; 1600];
-        let samples_bytes: Vec<u8> = samples_f32.iter()
-            .flat_map(|&f| f.to_le_bytes())
-            .collect();
+        let samples_bytes: Vec<u8> = samples_f32.iter().flat_map(|&f| f.to_le_bytes()).collect();
 
         let audio = RuntimeData::Audio(AudioBuffer {
             samples: samples_bytes,
@@ -198,7 +197,7 @@ mod tests {
         });
 
         // Create video frame with matching timestamp
-        use crate::grpc_service::generated::{VideoFrame, PixelFormat};
+        use crate::grpc_service::generated::{PixelFormat, VideoFrame};
         let video = RuntimeData::Video(VideoFrame {
             pixel_data: vec![0u8; 320 * 240 * 3],
             width: 320,
@@ -224,16 +223,14 @@ mod tests {
 
     #[test]
     fn test_sync_av_drift() {
-        use crate::grpc_service::generated::{AudioBuffer, AudioFormat, VideoFrame, PixelFormat};
+        use crate::grpc_service::generated::{AudioBuffer, AudioFormat, PixelFormat, VideoFrame};
 
         let node = SynchronizedAudioVideoNode::new("sync1".to_string(), "{}").unwrap();
 
         let mut inputs = HashMap::new();
 
         let samples_f32 = vec![0.0f32; 1600];
-        let samples_bytes: Vec<u8> = samples_f32.iter()
-            .flat_map(|&f| f.to_le_bytes())
-            .collect();
+        let samples_bytes: Vec<u8> = samples_f32.iter().flat_map(|&f| f.to_le_bytes()).collect();
 
         let audio = RuntimeData::Audio(AudioBuffer {
             samples: samples_bytes,

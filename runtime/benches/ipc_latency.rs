@@ -1,7 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use remotemedia_runtime::python::multiprocess::{
-    ipc_channel::ChannelRegistry,
-    data_transfer::RuntimeData,
+    data_transfer::RuntimeData, ipc_channel::ChannelRegistry,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,10 +11,10 @@ fn bench_ipc_latency(c: &mut Criterion) {
 
     // Test payload sizes: 1KB, 10KB, 100KB, 1MB, 10MB
     let sizes = vec![
-        1024,           // 1KB
-        10 * 1024,      // 10KB
-        100 * 1024,     // 100KB
-        1024 * 1024,    // 1MB
+        1024,             // 1KB
+        10 * 1024,        // 10KB
+        100 * 1024,       // 100KB
+        1024 * 1024,      // 1MB
         10 * 1024 * 1024, // 10MB
     ];
 
@@ -63,11 +62,10 @@ fn bench_channel_creation(c: &mut Criterion) {
                 let mut registry = ChannelRegistry::new();
                 registry.initialize().unwrap();
 
-                let channel = registry.create_channel(
-                    "bench_channel",
-                    100,
-                    true,
-                ).await.unwrap();
+                let channel = registry
+                    .create_channel("bench_channel", 100, true)
+                    .await
+                    .unwrap();
 
                 registry.destroy_channel(channel).await.unwrap();
             }

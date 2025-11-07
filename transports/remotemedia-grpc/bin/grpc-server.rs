@@ -31,8 +31,8 @@
 //! - `GRPC_JSON_LOGGING`: Enable JSON structured logging (default: `true`)
 //! - `RUST_LOG`: Logging level (default: `info`, options: `trace`, `debug`, `info`, `warn`, `error`)
 
+use remotemedia_grpc::{init_tracing, server::GrpcServer, ServiceConfig};
 use remotemedia_runtime_core::transport::PipelineRunner;
-use remotemedia_grpc::{server::GrpcServer, ServiceConfig, init_tracing};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::{error, info};
@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // This ensures it's registered before any blocking operations
     let shutdown_flag = Arc::new(AtomicBool::new(false));
     let shutdown_flag_handler = Arc::clone(&shutdown_flag);
-    
+
     ctrlc::set_handler(move || {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -50,16 +50,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .as_secs();
         eprintln!("\n🛑 [{}] Ctrl+C received! Setting shutdown flag...", timestamp);
         eprintln!("   [SIGNAL] Handler executing in thread: {:?}", std::thread::current().id());
-        
+
         let was_already_set = shutdown_flag_handler.swap(true, Ordering::SeqCst);
         if was_already_set {
             eprintln!("   [SIGNAL] ⚠️  Shutdown already in progress, forcing immediate exit");
             std::process::exit(0);
         }
-        
+
         eprintln!("   [SIGNAL] Shutdown flag set successfully");
         eprintln!("   [SIGNAL] Spawning watchdog thread for force-exit after 1s...");
-        
+
         // Give it a brief moment, then force exit if graceful shutdown fails
         // Use 1 second timeout to ensure responsiveness even with blocking operations
         std::thread::spawn(move || {

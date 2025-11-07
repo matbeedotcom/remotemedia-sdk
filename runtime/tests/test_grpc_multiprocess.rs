@@ -5,10 +5,10 @@
 
 #[cfg(all(test, feature = "grpc-transport", feature = "multiprocess"))]
 mod tests {
-    use remotemedia_runtime::grpc_service::{
-        executor_registry::{ExecutorRegistry, ExecutorType, PatternRule},
+    use remotemedia_runtime::grpc_service::executor_registry::{
+        ExecutorRegistry, ExecutorType, PatternRule,
     };
-    use remotemedia_runtime::python::multiprocess::{MultiprocessExecutor, MultiprocessConfig};
+    use remotemedia_runtime::python::multiprocess::{MultiprocessConfig, MultiprocessExecutor};
 
     /// Test executor registry initialization and pattern matching
     #[tokio::test]
@@ -25,7 +25,8 @@ mod tests {
             ExecutorType::Multiprocess,
             100,
             "Python AI nodes",
-        ).expect("Failed to create pattern");
+        )
+        .expect("Failed to create pattern");
         registry.register_pattern(python_pattern);
 
         // Set default
@@ -77,7 +78,8 @@ mod tests {
                 ExecutorType::Multiprocess,
                 50,
                 "Default Python nodes",
-            ).expect("Failed to create pattern");
+            )
+            .expect("Failed to create pattern");
             registry.register_pattern(python_pattern);
         }
 
@@ -106,7 +108,8 @@ mod tests {
 
         // Create test session
         let session_id = "test_grpc_session";
-        executor.create_session(session_id.to_string())
+        executor
+            .create_session(session_id.to_string())
             .await
             .expect("Failed to create session");
 
@@ -115,7 +118,8 @@ mod tests {
         assert!(progress.is_ok(), "Session should exist");
 
         // Cleanup
-        executor.terminate_session(session_id)
+        executor
+            .terminate_session(session_id)
             .await
             .expect("Failed to terminate session");
     }
@@ -129,9 +133,15 @@ mod tests {
         let session_ctx = SessionExecutionContext::new(session_id.to_string());
 
         // Assign nodes to executors
-        session_ctx.assign_node("node1".to_string(), ExecutorType::Native).await;
-        session_ctx.assign_node("node2".to_string(), ExecutorType::Multiprocess).await;
-        session_ctx.assign_node("node3".to_string(), ExecutorType::Native).await;
+        session_ctx
+            .assign_node("node1".to_string(), ExecutorType::Native)
+            .await;
+        session_ctx
+            .assign_node("node2".to_string(), ExecutorType::Multiprocess)
+            .await;
+        session_ctx
+            .assign_node("node3".to_string(), ExecutorType::Native)
+            .await;
 
         // Verify assignments
         assert_eq!(
@@ -152,7 +162,7 @@ mod tests {
     /// Test executor bridge creation and initialization
     #[tokio::test]
     async fn test_executor_bridges_initialization() {
-        use remotemedia_runtime::executor::{Executor, executor_bridge::*};
+        use remotemedia_runtime::executor::{executor_bridge::*, Executor};
         use std::sync::Arc;
 
         // Create executors
@@ -165,18 +175,18 @@ mod tests {
         assert_eq!(native_bridge.executor_type_name(), "native");
 
         let session_id = "test_bridge_session";
-        mp_executor.create_session(session_id.to_string())
+        mp_executor
+            .create_session(session_id.to_string())
             .await
             .expect("Failed to create MP session");
 
-        let mp_bridge = MultiprocessExecutorBridge::new(
-            Arc::clone(&mp_executor),
-            session_id.to_string(),
-        );
+        let mp_bridge =
+            MultiprocessExecutorBridge::new(Arc::clone(&mp_executor), session_id.to_string());
         assert_eq!(mp_bridge.executor_type_name(), "multiprocess");
 
         // Cleanup
-        mp_executor.terminate_session(session_id)
+        mp_executor
+            .terminate_session(session_id)
             .await
             .expect("Failed to terminate session");
     }
@@ -194,11 +204,11 @@ mod tests {
             return;
         }
 
-        let manifest_json = std::fs::read_to_string(&manifest_path)
-            .expect("Failed to read manifest fixture");
+        let manifest_json =
+            std::fs::read_to_string(&manifest_path).expect("Failed to read manifest fixture");
 
-        let manifest: serde_json::Value = serde_json::from_str(&manifest_json)
-            .expect("Failed to parse manifest JSON");
+        let manifest: serde_json::Value =
+            serde_json::from_str(&manifest_json).expect("Failed to parse manifest JSON");
 
         // Verify structure
         assert_eq!(manifest["version"], "v1");
@@ -206,14 +216,19 @@ mod tests {
 
         // Verify multiprocess config exists
         assert!(manifest["metadata"]["multiprocess"].is_object());
-        assert_eq!(manifest["metadata"]["multiprocess"]["max_processes_per_session"], 5);
+        assert_eq!(
+            manifest["metadata"]["multiprocess"]["max_processes_per_session"],
+            5
+        );
 
         // Verify nodes
         let nodes = manifest["nodes"].as_array().expect("nodes should be array");
         assert_eq!(nodes.len(), 3);
 
         // Verify connections
-        let connections = manifest["connections"].as_array().expect("connections should be array");
+        let connections = manifest["connections"]
+            .as_array()
+            .expect("connections should be array");
         assert_eq!(connections.len(), 2);
     }
 }

@@ -5,19 +5,19 @@
 
 #![cfg(feature = "grpc-transport")]
 
+use crate::executor::Executor;
 use crate::grpc_service::{
     auth::AuthConfig,
     execution::ExecutionServiceImpl,
-    streaming::StreamingServiceImpl,
+    executor_registry::{ExecutorRegistry, ExecutorType, PatternRule},
     generated::{
         pipeline_execution_service_server::PipelineExecutionServiceServer,
         streaming_pipeline_service_server::StreamingPipelineServiceServer,
     },
     metrics::ServiceMetrics,
-    executor_registry::{ExecutorRegistry, ExecutorType, PatternRule},
+    streaming::StreamingServiceImpl,
     ServiceConfig,
 };
-use crate::executor::Executor;
 use std::sync::Arc;
 use tonic::{service::LayerExt as _, transport::Server};
 use tracing::{info, warn};
@@ -32,7 +32,10 @@ pub struct GrpcServer {
 
 impl GrpcServer {
     /// Create new server with configuration and executor
-    pub fn new(config: ServiceConfig, executor: Arc<Executor>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(
+        config: ServiceConfig,
+        executor: Arc<Executor>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let metrics = Arc::new(ServiceMetrics::with_default_registry()?);
 
         // Initialize executor registry with default mappings
@@ -76,9 +79,7 @@ impl GrpcServer {
         let summary = registry.summary();
         info!(
             "Executor registry initialized: {} explicit mappings, {} pattern rules, default: {:?}",
-            summary.explicit_mappings_count,
-            summary.pattern_rules_count,
-            summary.default_executor
+            summary.explicit_mappings_count, summary.pattern_rules_count, summary.default_executor
         );
 
         Ok(registry)
@@ -108,7 +109,7 @@ impl GrpcServer {
         // Create multiprocess executor (spec 002)
         #[cfg(feature = "multiprocess")]
         let multiprocess_executor = {
-            use crate::python::multiprocess::{MultiprocessExecutor, MultiprocessConfig};
+            use crate::python::multiprocess::{MultiprocessConfig, MultiprocessExecutor};
 
             let config = MultiprocessConfig::from_default_file()
                 .map_err(|e| format!("Failed to load multiprocess config: {}", e))?;
@@ -165,7 +166,7 @@ impl GrpcServer {
             .named_layer(
                 PipelineExecutionServiceServer::new(execution_service)
                     .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
-                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+                    .max_encoding_message_size(10 * 1024 * 1024), // 10MB
             );
 
         let streaming_service = tower::ServiceBuilder::new()
@@ -175,7 +176,7 @@ impl GrpcServer {
             .named_layer(
                 StreamingPipelineServiceServer::new(streaming_service)
                     .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
-                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+                    .max_encoding_message_size(10 * 1024 * 1024), // 10MB
             );
 
         // T037: Configure connection pooling and HTTP/2 keepalive for concurrent clients
@@ -195,12 +196,11 @@ impl GrpcServer {
             // Tracing
             .trace_fn(|_| tracing::info_span!("grpc_request"))
             .add_service(execution_service)
-            .add_service(streaming_service)
-            ;
+            .add_service(streaming_service);
 
         // Graceful shutdown on Ctrl+C
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        
+
         tokio::spawn(async move {
             tokio::signal::ctrl_c()
                 .await
@@ -210,7 +210,7 @@ impl GrpcServer {
         });
 
         info!("gRPC server listening on {}", addr);
-        
+
         server
             .serve_with_shutdown(addr, async {
                 rx.await.ok();
@@ -227,7 +227,7 @@ impl GrpcServer {
         shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let addr: std::net::SocketAddr = self.config.bind_address.parse()?;
-        
+
         info!(
             %addr,
             auth_required = self.config.auth.require_auth,
@@ -238,7 +238,7 @@ impl GrpcServer {
         // Create multiprocess executor (spec 002)
         #[cfg(feature = "multiprocess")]
         let multiprocess_executor_2 = {
-            use crate::python::multiprocess::{MultiprocessExecutor, MultiprocessConfig};
+            use crate::python::multiprocess::{MultiprocessConfig, MultiprocessExecutor};
 
             let config = MultiprocessConfig::from_default_file()
                 .map_err(|e| format!("Failed to load multiprocess config: {}", e))?;
@@ -295,7 +295,7 @@ impl GrpcServer {
             .named_layer(
                 PipelineExecutionServiceServer::new(execution_service)
                     .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
-                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+                    .max_encoding_message_size(10 * 1024 * 1024), // 10MB
             );
 
         let streaming_service = tower::ServiceBuilder::new()
@@ -305,7 +305,7 @@ impl GrpcServer {
             .named_layer(
                 StreamingPipelineServiceServer::new(streaming_service)
                     .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
-                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+                    .max_encoding_message_size(10 * 1024 * 1024), // 10MB
             );
 
         // T037: Configure connection pooling and HTTP/2 keepalive for concurrent clients
@@ -325,11 +325,10 @@ impl GrpcServer {
             // Tracing
             .trace_fn(|_| tracing::info_span!("grpc_request"))
             .add_service(execution_service)
-            .add_service(streaming_service)
-            ;
+            .add_service(streaming_service);
 
         info!("gRPC server listening on {}", addr);
-        
+
         // Monitor shutdown flag and trigger graceful shutdown
         // Poll frequently (10ms) to ensure responsive shutdown
         let shutdown_future = async move {
@@ -337,25 +336,36 @@ impl GrpcServer {
             loop {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 check_count += 1;
-                
+
                 if shutdown_flag.load(std::sync::atomic::Ordering::SeqCst) {
-                    info!("[SHUTDOWN] Flag detected after {} checks ({}ms)", check_count, check_count * 10);
+                    info!(
+                        "[SHUTDOWN] Flag detected after {} checks ({}ms)",
+                        check_count,
+                        check_count * 10
+                    );
                     info!("[SHUTDOWN] Initiating graceful shutdown of gRPC server...");
                     break;
                 }
-                
+
                 // Log periodically to show we're still checking
-                if check_count % 6000 == 0 {  // Every minute
-                    info!("[HEALTH] Server running, checked shutdown flag {} times", check_count);
+                if check_count % 6000 == 0 {
+                    // Every minute
+                    info!(
+                        "[HEALTH] Server running, checked shutdown flag {} times",
+                        check_count
+                    );
                 }
             }
             info!("[SHUTDOWN] Shutdown future completed, server will now close connections");
         };
-        
+
         info!("[SERVER] Calling serve_with_shutdown, will block until shutdown signal...");
         let serve_result = server.serve_with_shutdown(addr, shutdown_future).await;
-        info!("[SERVER] serve_with_shutdown returned: {:?}", serve_result.is_ok());
-        
+        info!(
+            "[SERVER] serve_with_shutdown returned: {:?}",
+            serve_result.is_ok()
+        );
+
         serve_result?;
 
         info!("[SHUTDOWN] gRPC server shutdown complete");

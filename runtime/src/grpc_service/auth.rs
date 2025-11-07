@@ -5,9 +5,9 @@
 
 #![cfg(feature = "grpc-transport")]
 
-use tonic::{Request, Status};
 use std::collections::HashSet;
 use std::sync::Arc;
+use tonic::{Request, Status};
 
 /// Authentication configuration
 #[derive(Clone, Debug)]
@@ -63,15 +63,13 @@ pub fn check_auth<T>(request: &Request<T>, config: &AuthConfig) -> Result<(), St
         })?;
 
     // Parse bearer token
-    let auth_str = auth_header.to_str().map_err(|_| {
-        Status::unauthenticated("Invalid authorization header encoding")
-    })?;
+    let auth_str = auth_header
+        .to_str()
+        .map_err(|_| Status::unauthenticated("Invalid authorization header encoding"))?;
 
-    let token = auth_str
-        .strip_prefix("Bearer ")
-        .ok_or_else(|| {
-            Status::unauthenticated("Invalid authorization format. Expected 'Bearer <token>'")
-        })?;
+    let token = auth_str.strip_prefix("Bearer ").ok_or_else(|| {
+        Status::unauthenticated("Invalid authorization format. Expected 'Bearer <token>'")
+    })?;
 
     // Validate token
     if !config.validate_token(token) {
@@ -165,4 +163,3 @@ mod tests {
         assert!(result.is_ok()); // Should pass when auth disabled
     }
 }
-

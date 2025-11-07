@@ -3,8 +3,8 @@
 //! Provides a unified interface for executing nodes across different executor types
 //! (Native, Multiprocess, WASM) with transparent routing and data conversion.
 
-use crate::{Error, Result};
 use crate::executor::node_executor::{NodeContext, NodeExecutor};
+use crate::{Error, Result};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -24,12 +24,7 @@ pub trait ExecutorBridge: Send + Sync {
     ) -> Result<Vec<u8>>; // RuntimeData serialized
 
     /// Initialize a node (for stateful nodes like AI models)
-    async fn initialize_node(
-        &self,
-        node_id: &str,
-        node_type: &str,
-        params: &Value,
-    ) -> Result<()>;
+    async fn initialize_node(&self, node_id: &str, node_type: &str, params: &Value) -> Result<()>;
 
     /// Cleanup node resources
     async fn cleanup_node(&self, node_id: &str) -> Result<()>;
@@ -77,13 +72,12 @@ impl ExecutorBridge for NativeExecutorBridge {
         Ok(input_data)
     }
 
-    async fn initialize_node(
-        &self,
-        node_id: &str,
-        node_type: &str,
-        params: &Value,
-    ) -> Result<()> {
-        tracing::info!("NativeExecutorBridge: Initializing node {} (type: {})", node_id, node_type);
+    async fn initialize_node(&self, node_id: &str, node_type: &str, params: &Value) -> Result<()> {
+        tracing::info!(
+            "NativeExecutorBridge: Initializing node {} (type: {})",
+            node_id,
+            node_type
+        );
 
         // For native nodes, initialization happens per-execution
         // No persistent state needed for the MVP
@@ -154,12 +148,7 @@ impl ExecutorBridge for MultiprocessExecutorBridge {
         Ok(input_data)
     }
 
-    async fn initialize_node(
-        &self,
-        node_id: &str,
-        node_type: &str,
-        params: &Value,
-    ) -> Result<()> {
+    async fn initialize_node(&self, node_id: &str, node_type: &str, params: &Value) -> Result<()> {
         tracing::info!(
             "MultiprocessExecutorBridge: Initializing Python node {} (type: {}) in session {}",
             node_id,
@@ -171,16 +160,21 @@ impl ExecutorBridge for MultiprocessExecutorBridge {
         // The actual process spawning happens when the pipeline executes
         // This is because MultiprocessExecutor::initialize requires &mut self
         // but we're working with Arc<MultiprocessExecutor>
-        self.executor.update_init_progress(
-            &self.session_id,
-            node_id,
-            crate::python::multiprocess::InitStatus::Starting,
-            0.0,
-            format!("Initializing {} node", node_type),
-        ).await
-        .map_err(|e| Error::Execution(format!("Failed to track init progress: {}", e)))?;
+        self.executor
+            .update_init_progress(
+                &self.session_id,
+                node_id,
+                crate::python::multiprocess::InitStatus::Starting,
+                0.0,
+                format!("Initializing {} node", node_type),
+            )
+            .await
+            .map_err(|e| Error::Execution(format!("Failed to track init progress: {}", e)))?;
 
-        tracing::info!("MultiprocessExecutorBridge: Node {} initialization tracked", node_id);
+        tracing::info!(
+            "MultiprocessExecutorBridge: Node {} initialization tracked",
+            node_id
+        );
         Ok(())
     }
 

@@ -1,7 +1,9 @@
 // Validation functions for data types
 // Feature: 004-generic-streaming
 
-use crate::grpc_service::generated::{VideoFrame, TensorBuffer, TextBuffer, PixelFormat, TensorDtype};
+use crate::grpc_service::generated::{
+    PixelFormat, TensorBuffer, TensorDtype, TextBuffer, VideoFrame,
+};
 use crate::Error;
 
 /// Validate video frame pixel data matches dimensions and format
@@ -22,7 +24,7 @@ pub fn validate_video_frame(frame: &VideoFrame) -> Result<(), Error> {
         Ok(PixelFormat::Yuv420p) => {
             // Y plane: width*height, U plane: (width/2)*(height/2), V plane: same as U
             ((frame.width * frame.height * 3) / 2) as usize
-        },
+        }
         Ok(PixelFormat::Gray8) => (frame.width * frame.height) as usize,
         _ => {
             return Err(Error::InvalidInput {
@@ -39,7 +41,9 @@ pub fn validate_video_frame(frame: &VideoFrame) -> Result<(), Error> {
             node_id: String::new(),
             context: format!(
                 "Expected {} bytes for {}x{} {:?}, got {} bytes",
-                expected_bytes, frame.width, frame.height,
+                expected_bytes,
+                frame.width,
+                frame.height,
                 PixelFormat::try_from(frame.format).unwrap_or(PixelFormat::Unspecified),
                 frame.pixel_data.len()
             ),
@@ -76,7 +80,8 @@ pub fn validate_tensor_size(tensor: &TensorBuffer) -> Result<(), Error> {
             node_id: String::new(),
             context: format!(
                 "Expected {} bytes for shape {:?} with dtype {:?}, got {} bytes",
-                expected_bytes, tensor.shape,
+                expected_bytes,
+                tensor.shape,
                 TensorDtype::try_from(tensor.dtype).unwrap_or(TensorDtype::Unspecified),
                 tensor.data.len()
             ),
@@ -90,16 +95,14 @@ pub fn validate_tensor_size(tensor: &TensorBuffer) -> Result<(), Error> {
 ///
 /// Returns the validated string if successful
 pub fn validate_text_buffer(text_buf: &TextBuffer) -> Result<String, Error> {
-    String::from_utf8(text_buf.text_data.clone()).map_err(|e| {
-        Error::InvalidInput {
-            message: "Invalid UTF-8 in text buffer".into(),
-            node_id: String::new(),
-            context: format!(
-                "Invalid UTF-8 at byte offset {}, encoding={}",
-                e.utf8_error().valid_up_to(),
-                text_buf.encoding
-            ),
-        }
+    String::from_utf8(text_buf.text_data.clone()).map_err(|e| Error::InvalidInput {
+        message: "Invalid UTF-8 in text buffer".into(),
+        node_id: String::new(),
+        context: format!(
+            "Invalid UTF-8 at byte offset {}, encoding={}",
+            e.utf8_error().valid_up_to(),
+            text_buf.encoding
+        ),
     })
 }
 

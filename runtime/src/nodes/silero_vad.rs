@@ -8,17 +8,20 @@
 /// - Configurable thresholds and timing
 /// - State management for streaming audio
 /// - JSON output with VAD results
-
 use crate::data::RuntimeData;
 use crate::error::{Error, Result};
-use crate::nodes::AsyncStreamingNode;
 use crate::grpc_service::generated::{AudioBuffer, TensorBuffer};
+use crate::nodes::AsyncStreamingNode;
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::{Mutex, OnceCell};
 
 #[cfg(feature = "silero-vad")]
-use ort::{execution_providers::CPUExecutionProvider, session::{Session, SessionOutputs}, value::Tensor};
+use ort::{
+    execution_providers::CPUExecutionProvider,
+    session::{Session, SessionOutputs},
+    value::Tensor,
+};
 
 /// VAD state for speech detection
 #[derive(Debug, Clone)]
@@ -134,11 +137,7 @@ impl SileroVADNode {
     }
 
     #[cfg(feature = "silero-vad")]
-    async fn run_vad(
-        &self,
-        audio: &[f32],
-        state: &mut VADState,
-    ) -> Result<f32> {
+    async fn run_vad(&self, audio: &[f32], state: &mut VADState) -> Result<f32> {
         // Lazy-initialize the session on first use
         let session_arc = self.get_or_init_session().await?;
 
@@ -149,7 +148,10 @@ impl SileroVADNode {
 
         let chunk_size = audio.len();
         tracing::debug!("VAD processing {} audio samples", chunk_size);
-        tracing::trace!("Audio data first 10 samples: {:?}", &audio[..audio.len().min(10)]);
+        tracing::trace!(
+            "Audio data first 10 samples: {:?}",
+            &audio[..audio.len().min(10)]
+        );
 
         // Input tensor: [1, chunk_size]
         let input_tensor = Tensor::from_array(([1, chunk_size], audio.to_vec()))?;
@@ -218,7 +220,7 @@ impl AsyncStreamingNode for SileroVADNode {
         #[cfg(not(feature = "silero-vad"))]
         {
             return Err(Error::Execution(
-                "SileroVADNode requires 'silero-vad' feature to be enabled".into()
+                "SileroVADNode requires 'silero-vad' feature to be enabled".into(),
             ));
         }
 
@@ -226,19 +228,24 @@ impl AsyncStreamingNode for SileroVADNode {
         {
             // This is a simplified version - use process_streaming for full functionality
             Err(Error::Execution(
-                "SileroVADNode requires streaming mode - use process_streaming() instead".into()
+                "SileroVADNode requires streaming mode - use process_streaming() instead".into(),
             ))
         }
     }
 
-    async fn process_streaming<F>(&self, data: RuntimeData, session_id: Option<String>, mut callback: F) -> Result<usize>
+    async fn process_streaming<F>(
+        &self,
+        data: RuntimeData,
+        session_id: Option<String>,
+        mut callback: F,
+    ) -> Result<usize>
     where
         F: FnMut(RuntimeData) -> Result<()> + Send,
     {
         #[cfg(not(feature = "silero-vad"))]
         {
             return Err(Error::Execution(
-                "SileroVADNode requires 'silero-vad' feature to be enabled".into()
+                "SileroVADNode requires 'silero-vad' feature to be enabled".into(),
             ));
         }
 
@@ -247,7 +254,11 @@ impl AsyncStreamingNode for SileroVADNode {
             // Extract audio from RuntimeData
             let audio_buf = match &data {
                 RuntimeData::Audio(buf) => buf,
-                _ => return Err(Error::Execution("SileroVADNode requires audio input".into())),
+                _ => {
+                    return Err(Error::Execution(
+                        "SileroVADNode requires audio input".into(),
+                    ))
+                }
             };
 
             // Convert audio bytes to f32 samples
@@ -267,7 +278,11 @@ impl AsyncStreamingNode for SileroVADNode {
                         })
                         .collect()
                 }
-                _ => return Err(Error::Execution("SileroVADNode requires F32 audio format".into())),
+                _ => {
+                    return Err(Error::Execution(
+                        "SileroVADNode requires F32 audio format".into(),
+                    ))
+                }
             };
 
             // Resample if needed
@@ -295,7 +310,9 @@ impl AsyncStreamingNode for SileroVADNode {
             // Get or create state for this session
             let session_key = session_id.clone().unwrap_or_else(|| "default".to_string());
             let mut states = self.states.lock().await;
-            let state = states.entry(session_key.clone()).or_insert_with(VADState::default);
+            let state = states
+                .entry(session_key.clone())
+                .or_insert_with(VADState::default);
 
             // Run VAD
             let speech_prob = self.run_vad(&mono, state).await?;

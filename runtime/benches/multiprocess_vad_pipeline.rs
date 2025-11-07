@@ -1,9 +1,9 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use remotemedia_runtime::python::multiprocess::{
-    MultiprocessExecutor, MultiprocessConfig, InitStatus, RuntimeData,
+    InitStatus, MultiprocessConfig, MultiprocessExecutor, RuntimeData,
 };
-use std::time::{Duration, Instant};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "multiprocess")]
 /// Benchmark the VAD debug pipeline with multiprocess Python nodes
@@ -15,7 +15,10 @@ fn bench_vad_pipeline(c: &mut Criterion) {
     // Load the audio file
     let audio_path = PathBuf::from("examples/transcribe_demo.wav");
     if !audio_path.exists() {
-        eprintln!("Warning: {} not found, using synthetic audio", audio_path.display());
+        eprintln!(
+            "Warning: {} not found, using synthetic audio",
+            audio_path.display()
+        );
     }
 
     // Benchmark: Full VAD pipeline end-to-end
@@ -40,7 +43,9 @@ fn bench_vad_pipeline(c: &mut Criterion) {
 
                     // Create session
                     let session_id = format!("vad_bench_session_{}", iter);
-                    executor.create_session(session_id.clone()).await
+                    executor
+                        .create_session(session_id.clone())
+                        .await
                         .expect("Failed to create session");
 
                     // Simulate node initialization progress
@@ -55,33 +60,44 @@ fn bench_vad_pipeline(c: &mut Criterion) {
 
                     // Simulate initialization progress tracking
                     for (node_id, _node_type) in &nodes {
-                        executor.update_init_progress(
-                            &session_id,
-                            node_id,
-                            InitStatus::Starting,
-                            0.0,
-                            "Starting node".to_string()
-                        ).await.expect("Failed to update progress");
+                        executor
+                            .update_init_progress(
+                                &session_id,
+                                node_id,
+                                InitStatus::Starting,
+                                0.0,
+                                "Starting node".to_string(),
+                            )
+                            .await
+                            .expect("Failed to update progress");
 
-                        executor.update_init_progress(
-                            &session_id,
-                            node_id,
-                            InitStatus::LoadingModel,
-                            0.5,
-                            "Loading model".to_string()
-                        ).await.expect("Failed to update progress");
+                        executor
+                            .update_init_progress(
+                                &session_id,
+                                node_id,
+                                InitStatus::LoadingModel,
+                                0.5,
+                                "Loading model".to_string(),
+                            )
+                            .await
+                            .expect("Failed to update progress");
 
-                        executor.update_init_progress(
-                            &session_id,
-                            node_id,
-                            InitStatus::Ready,
-                            1.0,
-                            "Node ready".to_string()
-                        ).await.expect("Failed to update progress");
+                        executor
+                            .update_init_progress(
+                                &session_id,
+                                node_id,
+                                InitStatus::Ready,
+                                1.0,
+                                "Node ready".to_string(),
+                            )
+                            .await
+                            .expect("Failed to update progress");
                     }
 
                     // Get progress (verify tracking works)
-                    let _progress = executor.get_init_progress(&session_id).await
+                    let _progress = executor
+                        .get_init_progress(&session_id)
+                        .await
                         .expect("Failed to get progress");
 
                     // Simulate streaming audio through pipeline
@@ -90,7 +106,11 @@ fn bench_vad_pipeline(c: &mut Criterion) {
                     let duration_secs = 3.0;
                     let num_samples = (sample_rate as f64 * duration_secs) as usize;
                     let audio_samples: Vec<f32> = (0..num_samples)
-                        .map(|i| (i as f32 * 440.0 * 2.0 * std::f32::consts::PI / sample_rate as f32).sin() * 0.5)
+                        .map(|i| {
+                            (i as f32 * 440.0 * 2.0 * std::f32::consts::PI / sample_rate as f32)
+                                .sin()
+                                * 0.5
+                        })
                         .collect();
 
                     // Stream audio in chunks (1024 samples per chunk)
@@ -105,7 +125,7 @@ fn bench_vad_pipeline(c: &mut Criterion) {
                             chunk,
                             sample_rate,
                             1, // mono
-                            &session_id
+                            &session_id,
                         );
 
                         // Simulate processing through pipeline
@@ -124,7 +144,9 @@ fn bench_vad_pipeline(c: &mut Criterion) {
                     );
 
                     // Cleanup
-                    executor.terminate_session(&session_id).await
+                    executor
+                        .terminate_session(&session_id)
+                        .await
                         .expect("Failed to terminate session");
 
                     // Small delay between iterations
@@ -164,39 +186,52 @@ fn bench_node_initialization(c: &mut Criterion) {
                     let executor = MultiprocessExecutor::new(config);
 
                     let session_id = format!("init_bench_{}", node_id);
-                    executor.create_session(session_id.clone()).await
+                    executor
+                        .create_session(session_id.clone())
+                        .await
                         .expect("Failed to create session");
 
                     // Measure initialization time
                     let start = Instant::now();
 
-                    executor.update_init_progress(
-                        &session_id,
-                        node_id,
-                        InitStatus::Starting,
-                        0.0,
-                        "Starting".to_string()
-                    ).await.expect("Failed to update progress");
+                    executor
+                        .update_init_progress(
+                            &session_id,
+                            node_id,
+                            InitStatus::Starting,
+                            0.0,
+                            "Starting".to_string(),
+                        )
+                        .await
+                        .expect("Failed to update progress");
 
-                    executor.update_init_progress(
-                        &session_id,
-                        node_id,
-                        InitStatus::LoadingModel,
-                        0.5,
-                        "Loading model".to_string()
-                    ).await.expect("Failed to update progress");
+                    executor
+                        .update_init_progress(
+                            &session_id,
+                            node_id,
+                            InitStatus::LoadingModel,
+                            0.5,
+                            "Loading model".to_string(),
+                        )
+                        .await
+                        .expect("Failed to update progress");
 
-                    executor.update_init_progress(
-                        &session_id,
-                        node_id,
-                        InitStatus::Ready,
-                        1.0,
-                        "Ready".to_string()
-                    ).await.expect("Failed to update progress");
+                    executor
+                        .update_init_progress(
+                            &session_id,
+                            node_id,
+                            InitStatus::Ready,
+                            1.0,
+                            "Ready".to_string(),
+                        )
+                        .await
+                        .expect("Failed to update progress");
 
                     let elapsed = start.elapsed();
 
-                    executor.terminate_session(&session_id).await
+                    executor
+                        .terminate_session(&session_id)
+                        .await
                         .expect("Failed to terminate session");
 
                     black_box(elapsed)
@@ -228,11 +263,15 @@ fn bench_session_lifecycle(c: &mut Criterion) {
                 let session_id = format!("lifecycle_session_{}", id);
 
                 // Create session
-                executor.create_session(session_id.clone()).await
+                executor
+                    .create_session(session_id.clone())
+                    .await
                     .expect("Failed to create session");
 
                 // Destroy session
-                executor.terminate_session(&session_id).await
+                executor
+                    .terminate_session(&session_id)
+                    .await
                     .expect("Failed to terminate session");
             }
         });
@@ -257,19 +296,17 @@ fn bench_audio_chunking(c: &mut Criterion) {
                 // Generate audio samples
                 let sample_rate = 48000;
                 let audio_samples: Vec<f32> = (0..10000)
-                    .map(|i| (i as f32 * 440.0 * 2.0 * std::f32::consts::PI / sample_rate as f32).sin())
+                    .map(|i| {
+                        (i as f32 * 440.0 * 2.0 * std::f32::consts::PI / sample_rate as f32).sin()
+                    })
                     .collect();
 
                 b.iter(|| {
                     let chunks: Vec<&[f32]> = audio_samples.chunks(chunk_size).collect();
 
                     for chunk in chunks {
-                        let runtime_data = RuntimeData::audio(
-                            chunk,
-                            sample_rate,
-                            1,
-                            "bench_session"
-                        );
+                        let runtime_data =
+                            RuntimeData::audio(chunk, sample_rate, 1, "bench_session");
                         black_box(runtime_data);
                     }
                 });

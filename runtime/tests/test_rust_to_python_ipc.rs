@@ -8,7 +8,7 @@
 
 #[cfg(all(test, feature = "multiprocess"))]
 mod rust_to_python_ipc {
-    use remotemedia_runtime::python::multiprocess::{ChannelRegistry, data_transfer::RuntimeData};
+    use remotemedia_runtime::python::multiprocess::{data_transfer::RuntimeData, ChannelRegistry};
     use std::process::{Command, Stdio};
     use std::time::Duration;
 
@@ -95,7 +95,10 @@ mod rust_to_python_ipc {
                             "Python should have received our exact message"
                         );
                     } else {
-                        panic!("❌ Python process failed with exit code: {:?}", status.code());
+                        panic!(
+                            "❌ Python process failed with exit code: {:?}",
+                            status.code()
+                        );
                     }
                     break;
                 }

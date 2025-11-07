@@ -7,7 +7,7 @@
 //! separate processes with independent GILs for concurrent execution.
 
 use crate::data::RuntimeData;
-use crate::nodes::{AsyncStreamingNode, NodeExecutor, NodeContext};
+use crate::nodes::{AsyncStreamingNode, NodeContext, NodeExecutor};
 use crate::Error;
 use serde_json::Value;
 use tokio::sync::Mutex;
@@ -29,7 +29,8 @@ impl PythonStreamingNode {
     /// Create a new Python streaming node
     pub fn new(node_id: String, node_type: &str, params: &Value) -> Result<Self, Error> {
         // Extract session_id from params if present (spec 002)
-        let session_id = params.get("__session_id__")
+        let session_id = params
+            .get("__session_id__")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
@@ -52,7 +53,12 @@ impl PythonStreamingNode {
     }
 
     /// Create with session ID for multiprocess execution (spec 002)
-    pub fn with_session(node_id: String, node_type: &str, params: &Value, session_id: String) -> Result<Self, Error> {
+    pub fn with_session(
+        node_id: String,
+        node_type: &str,
+        params: &Value,
+        session_id: String,
+    ) -> Result<Self, Error> {
         Ok(Self {
             node_id,
             node_type: node_type.to_string(),
@@ -63,7 +69,12 @@ impl PythonStreamingNode {
     }
 
     /// Create from an existing executor (to reuse cached Python instances)
-    pub fn from_executor(node_id: String, node_type: &str, params: &Value, executor: Box<dyn NodeExecutor>) -> Result<Self, Error> {
+    pub fn from_executor(
+        node_id: String,
+        node_type: &str,
+        params: &Value,
+        executor: Box<dyn NodeExecutor>,
+    ) -> Result<Self, Error> {
         Ok(Self {
             node_id,
             node_type: node_type.to_string(),
@@ -88,7 +99,7 @@ impl PythonStreamingNode {
                 .unwrap_or_default();
 
             let mut py_executor: Box<dyn NodeExecutor> = Box::new(
-                crate::python::multiprocess::MultiprocessExecutor::new(config)
+                crate::python::multiprocess::MultiprocessExecutor::new(config),
             );
 
             // Create context for initialization
@@ -129,21 +140,28 @@ impl AsyncStreamingNode for PythonStreamingNode {
 
         // Get the executor and process through it
         let mut executor_guard = self.executor.lock().await;
-        let executor = executor_guard.as_mut()
+        let executor = executor_guard
+            .as_mut()
             .ok_or_else(|| Error::Execution("Python node not initialized".to_string()))?;
 
         // Downcast to MultiprocessExecutor
-        let mp_executor = executor.as_any_mut()
+        let mp_executor = executor
+            .as_any_mut()
             .downcast_mut::<crate::python::multiprocess::MultiprocessExecutor>()
-            .ok_or_else(|| Error::Execution("Failed to downcast to MultiprocessExecutor".to_string()))?;
+            .ok_or_else(|| {
+                Error::Execution("Failed to downcast to MultiprocessExecutor".to_string())
+            })?;
 
         // Use streaming iteration but only take the first item
         let mut result: Option<RuntimeData> = None;
-        mp_executor.process_runtime_data_streaming(data, None, |output| {
-            result = Some(output);
-            // Return error to stop iteration after first item
-            Err(crate::Error::Execution("StopIteration".to_string()))
-        }).await.ok(); // Ignore the error since we use it to stop
+        mp_executor
+            .process_runtime_data_streaming(data, None, |output| {
+                result = Some(output);
+                // Return error to stop iteration after first item
+                Err(crate::Error::Execution("StopIteration".to_string()))
+            })
+            .await
+            .ok(); // Ignore the error since we use it to stop
 
         result.ok_or_else(|| Error::Execution("No output from Python node".to_string()))
     }
@@ -163,26 +181,37 @@ impl AsyncStreamingNode for PythonStreamingNode {
 
         // Get the executor
         let mut executor_guard = self.executor.lock().await;
-        let executor = executor_guard.as_mut()
+        let executor = executor_guard
+            .as_mut()
             .ok_or_else(|| Error::Execution("Python node not initialized".to_string()))?;
 
         // Use MultiprocessExecutor with IPC streaming
-        let mp_executor = executor.as_any_mut()
+        let mp_executor = executor
+            .as_any_mut()
             .downcast_mut::<crate::python::multiprocess::MultiprocessExecutor>()
-            .ok_or_else(|| Error::Execution("Failed to downcast to MultiprocessExecutor".to_string()))?;
+            .ok_or_else(|| {
+                Error::Execution("Failed to downcast to MultiprocessExecutor".to_string())
+            })?;
 
-        tracing::info!("Using MultiprocessExecutor with IPC streaming for node {}", self.node_id);
+        tracing::info!(
+            "Using MultiprocessExecutor with IPC streaming for node {}",
+            self.node_id
+        );
 
         // Get session_id (from parameter or from node)
-        let session_id_str = session_id.as_ref()
+        let session_id_str = session_id
+            .as_ref()
             .or(self.session_id.as_ref())
-            .ok_or_else(|| Error::Execution("No session_id available for multiprocess node".to_string()))?;
+            .ok_or_else(|| {
+                Error::Execution("No session_id available for multiprocess node".to_string())
+            })?;
 
         // Just send the data - a background task is continuously draining outputs
-        mp_executor.send_data_to_node(&self.node_id, session_id_str, data).await?;
+        mp_executor
+            .send_data_to_node(&self.node_id, session_id_str, data)
+            .await?;
 
         // Return immediately - the background draining task will forward outputs
         Ok(0)
     }
 }
-

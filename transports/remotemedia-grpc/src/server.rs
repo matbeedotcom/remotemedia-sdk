@@ -6,12 +6,12 @@
 use crate::{
     auth::AuthConfig,
     execution::ExecutionServiceImpl,
-    streaming::StreamingServiceImpl,
     generated::{
         pipeline_execution_service_server::PipelineExecutionServiceServer,
         streaming_pipeline_service_server::StreamingPipelineServiceServer,
     },
     metrics::ServiceMetrics,
+    streaming::StreamingServiceImpl,
     ServiceConfig,
 };
 use remotemedia_runtime_core::transport::PipelineRunner;
@@ -31,7 +31,10 @@ impl GrpcServer {
     ///
     /// The runner encapsulates all executor and node registry details.
     /// The server is only responsible for the gRPC transport layer.
-    pub fn new(config: ServiceConfig, runner: Arc<PipelineRunner>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(
+        config: ServiceConfig,
+        runner: Arc<PipelineRunner>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let metrics = Arc::new(ServiceMetrics::with_default_registry()?);
 
         Ok(Self {
@@ -85,7 +88,7 @@ impl GrpcServer {
             .named_layer(
                 PipelineExecutionServiceServer::new(execution_service)
                     .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
-                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+                    .max_encoding_message_size(10 * 1024 * 1024), // 10MB
             );
 
         let streaming_service = tower::ServiceBuilder::new()
@@ -95,7 +98,7 @@ impl GrpcServer {
             .named_layer(
                 StreamingPipelineServiceServer::new(streaming_service)
                     .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
-                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+                    .max_encoding_message_size(10 * 1024 * 1024), // 10MB
             );
 
         // T037: Configure connection pooling and HTTP/2 keepalive for concurrent clients
@@ -115,16 +118,13 @@ impl GrpcServer {
             // Tracing
             .trace_fn(|_| tracing::info_span!("grpc_request"))
             .add_service(execution_service)
-            .add_service(streaming_service)
-            ;
+            .add_service(streaming_service);
 
         // TODO: Add graceful shutdown on Ctrl+C
         // Requires tokio signal feature which may not be available on all platforms
         info!("gRPC server listening on {}", addr);
 
-        server
-            .serve(addr)
-            .await?;
+        server.serve(addr).await?;
 
         Ok(())
     }
@@ -166,7 +166,7 @@ impl GrpcServer {
             .named_layer(
                 PipelineExecutionServiceServer::new(execution_service)
                     .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
-                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+                    .max_encoding_message_size(10 * 1024 * 1024), // 10MB
             );
 
         let streaming_service = tower::ServiceBuilder::new()
@@ -176,7 +176,7 @@ impl GrpcServer {
             .named_layer(
                 StreamingPipelineServiceServer::new(streaming_service)
                     .max_decoding_message_size(10 * 1024 * 1024) // 10MB for large video frames
-                    .max_encoding_message_size(10 * 1024 * 1024) // 10MB
+                    .max_encoding_message_size(10 * 1024 * 1024), // 10MB
             );
 
         // T037: Configure connection pooling and HTTP/2 keepalive for concurrent clients
@@ -196,11 +196,10 @@ impl GrpcServer {
             // Tracing
             .trace_fn(|_| tracing::info_span!("grpc_request"))
             .add_service(execution_service)
-            .add_service(streaming_service)
-            ;
+            .add_service(streaming_service);
 
         info!("gRPC server listening on {}", addr);
-        
+
         // Monitor shutdown flag and trigger graceful shutdown
         // Poll frequently (10ms) to ensure responsive shutdown
         let shutdown_future = async move {
@@ -208,25 +207,36 @@ impl GrpcServer {
             loop {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 check_count += 1;
-                
+
                 if shutdown_flag.load(std::sync::atomic::Ordering::SeqCst) {
-                    info!("[SHUTDOWN] Flag detected after {} checks ({}ms)", check_count, check_count * 10);
+                    info!(
+                        "[SHUTDOWN] Flag detected after {} checks ({}ms)",
+                        check_count,
+                        check_count * 10
+                    );
                     info!("[SHUTDOWN] Initiating graceful shutdown of gRPC server...");
                     break;
                 }
-                
+
                 // Log periodically to show we're still checking
-                if check_count % 6000 == 0 {  // Every minute
-                    info!("[HEALTH] Server running, checked shutdown flag {} times", check_count);
+                if check_count % 6000 == 0 {
+                    // Every minute
+                    info!(
+                        "[HEALTH] Server running, checked shutdown flag {} times",
+                        check_count
+                    );
                 }
             }
             info!("[SHUTDOWN] Shutdown future completed, server will now close connections");
         };
-        
+
         info!("[SERVER] Calling serve_with_shutdown, will block until shutdown signal...");
         let serve_result = server.serve_with_shutdown(addr, shutdown_future).await;
-        info!("[SERVER] serve_with_shutdown returned: {:?}", serve_result.is_ok());
-        
+        info!(
+            "[SERVER] serve_with_shutdown returned: {:?}",
+            serve_result.is_ok()
+        );
+
         serve_result?;
 
         info!("[SHUTDOWN] gRPC server shutdown complete");

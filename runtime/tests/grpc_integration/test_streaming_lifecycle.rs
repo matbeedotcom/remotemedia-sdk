@@ -9,9 +9,9 @@
 // - StreamClosed message is sent with final metrics
 
 use remotemedia_runtime::grpc_service::generated::{
-    AudioChunk, AudioBuffer, AudioFormat, StreamControl, StreamClosed,
-    PipelineManifest, NodeManifest, StreamInit, StreamRequest, StreamResponse,
-    stream_control::Command, stream_response::Response,
+    stream_control::Command, stream_response::Response, AudioBuffer, AudioChunk, AudioFormat,
+    NodeManifest, PipelineManifest, StreamClosed, StreamControl, StreamInit, StreamRequest,
+    StreamResponse,
 };
 
 // Integration test: Graceful close with COMMAND_CLOSE
@@ -19,9 +19,9 @@ use remotemedia_runtime::grpc_service::generated::{
 async fn test_stream_graceful_close() {
     // Simplified - validates server startup
     use super::test_helpers::start_test_server;
-    
+
     let _addr = start_test_server().await;
-    
+
     // StreamControl::CLOSE handling implemented in streaming.rs
 }
 
@@ -30,9 +30,9 @@ async fn test_stream_graceful_close() {
 async fn test_stream_immediate_cancel() {
     // Simplified - validates server startup
     use super::test_helpers::start_test_server;
-    
+
     let _addr = start_test_server().await;
-    
+
     // StreamControl::CANCEL handling implemented in streaming.rs
 }
 
@@ -41,9 +41,9 @@ async fn test_stream_immediate_cancel() {
 async fn test_stream_disconnect_cleanup() {
     // Simplified - validates server startup
     use super::test_helpers::start_test_server;
-    
+
     let _addr = start_test_server().await;
-    
+
     // Session cleanup implemented in StreamingServiceImpl
 }
 
@@ -52,9 +52,9 @@ async fn test_stream_disconnect_cleanup() {
 async fn test_stream_closed_final_metrics() {
     // Simplified - validates server startup
     use super::test_helpers::start_test_server;
-    
+
     let _addr = start_test_server().await;
-    
+
     // StreamClosed includes final_metrics (ExecutionMetrics)
 }
 
@@ -63,9 +63,9 @@ async fn test_stream_closed_final_metrics() {
 async fn test_multiple_sequential_sessions() {
     // Simplified - validates server startup
     use super::test_helpers::start_test_server;
-    
+
     let _addr = start_test_server().await;
-    
+
     // Session management supports multiple concurrent sessions
 }
 
@@ -74,9 +74,9 @@ async fn test_multiple_sequential_sessions() {
 async fn test_stream_session_timeout() {
     // Simplified - validates server startup
     use super::test_helpers::start_test_server;
-    
+
     let _addr = start_test_server().await;
-    
+
     // Session timeout implemented (SESSION_TIMEOUT_SECS = 300)
 }
 
@@ -86,19 +86,17 @@ fn create_streaming_manifest() -> PipelineManifest {
     PipelineManifest {
         version: "1.0.0".to_string(),
         metadata: None,
-        nodes: vec![
-            NodeManifest {
-                id: "input".to_string(),
-                node_type: "audio_input".to_string(),
-                params: "{}".to_string(),
-                is_streaming: true,
-                capabilities: None,
-                host: "".to_string(),
-                runtime_hint: 0,
-                input_types: vec![1], // Audio
-                output_types: vec![1], // Audio
-            },
-        ],
+        nodes: vec![NodeManifest {
+            id: "input".to_string(),
+            node_type: "audio_input".to_string(),
+            params: "{}".to_string(),
+            is_streaming: true,
+            capabilities: None,
+            host: "".to_string(),
+            runtime_hint: 0,
+            input_types: vec![1],  // Audio
+            output_types: vec![1], // Audio
+        }],
         connections: vec![],
     }
 }
@@ -108,10 +106,8 @@ fn create_streaming_manifest() -> PipelineManifest {
 fn create_audio_chunk(sequence: u64) -> AudioChunk {
     let num_samples = 1600; // 100ms at 16kHz
     let samples_f32: Vec<f32> = vec![0.0; num_samples];
-    let samples_bytes: Vec<u8> = samples_f32.iter()
-        .flat_map(|&s| s.to_le_bytes())
-        .collect();
-    
+    let samples_bytes: Vec<u8> = samples_f32.iter().flat_map(|&s| s.to_le_bytes()).collect();
+
     AudioChunk {
         node_id: "input".to_string(),
         buffer: Some(AudioBuffer {
@@ -130,11 +126,13 @@ fn create_audio_chunk(sequence: u64) -> AudioChunk {
 #[allow(dead_code)]
 fn create_close_command() -> StreamRequest {
     StreamRequest {
-        request: Some(remotemedia_runtime::grpc_service::generated::stream_request::Request::Control(
-            StreamControl {
-                command: Command::Close as i32,
-            }
-        )),
+        request: Some(
+            remotemedia_runtime::grpc_service::generated::stream_request::Request::Control(
+                StreamControl {
+                    command: Command::Close as i32,
+                },
+            ),
+        ),
     }
 }
 
@@ -142,10 +140,12 @@ fn create_close_command() -> StreamRequest {
 #[allow(dead_code)]
 fn create_cancel_command() -> StreamRequest {
     StreamRequest {
-        request: Some(remotemedia_runtime::grpc_service::generated::stream_request::Request::Control(
-            StreamControl {
-                command: Command::Cancel as i32,
-            }
-        )),
+        request: Some(
+            remotemedia_runtime::grpc_service::generated::stream_request::Request::Control(
+                StreamControl {
+                    command: Command::Cancel as i32,
+                },
+            ),
+        ),
     }
 }

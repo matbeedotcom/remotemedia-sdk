@@ -21,11 +21,8 @@ async fn test_vad_node_direct_instantiation() {
             .join("python-client");
 
         let path_str = python_client_path.to_str().unwrap();
-        let add_path = CString::new(format!(
-            "import sys; sys.path.insert(0, r'{}')",
-            path_str
-        ))
-        .unwrap();
+        let add_path =
+            CString::new(format!("import sys; sys.path.insert(0, r'{}')", path_str)).unwrap();
         py.run(&add_path, None, None).unwrap();
 
         // Import and instantiate VAD node
@@ -104,17 +101,53 @@ test_result = {
 
         let result_dict = result.downcast::<PyDict>().unwrap();
 
-        let vad_init: bool = result_dict.get_item("vad_initialized").unwrap().unwrap().extract().unwrap();
-        let speech_detected: bool = result_dict.get_item("speech_detected").unwrap().unwrap().extract().unwrap();
-        let silence_not_detected: bool = result_dict.get_item("silence_not_detected").unwrap().unwrap().extract().unwrap();
-        let speech_ratio: f64 = result_dict.get_item("speech_ratio").unwrap().unwrap().extract().unwrap();
-        let silence_ratio: f64 = result_dict.get_item("silence_ratio").unwrap().unwrap().extract().unwrap();
+        let vad_init: bool = result_dict
+            .get_item("vad_initialized")
+            .unwrap()
+            .unwrap()
+            .extract()
+            .unwrap();
+        let speech_detected: bool = result_dict
+            .get_item("speech_detected")
+            .unwrap()
+            .unwrap()
+            .extract()
+            .unwrap();
+        let silence_not_detected: bool = result_dict
+            .get_item("silence_not_detected")
+            .unwrap()
+            .unwrap()
+            .extract()
+            .unwrap();
+        let speech_ratio: f64 = result_dict
+            .get_item("speech_ratio")
+            .unwrap()
+            .unwrap()
+            .extract()
+            .unwrap();
+        let silence_ratio: f64 = result_dict
+            .get_item("silence_ratio")
+            .unwrap()
+            .unwrap()
+            .extract()
+            .unwrap();
 
         assert!(vad_init, "VAD should initialize successfully");
         assert!(speech_detected, "VAD should detect speech in 440Hz tone");
-        assert!(silence_not_detected, "VAD should not detect speech in noise");
-        assert!(speech_ratio > 0.5, "Speech ratio should be high for tone: {}", speech_ratio);
-        assert!(silence_ratio < 0.5, "Speech ratio should be low for silence: {}", silence_ratio);
+        assert!(
+            silence_not_detected,
+            "VAD should not detect speech in noise"
+        );
+        assert!(
+            speech_ratio > 0.5,
+            "Speech ratio should be high for tone: {}",
+            speech_ratio
+        );
+        assert!(
+            silence_ratio < 0.5,
+            "Speech ratio should be low for silence: {}",
+            silence_ratio
+        );
 
         println!("\n✓ All VAD assertions passed!");
     });
@@ -137,11 +170,8 @@ async fn test_vad_node_with_cpython_executor_single_chunk() {
             .unwrap()
             .join("python-client");
         let path_str = python_client_path.to_str().unwrap();
-        let add_path = CString::new(format!(
-            "import sys; sys.path.insert(0, r'{}')",
-            path_str
-        ))
-        .unwrap();
+        let add_path =
+            CString::new(format!("import sys; sys.path.insert(0, r'{}')", path_str)).unwrap();
         py.run(&add_path, None, None).unwrap();
     });
 
@@ -229,11 +259,13 @@ sys.modules['remotemedia.nodes'].VADAnalyzerSync = VADAnalyzerSync
         .collect();
 
     // Generate silence (low noise) - simple pseudo-random
-    let silence_audio: Vec<f64> = (0..16000).map(|i| {
-        // Simple LCG for pseudo-random numbers (using wrapping operations)
-        let x = ((i as u64).wrapping_mul(1103515245).wrapping_add(12345)) % (1u64 << 31);
-        0.01 * ((x as f64 / (1u64 << 31) as f64) - 0.5) * 2.0
-    }).collect();
+    let silence_audio: Vec<f64> = (0..16000)
+        .map(|i| {
+            // Simple LCG for pseudo-random numbers (using wrapping operations)
+            let x = ((i as u64).wrapping_mul(1103515245).wrapping_add(12345)) % (1u64 << 31);
+            0.01 * ((x as f64 / (1u64 << 31) as f64) - 0.5) * 2.0
+        })
+        .collect();
 
     let test_inputs = vec![json!(speech_audio), json!(silence_audio)];
 
@@ -260,4 +292,3 @@ sys.modules['remotemedia.nodes'].VADAnalyzerSync = VADAnalyzerSync
 
     println!("\n✓ VAD Analyzer (CPython executor) test passed!");
 }
-

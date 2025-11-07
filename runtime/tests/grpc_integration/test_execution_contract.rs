@@ -5,12 +5,9 @@
 
 #![cfg(feature = "grpc-transport")]
 
-use remotemedia_runtime::grpc_service::{
-    generated::{
-        ExecuteRequest, ExecuteResponse, PipelineManifest, AudioBuffer, AudioFormat,
-        ExecutionStatus, NodeManifest, ExecutionResult, DataBuffer, data_buffer,
-        execute_response::Outcome,
-    },
+use remotemedia_runtime::grpc_service::generated::{
+    data_buffer, execute_response::Outcome, AudioBuffer, AudioFormat, DataBuffer, ExecuteRequest,
+    ExecuteResponse, ExecutionResult, ExecutionStatus, NodeManifest, PipelineManifest,
 };
 use std::collections::HashMap;
 
@@ -20,19 +17,17 @@ async fn test_execute_request_schema() {
     let manifest = PipelineManifest {
         version: "1.0".to_string(),
         metadata: None,
-        nodes: vec![
-            NodeManifest {
-                id: "input".to_string(),
-                node_type: "AudioResample".to_string(),
-                params: r#"{"target_sample_rate": 16000}"#.to_string(),
-                is_streaming: false,
-                capabilities: None,
-                host: String::new(),
-                runtime_hint: 0, // Native
-                input_types: vec![1], // Audio
-                output_types: vec![1], // Audio
-            },
-        ],
+        nodes: vec![NodeManifest {
+            id: "input".to_string(),
+            node_type: "AudioResample".to_string(),
+            params: r#"{"target_sample_rate": 16000}"#.to_string(),
+            is_streaming: false,
+            capabilities: None,
+            host: String::new(),
+            runtime_hint: 0,       // Native
+            input_types: vec![1],  // Audio
+            output_types: vec![1], // Audio
+        }],
         connections: vec![],
     };
 
@@ -75,7 +70,7 @@ fn test_execute_response_schema() {
         node_results: vec![],
         status: ExecutionStatus::Success as i32,
     };
-    
+
     let response = ExecuteResponse {
         outcome: Some(Outcome::Result(exec_result)),
     };
@@ -85,7 +80,7 @@ fn test_execute_response_schema() {
     match response.outcome {
         Some(Outcome::Result(result)) => {
             assert_eq!(result.status, ExecutionStatus::Success as i32);
-        },
+        }
         _ => panic!("Expected Result outcome"),
     }
 }
@@ -96,26 +91,26 @@ fn test_pipeline_manifest_serialization() {
     let manifest = PipelineManifest {
         version: "1.0".to_string(),
         metadata: None,
-        nodes: vec![
-            NodeManifest {
-                id: "resample".to_string(),
-                node_type: "AudioResample".to_string(),
-                params: r#"{"target_sample_rate": 16000}"#.to_string(),
-                is_streaming: false,
-                capabilities: None,
-                host: String::new(),
-                runtime_hint: 0,
-                input_types: vec![1], // Audio
-                output_types: vec![1], // Audio
-            },
-        ],
+        nodes: vec![NodeManifest {
+            id: "resample".to_string(),
+            node_type: "AudioResample".to_string(),
+            params: r#"{"target_sample_rate": 16000}"#.to_string(),
+            is_streaming: false,
+            capabilities: None,
+            host: String::new(),
+            runtime_hint: 0,
+            input_types: vec![1],  // Audio
+            output_types: vec![1], // Audio
+        }],
         connections: vec![],
     };
 
     // Should be able to encode to protobuf
     use prost::Message;
     let mut buf = Vec::new();
-    manifest.encode(&mut buf).expect("Failed to encode manifest");
+    manifest
+        .encode(&mut buf)
+        .expect("Failed to encode manifest");
     assert!(!buf.is_empty());
 
     // Should be able to decode back

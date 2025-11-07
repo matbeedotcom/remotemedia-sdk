@@ -8,8 +8,7 @@
 #![cfg(feature = "grpc-transport")]
 
 use remotemedia_runtime::grpc_service::generated::{
-    ExecuteRequest, PipelineManifest, AudioBuffer, AudioFormat, NodeManifest,
-    ExecutionStatus,
+    AudioBuffer, AudioFormat, ExecuteRequest, ExecutionStatus, NodeManifest, PipelineManifest,
 };
 
 #[tokio::test]
@@ -19,19 +18,17 @@ async fn test_execution_metrics_populated() {
     let manifest = PipelineManifest {
         version: "1.0".to_string(),
         metadata: None,
-        nodes: vec![
-            NodeManifest {
-                id: "resample".to_string(),
-                node_type: "AudioResample".to_string(),
-                params: r#"{"target_sample_rate": 16000}"#.to_string(),
-                is_streaming: false,
-                capabilities: None,
-                host: String::new(),
-                runtime_hint: 0,
-                input_types: vec![1], // Audio
-                output_types: vec![1], // Audio
-            },
-        ],
+        nodes: vec![NodeManifest {
+            id: "resample".to_string(),
+            node_type: "AudioResample".to_string(),
+            params: r#"{"target_sample_rate": 16000}"#.to_string(),
+            is_streaming: false,
+            capabilities: None,
+            host: String::new(),
+            runtime_hint: 0,
+            input_types: vec![1],  // Audio
+            output_types: vec![1], // Audio
+        }],
         connections: vec![],
     };
 
@@ -55,16 +52,16 @@ async fn test_execution_metrics_populated() {
 
     // TODO: Call ExecutePipeline service once implemented
     // let response = service.execute_pipeline(request).await.unwrap();
-    
+
     // Verify metrics are present
     // assert_eq!(response.status, ExecutionStatus::Success as i32);
     // assert!(response.metrics.is_some());
-    
+
     // let metrics = response.metrics.unwrap();
     // assert!(metrics.wall_time_ms > 0.0);
     // assert!(metrics.memory_used_bytes > 0);
     // assert!(metrics.node_metrics.contains_key("resample"));
-    
+
     // let node_metrics = &metrics.node_metrics["resample"];
     // assert!(node_metrics.execution_time_ms > 0.0);
     // assert_eq!(node_metrics.items_processed, 44100);
@@ -86,7 +83,9 @@ fn test_metrics_structure() {
         wall_time_ms: 5.0,
         cpu_time_ms: 4.5,
         memory_used_bytes: 10_000_000,
-        node_metrics: vec![("test_node".to_string(), node_metrics)].into_iter().collect(),
+        node_metrics: vec![("test_node".to_string(), node_metrics)]
+            .into_iter()
+            .collect(),
         serialization_time_ms: 0.5,
         proto_to_runtime_ms: 0.0,
         runtime_to_proto_ms: 0.0,

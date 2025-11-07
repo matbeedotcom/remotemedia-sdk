@@ -3,34 +3,34 @@
 //! Handles spawning, monitoring, and lifecycle management of Python node processes.
 
 use crate::{Error, Result};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
-use serde_json::Value;
 use std::time::{Duration, Instant};
+use tokio::sync::{Mutex, RwLock};
 
 use super::multiprocess_executor::MultiprocessConfig;
 
 /// Process lifecycle states
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProcessStatus {
-    Idle,         // Process created but not initialized
-    Initializing, // Loading models/resources
-    Ready,        // Initialized and waiting for data
-    Processing,   // Actively processing data
-    Stopping,     // Graceful shutdown initiated
-    Stopped,      // Process terminated
+    Idle,          // Process created but not initialized
+    Initializing,  // Loading models/resources
+    Ready,         // Initialized and waiting for data
+    Processing,    // Actively processing data
+    Stopping,      // Graceful shutdown initiated
+    Stopped,       // Process terminated
     Error(String), // Failed with error message
 }
 
 /// Exit reasons for process termination
 #[derive(Debug, Clone)]
 pub enum ExitReason {
-    Normal,        // Clean exit
-    Error(i32),    // Exit with error code
-    Killed,        // Terminated by signal
-    Timeout,       // Initialization timeout
+    Normal,     // Clean exit
+    Error(i32), // Exit with error code
+    Killed,     // Terminated by signal
+    Timeout,    // Initialization timeout
 }
 
 /// Handle to a running process
@@ -77,7 +77,8 @@ impl ProcessHandle {
     /// Kill the process forcefully
     pub async fn kill(&self) -> Result<()> {
         if let Some(ref mut child) = *self.inner.lock().await {
-            child.kill()
+            child
+                .kill()
                 .map_err(|e| Error::Execution(format!("Failed to kill process: {}", e)))?;
         }
         Ok(())
@@ -154,18 +155,27 @@ impl ProcessManager {
         params: &Value,
         session_id: &str,
     ) -> Result<ProcessHandle> {
-        tracing::info!("Spawning process for node: {} ({}) in session: {}", node_id, node_type, session_id);
+        tracing::info!(
+            "Spawning process for node: {} ({}) in session: {}",
+            node_id,
+            node_type,
+            session_id
+        );
 
         // Build command for Python subprocess
         let mut command = Command::new(&self.spawn_config.python_executable);
 
         // Add multiprocess runner module
         command.args([
-            "-m", "remotemedia.core.multiprocessing.runner",
-            "--node-type", node_type,
-            "--node-id", node_id,
-            "--session-id", session_id,  // Pass session_id for channel naming
-            "--params-stdin",  // Signal that params come from stdin
+            "-m",
+            "remotemedia.core.multiprocessing.runner",
+            "--node-type",
+            node_type,
+            "--node-id",
+            node_id,
+            "--session-id",
+            session_id,       // Pass session_id for channel naming
+            "--params-stdin", // Signal that params come from stdin
         ]);
 
         // Set environment variables
@@ -175,7 +185,9 @@ impl ProcessManager {
 
         // Set Python path
         if !self.spawn_config.python_path.is_empty() {
-            let python_path = self.spawn_config.python_path
+            let python_path = self
+                .spawn_config
+                .python_path
                 .iter()
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>()
@@ -197,7 +209,7 @@ impl ProcessManager {
         }
 
         // Configure I/O
-        command.stdin(Stdio::piped());  // Always need stdin for params
+        command.stdin(Stdio::piped()); // Always need stdin for params
         if self.spawn_config.capture_output {
             command.stdout(Stdio::piped());
             command.stderr(Stdio::piped());
@@ -222,8 +234,9 @@ impl ProcessManager {
             use std::io::Write;
             if let Some(mut stdin) = child.stdin.take() {
                 let params_json = params.to_string();
-                stdin.write_all(params_json.as_bytes())
-                    .map_err(|e| Error::Execution(format!("Failed to write params to stdin: {}", e)))?;
+                stdin.write_all(params_json.as_bytes()).map_err(|e| {
+                    Error::Execution(format!("Failed to write params to stdin: {}", e))
+                })?;
                 // Drop stdin to close the pipe
                 drop(stdin);
             }
@@ -255,7 +268,11 @@ impl ProcessManager {
         process: ProcessHandle,
         grace_period: Duration,
     ) -> Result<()> {
-        tracing::info!("Terminating process {} for node {}", process.id, process.node_id);
+        tracing::info!(
+            "Terminating process {} for node {}",
+            process.id,
+            process.node_id
+        );
 
         // Update status
         *process.status.write().await = ProcessStatus::Stopping;
@@ -289,8 +306,12 @@ impl ProcessManager {
 
             // Force kill if still running
             if child.try_wait().ok().flatten().is_none() {
-                tracing::warn!("Process {} did not terminate gracefully, forcing kill", process.id);
-                child.kill()
+                tracing::warn!(
+                    "Process {} did not terminate gracefully, forcing kill",
+                    process.id
+                );
+                child
+                    .kill()
                     .map_err(|e| Error::Execution(format!("Failed to kill process: {}", e)))?;
             }
         }
@@ -337,24 +358,20 @@ impl ProcessManager {
                         ExitReason::Killed
                     };
 
-                    tracing::info!(
-                        "Process {} exited with reason: {:?}",
-                        process.id,
-                        reason
-                    );
+                    tracing::info!("Process {} exited with reason: {:?}", process.id, reason);
 
                     // Update status
                     *process.status.write().await = match &reason {
                         ExitReason::Normal => ProcessStatus::Stopped,
-                        ExitReason::Error(code) => ProcessStatus::Error(
-                            format!("Process exited with code {}", code)
-                        ),
-                        ExitReason::Killed => ProcessStatus::Error(
-                            "Process killed by signal".to_string()
-                        ),
-                        ExitReason::Timeout => ProcessStatus::Error(
-                            "Process initialization timeout".to_string()
-                        ),
+                        ExitReason::Error(code) => {
+                            ProcessStatus::Error(format!("Process exited with code {}", code))
+                        }
+                        ExitReason::Killed => {
+                            ProcessStatus::Error("Process killed by signal".to_string())
+                        }
+                        ExitReason::Timeout => {
+                            ProcessStatus::Error("Process initialization timeout".to_string())
+                        }
                     };
 
                     // Remove from registry

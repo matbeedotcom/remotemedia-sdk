@@ -5,9 +5,9 @@
 #![cfg(feature = "grpc-transport")]
 
 use remotemedia_runtime::grpc_service::generated::{
-    pipeline_execution_service_client::PipelineExecutionServiceClient, Connection,
-    ExecuteRequest, NodeManifest, PipelineManifest, data_buffer, DataBuffer,
-    execute_response::Outcome, JsonData,
+    data_buffer, execute_response::Outcome,
+    pipeline_execution_service_client::PipelineExecutionServiceClient, Connection, DataBuffer,
+    ExecuteRequest, JsonData, NodeManifest, PipelineManifest,
 };
 use std::collections::HashMap;
 
@@ -463,7 +463,9 @@ async fn test_python_conditional_expander() {
 
     // Should yield 5 items (one for each expansion)
     match &response.outcome {
-        Some(Outcome::Result(result)) => println!("Conditional expander (value=5) result: {:?}", result),
+        Some(Outcome::Result(result)) => {
+            println!("Conditional expander (value=5) result: {:?}", result)
+        }
         Some(Outcome::Error(err)) => panic!("Execution failed: {:?}", err),
         None => panic!("No outcome in response"),
     }
