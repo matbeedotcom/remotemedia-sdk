@@ -60,3 +60,8 @@ tonic-prost-build = { workspace = true }
 [[bin]]
 name = "grpc-server"
 path = "bin/grpc-server.rs"
+
+[features]
+default = []
+model-registry = ["remotemedia-runtime-core/model-registry"]
+shared-memory = ["remotemedia-runtime-core/shared-memory"]

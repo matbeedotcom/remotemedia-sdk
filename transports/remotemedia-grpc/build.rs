@@ -20,6 +20,7 @@ fn compile_protos() {
                 "protos/common.proto",
                 "protos/execution.proto",
                 "protos/streaming.proto",
+                "protos/model_worker.proto", // Model registry and worker services
             ],
             &["protos/"],
         )

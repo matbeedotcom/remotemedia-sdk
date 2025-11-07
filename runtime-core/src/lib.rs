@@ -52,6 +52,7 @@ pub mod python;
 pub mod model_registry;
 #[cfg(any(feature = "shared-memory", feature = "model-registry"))]
 pub mod tensor;
+#[cfg(feature = "model-registry")]
 pub mod model_worker;
 
 // Manifest

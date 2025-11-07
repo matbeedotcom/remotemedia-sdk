@@ -1,0 +1,171 @@
+syntax = "proto3";
+
+package remotemedia.model_registry.v1;
+
+// Service for managing model registry operations
+service ModelRegistryService {
+  // Load or retrieve a model from the registry
+  rpc GetOrLoadModel(GetOrLoadModelRequest) returns (GetOrLoadModelResponse);
+  
+  // Release a model handle
+  rpc ReleaseModel(ReleaseModelRequest) returns (ReleaseModelResponse);
+  
+  // List all loaded models
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+  
+  // Get registry metrics
+  rpc GetMetrics(GetMetricsRequest) returns (GetMetricsResponse);
+  
+  // Force eviction of expired models
+  rpc EvictExpired(EvictExpiredRequest) returns (EvictExpiredResponse);
+}
+
+// Service for model worker processes
+service ModelWorkerService {
+  // Submit inference request to worker
+  rpc Infer(InferRequest) returns (InferResponse);
+  
+  // Submit streaming inference request
+  rpc InferStream(stream InferRequest) returns (stream InferResponse);
+  
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  
+  // Get worker status
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+}
+
+// Request to get or load a model
+message GetOrLoadModelRequest {
+  string model_id = 1;              // Unique model identifier
+  string model_path = 2;            // Path to model weights (if loading)
+  map<string, string> config = 3;   // Model-specific configuration
+  string device = 4;                // Target device (cpu, cuda:0, etc.)
+  string session_id = 5;            // Optional session association
+}
+
+// Response with model handle
+message GetOrLoadModelResponse {
+  string handle_id = 1;             // Handle identifier for this reference
+  string model_id = 2;              // Model identifier
+  bool was_cached = 3;              // True if model was already loaded
+  uint64 load_time_ms = 4;         // Time taken to load (0 if cached)
+  uint64 memory_bytes = 5;          // Memory used by model
+}
+
+// Request to release a model handle
+message ReleaseModelRequest {
+  string handle_id = 1;             // Handle to release
+}
+
+// Response from release operation
+message ReleaseModelResponse {
+  bool released = 1;                // True if successfully released
+  uint32 remaining_references = 2;  // Remaining reference count
+}
+
+// Request to list loaded models
+message ListModelsRequest {
+  bool include_metrics = 1;         // Include usage metrics
+}
+
+// Response with loaded models
+message ListModelsResponse {
+  repeated ModelInfo models = 1;
+}
+
+// Information about a loaded model
+message ModelInfo {
+  string model_id = 1;
+  string device = 2;
+  uint64 memory_bytes = 3;
+  uint32 reference_count = 4;
+  int64 loaded_at = 5;              // Unix timestamp
+  int64 last_accessed = 6;          // Unix timestamp
+  map<string, string> metadata = 7;
+}
+
+// Request for registry metrics
+message GetMetricsRequest {}
+
+// Response with registry metrics
+message GetMetricsResponse {
+  uint64 total_models = 1;
+  uint64 total_memory_bytes = 2;
+  uint64 cache_hits = 3;
+  uint64 cache_misses = 4;
+  double hit_rate = 5;
+  uint64 evictions = 6;
+}
+
+// Request to evict expired models
+message EvictExpiredRequest {
+  uint32 ttl_seconds = 1;           // Override default TTL
+}
+
+// Response from eviction
+message EvictExpiredResponse {
+  uint32 evicted_count = 1;
+  uint64 freed_memory_bytes = 2;
+}
+
+// Inference request to model worker
+message InferRequest {
+  string model_id = 1;
+  oneof input {
+    TensorRef tensor_ref = 2;      // Reference to shared memory tensor
+    TensorData tensor_data = 3;     // Inline tensor data
+  }
+  map<string, string> parameters = 4;
+  string request_id = 5;
+}
+
+// Inference response from model worker
+message InferResponse {
+  string request_id = 1;
+  oneof output {
+    TensorRef tensor_ref = 2;      // Reference to shared memory tensor
+    TensorData tensor_data = 3;     // Inline tensor data
+  }
+  uint64 inference_time_ms = 4;
+  map<string, string> metadata = 5;
+}
+
+// Reference to a shared memory tensor
+message TensorRef {
+  string region_id = 1;             // Shared memory region ID
+  uint64 offset = 2;                // Offset within region
+  uint64 size = 3;                  // Size in bytes
+  repeated int32 shape = 4;         // Tensor shape
+  string dtype = 5;                 // Data type (f32, f16, i32, etc.)
+}
+
+// Inline tensor data (fallback when SHM unavailable)
+message TensorData {
+  bytes data = 1;                   // Raw tensor bytes
+  repeated int32 shape = 2;         // Tensor shape
+  string dtype = 3;                 // Data type
+}
+
+// Health check request
+message HealthCheckRequest {}
+
+// Health check response
+message HealthCheckResponse {
+  bool healthy = 1;
+  string status = 2;
+}
+
+// Worker status request
+message GetStatusRequest {}
+
+// Worker status response
+message GetStatusResponse {
+  string worker_id = 1;
+  string model_id = 2;
+  string status = 3;                // Starting, Ready, Busy, Stopping
+  uint32 current_load = 4;
+  uint32 max_batch_size = 5;
+  uint64 total_requests = 6;
+  double average_latency_ms = 7;
+}
