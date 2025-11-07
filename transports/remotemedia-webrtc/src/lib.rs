@@ -71,8 +71,13 @@ mod session;
 mod transport;
 
 // Re-exports for public API
-pub use config::{WebRtcTransportConfig, ConfigOptions};
+pub use config::{
+    AudioCodec, ConfigOptions, DataChannelMode, TurnServerConfig, VideoCodec, VideoResolution,
+    WebRtcTransportConfig,
+};
 pub use error::{Error, Result};
+pub use peer::{ConnectionState, PeerInfo};
+pub use transport::WebRtcTransport;
 
 /// Get the version of this crate
 pub fn version() -> &'static str {
