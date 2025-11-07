@@ -61,7 +61,7 @@ impl AsyncNodeExecutor {
 
     /// Run the node executor in its own task
     /// This continuously processes items from the input queue
-    pub async fn run(mut self) -> Result<(), Error> {
+    pub async fn run(mut self) -> Result<()> {
         info!("🚀 AsyncNodeExecutor '{}' starting (streaming: {})", self.node_id, self.is_streaming);
 
         while let Some(item) = self.input_rx.recv().await {
@@ -281,7 +281,7 @@ pub struct AsyncPipeline {
 
 impl AsyncPipeline {
     /// Send input to the pipeline
-    pub async fn send_input(&self, node_id: &str, item: PipelineItem) -> Result<(), Error> {
+    pub async fn send_input(&self, node_id: &str, item: PipelineItem) -> Result<()> {
         if let Some(tx) = self.input_senders.get(node_id) {
             tx.send(item)
                 .map_err(|e| Error::Execution(format!("Failed to send input: {}", e)))?;
