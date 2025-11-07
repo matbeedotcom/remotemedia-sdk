@@ -1,56 +1,72 @@
 # RemoteMedia WebRTC Transport
 
-**Status**: 🚧 Placeholder - Not Yet Implemented
+**Status**: 🚧 In Development (Phase 1 - Setup Complete)
 
 ## Overview
 
-This crate will provide WebRTC-based real-time media streaming transport for RemoteMedia pipelines.
+This crate provides WebRTC-based real-time media streaming transport for RemoteMedia pipelines with multi-peer mesh networking support.
 
-## Planned Features
+## Features
 
-- **Real-time Communication**: WebRTC peer-to-peer connections
-- **Low Latency**: Sub-100ms audio/video streaming
-- **Browser Support**: Direct browser-to-server communication
-- **NAT Traversal**: ICE/STUN/TURN support
-- **Data Channels**: For pipeline control and results
-- **Media Tracks**: For audio/video streaming
+- **Multi-peer mesh topology**: Up to 10 simultaneous peer connections (N:N communication)
+- **Audio/Video synchronization**: Per-peer sync managers with jitter buffers and clock drift estimation
+- **Media codecs**: Opus audio, VP9/H264 video
+- **Data channels**: Reliable/unreliable messaging modes
+- **JSON-RPC 2.0 signaling**: WebSocket-based peer discovery and SDP exchange
+- **Low latency**: <50ms audio, <100ms video (95th percentile target)
+- **RemoteMedia pipeline integration**: Implements PipelineTransport trait
 
-## Architecture (Planned)
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Browser/Native Client                              │
-│  ├─ WebRTC PeerConnection                           │
-│  ├─ Data Channels (pipeline I/O)                    │
-│  └─ Media Tracks (audio/video)                      │
-│     ↓                                                │
-│  remotemedia-webrtc (Server)                        │
-│  ├─ Signaling Server (WebSocket/HTTP)               │
-│  ├─ ICE/STUN/TURN handling                          │
-│  ├─ Data Channel → StreamSession mapping            │
-│  └─ Media Track → PipelineRunner integration        │
-│     ↓                                                │
-│  remotemedia-runtime-core                           │
-│  └─ PipelineRunner (streaming execution)            │
-└─────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────┐
+│  WebRTC Peers (Browser/Native)                         │
+│  ↓ (WebRTC peer connections - mesh topology)           │
+│  WebRtcTransport                                       │
+│  ├─ SignalingClient (JSON-RPC 2.0 over WebSocket)     │
+│  ├─ PeerManager (mesh of PeerConnections)             │
+│  │   └─ Per-peer SyncManager (A/V sync, jitter)       │
+│  ├─ SessionManager (pipeline sessions)                 │
+│  └─ SessionRouter (routes data: peers ↔ pipeline)     │
+│     ↓                                                   │
+│  remotemedia-runtime-core::PipelineRunner              │
+└────────────────────────────────────────────────────────┘
 ```
+
+### Key Components
+
+- **SignalingClient**: WebSocket client for JSON-RPC 2.0 peer discovery and SDP exchange
+- **PeerManager**: Manages mesh topology of up to 10 peer connections
+- **SyncManager**: Per-peer audio/video synchronization with jitter buffers and clock drift compensation
+- **SessionManager**: Tracks active streaming sessions and their peer associations
+- **SessionRouter**: Routes media data between peers and RemoteMedia pipelines
 
 ## Use Cases
 
-1. **Browser-Based Real-Time Processing**
+1. **Point-to-Point Video Processing** (Priority 1)
+   - Real-time video filters with browser preview
    - Speech-to-text from microphone
-   - Real-time audio effects
-   - Video processing with visual feedback
+   - Interactive audio effects
 
-2. **Low-Latency Streaming**
-   - Interactive voice applications
-   - Live transcription
-   - Real-time translation
+2. **Multi-Peer Audio Conferencing** (Priority 2)
+   - Conference rooms with audio mixing
+   - Up to 10 participants in mesh topology
+   - Synchronized audio/video playback
 
-3. **Peer-to-Peer Media**
-   - Direct client-to-server processing
-   - Minimal latency for interactive apps
-   - NAT traversal for home networks
+3. **Broadcast Routing** (Priority 2)
+   - One-to-many streaming (presenter to audience)
+   - Many-to-one streaming (audience to aggregator)
+   - Custom routing patterns via SessionRouter
+
+4. **Data Channel Communication** (Priority 3)
+   - Real-time text chat during calls
+   - File transfer between peers
+   - Custom control protocols
+
+5. **Automatic Reconnection** (Priority 3)
+   - Network interruption recovery
+   - Exponential backoff retry logic
+   - State preservation during reconnection
 
 ## Implementation Plan
 
@@ -91,26 +107,36 @@ When implementing this transport:
    - Integration tests with real WebRTC stack
    - Browser compatibility tests
 
-## API Design (Future)
+## Quick Start
 
 ```rust
-use remotemedia_webrtc::{WebRTCServer, WebRTCConfig};
-use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_webrtc::{WebRtcTransport, WebRtcTransportConfig};
+use remotemedia_runtime_core::PipelineRunner;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let runner = PipelineRunner::new()?;
-
-    let config = WebRTCConfig {
-        signaling_addr: "0.0.0.0:8080".parse()?,
-        ice_servers: vec![
-            "stun:stun.l.google.com:19302".to_string(),
-        ],
+    // Configure transport
+    let config = WebRtcTransportConfig {
+        signaling_url: "ws://localhost:8080".to_string(),
+        stun_servers: vec!["stun:stun.l.google.com:19302".to_string()],
+        max_peers: 10,
         ..Default::default()
     };
 
-    let server = WebRTCServer::new(config, runner)?;
-    server.serve().await?;
+    // Validate configuration
+    config.validate()?;
+
+    // Create transport (Phase 2+ implementation)
+    // let runner = PipelineRunner::new()?;
+    // let transport = WebRtcTransport::new(config, runner).await?;
+    //
+    // // Connect to peer
+    // let peer_id = transport.connect_peer("peer-abc123").await?;
+    //
+    // // Start streaming session with pipeline
+    // let manifest = Arc::new(manifest);
+    // let session = transport.stream(manifest).await?;
 
     Ok(())
 }
@@ -132,12 +158,20 @@ If you're interested in implementing WebRTC support:
 4. Start with a minimal proof-of-concept
 5. Add comprehensive tests
 
-## Timeline
+## Implementation Status
 
-- **Q1 2025**: Design phase
-- **Q2 2025**: Initial implementation
-- **Q3 2025**: Testing and refinement
-- **Q4 2025**: Production release
+**Current Phase**: Phase 1 - Project Setup ✅
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 1 | ✅ Complete | Crate structure, config, error types |
+| Phase 2 | 🔄 Pending | Signaling protocol and peer connections |
+| Phase 3 | 📋 Planned | Point-to-point video (User Story 1) |
+| Phase 4 | 📋 Planned | Multi-peer A/V synchronization (User Story 2) |
+| Phase 5 | 📋 Planned | Pipeline integration |
+| Phase 6+ | 📋 Planned | Additional features and polish |
+
+See [specs/001-webrtc-multi-peer-transport/](../../specs/001-webrtc-multi-peer-transport/) for detailed implementation plan and task breakdown.
 
 ## Questions?
 

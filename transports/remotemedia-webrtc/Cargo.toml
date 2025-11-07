@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
-description = "WebRTC transport for RemoteMedia pipelines (placeholder for future implementation)"
+description = "WebRTC transport for RemoteMedia pipelines with multi-peer mesh networking"
 license.workspace = true
 repository.workspace = true
 
@@ -13,17 +13,30 @@ name = "remotemedia_webrtc"
 crate-type = ["rlib"]
 
 [dependencies]
-# Core runtime (NO transport dependencies)
+# Core runtime
 remotemedia-runtime-core = { path = "../../runtime-core" }
 
-# WebRTC dependencies (to be added when implemented)
-# webrtc = { workspace = true }
+# WebRTC peer connections, ICE, DTLS, SRTP
+webrtc = "0.9"
+
+# WebSocket signaling client
+tokio-tungstenite = "0.21"
+
+# Audio codec (optional until Phase 3 - requires CMake)
+opus = { version = "0.3", optional = true }
+
+# Video codecs (optional until Phase 3 - requires native libs)
+vpx = { version = "0.1", optional = true }
+openh264 = { version = "0.5", optional = true }
+
+# UUID generation for session/peer IDs
+uuid = { version = "1.6", features = ["v4", "serde"] }
 
 # Async runtime
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
 futures = { workspace = true }
 
-# Serialization
+# Serialization (JSON-RPC 2.0)
 serde = { workspace = true }
 serde_json = { workspace = true }
 
@@ -36,3 +49,13 @@ tracing = { workspace = true }
 # Error handling
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+criterion = "0.5"
+
+[features]
+default = []
+codecs = ["dep:opus", "dep:vpx"]
+h264 = ["dep:openh264"]
+full = ["codecs", "h264"]
