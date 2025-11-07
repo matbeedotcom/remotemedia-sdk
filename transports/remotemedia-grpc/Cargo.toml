@@ -40,6 +40,7 @@ async-trait = { workspace = true }
 
 # Logging and metrics
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 prometheus = { workspace = true }
 
 # Error handling
@@ -48,6 +49,8 @@ anyhow = { workspace = true }
 
 # Utilities
 uuid = { workspace = true }
+ctrlc = "3.4"
+num_cpus = "1.16"
 
 [build-dependencies]
 tonic-build = { workspace = true }

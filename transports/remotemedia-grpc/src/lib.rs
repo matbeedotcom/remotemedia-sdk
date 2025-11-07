@@ -117,6 +117,9 @@ pub struct ServiceConfig {
 
     /// Resource limits
     pub limits: limits::ResourceLimits,
+
+    /// Enable JSON structured logging
+    pub json_logging: bool,
 }
 
 impl Default for ServiceConfig {
@@ -125,6 +128,69 @@ impl Default for ServiceConfig {
             bind_address: "0.0.0.0:50051".to_string(),
             auth: auth::AuthConfig::default(),
             limits: limits::ResourceLimits::default(),
+            json_logging: true,
         }
+    }
+}
+
+impl ServiceConfig {
+    /// Load configuration from environment variables
+    pub fn from_env() -> Self {
+        let bind_address = std::env::var("GRPC_BIND_ADDRESS")
+            .unwrap_or_else(|_| "0.0.0.0:50051".to_string());
+
+        let require_auth = std::env::var("GRPC_REQUIRE_AUTH")
+            .map(|v| v.to_lowercase() == "true")
+            .unwrap_or(false);
+
+        let auth_tokens: Vec<String> = std::env::var("GRPC_AUTH_TOKENS")
+            .map(|t| t.split(',').map(|s| s.trim().to_string()).collect())
+            .unwrap_or_default();
+
+        let max_memory_bytes = std::env::var("GRPC_MAX_MEMORY_MB")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(|mb| mb * 1_000_000)
+            .unwrap_or(100_000_000);
+
+        let max_timeout_sec = std::env::var("GRPC_MAX_TIMEOUT_SEC")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(5);
+
+        let json_logging = std::env::var("GRPC_JSON_LOGGING")
+            .map(|v| v.to_lowercase() == "true")
+            .unwrap_or(true);
+
+        Self {
+            bind_address,
+            auth: auth::AuthConfig::new(auth_tokens, require_auth),
+            limits: limits::ResourceLimits {
+                max_memory_bytes,
+                max_timeout: std::time::Duration::from_secs(max_timeout_sec),
+                ..Default::default()
+            },
+            json_logging,
+        }
+    }
+}
+
+/// Initialize tracing/logging
+pub fn init_tracing(json_logging: bool) {
+    use tracing_subscriber::{fmt, EnvFilter, prelude::*};
+
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+
+    if json_logging {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt::layer().json())
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt::layer())
+            .init();
     }
 }
