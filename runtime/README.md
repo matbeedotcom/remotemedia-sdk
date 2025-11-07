@@ -1,4 +1,13 @@
-# RemoteMedia Runtime
+# ⚠️ RemoteMedia Runtime (LEGACY)
+
+**DEPRECATION NOTICE:** This crate is legacy code as of v0.4.0. Please use:
+- **`runtime-core/`** for core runtime functionality (zero transport dependencies)
+- **`transports/remotemedia-grpc/`** for gRPC transport
+- **`transports/remotemedia-ffi/`** for Python FFI transport
+
+See [DEPRECATION_NOTICE.md](DEPRECATION_NOTICE.md) for details.
+
+---
 
 Language-neutral execution engine for distributed AI pipelines.
 

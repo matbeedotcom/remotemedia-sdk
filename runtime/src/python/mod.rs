@@ -1,29 +1,21 @@
 //! Python integration module
 //!
 //! This module provides:
-//! 1. FFI functions for Python to call Rust runtime
-//! 2. Data marshaling between Python and Rust types  
-//! 3. Python node execution via CPython (PyO3)
-//! 4. Zero-copy numpy array integration
+//! 1. Data marshaling between Python and Rust types
+//! 2. Python node execution via CPython (PyO3)
+//! 3. Zero-copy numpy array integration
+//! 4. Multiprocess Python execution with iceoryx2 IPC
+//!
+//! ## v0.4.0 Changes
+//! - FFI functions extracted to transports/remotemedia-ffi crate
+//! - Legacy FFI code archived in archive/legacy-python-ffi/
+//! - marshal.rs and numpy_marshal.rs moved to FFI transport
 
-// FFI module requires python-async feature (pyo3-async-runtimes)
-#[cfg(feature = "python-async")]
-pub mod ffi;
-
-pub mod marshal;
 pub mod node_executor;
 pub mod runtime_data_py;
 
-// numpy_marshal requires native-numpy feature
-#[cfg(feature = "native-numpy")]
-pub mod numpy_marshal;
-
 pub mod cpython_executor;
 // pub mod cpython_node;  // Archived in v0.2.1 - adapter no longer needed
-
-// Re-export FFI module for Python extension (only when python-async is enabled)
-#[cfg(feature = "python-async")]
-pub use ffi::*;
 
 // DEPRECATED in v0.3.0: Use MultiprocessExecutor instead
 // CPythonNodeExecutor is kept for backward compatibility but will be removed in v0.4.0

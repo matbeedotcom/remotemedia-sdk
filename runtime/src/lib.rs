@@ -5,8 +5,14 @@
 //! - Manifest-based pipeline execution
 //! - RustPython VM for backward compatibility with Python nodes
 //! - WASM sandbox for portable, secure execution
-//! - WebRTC and gRPC transports
+//! - Multiprocess Python execution with iceoryx2 IPC
 //! - Automatic capability-based scheduling
+//!
+//! ## Transport Layer (v0.4.0+)
+//! Transports have been extracted to separate crates:
+//! - gRPC: `remotemedia-grpc` in transports/remotemedia-grpc/
+//! - FFI: `remotemedia-ffi` in transports/remotemedia-ffi/
+//! - WebRTC: `remotemedia-webrtc` in transports/remotemedia-webrtc/ (placeholder)
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -23,9 +29,8 @@ pub mod registry;
 pub mod transport;
 pub mod wasm;
 
-// gRPC service (only available with grpc-transport feature)
-#[cfg(feature = "grpc-transport")]
-pub mod grpc_service;
+// NOTE: gRPC service module removed in v0.4.0 - now in transports/remotemedia-grpc crate
+// Legacy code archived in archive/legacy-grpc-service/
 
 mod error;
 pub use error::{Error, Result};
