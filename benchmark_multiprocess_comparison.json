@@ -1,0 +1,37 @@
+{
+  "model_id": "openai/whisper-tiny.en",
+  "num_nodes": 3,
+  "system": "rust_multiprocess_iceoryx2",
+  "baseline": {
+    "total_memory_mb": 277.0234375,
+    "per_node_mb": 92.34114583333333,
+    "init_times": [
+      1.3321361541748047,
+      0.9999809265136719,
+      1.0300073623657227
+    ],
+    "total_time_s": 3.362124443054199,
+    "avg_init_time_s": 1.1207081476847331
+  },
+  "optimized": {
+    "total_memory_mb": -14.18359375,
+    "per_node_mb": -4.727864583333333,
+    "init_times": [
+      1.0510432720184326,
+      0.0020101070404052734,
+      0.0
+    ],
+    "total_time_s": 1.053053379058838,
+    "avg_init_time_s": 0.3510177930196126,
+    "cache_hits": 4,
+    "cache_misses": 2,
+    "hit_rate": 0.6666666666666666
+  },
+  "comparison": {
+    "memory_saved_mb": 291.20703125,
+    "memory_saved_pct": 105.1199977438732,
+    "time_saved_s": 2.3090710639953613,
+    "time_saved_pct": 68.67892914450752
+  },
+  "timestamp": 1762543360.3558369
+}

@@ -31,6 +31,9 @@ mod api;
 mod marshal;
 mod numpy_bridge;
 
+#[cfg(feature = "model-registry")]
+mod model_registry;
+
 use pyo3::prelude::*;
 
 /// Python module for RemoteMedia FFI transport
@@ -51,6 +54,13 @@ fn remotemedia_ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(api::execute_pipeline_with_input, m)?)?;
     m.add_function(wrap_pyfunction!(api::get_runtime_version, m)?)?;
     m.add_function(wrap_pyfunction!(api::is_available, m)?)?;
+
+    // Add model registry support (if feature enabled)
+    #[cfg(feature = "model-registry")]
+    {
+        model_registry::register_module(m)?;
+        tracing::info!("Model registry FFI bindings registered");
+    }
 
     // Add version as module constant
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

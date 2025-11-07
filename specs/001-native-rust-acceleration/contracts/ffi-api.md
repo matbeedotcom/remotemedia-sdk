@@ -386,7 +386,7 @@ mod tests {
     
     #[test]
     fn test_ffi_overhead() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let manifest = r#"{"version": "1.0", "nodes": []}"#;
             
             let start = Instant::now();
@@ -399,7 +399,7 @@ mod tests {
     
     #[test]
     fn test_numpy_zero_copy() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let audio = PyArrayDyn::<f32>::zeros(py, vec![1000], false);
             let ptr_before = audio.as_ptr();
             

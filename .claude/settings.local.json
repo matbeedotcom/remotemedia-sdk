@@ -11,7 +11,19 @@
       "Bash(cargo build:*)",
       "Bash(./target/debug/analyze_pipeline.exe:*)",
       "Bash(powershell.exe -ExecutionPolicy Bypass -File scripts/build-package.ps1 browser-demo/examples/calculator.rmpkg.json test-calculator.rmpkg)",
-      "Bash(powershell.exe -ExecutionPolicy Bypass -File scripts/build-package.ps1 browser-demo/examples/calculator.rmpkg.json test-calculator-ps.rmpkg)"
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File scripts/build-package.ps1 browser-demo/examples/calculator.rmpkg.json test-calculator-ps.rmpkg)",
+      "Bash(find:*)",
+      "Bash(./target/debug/deps/test_grpc_service-*.exe)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File .specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks)",
+      "Bash(cargo bench:*)",
+      "Bash(cargo tree:*)",
+      "Bash(cargo clean:*)",
+      "Bash(powershell.exe -Command \"Measure-Command { cargo build --release 2>&1 | Out-Null } | Select-Object -ExpandProperty TotalSeconds\")",
+      "Bash(powershell.exe -Command \"Get-ChildItem ''C:\\Users\\mail\\dev\\personal\\remotemedia-sdk\\specs\\003-transport-decoupling\\contracts'' | Select-Object -ExpandProperty Name\")",
+      "Bash(powershell.exe -Command \"Test-Path ''transports\\remotemedia-grpc\\src\\auth.rs''; Test-Path ''transports\\remotemedia-grpc\\src\\limits.rs''\")",
+      "Bash(xargs:*)",
+      "Bash(powershell.exe -Command \"Get-Item runtime-core/Cargo.toml | Select-Object -ExpandProperty LastWriteTime\")",
+      "Bash(powershell.exe -Command \"Measure-Command { cargo build --release --package remotemedia-grpc 2>&1 | Out-Null } | Select-Object -ExpandProperty TotalSeconds\")"
     ],
     "deny": [],
     "ask": []

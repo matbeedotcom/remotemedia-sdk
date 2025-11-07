@@ -246,7 +246,7 @@ pub struct CPythonNode {
 #[async_trait]
 impl NodeExecutor for CPythonNode {
     async fn execute(&self, inputs: NodeInputs) -> Result<NodeOutputs, ExecutorError> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             // Import Python module
             let module = py.import("remotemedia.nodes.audio")?;
             

@@ -42,7 +42,10 @@ anyhow = { workspace = true }
 
 # Utilities
 base64 = "0.22"
+parking_lot = "0.12"
+once_cell = "1.19"
 
 [features]
 default = ["extension-module"]
 extension-module = ["pyo3/extension-module"]
+model-registry = ["remotemedia-runtime-core/model-registry"]

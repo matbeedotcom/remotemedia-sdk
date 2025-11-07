@@ -1,0 +1,87 @@
+{
+  "tensor_sizes_mb": [
+    1,
+    10,
+    100,
+    500
+  ],
+  "results": [
+    {
+      "size_mb": 1,
+      "serialization": {
+        "avg_time_ms": 0.6033400015439838,
+        "min_time_ms": 0.5740000051446259,
+        "max_time_ms": 0.6436000112444162,
+        "throughput_gbps": 1.6185939892944559,
+        "size_mb": 1.0
+      },
+      "shared_memory": {
+        "avg_time_ms": 0.5194400029722601,
+        "min_time_ms": 0.4191999905742705,
+        "max_time_ms": 0.813600025139749,
+        "throughput_gbps": 1.880029444039857,
+        "size_mb": 1.0
+      },
+      "speedup": 1.1615200948938162,
+      "overhead_reduction_pct": 13.905923419136556
+    },
+    {
+      "size_mb": 10,
+      "serialization": {
+        "avg_time_ms": 5.662600003415719,
+        "min_time_ms": 4.275799990864471,
+        "max_time_ms": 6.852299993624911,
+        "throughput_gbps": 1.7245832292779482,
+        "size_mb": 10.0
+      },
+      "shared_memory": {
+        "avg_time_ms": 5.142180004622787,
+        "min_time_ms": 4.834100021980703,
+        "max_time_ms": 5.468799994559959,
+        "throughput_gbps": 1.899121577078353,
+        "size_mb": 10.0
+      },
+      "speedup": 1.1012061029223164,
+      "overhead_reduction_pct": 9.190477845495188
+    },
+    {
+      "size_mb": 100,
+      "serialization": {
+        "avg_time_ms": 64.88243999192491,
+        "min_time_ms": 53.64689999260008,
+        "max_time_ms": 73.61829999717884,
+        "throughput_gbps": 1.5051260404533802,
+        "size_mb": 100.0
+      },
+      "shared_memory": {
+        "avg_time_ms": 52.93948000180535,
+        "min_time_ms": 50.065499992342666,
+        "max_time_ms": 56.1022000038065,
+        "throughput_gbps": 1.8446771671476507,
+        "size_mb": 100.0
+      },
+      "speedup": 1.2255964733637785,
+      "overhead_reduction_pct": 18.40707592317112
+    },
+    {
+      "size_mb": 500,
+      "serialization": {
+        "avg_time_ms": 332.78918000287376,
+        "min_time_ms": 236.65880001499318,
+        "max_time_ms": 392.0862000086345,
+        "throughput_gbps": 1.4672389588981933,
+        "size_mb": 500.0
+      },
+      "shared_memory": {
+        "avg_time_ms": 283.855800004676,
+        "min_time_ms": 260.6654000119306,
+        "max_time_ms": 305.53599999984726,
+        "throughput_gbps": 1.7201735881104296,
+        "size_mb": 500.0
+      },
+      "speedup": 1.1723881632765358,
+      "overhead_reduction_pct": 14.704017720099921
+    }
+  ],
+  "timestamp": 1762542381.326266
+}

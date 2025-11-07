@@ -1,0 +1,27 @@
+{
+  "model_id": "openai/whisper-tiny.en",
+  "device": "cpu",
+  "num_instances": 3,
+  "baseline": {
+    "name": "without_registry",
+    "memory_mb": 48.76171875,
+    "load_time_s": 3.1777760982513428,
+    "cache_hit_rate": 0.0,
+    "cache_avg_time_ms": 1079.2628526687622
+  },
+  "optimized": {
+    "name": "with_registry",
+    "memory_mb": 11.46484375,
+    "load_time_s": 0.9457728862762451,
+    "cache_hit_rate": 0.6666666666666666,
+    "cache_avg_time_ms": 0.0
+  },
+  "comparison": {
+    "memory_saved_mb": 37.296875,
+    "memory_saved_pct": 76.48802371224865,
+    "time_saved_s": 2.2320032119750977,
+    "time_saved_pct": 70.2379004361987,
+    "cache_time_ms": 0.0
+  },
+  "timestamp": 1762542956.178102
+}

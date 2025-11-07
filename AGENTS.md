@@ -1,3 +1,4 @@
+Do not add Emojis to the application. If printing to the terminal, use an ascii equivalent.
 <!-- OPENSPEC:START -->
 # OpenSpec Instructions
 
