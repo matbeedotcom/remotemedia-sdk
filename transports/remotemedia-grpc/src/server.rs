@@ -53,6 +53,11 @@ impl GrpcServer {
     pub fn auth_config(&self) -> &AuthConfig {
         &self.config.auth
     }
+    
+    /// Get pipeline runner for creating model workers
+    pub fn runner(&self) -> Arc<PipelineRunner> {
+        Arc::clone(&self.runner)
+    }
 
     /// Build and run the server
     pub async fn serve(self) -> Result<(), Box<dyn std::error::Error>> {
