@@ -22,11 +22,14 @@
 //! - Bounded buffer to prevent memory bloat
 //! - Backpressure via STREAM_ERROR_BUFFER_OVERFLOW
 
-use remotemedia_runtime_core::audio::AudioBuffer as RuntimeAudioBuffer;
-use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::executor::Executor;
-use remotemedia_runtime_core::manifest::Manifest;
-use remotemedia_runtime_core::nodes::{StreamingNode, python_streaming::PythonStreamingNode, StreamingNodeRegistry, streaming_registry::create_default_streaming_registry};
+use remotemedia_runtime_core::{
+    audio::AudioBuffer as RuntimeAudioBuffer,
+    data::RuntimeData,
+    executor::Executor,
+    manifest::Manifest,
+    nodes::{StreamingNode, python_streaming::PythonStreamingNode, StreamingNodeRegistry, streaming_registry::create_default_streaming_registry},
+    transport::PipelineRunner,
+};
 use crate::generated::{
     AudioChunk, AudioBuffer as ProtoAudioBuffer, ChunkResult, ErrorResponse, ErrorType, ExecutionMetrics, StreamClosed,
     StreamControl, StreamInit, StreamMetrics, StreamReady, StreamRequest, StreamResponse,
@@ -73,14 +76,21 @@ pub struct StreamingServiceImpl {
     /// Active streaming sessions (keyed by session_id)
     sessions: Arc<RwLock<HashMap<String, Arc<Mutex<StreamSession>>>>>,
 
-    /// Service configuration
-    config: ServiceConfig,
+    /// Authentication configuration
+    auth_config: crate::auth::AuthConfig,
 
-    /// Global executor (shared across sessions)
-    executor: Arc<Executor>,
+    /// Resource limits
+    limits: crate::limits::ResourceLimits,
 
     /// Prometheus metrics
     metrics: Arc<ServiceMetrics>,
+
+    /// Pipeline runner (encapsulates executor and registries)
+    runner: Arc<PipelineRunner>,
+
+    /// Global executor (still needed for SessionRouter compatibility)
+    /// TODO: Remove once SessionRouter is integrated into PipelineRunner
+    executor: Arc<Executor>,
 
     /// Streaming node registry
     streaming_registry: Arc<StreamingNodeRegistry>,
@@ -88,16 +98,19 @@ pub struct StreamingServiceImpl {
     /// Global node cache (shared across all sessions)
     /// Key: "{node_type}:{json_params_hash}", Value: cached node with timestamp
     global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>>,
-
-    /// Multiprocess executor for Python nodes
-    #[cfg(feature = "multiprocess")]
-    multiprocess_executor: Option<Arc<crate::python::multiprocess::MultiprocessExecutor>>,
 }
 
 impl StreamingServiceImpl {
     /// Create new streaming service instance
-    pub fn new(config: ServiceConfig, executor: Arc<Executor>, metrics: Arc<ServiceMetrics>) -> Self {
+    pub fn new(
+        auth_config: crate::auth::AuthConfig,
+        limits: crate::limits::ResourceLimits,
+        metrics: Arc<ServiceMetrics>,
+        runner: Arc<PipelineRunner>,
+    ) -> Self {
         // Create default streaming node registry
+        // TODO: Get this from PipelineRunner once streaming is fully integrated
+        let executor = Arc::new(Executor::new());
         let streaming_registry = Arc::new(create_default_streaming_registry());
 
         let global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>> = Arc::new(RwLock::new(HashMap::new()));
@@ -134,25 +147,19 @@ impl StreamingServiceImpl {
 
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
-            config,
+            auth_config,
+            limits,
             executor,
             metrics,
+            runner,
             streaming_registry,
             global_node_cache,
-            #[cfg(feature = "multiprocess")]
-            multiprocess_executor: None,
         }
     }
 
     /// Get number of active sessions
     pub async fn active_session_count(&self) -> usize {
         self.sessions.read().await.len()
-    }
-
-    /// Set multiprocess executor for Python nodes
-    #[cfg(feature = "multiprocess")]
-    pub fn set_multiprocess_executor(&mut self, executor: Arc<crate::python::multiprocess::MultiprocessExecutor>) {
-        self.multiprocess_executor = Some(executor);
     }
 }
 

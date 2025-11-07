@@ -3,8 +3,8 @@ members = [
     "runtime",
     "runtime-core",  # Phase 2: Core abstractions
     "transports/remotemedia-grpc",  # Phase 4: gRPC transport
-    # "transports/remotemedia-ffi",   # To be created in Phase 5
-    # "transports/remotemedia-webrtc", # To be created in Phase 7
+    "transports/remotemedia-ffi",   # Phase 5: Python FFI transport
+    "transports/remotemedia-webrtc", # Phase 7: WebRTC transport (placeholder)
 ]
 exclude = [
     "examples/*",  # Examples are independent projects demonstrating usage

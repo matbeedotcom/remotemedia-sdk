@@ -263,6 +263,64 @@ pub fn init() -> Result<()> {
     Ok(())
 }
 
+// ============================================================================
+// Backward Compatibility Re-exports (v0.3 → v0.4 Migration)
+// ============================================================================
+//
+// These re-exports allow existing code to gradually migrate from the old
+// monolithic structure to the new decoupled architecture.
+//
+// Example migration path:
+// ```rust
+// // Old (v0.3.x):
+// use remotemedia_runtime::grpc_service::GrpcServer;
+// use remotemedia_runtime::executor::Executor;
+//
+// // Transitional (v0.4.x with compat):
+// use remotemedia_runtime_core::executor::Executor;  // Still works
+// // BUT GrpcServer now in: use remotemedia_grpc::GrpcServer;
+//
+// // New (v0.4.x+):
+// use remotemedia_runtime_core::transport::PipelineRunner;
+// use remotemedia_grpc::GrpcServer;
+// ```
+//
+// These re-exports will be marked deprecated in v0.5 and removed in v1.0.
+
+/// Backward compatibility: Core execution types remain in runtime-core
+///
+/// **Migration Note**: Continue using from `remotemedia_runtime_core::executor`
+pub mod executor_compat {
+    pub use crate::executor::*;
+}
+
+/// Backward compatibility: Data types remain in runtime-core
+///
+/// **Migration Note**: Continue using from `remotemedia_runtime_core::data`
+pub mod data_compat {
+    pub use crate::data::*;
+}
+
+/// Backward compatibility: Manifest types remain in runtime-core
+///
+/// **Migration Note**: Continue using from `remotemedia_runtime_core::manifest`
+pub mod manifest_compat {
+    pub use crate::manifest::*;
+}
+
+/// Backward compatibility: Node types remain in runtime-core
+///
+/// **Migration Note**: Continue using from `remotemedia_runtime_core::nodes`
+pub mod nodes_compat {
+    pub use crate::nodes::*;
+}
+
+// NOTE: gRPC-specific types (GrpcServer, StreamingServiceImpl, ExecutionServiceImpl)
+// have been moved to the `remotemedia-grpc` crate and are NOT re-exported here.
+// Users must update imports:
+//   OLD: use remotemedia_runtime::grpc_service::GrpcServer;
+//   NEW: use remotemedia_grpc::GrpcServer;
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -4551,13 +4551,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
+name = "remotemedia-ffi"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "futures",
+ "numpy",
+ "pyo3",
+ "pyo3-async-runtimes",
+ "remotemedia-runtime-core",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "remotemedia-grpc"
 version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "ctrlc",
  "futures",
  "hyper 1.7.0",
+ "num_cpus",
  "prometheus",
  "prost",
  "prost-build",
@@ -4576,6 +4598,7 @@ dependencies = [
  "tower 0.4.13",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

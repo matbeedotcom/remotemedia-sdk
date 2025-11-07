@@ -1,0 +1,38 @@
+[package]
+name = "remotemedia-webrtc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "WebRTC transport for RemoteMedia pipelines (placeholder for future implementation)"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "remotemedia_webrtc"
+crate-type = ["rlib"]
+
+[dependencies]
+# Core runtime (NO transport dependencies)
+remotemedia-runtime-core = { path = "../../runtime-core" }
+
+# WebRTC dependencies (to be added when implemented)
+# webrtc = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+futures = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async trait support
+async-trait = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }

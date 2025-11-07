@@ -73,6 +73,11 @@ pub use adapters::{
     data_buffer_to_transport_data,
 };
 
+// Re-export main server types for convenience
+pub use server::GrpcServer;
+pub use execution::ExecutionServiceImpl;
+pub use streaming::StreamingServiceImpl;
+
 /// Error type for gRPC service operations
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
