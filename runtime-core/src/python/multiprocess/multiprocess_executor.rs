@@ -149,7 +149,7 @@ fn default_channel_capacity() -> usize {
 }
 
 fn default_init_timeout() -> u64 {
-    30
+    300  // 5 minutes for model loading (e.g., Kokoro TTS)
 }
 
 fn default_python_executable() -> std::path::PathBuf {
@@ -165,7 +165,7 @@ impl Default for MultiprocessConfig {
         Self {
             max_processes_per_session: Some(10),
             channel_capacity: 100,
-            init_timeout_secs: 30,
+            init_timeout_secs: 300,  // 5 minutes for model loading
             python_executable: std::path::PathBuf::from("python"),
             enable_backpressure: true,
         }
@@ -450,14 +450,26 @@ impl MultiprocessExecutor {
         );
 
         loop {
+            tracing::debug!("[Multiprocess] Waiting for response from IPC thread for node '{}'", ctx.node_id);
+
             match resp_rx.recv().await {
                 Some(IpcResponse::OutputData(ipc_output)) => {
+                    tracing::debug!(
+                        "[Multiprocess] Received OutputData from node '{}': type={:?}, {} bytes",
+                        ctx.node_id,
+                        ipc_output.data_type,
+                        ipc_output.payload.len()
+                    );
+
                     let output_data = Self::from_ipc_runtime_data(ipc_output)?;
+
+                    tracing::debug!("[Multiprocess] Converted to RuntimeData, invoking callback for node '{}'", ctx.node_id);
 
                     // Forward all outputs - the callback decides when to stop
                     match callback(output_data) {
                         Ok(_) => {
                             output_count += 1;
+                            tracing::debug!("[Multiprocess] Callback succeeded for node '{}', total outputs: {}", ctx.node_id, output_count);
                         }
                         Err(e) => {
                             // Callback returned error - stop collecting
@@ -472,10 +484,12 @@ impl MultiprocessExecutor {
                     }
                 }
                 Some(IpcResponse::SendComplete) => {
+                    tracing::debug!("[Multiprocess] Received SendComplete from node '{}', continuing to poll for outputs", ctx.node_id);
                     // Acknowledgment - ignore and continue polling for outputs
                     continue;
                 }
                 Some(IpcResponse::Error(e)) => {
+                    tracing::error!("[Multiprocess] IPC error from node '{}': {}", ctx.node_id, e);
                     return Err(Error::Execution(format!("IPC error: {}", e)));
                 }
                 None => {
@@ -1528,12 +1542,12 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
             // Wait for Python to signal it's ready via iceoryx2 control channel
             // Python creates its input subscriber BEFORE sending READY, so when we receive
             // READY signal, Python is fully prepared to receive data
-            // Timeout after 10 seconds to avoid hanging forever
+            // Wait for READY signal with configured timeout (allows time for heavy model loading)
             let ready = self
                 .wait_for_ready_signal_ipc(
                     &session_id,
                     &ctx.node_id,
-                    std::time::Duration::from_secs(10),
+                    std::time::Duration::from_secs(self.config.init_timeout_secs),
                 )
                 .await?;
             if !ready {

@@ -179,39 +179,54 @@ impl AsyncStreamingNode for PythonStreamingNode {
         // Ensure the Python node is initialized
         self.ensure_initialized().await?;
 
-        // Get the executor
-        let mut executor_guard = self.executor.lock().await;
-        let executor = executor_guard
-            .as_mut()
-            .ok_or_else(|| Error::Execution("Python node not initialized".to_string()))?;
-
-        // Use MultiprocessExecutor with IPC streaming
-        let mp_executor = executor
-            .as_any_mut()
-            .downcast_mut::<crate::python::multiprocess::MultiprocessExecutor>()
-            .ok_or_else(|| {
-                Error::Execution("Failed to downcast to MultiprocessExecutor".to_string())
-            })?;
-
         tracing::info!(
-            "Using MultiprocessExecutor with IPC streaming for node {}",
-            self.node_id
+            "PythonStreamingNode::process_streaming called for node {} session {:?}",
+            self.node_id, session_id
         );
 
         // Get session_id (from parameter or from node)
-        let session_id_str = session_id
-            .as_ref()
-            .or(self.session_id.as_ref())
-            .ok_or_else(|| {
-                Error::Execution("No session_id available for multiprocess node".to_string())
-            })?;
+        let session_id_opt = session_id.or_else(|| self.session_id.clone());
+        tracing::info!("Node {}: resolved session_id to {:?}", self.node_id, session_id_opt);
 
-        // Just send the data - a background task is continuously draining outputs
-        mp_executor
-            .send_data_to_node(&self.node_id, session_id_str, data)
-            .await?;
+        // CRITICAL: MultiprocessExecutor methods don't need &mut self anymore (as of the multiprocess redesign)
+        // They use Arc/RwLock internally, so we can safely get a shared reference and release the lock
+        // This allows concurrent requests to be processed in parallel
+        let executor = {
+            let mut executor_guard = self.executor.lock().await;
+            let executor = executor_guard
+                .as_mut()
+                .ok_or_else(|| Error::Execution("Python node not initialized".to_string()))?;
 
-        // Return immediately - the background draining task will forward outputs
-        Ok(0)
+            // Downcast to MultiprocessExecutor
+            let mp_executor = executor
+                .as_any_mut()
+                .downcast_mut::<crate::python::multiprocess::MultiprocessExecutor>()
+                .ok_or_else(|| {
+                    Error::Execution("Failed to downcast to MultiprocessExecutor".to_string())
+                })?;
+
+            // Clone the Arc to get a shared reference we can use outside the lock
+            // SAFETY: MultiprocessExecutor's process_runtime_data_streaming only needs &self
+            // because all mutable state is behind Arc<RwLock<...>>
+            mp_executor as *const crate::python::multiprocess::MultiprocessExecutor
+        };
+
+        // Release the lock here before calling process_runtime_data_streaming
+        // This allows other requests to proceed concurrently
+
+        // Use process_runtime_data_streaming which waits for outputs and invokes callback
+        tracing::info!("Node {}: calling mp_executor.process_runtime_data_streaming", self.node_id);
+        let result = unsafe {
+            // SAFETY: The executor pointer is valid for the lifetime of self because:
+            // 1. PythonStreamingNode owns the Box<dyn PythonExecutor> in self.executor
+            // 2. The MultiprocessExecutor will not be dropped while self exists
+            // 3. process_runtime_data_streaming only needs &self (all state is Arc/RwLock)
+            (*executor)
+                .process_runtime_data_streaming(data, session_id_opt, callback)
+                .await
+        };
+
+        tracing::info!("Node {}: process_runtime_data_streaming returned {:?}", self.node_id, result.as_ref().map(|_| "Ok").unwrap_or("Err"));
+        result
     }
 }

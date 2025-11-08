@@ -31,10 +31,17 @@ impl Default for AudioEncoderConfig {
 
 /// Audio encoder (Opus)
 pub struct AudioEncoder {
-    config: AudioEncoderConfig,
-    #[cfg(feature = "codecs")]
+    pub(crate) config: AudioEncoderConfig,
+    #[cfg(feature = "opus-codec")]
     encoder: opus::Encoder,
 }
+
+// SAFETY: Opus encoder is actually thread-safe despite raw pointers in FFI.
+// Each encoder instance is independent and mutations are protected by RwLock in AudioTrack.
+#[cfg(feature = "opus-codec")]
+unsafe impl Send for AudioEncoder {}
+#[cfg(feature = "opus-codec")]
+unsafe impl Sync for AudioEncoder {}
 
 impl AudioEncoder {
     /// Create a new audio encoder
@@ -58,7 +65,7 @@ impl AudioEncoder {
             ));
         }
 
-        #[cfg(feature = "codecs")]
+        #[cfg(feature = "opus-codec")]
         {
             // Create Opus encoder
             let channels = match config.channels {
@@ -77,14 +84,13 @@ impl AudioEncoder {
             encoder.set_bitrate(opus::Bitrate::Bits(config.bitrate as i32))
                 .map_err(|e| Error::EncodingError(format!("Failed to set bitrate: {:?}", e)))?;
 
-            encoder.set_complexity(config.complexity as i32)
-                .map_err(|e| Error::EncodingError(format!("Failed to set complexity: {:?}", e)))?;
-
-            Ok(Self { config, encoder })
+            return Ok(Self { config, encoder });
         }
 
-        #[cfg(not(feature = "codecs"))]
-        Ok(Self { config })
+        #[cfg(not(feature = "opus-codec"))]
+        {
+            Ok(Self { config })
+        }
     }
 
     /// Encode audio samples to Opus format
@@ -96,45 +102,46 @@ impl AudioEncoder {
     /// # Returns
     ///
     /// Encoded Opus packet as bytes (RTP payload)
-    #[cfg(not(feature = "codecs"))]
-    pub fn encode(&mut self, _samples: &[f32]) -> Result<Vec<u8>> {
-        Err(Error::EncodingError(
-            "Opus encoding requires the 'codecs' feature flag".to_string(),
-        ))
-    }
-
-    /// Encode audio samples to Opus format
-    ///
-    /// # Arguments
-    ///
-    /// * `samples` - Input audio samples as f32 (range -1.0 to 1.0)
-    ///
-    /// # Returns
-    ///
-    /// Encoded Opus packet as bytes (RTP payload)
-    #[cfg(feature = "codecs")]
     pub fn encode(&mut self, samples: &[f32]) -> Result<Vec<u8>> {
+        #[cfg(not(feature = "opus-codec"))]
+        {
+            let _ = samples;
+            return Err(Error::EncodingError(
+                "Opus encoding requires the 'opus-codec' feature flag".to_string(),
+            ));
+        }
+
+        #[cfg(feature = "opus-codec")]
+        {
         // Opus expects samples in range -1.0 to 1.0
         // Allocate buffer for encoded output (max Opus packet size)
         const MAX_PACKET_SIZE: usize = 4000;
         let mut output = vec![0u8; MAX_PACKET_SIZE];
 
-        // Encode the samples
-        let len = self.encoder.encode_float(samples, &mut output)
-            .map_err(|e| Error::EncodingError(format!("Opus encoding failed: {:?}", e)))?;
+            // Encode the samples
+            let len = self.encoder.encode_float(samples, &mut output)
+                .map_err(|e| Error::EncodingError(format!("Opus encoding failed: {}", e)))?;
 
-        // Truncate to actual encoded size
-        output.truncate(len);
-        Ok(output)
+            // Truncate to actual encoded size
+            output.truncate(len);
+            Ok(output)
+        }
     }
 }
 
 /// Audio decoder (Opus)
 pub struct AudioDecoder {
     config: AudioEncoderConfig,
-    #[cfg(feature = "codecs")]
+    #[cfg(feature = "opus-codec")]
     decoder: opus::Decoder,
 }
+
+// SAFETY: Opus decoder is actually thread-safe despite raw pointers in FFI.
+// Each decoder instance is independent and mutations are protected by RwLock in AudioTrack.
+#[cfg(feature = "opus-codec")]
+unsafe impl Send for AudioDecoder {}
+#[cfg(feature = "opus-codec")]
+unsafe impl Sync for AudioDecoder {}
 
 impl AudioDecoder {
     /// Create a new audio decoder
@@ -152,7 +159,7 @@ impl AudioDecoder {
             ));
         }
 
-        #[cfg(feature = "codecs")]
+        #[cfg(feature = "opus-codec")]
         {
             // Create Opus decoder
             let channels = match config.channels {
@@ -164,11 +171,13 @@ impl AudioDecoder {
             let decoder = opus::Decoder::new(config.sample_rate, channels)
                 .map_err(|e| Error::EncodingError(format!("Failed to create Opus decoder: {:?}", e)))?;
 
-            Ok(Self { config, decoder })
+            return Ok(Self { config, decoder });
         }
 
-        #[cfg(not(feature = "codecs"))]
-        Ok(Self { config })
+        #[cfg(not(feature = "opus-codec"))]
+        {
+            Ok(Self { config })
+        }
     }
 
     /// Decode Opus packet to audio samples
@@ -180,37 +189,31 @@ impl AudioDecoder {
     /// # Returns
     ///
     /// Decoded audio samples as f32 (range -1.0 to 1.0) at 48kHz
-    #[cfg(not(feature = "codecs"))]
-    pub fn decode(&mut self, _payload: &[u8]) -> Result<Vec<f32>> {
-        Err(Error::EncodingError(
-            "Opus decoding requires the 'codecs' feature flag".to_string(),
-        ))
-    }
-
-    /// Decode Opus packet to audio samples
-    ///
-    /// # Arguments
-    ///
-    /// * `payload` - Encoded Opus packet (RTP payload)
-    ///
-    /// # Returns
-    ///
-    /// Decoded audio samples as f32 (range -1.0 to 1.0) at 48kHz
-    #[cfg(feature = "codecs")]
     pub fn decode(&mut self, payload: &[u8]) -> Result<Vec<f32>> {
+        #[cfg(not(feature = "opus-codec"))]
+        {
+            let _ = payload;
+            return Err(Error::EncodingError(
+                "Opus decoding requires the 'opus-codec' feature flag".to_string(),
+            ));
+        }
+
+        #[cfg(feature = "opus-codec")]
+        {
         // Opus frame size: typically 2.5, 5, 10, 20, 40, or 60 ms
         // At 48kHz, 20ms = 960 samples per channel
         // Max frame size for Opus is 120ms @ 48kHz = 5760 samples per channel
         const MAX_FRAME_SIZE: usize = 5760;
         let mut output = vec![0f32; MAX_FRAME_SIZE * self.config.channels as usize];
 
-        // Decode the packet
-        let len = self.decoder.decode_float(payload, &mut output, false)
-            .map_err(|e| Error::EncodingError(format!("Opus decoding failed: {:?}", e)))?;
+            // Decode the packet
+            let len = self.decoder.decode_float(payload, &mut output, false)
+                .map_err(|e| Error::EncodingError(format!("Opus decoding failed: {:?}", e)))?;
 
-        // Truncate to actual decoded size
-        output.truncate(len * self.config.channels as usize);
-        Ok(output)
+            // Truncate to actual decoded size
+            output.truncate(len * self.config.channels as usize);
+            Ok(output)
+        }
     }
 }
 

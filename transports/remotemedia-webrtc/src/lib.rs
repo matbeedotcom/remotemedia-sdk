@@ -62,13 +62,25 @@ pub mod config;
 pub mod error;
 
 // Internal modules
+#[cfg(not(feature = "grpc-signaling"))]
 mod signaling;
+#[cfg(feature = "grpc-signaling")]
+pub mod signaling;
+
 mod peer;
 mod sync;
 mod media;
 mod channels;
 mod session;
 mod transport;
+
+// Generated protobuf code (gRPC signaling)
+#[cfg(feature = "grpc-signaling")]
+pub mod generated {
+    pub mod webrtc {
+        include!("generated/remotemedia.v1.webrtc.rs");
+    }
+}
 
 // Re-exports for public API
 pub use config::{

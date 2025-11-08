@@ -89,6 +89,104 @@ async fn async_main(shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::e
         "RemoteMedia WebRTC Server starting"
     );
 
+    // Check if gRPC signaling is enabled
+    #[cfg(feature = "grpc-signaling")]
+    let enable_grpc = std::env::var("WEBRTC_ENABLE_GRPC_SIGNALING")
+        .map(|v| v.to_lowercase() == "true")
+        .unwrap_or(false);
+
+    #[cfg(not(feature = "grpc-signaling"))]
+    let enable_grpc = false;
+
+    if enable_grpc {
+        #[cfg(feature = "grpc-signaling")]
+        {
+            info!("Starting in gRPC signaling server mode");
+            run_grpc_signaling_server(shutdown_flag).await?;
+        }
+        #[cfg(not(feature = "grpc-signaling"))]
+        {
+            return Err("gRPC signaling requested but feature not enabled. Build with --features grpc-signaling".into());
+        }
+    } else {
+        info!("Starting in WebSocket signaling client mode");
+        run_websocket_client_mode(shutdown_flag).await?;
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "grpc-signaling")]
+async fn run_grpc_signaling_server(shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
+    use remotemedia_webrtc::signaling::grpc::WebRtcSignalingService;
+    use remotemedia_runtime_core::transport::PipelineRunner;
+    use remotemedia_runtime_core::manifest::Manifest;
+    use tonic::transport::Server;
+    use std::sync::Arc;
+
+    // Load gRPC signaling configuration
+    let grpc_address = std::env::var("GRPC_SIGNALING_ADDRESS")
+        .unwrap_or_else(|_| "0.0.0.0:50051".to_string());
+
+    let manifest_path = std::env::var("WEBRTC_PIPELINE_MANIFEST")
+        .unwrap_or_else(|_| "./examples/loopback.yaml".to_string());
+
+    info!(
+        grpc_address = %grpc_address,
+        manifest_path = %manifest_path,
+        "gRPC signaling server configuration"
+    );
+
+    // Load pipeline manifest from file
+    let manifest_json = std::fs::read_to_string(&manifest_path)?;
+    let manifest: Manifest = serde_json::from_str(&manifest_json)?;
+    let manifest = Arc::new(manifest);
+    info!("Loaded pipeline manifest: {}", manifest_path);
+
+    // Create PipelineRunner
+    let runner = Arc::new(PipelineRunner::new()?);
+    info!("PipelineRunner initialized");
+
+    // Load WebRTC transport configuration from environment
+    let config = Arc::new(load_config_from_env()?);
+    info!("WebRTC transport configuration loaded");
+
+    // Create gRPC signaling service with config, runner, and manifest
+    let signaling_service = WebRtcSignalingService::new(
+        Arc::clone(&config),
+        Arc::clone(&runner),
+        Arc::clone(&manifest),
+    );
+
+    // Register virtual server peer
+    let (server_tx, mut _server_rx) = tokio::sync::mpsc::channel(128);
+    signaling_service.register_server_peer(server_tx).await;
+
+    let signaling_server = signaling_service.into_server();
+
+    info!("gRPC signaling server listening on {}", grpc_address);
+
+    // Parse address
+    let addr: std::net::SocketAddr = grpc_address.parse()?;
+
+    // Start gRPC server with shutdown
+    let shutdown_future = async move {
+        while !shutdown_flag.load(Ordering::SeqCst) {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+        info!("Shutdown signal received, stopping gRPC server...");
+    };
+
+    Server::builder()
+        .add_service(signaling_server)
+        .serve_with_shutdown(addr, shutdown_future)
+        .await?;
+
+    info!("gRPC signaling server shut down gracefully");
+    Ok(())
+}
+
+async fn run_websocket_client_mode(shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
     // Load configuration from environment
     let config = load_config_from_env()?;
 

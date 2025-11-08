@@ -517,9 +517,152 @@ loop {
 - [ ] WebRTC stats API integration
 - [ ] Browser SDK (WASM)
 
+## gRPC Signaling Integration (2025-01)
+
+### Overview
+
+In addition to WebSocket-based JSON-RPC 2.0 signaling, the WebRTC transport now supports **gRPC bidirectional streaming** for signaling. This provides type-safe, efficient signaling with automatic code generation via Protocol Buffers.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Next.js Client (or other gRPC-enabled client)              │
+│  ↓ (gRPC bidirectional stream over HTTP/2)                  │
+│  WebRtcSignalingService (in remotemedia-webrtc)             │
+│    │                                                          │
+│    ├─ Peer announces (client_id, capabilities)              │
+│    ├─ Server auto-spawns ServerPeer                         │
+│    │   └─ PeerConnection + PipelineRunner + StreamSession   │
+│    │                                                          │
+│    ├─ Client sends SDP offer                                 │
+│    ├─ ServerPeer generates real SDP answer                   │
+│    ├─ ICE candidate exchange                                 │
+│    └─ Media flows: Client ↔ WebRTC ↔ Pipeline ↔ WebRTC ↔ Client │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Key Differences: gRPC vs WebSocket Signaling
+
+| Feature | WebSocket (JSON-RPC 2.0) | gRPC (Protocol Buffers) |
+|---------|--------------------------|-------------------------|
+| **Protocol** | WebSocket over TCP | HTTP/2 with multiplexing |
+| **Encoding** | JSON (text) | Protobuf (binary) |
+| **Type Safety** | Runtime validation | Compile-time types |
+| **Code Generation** | Manual types | Automatic via tonic-build |
+| **Performance** | Good | Better (binary encoding) |
+| **Browser Support** | Native | Via grpc-web |
+| **Use Case** | Browser-native clients | Server-to-server, typed clients |
+
+### ServerPeer Concept
+
+When a client announces via gRPC signaling, the server automatically creates a **ServerPeer** that:
+
+1. **Creates WebRTC PeerConnection** with ICE servers configured
+2. **Creates Pipeline Session** via `PipelineRunner::create_stream_session(manifest)`
+3. **Bidirectional Media Routing**:
+   - **Incoming**: RTP packets from client → RuntimeData → `session.send_input()`
+   - **Outgoing**: `session.receive_output()` → RuntimeData → RTP packets to client
+4. **Generates Real SDP Answer** (not dummy responses)
+5. **Cleans up** when client disconnects
+
+### Implementation Status
+
+**Completed:**
+- ✅ Moved gRPC signaling service from remotemedia-grpc to remotemedia-webrtc
+- ✅ Added `grpc-signaling` feature flag
+- ✅ Proto file and service implementation
+- ✅ Build system (tonic-prost-build)
+
+**In Progress:**
+- 🚧 ServerPeer implementation (`src/peer/server_peer.rs`)
+- 🚧 PipelineRunner integration
+- 🚧 Signaling service callbacks for peer lifecycle
+
+**Pending:**
+- ⏳ webrtc_server binary with gRPC signaling
+- ⏳ Real SDP answer generation
+- ⏳ Bidirectional media routing
+- ⏳ Testing with Next.js client
+
+### Configuration
+
+```bash
+# Enable gRPC signaling
+cargo build --bin webrtc_server --features grpc-signaling
+
+# Environment variables
+GRPC_SIGNALING_PORT=50051
+GRPC_SIGNALING_ADDRESS="0.0.0.0:50051"
+WEBRTC_PIPELINE_MANIFEST="./examples/loopback.yaml"
+WEBRTC_STUN_SERVERS="stun:stun.l.google.com:19302"
+```
+
+### Proto Definition
+
+See [`protos/webrtc_signaling.proto`](protos/webrtc_signaling.proto) for full protocol definition.
+
+**Key Messages:**
+- `AnnounceRequest` - Client registers with peer_id and capabilities
+- `OfferRequest` - Client sends SDP offer
+- `AnswerNotification` - Server sends real SDP answer (via ServerPeer)
+- `IceCandidateRequest/Notification` - Bidirectional ICE exchange
+- `SignalingResponse` - Unified response/notification envelope
+
+### Client Example (TypeScript/Next.js)
+
+```typescript
+import { WebRtcSignalingClient } from '@grpc/grpc-js';
+
+// Connect to gRPC signaling
+const client = new WebRtcSignalingClient('http://localhost:50051');
+
+// Open bidirectional stream
+const stream = client.signal();
+
+// Announce peer
+stream.write({
+  requestId: '1',
+  announce: {
+    peerId: 'browser-client-123',
+    capabilities: { audio: true, video: true, data: false }
+  }
+});
+
+// Listen for peer joined notifications
+stream.on('data', (response) => {
+  if (response.notification?.peerJoined) {
+    console.log('Server peer ready:', response.notification.peerJoined.peerId);
+  }
+  if (response.notification?.answer) {
+    // Set remote description with real SDP answer
+    pc.setRemoteDescription({
+      type: 'answer',
+      sdp: response.notification.answer.sdp
+    });
+  }
+});
+
+// Create WebRTC offer
+const offer = await pc.createOffer();
+await pc.setLocalDescription(offer);
+
+// Send offer to server
+stream.write({
+  requestId: '2',
+  offer: {
+    toPeerId: 'remotemedia-server',
+    sdp: offer.sdp,
+    type: 'offer'
+  }
+});
+```
+
 ## References
 
 - [WebRTC Specification](https://w3c.github.io/webrtc-pc/)
 - [CUSTOM_TRANSPORT_GUIDE.md](../../../docs/CUSTOM_TRANSPORT_GUIDE.md)
 - [specs/003-transport-decoupling/](../../../specs/003-transport-decoupling/)
 - [rust-webrtc crate](https://github.com/webrtc-rs/webrtc)
+- [tonic gRPC framework](https://github.com/hyperium/tonic)
+- [gRPC-Web](https://github.com/grpc/grpc-web)
