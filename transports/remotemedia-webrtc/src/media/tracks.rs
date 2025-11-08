@@ -3,13 +3,15 @@
 //! Handles RTP track management, encoding, and decoding.
 
 use crate::{Error, Result};
-use super::audio::{AudioEncoder, AudioDecoder, AudioEncoderConfig};
+use super::audio::{AudioEncoder, AudioEncoderConfig};
 use super::video::{VideoEncoder, VideoDecoder, VideoEncoderConfig, VideoFrame, VideoFormat};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
-use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
+use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
+use webrtc::media::Sample;
 use remotemedia_runtime_core::data::RuntimeData;
 
 /// Audio track for WebRTC
@@ -17,18 +19,15 @@ use remotemedia_runtime_core::data::RuntimeData;
 /// Manages audio encoding/decoding and RTP transmission.
 pub struct AudioTrack {
     /// Underlying WebRTC track
-    track: Arc<TrackLocalStaticRTP>,
+    track: Arc<TrackLocalStaticSample>,
 
     /// Audio encoder
     encoder: Arc<RwLock<AudioEncoder>>,
 
-    /// Audio decoder
-    decoder: Arc<RwLock<AudioDecoder>>,
+    /// Audio decoder (for receiving audio from remote peer)
+    decoder: Arc<RwLock<super::audio::AudioDecoder>>,
 
-    /// RTP sequence number
-    sequence_number: Arc<RwLock<u16>>,
-
-    /// RTP timestamp
+    /// RTP timestamp (in sample units)
     timestamp: Arc<RwLock<u32>>,
 }
 
@@ -39,15 +38,14 @@ impl AudioTrack {
     ///
     /// * `track` - Underlying WebRTC track
     /// * `config` - Audio encoder configuration
-    pub fn new(track: Arc<TrackLocalStaticRTP>, config: AudioEncoderConfig) -> Result<Self> {
+    pub fn new(track: Arc<TrackLocalStaticSample>, config: AudioEncoderConfig) -> Result<Self> {
         let encoder = Arc::new(RwLock::new(AudioEncoder::new(config.clone())?));
-        let decoder = Arc::new(RwLock::new(AudioDecoder::new(config)?));
+        let decoder = Arc::new(RwLock::new(super::audio::AudioDecoder::new(config)?));
 
         Ok(Self {
             track,
             encoder,
             decoder,
-            sequence_number: Arc::new(RwLock::new(0)),
             timestamp: Arc::new(RwLock::new(0)),
         })
     }
@@ -60,32 +58,64 @@ impl AudioTrack {
     ///
     /// # Note
     ///
-    /// This method encodes the audio to Opus and sends it over RTP.
-    /// Requires the `codecs` feature flag for actual encoding.
+    /// This method encodes the audio to Opus and sends it via WebRTC samples.
+    /// Opus requires specific frame sizes (2.5, 5, 10, 20, 40, or 60ms).
+    /// We chunk the input into 20ms frames (480 samples @ 24kHz, 960 @ 48kHz).
     pub async fn send_audio(&self, samples: Arc<Vec<f32>>) -> Result<()> {
-        // Encode audio samples
-        let encoded = self.encoder.write().await.encode(&samples)?;
+        use tracing::debug;
 
-        // Update sequence number
-        let mut seq = self.sequence_number.write().await;
-        *seq = seq.wrapping_add(1);
+        // Determine frame size based on sample rate (20ms frame)
+        // 24kHz: 20ms = 480 samples
+        // 48kHz: 20ms = 960 samples
+        let encoder = self.encoder.read().await;
+        let sample_rate = encoder.config.sample_rate;
+        drop(encoder);
 
-        // Update timestamp (assuming 48kHz, 20ms frames = 960 samples)
-        let mut ts = self.timestamp.write().await;
-        *ts = ts.wrapping_add(960);
+        let frame_size = (sample_rate as usize * 20) / 1000; // 20ms frame
+        let frame_duration = Duration::from_millis(20);
 
-        // Send RTP packet (write raw encoded bytes)
-        self.track
-            .as_ref()
-            .write(&encoded)
-            .await
-            .map_err(|e| Error::MediaTrackError(format!("Failed to write RTP packet: {}", e)))?;
+        debug!("Chunking {} samples into {}sample frames @ {}Hz",
+               samples.len(), frame_size, sample_rate);
+
+        // Process audio in chunks
+        for chunk in samples.chunks(frame_size) {
+            // Opus requires exact frame sizes - pad last chunk if needed
+            let samples_to_encode: Vec<f32> = if chunk.len() < frame_size {
+                debug!("Padding last chunk from {} to {} samples", chunk.len(), frame_size);
+                let mut padded = chunk.to_vec();
+                padded.resize(frame_size, 0.0); // Pad with silence
+                padded
+            } else {
+                chunk.to_vec()
+            };
+
+            // Encode this chunk
+            let encoded = self.encoder.write().await.encode(&samples_to_encode)?;
+
+            // Update timestamp based on actual samples in this chunk (not padded size)
+            let mut ts = self.timestamp.write().await;
+            *ts = ts.wrapping_add(chunk.len() as u32);
+
+            // Create WebRTC sample with encoded Opus data
+            let sample = Sample {
+                data: encoded.into(),
+                duration: frame_duration,
+                timestamp: std::time::SystemTime::now(),
+                ..Default::default()
+            };
+
+            // Send sample (handles RTP packetization internally)
+            self.track
+                .write_sample(&sample)
+                .await
+                .map_err(|e| Error::MediaTrackError(format!("Failed to write sample: {}", e)))?;
+        }
 
         Ok(())
     }
 
     /// Get the underlying WebRTC track
-    pub fn track(&self) -> Arc<TrackLocalStaticRTP> {
+    pub fn track(&self) -> Arc<TrackLocalStaticSample> {
         Arc::clone(&self.track)
     }
 
@@ -97,19 +127,23 @@ impl AudioTrack {
     ///
     /// # Returns
     ///
-    /// Decoded audio samples as f32 (range -1.0 to 1.0)
+    /// Decoded audio samples as f32 (range -1.0 to 1.0) at 48kHz
     ///
     /// # Note
     ///
-    /// This method is called when an RTP audio packet is received.
-    /// Requires the `codecs` feature flag for actual decoding.
+    /// This method decodes incoming Opus RTP payloads from the remote peer.
+    /// Used for bidirectional audio (VAD, STT, etc.).
     pub async fn on_rtp_packet(&self, payload: &[u8]) -> Result<Vec<f32>> {
-        self.decoder.write().await.decode(payload)
-    }
+        use tracing::debug;
 
-    /// Get current RTP sequence number
-    pub async fn sequence_number(&self) -> u16 {
-        *self.sequence_number.read().await
+        debug!("Decoding RTP packet with {} bytes", payload.len());
+
+        // Decode the Opus payload
+        let samples = self.decoder.write().await.decode(payload)?;
+
+        debug!("Decoded {} samples from RTP packet", samples.len());
+
+        Ok(samples)
     }
 
     /// Get current RTP timestamp
@@ -123,7 +157,7 @@ impl AudioTrack {
 /// Manages video encoding/decoding and RTP transmission.
 pub struct VideoTrack {
     /// Underlying WebRTC track
-    track: Arc<TrackLocalStaticRTP>,
+    track: Arc<TrackLocalStaticSample>,
 
     /// Video encoder
     encoder: Arc<RwLock<VideoEncoder>>,
@@ -145,7 +179,7 @@ impl VideoTrack {
     ///
     /// * `track` - Underlying WebRTC track
     /// * `config` - Video encoder configuration
-    pub fn new(track: Arc<TrackLocalStaticRTP>, config: VideoEncoderConfig) -> Result<Self> {
+    pub fn new(track: Arc<TrackLocalStaticSample>, config: VideoEncoderConfig) -> Result<Self> {
         let encoder = Arc::new(RwLock::new(VideoEncoder::new(config.clone())?));
         let decoder = Arc::new(RwLock::new(VideoDecoder::new(config)?));
 
@@ -166,7 +200,7 @@ impl VideoTrack {
     ///
     /// # Note
     ///
-    /// This method encodes the video to VP9 and sends it over RTP.
+    /// This method encodes the video to VP9 and sends it via WebRTC samples.
     /// Requires the `codecs` feature flag for actual encoding.
     pub async fn send_video(&self, frame: &VideoFrame) -> Result<()> {
         // Encode video frame
@@ -181,18 +215,27 @@ impl VideoTrack {
         let timestamp_increment = 90000 / 30; // Assuming 30fps
         *ts = ts.wrapping_add(timestamp_increment);
 
-        // Send RTP packet (write raw encoded bytes)
+        // Create WebRTC sample with encoded VP9 data
+        // Video frames typically have variable duration based on framerate
+        let frame_duration = Duration::from_millis(33); // ~30fps
+        let sample = Sample {
+            data: encoded.into(),
+            duration: frame_duration,
+            timestamp: std::time::SystemTime::now(),
+            ..Default::default()
+        };
+
+        // Send sample (handles RTP packetization internally)
         self.track
-            .as_ref()
-            .write(&encoded)
+            .write_sample(&sample)
             .await
-            .map_err(|e| Error::MediaTrackError(format!("Failed to write RTP packet: {}", e)))?;
+            .map_err(|e| Error::MediaTrackError(format!("Failed to write sample: {}", e)))?;
 
         Ok(())
     }
 
     /// Get the underlying WebRTC track
-    pub fn track(&self) -> Arc<TrackLocalStaticRTP> {
+    pub fn track(&self) -> Arc<TrackLocalStaticSample> {
         Arc::clone(&self.track)
     }
 
@@ -237,7 +280,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_audio_track_creation() {
-        let track = Arc::new(TrackLocalStaticRTP::new(
+        let track = Arc::new(TrackLocalStaticSample::new(
             RTCRtpCodecCapability {
                 mime_type: "audio/opus".to_string(),
                 ..Default::default()
@@ -253,7 +296,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_video_track_creation() {
-        let track = Arc::new(TrackLocalStaticRTP::new(
+        let track = Arc::new(TrackLocalStaticSample::new(
             RTCRtpCodecCapability {
                 mime_type: "video/VP9".to_string(),
                 ..Default::default()

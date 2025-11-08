@@ -26,11 +26,11 @@ webrtc = "0.14.0"
 # WebSocket signaling client
 tokio-tungstenite = "0.21"
 
-# Audio codec (optional until Phase 3 - requires CMake)
-opus = { version = "0.3", optional = true }
+# Audio codec (optional - pure Rust implementation via unsafe-libopus)
+opus = { git = "https://github.com/DCNick3/opus-rs.git", branch = "unsafe-libopus", default-features = false, features = ["unsafe-libopus-backend"], optional = true }
 
 # Video codecs (optional until Phase 3 - requires native libs)
-vpx = { version = "0.1", optional = true }
+media-codec-vpx = { version = "0.5", optional = true }
 openh264 = { version = "0.5", optional = true }
 
 # UUID generation for session/peer IDs
@@ -55,6 +55,14 @@ tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 
+# gRPC signaling (optional)
+tonic = { workspace = true, optional = true }
+tonic-prost = { workspace = true, optional = true }
+prost = { workspace = true, optional = true }
+tokio-stream = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
+tower-http = { version = "0.6", features = ["cors"], optional = true }
+
 # Server utilities
 ctrlc = "3.4"
 num_cpus = "1.16"
@@ -63,8 +71,20 @@ num_cpus = "1.16"
 tokio-test = "0.4"
 criterion = "0.5"
 
+[build-dependencies]
+tonic-prost-build = { workspace = true }
+
 [features]
 default = []
-codecs = ["dep:opus", "dep:vpx"]
+opus-codec = ["dep:opus"]
+codecs = ["opus-codec", "dep:media-codec-vpx"]
 h264 = ["dep:openh264"]
-full = ["codecs", "h264"]
+grpc-signaling = [
+    "dep:tonic",
+    "dep:tonic-prost",
+    "dep:prost",
+    "dep:tokio-stream",
+    "dep:tower",
+    "dep:tower-http",
+]
+full = ["codecs", "h264", "grpc-signaling"]

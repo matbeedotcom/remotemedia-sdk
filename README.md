@@ -270,6 +270,20 @@ remotemedia-sdk/
 
 ## Building
 
+> **📖 Build Guide**: See [QUICK_BUILD_REFERENCE.md](QUICK_BUILD_REFERENCE.md) for fast build commands or [BUILD_CONFIGURATION.md](BUILD_CONFIGURATION.md) for comprehensive documentation.
+
+### Quick Start
+
+**gRPC Server (most common)**:
+```bash
+cargo run --bin grpc-server --release
+```
+
+**gRPC Server + WebRTC Signaling**:
+```bash
+cargo run --bin grpc-server --release --features webrtc-signaling
+```
+
 ### Native Runtime with Rust Acceleration
 
 ```bash
@@ -283,6 +297,26 @@ The compiled library will be automatically detected by the Python SDK. If not bu
 - Linux: `runtime/target/release/libremotemedia_runtime.so`
 - macOS: `runtime/target/release/libremotemedia_runtime.dylib`
 - Windows: `runtime/target/release/remotemedia_runtime.dll`
+
+### Modular Transports
+
+RemoteMedia SDK uses a **modular transport architecture** where each transport is optional:
+
+```bash
+# Core library only (no transports)
+cargo build -p remotemedia-runtime-core --no-default-features
+
+# gRPC transport only
+cargo build -p remotemedia-grpc
+
+# Python FFI transport only
+cargo build -p remotemedia-ffi --features extension-module
+
+# WebRTC transport only (when available)
+cargo build -p remotemedia-webrtc --features full
+```
+
+See [BUILD_CONFIGURATION.md](BUILD_CONFIGURATION.md) for all build options.
 
 ### WASM Runtime
 

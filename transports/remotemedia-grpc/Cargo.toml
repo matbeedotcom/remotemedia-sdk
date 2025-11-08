@@ -64,12 +64,6 @@ default = ["server"]
 # Server feature: includes dependencies needed to run grpc-server binary
 server = ["ctrlc", "num_cpus"]
 
-# WebRTC signaling service (adds gRPC-based WebRTC signaling)
-webrtc-signaling = []
-
-# Full feature: everything enabled
-full = ["server", "webrtc-signaling"]
-
 [[bin]]
 name = "grpc-server"
 path = "bin/grpc-server.rs"

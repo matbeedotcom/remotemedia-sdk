@@ -418,6 +418,282 @@ WEBRTC_STUN_SERVERS="stun:stun.l.google.com:19302" \
 
 For detailed deployment and integration instructions, see [INTEGRATION.md](INTEGRATION.md).
 
+## gRPC Signaling (Alternative to WebSocket)
+
+The WebRTC transport now supports **gRPC bidirectional streaming** as an alternative to WebSocket JSON-RPC 2.0 signaling. This provides:
+- Type-safe protocol with Protocol Buffers
+- Built-in signaling server (no separate server needed)
+- Automatic server-side peer creation with pipeline integration
+- Real SDP answer generation
+
+### Building with gRPC Signaling
+
+```bash
+cd transports/remotemedia-webrtc
+
+# Build with gRPC signaling only
+cargo build --bin webrtc_server --release --features grpc-signaling
+
+# Build with all features (codecs + gRPC)
+cargo build --bin webrtc_server --release --features full
+```
+
+### Running with gRPC Signaling
+
+```bash
+# Basic gRPC signaling server (port 50051)
+WEBRTC_ENABLE_GRPC_SIGNALING=true \
+GRPC_SIGNALING_ADDRESS="0.0.0.0:50051" \
+WEBRTC_PIPELINE_MANIFEST="./examples/loopback.yaml" \
+cargo run --release --bin webrtc_server --features grpc-signaling
+
+# With STUN/TURN servers
+WEBRTC_ENABLE_GRPC_SIGNALING=true \
+GRPC_SIGNALING_ADDRESS="0.0.0.0:50051" \
+WEBRTC_STUN_SERVERS="stun:stun.l.google.com:19302" \
+WEBRTC_TURN_SERVERS="turn:turn.example.com:3478:user:pass" \
+WEBRTC_PIPELINE_MANIFEST="./manifests/vad.yaml" \
+cargo run --release --bin webrtc_server --features grpc-signaling
+
+# Full configuration (gRPC + WebSocket simultaneously)
+WEBRTC_SIGNALING_URL="ws://0.0.0.0:8080" \
+WEBRTC_ENABLE_GRPC_SIGNALING=true \
+GRPC_SIGNALING_ADDRESS="0.0.0.0:50051" \
+WEBRTC_STUN_SERVERS="stun:stun.l.google.com:19302" \
+WEBRTC_MAX_PEERS=20 \
+WEBRTC_JITTER_BUFFER_MS=100 \
+WEBRTC_PIPELINE_MANIFEST="./manifests/audio_processing.yaml" \
+RUST_LOG=info \
+cargo run --release --bin webrtc_server --features full
+```
+
+### gRPC Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WEBRTC_ENABLE_GRPC_SIGNALING` | `false` | Enable gRPC signaling server |
+| `GRPC_SIGNALING_ADDRESS` | `0.0.0.0:50051` | gRPC server bind address |
+| `WEBRTC_PIPELINE_MANIFEST` | (required) | Path to pipeline manifest YAML/JSON |
+
+### Architecture: gRPC vs WebSocket
+
+#### WebSocket Signaling (Default)
+
+```
+┌─────────────────────────────────────────────────┐
+│  Browser Client                                 │
+│  ↓ (WebSocket JSON-RPC 2.0)                    │
+│  External Signaling Server (Node.js/Python)    │
+│  ↓ (SDP/ICE relay)                              │
+│  WebRTC P2P Connections (mesh)                 │
+│  ↓                                               │
+│  WebRtcTransport + PipelineRunner (optional)   │
+└─────────────────────────────────────────────────┘
+```
+
+**Pros**: Browser-native, no extra dependencies
+**Cons**: Requires external signaling server, manual peer setup
+
+#### gRPC Signaling (Optional)
+
+```
+┌─────────────────────────────────────────────────┐
+│  Next.js Client (gRPC-Web)                     │
+│  ↓ (gRPC bidirectional stream over HTTP/2)     │
+│  WebRtcSignalingService (built-in, port 50051) │
+│    │                                             │
+│    ├─ Auto-spawn ServerPeer on client announce  │
+│    │   └─ WebRTC + PipelineRunner + Session     │
+│    │                                             │
+│    ├─ Real SDP answer generation                │
+│    └─ Media: Client ↔ WebRTC ↔ Pipeline ↔ Client │
+└─────────────────────────────────────────────────┘
+```
+
+**Pros**: Built-in server, auto-peer creation, type-safe, pipeline integration
+**Cons**: Requires `grpc-signaling` feature, gRPC-Web for browsers
+
+### Comparison
+
+| Feature | WebSocket (JSON-RPC 2.0) | gRPC (Protobuf) |
+|---------|--------------------------|-----------------|
+| **Protocol** | WebSocket over TCP | HTTP/2 |
+| **Encoding** | JSON (text) | Protobuf (binary) |
+| **Type Safety** | Runtime validation | Compile-time |
+| **Browser Support** | Native | Via gRPC-Web |
+| **Server** | Separate (Node.js/Python) | Built-in |
+| **Auto-Peer Creation** | Manual | Automatic (ServerPeer) |
+| **Pipeline Integration** | Manual | Automatic |
+| **SDP Answers** | Relay from other peer | Real from WebRTC |
+| **Use Case** | Browser P2P | Server-processed media |
+
+### Client Example (Next.js with gRPC-Web)
+
+```typescript
+import { WebRtcSignalingClient } from './generated/remotemedia/v1/webrtc';
+
+// Create gRPC client (gRPC-Web for browsers)
+const client = new WebRtcSignalingClient('http://localhost:50051', {
+  transport: 'grpc-web'
+});
+
+// Open bidirectional stream
+const stream = client.signal();
+
+// Announce peer
+stream.write({
+  requestId: '1',
+  announce: {
+    peerId: 'browser-client-123',
+    capabilities: { audio: true, video: true, data: false }
+  }
+});
+
+// Create WebRTC peer connection
+const pc = new RTCPeerConnection();
+
+// Add local media
+const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+// Create and send offer
+const offer = await pc.createOffer();
+await pc.setLocalDescription(offer);
+
+stream.write({
+  requestId: '2',
+  offer: {
+    toPeerId: 'remotemedia-server',
+    sdp: offer.sdp,
+    type: 'offer'
+  }
+});
+
+// Listen for server's answer
+stream.on('data', async (response) => {
+  if (response.notification?.answer) {
+    await pc.setRemoteDescription({
+      type: 'answer',
+      sdp: response.notification.answer.sdp
+    });
+  }
+
+  if (response.notification?.iceCandidate) {
+    await pc.addIceCandidate(new RTCIceCandidate({
+      candidate: response.notification.iceCandidate.candidate,
+      sdpMid: response.notification.iceCandidate.sdpMid,
+      sdpMLineIndex: response.notification.iceCandidate.sdpMlineIndex
+    }));
+  }
+});
+
+// Send ICE candidates to server
+pc.onicecandidate = ({ candidate }) => {
+  if (candidate) {
+    stream.write({
+      requestId: String(Date.now()),
+      iceCandidate: {
+        toPeerId: 'remotemedia-server',
+        candidate: candidate.candidate,
+        sdpMid: candidate.sdpMid,
+        sdpMLineIndex: candidate.sdpMLineIndex
+      }
+    });
+  }
+};
+```
+
+### Pipeline Manifests for gRPC Mode
+
+When using gRPC signaling, you must provide a pipeline manifest. The ServerPeer will process all media through this pipeline.
+
+**Example: Audio Loopback** (`examples/loopback.yaml`):
+```yaml
+nodes:
+  - id: input
+    node_type: Input
+
+  - id: output
+    node_type: Output
+
+connections:
+  - from: input
+    to: output
+```
+
+**Example: Voice Activity Detection** (`manifests/vad.yaml`):
+```yaml
+nodes:
+  - id: input
+    node_type: Input
+
+  - id: vad
+    node_type: VoiceActivityDetection
+    params:
+      threshold: 0.5
+      min_speech_duration_ms: 300
+
+  - id: output
+    node_type: Output
+
+connections:
+  - from: input
+    to: vad
+  - from: vad
+    to: output
+```
+
+### Protocol Buffers Definition
+
+The gRPC protocol is defined in [`protos/webrtc_signaling.proto`](protos/webrtc_signaling.proto).
+
+**Key Messages**:
+- `SignalingRequest` - Client → Server (announce, offer, answer, ICE candidate)
+- `SignalingResponse` - Server → Client (ack, peer list, notifications)
+- `AnnounceRequest` - Register peer with capabilities
+- `OfferRequest` - Send SDP offer
+- `AnswerNotification` - Receive real SDP answer from ServerPeer
+- `IceCandidateRequest/Notification` - Bidirectional ICE exchange
+
+### When to Use Each Signaling Method
+
+**Use WebSocket (JSON-RPC 2.0) when**:
+- Building browser-to-browser P2P applications
+- Need native browser support without extra libraries
+- Want simple peer-to-peer connections
+- Don't need server-side media processing
+
+**Use gRPC (Protobuf) when**:
+- Need server-side media processing through pipelines
+- Want type-safe protocol with compile-time validation
+- Building Next.js or other gRPC-enabled clients
+- Need automatic server peer creation
+- Want built-in signaling server (no separate deployment)
+
+### Troubleshooting gRPC Signaling
+
+**Issue**: `Error: 14 UNAVAILABLE: failed to connect to all addresses`
+
+**Solutions**:
+1. Ensure server was built with `--features grpc-signaling`
+2. Check `GRPC_SIGNALING_ADDRESS` is correct
+3. Verify port 50051 is not in use: `netstat -an | findstr 50051` (Windows) or `lsof -i :50051` (Linux/Mac)
+4. Check firewall allows incoming connections on port 50051
+
+**Issue**: `PipelineError: Failed to load manifest`
+
+**Solutions**:
+1. Ensure `WEBRTC_PIPELINE_MANIFEST` points to valid YAML/JSON file
+2. Check manifest syntax and node types exist in runtime
+3. Verify file path is accessible from server working directory
+
+**Issue**: Browser can't connect (CORS or gRPC-Web)
+
+**Solutions**:
+1. Use gRPC-Web proxy (envoy) for browser clients
+2. Or enable CORS in server configuration (already enabled in WebRtcSignalingService)
+3. Check browser console for specific gRPC-Web errors
+
 ## Troubleshooting
 
 ### Common Issues

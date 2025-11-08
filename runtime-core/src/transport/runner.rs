@@ -246,29 +246,94 @@ impl PipelineRunnerInner {
                 }
             };
 
+            // Create nodes ONCE at session creation and cache them for reuse
+            // This prevents recreating Python processes and reloading models for each request
+            use crate::nodes::streaming_registry::create_default_streaming_registry;
+            use std::collections::HashMap;
+
+            let streaming_registry = create_default_streaming_registry();
+            let cached_nodes: Arc<HashMap<String, Box<dyn crate::nodes::StreamingNode>>> = {
+                let mut n = HashMap::new();
+                for node_spec in &manifest_clone.nodes {
+                    // Inject session_id into params for multiprocess execution
+                    let mut params_with_session = node_spec.params.clone();
+                    params_with_session["__session_id__"] = serde_json::Value::String(session_id_clone.clone());
+
+                    match streaming_registry.create_node(
+                        &node_spec.node_type,
+                        node_spec.id.clone(),
+                        &params_with_session,
+                        Some(session_id_clone.clone()),
+                    ) {
+                        Ok(node) => {
+                            tracing::info!("Session {} cached node {} (type: {})", session_id_clone, node_spec.id, node_spec.node_type);
+                            n.insert(node_spec.id.clone(), node);
+                        }
+                        Err(e) => {
+                            tracing::error!("Session {}: Failed to create node {}: {}", session_id_clone, node_spec.id, e);
+                            return;
+                        }
+                    }
+                }
+                Arc::new(n)
+            };
+
+            // Keep output_tx alive for the entire session by holding it here
+            // This prevents the channel from closing after the first execution
+            let _output_tx_holder = output_tx.clone();
+
             loop {
                 tokio::select! {
                     Some(input_data) = input_rx.recv() => {
                         tracing::debug!("Session {} processing input", session_id_clone);
 
-                        // Execute pipeline with input
-                        let mut runtime_inputs = std::collections::HashMap::new();
-                        runtime_inputs.insert(first_node_id.clone(), input_data);
+                        // Spawn execution as a background task so the select loop can continue
+                        // processing new inputs while this one executes
+                        let output_tx_clone = output_tx.clone();
+                        let first_node_clone = first_node_id.clone();
+                        let session_id_for_exec = session_id_clone.clone();
+                        let session_id_for_log = session_id_clone.clone();
+                        let cached_nodes_clone = Arc::clone(&cached_nodes);
 
-                        match executor.execute_with_runtime_data(&manifest_clone, runtime_inputs).await {
-                            Ok(output_map) => {
-                                // Send all outputs
-                                for (_, output_data) in output_map {
-                                    if output_tx.send(output_data).is_err() {
-                                        tracing::warn!("Session {}: Failed to send output (receiver closed)", session_id_clone);
-                                        return;
-                                    }
+                        tracing::info!("Session {} spawning background task to process input", session_id_clone);
+                        tokio::spawn(async move {
+                            tracing::info!("Session {} background task started", session_id_for_exec);
+                            let session_id_for_callback = session_id_for_exec.clone();
+
+                            // Get reference to the cached node
+                            tracing::debug!("Session {} looking up cached node '{}'", session_id_for_exec, first_node_clone);
+                            let node = match cached_nodes_clone.get(&first_node_clone) {
+                                Some(n) => {
+                                    tracing::info!("Session {} found cached node '{}', type: {}", session_id_for_exec, first_node_clone, n.node_type());
+                                    n
+                                },
+                                None => {
+                                    tracing::error!("Session {}: Node {} not found in cached nodes", session_id_for_exec, first_node_clone);
+                                    return;
+                                }
+                            };
+
+                            // Use the cached node directly instead of calling execute_with_streaming_callback
+                            // which would create new nodes each time
+                            let callback = Box::new(move |output| {
+                                tracing::debug!("Session {} received streaming output, sending to client", session_id_for_callback);
+                                if let Err(e) = output_tx_clone.send(output) {
+                                    tracing::warn!("Session {}: Failed to send streaming output: {}", session_id_for_callback, e);
+                                }
+                                Ok(())
+                            });
+
+                            tracing::info!("Session {} calling process_streaming_async on node '{}'", session_id_for_exec, first_node_clone);
+                            match node.process_streaming_async(input_data, Some(session_id_for_exec.clone()), callback).await {
+                                Ok(_) => {
+                                    tracing::info!("Session {} execution completed successfully", session_id_for_log);
+                                }
+                                Err(e) => {
+                                    tracing::error!("Session {}: Pipeline execution error: {}", session_id_for_log, e);
                                 }
                             }
-                            Err(e) => {
-                                tracing::error!("Session {}: Pipeline execution error: {}", session_id_clone, e);
-                            }
-                        }
+                            tracing::info!("Session {} background task finished", session_id_for_log);
+                        });
                     }
                     _ = shutdown_rx.recv() => {
                         tracing::info!("Session {} shutdown requested", session_id_clone);

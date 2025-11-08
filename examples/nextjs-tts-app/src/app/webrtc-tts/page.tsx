@@ -340,7 +340,6 @@ export default function WebRTCTTSPage() {
 
             <button
               onClick={sendTextToTTS}
-              disabled={!isConnected || !text.trim() || isSpeaking}
               className="px-8 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
               {isSpeaking ? 'Speaking...' : '🔊 Speak'}

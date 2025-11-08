@@ -47,6 +47,16 @@ const pendingRequests = new Map<
   }
 >();
 
+// Pending answer map (from_peer_id → Promise resolve)
+const pendingAnswers = new Map<
+  string,
+  {
+    resolve: (value: any) => void;
+    reject: (reason: any) => void;
+    timeout: NodeJS.Timeout;
+  }
+>();
+
 /**
  * Initialize gRPC client and signaling stream
  */
@@ -212,26 +222,34 @@ function sendSignalingRequest(requestId: string, request: any): Promise<any> {
 function handleServerNotification(notification: any): void {
   console.log('[Signaling] Server notification:', notification);
 
-  // TODO: Forward notifications to browser clients
-  // This would require WebSocket or SSE connection to browser
-  // For now, we'll handle this via polling or stateful session storage
-
-  if (notification.offer_received) {
+  if (notification.offer) {
     console.log(
       '[Signaling] Received offer from peer:',
-      notification.offer_received.from_peer_id
+      notification.offer.from_peer_id
     );
     // Store offer for browser to retrieve
-  } else if (notification.answer_received) {
+  } else if (notification.answer) {
     console.log(
       '[Signaling] Received answer from peer:',
-      notification.answer_received.from_peer_id
+      notification.answer.from_peer_id
     );
-    // Store answer for browser to retrieve
-  } else if (notification.ice_candidate_received) {
+
+    // Resolve pending answer promise
+    const pending = pendingAnswers.get(notification.answer.from_peer_id);
+    if (pending) {
+      clearTimeout(pending.timeout);
+      pending.resolve({
+        type: notification.answer.type || 'answer',
+        sdp: notification.answer.sdp,
+      });
+      pendingAnswers.delete(notification.answer.from_peer_id);
+    } else {
+      console.warn('[Signaling] Received answer but no pending request found');
+    }
+  } else if (notification.ice_candidate) {
     console.log(
       '[Signaling] Received ICE candidate from peer:',
-      notification.ice_candidate_received.from_peer_id
+      notification.ice_candidate.from_peer_id
     );
     // Store ICE candidate for browser to retrieve
   } else if (notification.peer_joined) {
@@ -299,6 +317,16 @@ async function handleOffer(body: any): Promise<NextResponse> {
     const requestId = uuidv4();
     const toPeerId = body.to_peer_id || 'remotemedia-server'; // Default target
 
+    // Create promise to wait for answer notification
+    const answerPromise = new Promise<any>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        pendingAnswers.delete(toPeerId);
+        reject(new Error('Answer timeout - no response from server'));
+      }, 10000); // 10 second timeout
+
+      pendingAnswers.set(toPeerId, { resolve, reject, timeout });
+    });
+
     const offerRequest = {
       request_id: requestId,
       offer: {
@@ -313,11 +341,14 @@ async function handleOffer(body: any): Promise<NextResponse> {
 
     console.log('[Signaling] Offer sent, ack received:', ackResponse);
 
-    // Note: In a real implementation, the answer would come via notification
-    // For now, we return success and expect answer via separate polling
+    // Wait for answer notification from server
+    const answer = await answerPromise;
+
+    console.log('[Signaling] Answer received:', answer);
+
     return NextResponse.json({
       success: true,
-      message: 'Offer sent successfully. Poll for answer using GET request.',
+      answer: answer,
     });
   } catch (error) {
     console.error('Error handling offer:', error);

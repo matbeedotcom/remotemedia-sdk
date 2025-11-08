@@ -630,12 +630,23 @@ impl Executor {
                 tracing::debug!("  Processing input {}/{}", idx + 1, input_data_list.len());
 
                 let collected_outputs_clone = collected_outputs.clone();
+                let node_id_clone = node_id.clone();
                 let callback = Box::new(move |output: crate::data::RuntimeData| -> Result<()> {
+                    tracing::debug!("[Executor] Callback invoked for node '{}', received output type: {:?}", node_id_clone,
+                        match &output {
+                            crate::data::RuntimeData::Audio { samples, sample_rate, channels } =>
+                                format!("Audio({} samples, {}Hz, {} ch)", samples.len(), sample_rate, channels),
+                            crate::data::RuntimeData::Text(text) =>
+                                format!("Text({} chars)", text.len()),
+                            _ => format!("{:?}", output),
+                        }
+                    );
                     collected_outputs_clone.lock().unwrap().push(output);
+                    tracing::debug!("[Executor] Output added to collected_outputs for node '{}'", node_id_clone);
                     Ok(())
                 });
 
-                node.process_streaming_async(input_data.clone(), None, callback)
+                node.process_streaming_async(input_data.clone(), session_id.clone(), callback)
                     .await?;
             }
 
@@ -675,6 +686,90 @@ impl Executor {
         }
 
         Ok(result)
+    }
+
+    /// Execute pipeline with streaming callback for immediate output forwarding
+    ///
+    /// This method is designed for true streaming pipelines where outputs should be
+    /// sent to the client immediately as they're produced, rather than being buffered
+    /// and returned at the end of execution.
+    ///
+    /// # Arguments
+    ///
+    /// * `manifest` - Pipeline configuration
+    /// * `first_node_id` - ID of the first node to receive input
+    /// * `input_data` - Input data for the first node
+    /// * `session_id` - Optional session ID for multiprocess nodes
+    /// * `output_callback` - Callback invoked immediately when outputs are produced
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Pipeline execution completed successfully
+    /// * `Err(Error)` - Pipeline execution failed
+    pub async fn execute_with_streaming_callback<F>(
+        &self,
+        manifest: &Manifest,
+        first_node_id: String,
+        input_data: crate::data::RuntimeData,
+        session_id: Option<String>,
+        output_callback: F,
+    ) -> Result<()>
+    where
+        F: Fn(crate::data::RuntimeData) -> Result<()> + Send + 'static,
+    {
+        use crate::nodes::streaming_registry::create_default_streaming_registry;
+
+        tracing::debug!(
+            "Executing streaming pipeline with callback: {} (session: {:?})",
+            manifest.metadata.name,
+            session_id
+        );
+
+        // Build graph and validate
+        let graph = PipelineGraph::from_manifest(manifest)?;
+        crate::manifest::validate(manifest)?;
+
+        // Create streaming registry and nodes
+        let streaming_registry = create_default_streaming_registry();
+        let nodes: HashMap<String, Box<dyn crate::nodes::StreamingNode>> = {
+            let mut n = HashMap::new();
+            for node_spec in &manifest.nodes {
+                // Inject session_id into params for multiprocess execution
+                let mut params_with_session = node_spec.params.clone();
+                if let Some(ref sid) = session_id {
+                    params_with_session["__session_id__"] = serde_json::Value::String(sid.clone());
+                }
+
+                let node = streaming_registry.create_node(
+                    &node_spec.node_type,
+                    node_spec.id.clone(),
+                    &params_with_session,
+                    session_id.clone(),
+                )?;
+                n.insert(node_spec.id.clone(), node);
+            }
+            n
+        };
+
+        // For simple single-node pipelines, execute directly with callback
+        if graph.execution_order.len() == 1 && graph.execution_order[0] == first_node_id {
+            let node = nodes
+                .get(&first_node_id)
+                .ok_or_else(|| Error::Execution(format!("Node not found: {}", first_node_id)))?;
+
+            // Use the provided callback directly for immediate forwarding
+            let callback = Box::new(output_callback);
+
+            node.process_streaming_async(input_data, session_id, callback).await?;
+
+            return Ok(());
+        }
+
+        // For multi-node pipelines, we'd need to implement proper graph execution
+        // with intermediate buffering. For now, return an error.
+        Err(Error::Execution(
+            "Multi-node streaming pipelines not yet supported with callback-based execution".to_string()
+        ))
     }
 
     /// Execute pipeline with fast nodes (no JSON serialization)
