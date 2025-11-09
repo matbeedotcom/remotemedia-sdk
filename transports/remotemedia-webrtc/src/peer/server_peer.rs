@@ -14,6 +14,7 @@ use remotemedia_runtime_core::{
     transport::{PipelineRunner, StreamSession, StreamSessionHandle, TransportData},
     data::RuntimeData,
 };
+use prost::Message; // For Protobuf decode
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn, error};
@@ -176,7 +177,7 @@ impl ServerPeer {
                     info!("Data channel opened: label={}, id={:?} for peer {}",
                         data_channel.label(), data_channel.id(), peer_id);
 
-                    // Set up message handler
+                    // Set up message handler - expects Protobuf-encoded DataBuffer
                     data_channel.on_message(Box::new(move |msg| {
                         let peer_id = peer_id.clone();
                         let dc_input_tx = dc_input_tx.clone();
@@ -184,19 +185,28 @@ impl ServerPeer {
                         Box::pin(async move {
                             info!("Received data channel message: {} bytes from peer {}", msg.data.len(), peer_id);
 
-                            // Parse JSON message
-                            match String::from_utf8(msg.data.to_vec()) {
-                                Ok(text) => {
-                                    info!("Data channel text: {}", text);
+                            // Deserialize Protobuf DataBuffer
+                            match remotemedia_runtime::grpc_service::generated::DataBuffer::decode(&msg.data[..]) {
+                                Ok(data_buffer) => {
+                                    // Convert Protobuf → RuntimeData
+                                    match remotemedia_runtime::data::conversions::convert_proto_to_runtime_data(data_buffer) {
+                                        Ok(runtime_data) => {
+                                            info!("Decoded RuntimeData from data channel: type={}",
+                                                match &runtime_data {
+                                                    remotemedia_runtime::data::RuntimeData::Audio(_) => "Audio",
+                                                    remotemedia_runtime::data::RuntimeData::Video(_) => "Video",
+                                                    remotemedia_runtime::data::RuntimeData::Tensor(_) => "Tensor",
+                                                    remotemedia_runtime::data::RuntimeData::Json(_) => "Json",
+                                                    remotemedia_runtime::data::RuntimeData::Text(t) => {
+                                                        info!("Text data: {}", t);
+                                                        "Text"
+                                                    },
+                                                    remotemedia_runtime::data::RuntimeData::Binary(_) => "Binary",
+                                                });
 
-                                    // Parse TTS command
-                                    if let Ok(command) = serde_json::from_str::<serde_json::Value>(&text) {
-                                        if let Some(text_to_synth) = command.get("text").and_then(|v| v.as_str()) {
-                                            info!("Forwarding text to pipeline: {}", text_to_synth);
-
-                                            // Create Text RuntimeData
-                                            let transport_data = TransportData {
-                                                data: RuntimeData::Text(text_to_synth.to_string()),
+                                            // Create TransportData
+                                            let transport_data = remotemedia_runtime_core::transport::TransportData {
+                                                data: runtime_data,
                                                 sequence: None,
                                                 metadata: std::collections::HashMap::new(),
                                             };
@@ -205,10 +215,13 @@ impl ServerPeer {
                                                 error!("Failed to forward data channel message to pipeline: {}", e);
                                             }
                                         }
+                                        Err(e) => {
+                                            error!("Failed to convert DataBuffer to RuntimeData: {}", e);
+                                        }
                                     }
                                 }
                                 Err(e) => {
-                                    warn!("Invalid UTF-8 in data channel message: {}", e);
+                                    error!("Failed to decode Protobuf DataBuffer from data channel: {}", e);
                                 }
                             }
                         })
