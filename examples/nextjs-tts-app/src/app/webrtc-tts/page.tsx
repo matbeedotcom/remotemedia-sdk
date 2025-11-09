@@ -1,23 +1,26 @@
 'use client';
 
 /**
- * WebRTC + Pipeline TTS Demo
+ * WebRTC + Pipeline TTS Demo with Bidirectional Audio
  *
  * This page demonstrates:
  * 1. WebRTC signaling via gRPC service
- * 2. Real-time audio pipeline execution
- * 3. Audio streaming back to browser via WebRTC
+ * 2. Real-time bidirectional audio pipeline execution
+ * 3. Microphone input → VAD/STT pipeline
+ * 4. TTS pipeline → Audio output
  *
  * Architecture:
- *   Browser <-> WebRTC <-> RemoteMedia Server <-> TTS Pipeline
- *   (signaling via gRPC)      (media via RTP)     (Kokoro TTS)
+ *   Browser <-> WebRTC <-> RemoteMedia Server <-> Pipeline (VAD/STT/TTS)
+ *   (signaling via gRPC)      (media via RTP)
  */
 
 import { useEffect, useState, useRef } from 'react';
+import { encodeTextData } from '@/lib/proto-encoder';
 
 interface PeerConnection {
   pc: RTCPeerConnection;
   dataChannel: RTCDataChannel | null;
+  localStream: MediaStream | null;
 }
 
 export default function WebRTCTTSPage() {
@@ -26,12 +29,14 @@ export default function WebRTCTTSPage() {
   const [status, setStatus] = useState<string>('Disconnected');
   const [isConnected, setIsConnected] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Refs
   const peerConnectionRef = useRef<PeerConnection | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
 
   // WebRTC Configuration
   const rtcConfig: RTCConfiguration = {
@@ -49,8 +54,36 @@ export default function WebRTCTTSPage() {
       setStatus('Connecting...');
       setError(null);
 
+      // Request microphone access
+      let localStream: MediaStream | null = null;
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        });
+        console.log('Microphone access granted');
+        localStreamRef.current = localStream;
+        setIsListening(true);
+      } catch (micError) {
+        console.warn('Microphone access denied:', micError);
+        setError('Microphone access denied. Text-only mode enabled.');
+        // Continue without microphone - text input will still work
+      }
+
       // Create peer connection
       const pc = new RTCPeerConnection(rtcConfig);
+
+      // Add local audio track if available (microphone input for VAD/STT)
+      if (localStream) {
+        localStream.getTracks().forEach((track) => {
+          pc.addTrack(track, localStream);
+          console.log('Added local track:', track.kind);
+        });
+      }
 
       // Create data channel for text input
       const dataChannel = pc.createDataChannel('tts-input', {
@@ -75,7 +108,7 @@ export default function WebRTCTTSPage() {
         setError('Data channel error');
       };
 
-      // Handle incoming audio stream
+      // Handle incoming audio stream (TTS output from server)
       pc.ontrack = (event) => {
         console.log('Received remote track:', event.track.kind);
 
@@ -131,6 +164,7 @@ export default function WebRTCTTSPage() {
       peerConnectionRef.current = {
         pc,
         dataChannel,
+        localStream,
       };
 
       setStatus('Connected');
@@ -139,6 +173,12 @@ export default function WebRTCTTSPage() {
       console.error('Error connecting:', error);
       setError(error instanceof Error ? error.message : 'Connection failed');
       setStatus('Error');
+
+      // Clean up local stream on error
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+        localStreamRef.current = null;
+      }
     }
   }
 
@@ -199,17 +239,11 @@ export default function WebRTCTTSPage() {
       setIsSpeaking(true);
       setError(null);
 
-      // Send text via data channel
-      peerConnectionRef.current.dataChannel.send(
-        JSON.stringify({
-          action: 'synthesize',
-          text: text.trim(),
-          voice: 'af_bella',
-          language: 'en',
-        })
-      );
+      // Encode text as Protobuf DataBuffer (binary RuntimeData)
+      const protobufData = encodeTextData(text.trim());
+      peerConnectionRef.current.dataChannel.send(protobufData);
 
-      console.log('Sent text to TTS pipeline');
+      console.log('Sent text to TTS pipeline as Protobuf DataBuffer');
     } catch (error) {
       console.error('Error sending text:', error);
       setError(error instanceof Error ? error.message : 'Failed to send text');
@@ -222,9 +256,19 @@ export default function WebRTCTTSPage() {
    */
   function disconnect() {
     if (peerConnectionRef.current) {
+      // Stop local stream (microphone)
+      if (peerConnectionRef.current.localStream) {
+        peerConnectionRef.current.localStream.getTracks().forEach((track) => track.stop());
+      }
+
       peerConnectionRef.current.dataChannel?.close();
       peerConnectionRef.current.pc.close();
       peerConnectionRef.current = null;
+    }
+
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
     }
 
     if (remoteStreamRef.current) {
@@ -237,6 +281,7 @@ export default function WebRTCTTSPage() {
     }
 
     setIsConnected(false);
+    setIsListening(false);
     setStatus('Disconnected');
     setIsSpeaking(false);
   }
@@ -269,10 +314,10 @@ export default function WebRTCTTSPage() {
         {/* Header */}
         <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
           <h1 className="text-3xl font-bold text-gray-800 mb-2">
-            WebRTC + Pipeline TTS Demo
+            WebRTC + Bidirectional Audio Pipeline Demo
           </h1>
           <p className="text-gray-600">
-            Real-time text-to-speech via WebRTC with RemoteMedia pipeline execution
+            Real-time bidirectional audio via WebRTC with VAD, STT, and TTS pipelines
           </p>
         </div>
 
@@ -281,7 +326,7 @@ export default function WebRTCTTSPage() {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-xl font-semibold text-gray-800 mb-2">Connection Status</h2>
-              <p className="text-lg">
+              <p className="text-lg mb-2">
                 Status:{' '}
                 <span
                   className={`font-semibold ${
@@ -291,6 +336,14 @@ export default function WebRTCTTSPage() {
                   {status}
                 </span>
               </p>
+              {isConnected && (
+                <p className="text-sm text-gray-600">
+                  Microphone:{' '}
+                  <span className={`font-semibold ${isListening ? 'text-green-600' : 'text-gray-500'}`}>
+                    {isListening ? '🎤 Active' : 'Disabled'}
+                  </span>
+                </p>
+              )}
             </div>
 
             <div className="flex gap-3">
@@ -360,17 +413,27 @@ export default function WebRTCTTSPage() {
                 1
               </span>
               <p>
-                <strong>Connect:</strong> Establish WebRTC connection to the RemoteMedia server
+                <strong>Connect:</strong> Establish WebRTC connection with microphone access
                 via gRPC signaling
               </p>
             </div>
 
             <div className="flex items-start gap-3">
-              <span className="flex-shrink-0 w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-sm">
-                2
+              <span className="flex-shrink-0 w-6 h-6 bg-green-600 text-white rounded-full flex items-center justify-center text-sm">
+                2a
               </span>
               <p>
-                <strong>Input:</strong> Send text via WebRTC data channel to the server
+                <strong>Microphone Input:</strong> Your voice → WebRTC audio track → Server
+                → VAD/STT pipeline (real-time voice detection)
+              </p>
+            </div>
+
+            <div className="flex items-start gap-3">
+              <span className="flex-shrink-0 w-6 h-6 bg-purple-600 text-white rounded-full flex items-center justify-center text-sm">
+                2b
+              </span>
+              <p>
+                <strong>Text Input:</strong> Send text via WebRTC data channel to TTS pipeline
               </p>
             </div>
 
@@ -379,7 +442,7 @@ export default function WebRTCTTSPage() {
                 3
               </span>
               <p>
-                <strong>Process:</strong> Server executes TTS pipeline (Kokoro TTS engine)
+                <strong>Process:</strong> Server executes pipelines (VAD, STT, TTS) in parallel
               </p>
             </div>
 
@@ -388,7 +451,7 @@ export default function WebRTCTTSPage() {
                 4
               </span>
               <p>
-                <strong>Stream:</strong> Audio is streamed back via WebRTC audio track (RTP)
+                <strong>Audio Output:</strong> TTS audio streamed back via WebRTC (Opus/RTP)
               </p>
             </div>
 
@@ -397,7 +460,7 @@ export default function WebRTCTTSPage() {
                 5
               </span>
               <p>
-                <strong>Play:</strong> Browser receives and plays audio in real-time
+                <strong>Play:</strong> Browser receives and plays synthesized speech in real-time
               </p>
             </div>
           </div>
@@ -406,9 +469,11 @@ export default function WebRTCTTSPage() {
             <h3 className="font-semibold text-blue-900 mb-2">Technical Details</h3>
             <ul className="text-sm text-blue-800 space-y-1">
               <li>• Signaling: gRPC bidirectional streaming</li>
-              <li>• Media: WebRTC (Opus codec for audio)</li>
-              <li>• Pipeline: RemoteMedia runtime with Kokoro TTS</li>
-              <li>• Latency: ~50-100ms for real-time streaming</li>
+              <li>• Media: WebRTC with Opus codec (bidirectional audio)</li>
+              <li>• Input: Microphone (VAD/STT) + Data Channel (Text)</li>
+              <li>• Output: Audio track (TTS synthesis)</li>
+              <li>• Pipeline: RemoteMedia runtime with VAD, STT, and Kokoro TTS</li>
+              <li>• Latency: ~50-100ms for real-time bidirectional streaming</li>
             </ul>
           </div>
         </div>
