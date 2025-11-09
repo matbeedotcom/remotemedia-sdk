@@ -378,5 +378,50 @@ class TransformersPipelineNode(Node):
                 except Exception as e:
                     logger.warning(f"Could not clear CUDA cache: {e}")
 
+    def get_capabilities(self) -> Optional[Dict[str, Any]]:
+        """
+        Return capability requirements for Transformers pipeline.
+
+        Requirements vary significantly based on the task and model size.
+        This provides reasonable defaults.
+
+        Returns:
+            Capability descriptor with GPU preferences and memory requirements
+        """
+        # Determine if GPU is required or optional
+        gpu_required = False
+        if self.device is not None:
+            if isinstance(self.device, str) and "cuda" in str(self.device):
+                gpu_required = True
+            elif isinstance(self.device, int):  # GPU device index
+                gpu_required = True
+
+        # Estimate memory based on task type
+        memory_gb = 4.0  # Default for smaller models
+        gpu_memory_gb = 3.0
+
+        # Task-specific estimates
+        if self.task in ["automatic-speech-recognition", "text-to-speech"]:
+            memory_gb = 8.0
+            gpu_memory_gb = 6.0
+        elif self.task in ["text-generation", "translation"]:
+            memory_gb = 6.0
+            gpu_memory_gb = 4.0
+        elif self.task in ["image-to-text", "visual-question-answering"]:
+            memory_gb = 8.0
+            gpu_memory_gb = 6.0
+
+        capabilities = {"memory_gb": memory_gb}
+
+        # Add GPU requirements if applicable
+        if self.device is None or gpu_required:  # None means auto-select GPU if available
+            capabilities["gpu"] = {
+                "type": "cuda",
+                "min_memory_gb": gpu_memory_gb,
+                "required": gpu_required
+            }
+
+        return capabilities
+
 
 __all__ = ["TransformersPipelineNode"] 

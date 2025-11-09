@@ -1,0 +1,102 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "vad-s2s-streaming",
+    "description": "VAD-based real-time speech-to-speech: AudioChunker → Silero VAD → AudioBuffer → LFM2 (ASR) → Kokoro TTS",
+    "author": "RemoteMedia SDK",
+    "createdAt": "2025-01-30T00:00:00Z"
+  },
+  "nodes": [
+    {
+      "id": "audio_chunker",
+      "nodeType": "AudioChunkerNode",
+      "params": {
+        "chunkSize": 512
+      },
+      "isStreaming": true,
+      "description": "Split audio into 512-sample chunks for VAD"
+    },
+    {
+      "id": "silero_vad",
+      "nodeType": "SileroVADNode",
+      "params": {
+        "threshold": 0.5,
+        "samplingRate": 16000,
+        "minSpeechDurationMs": 250,
+        "minSilenceDurationMs": 500,
+        "speechPadMs": 30
+      },
+      "isStreaming": true,
+      "description": "High-accuracy VAD using Silero ONNX model"
+    },
+    {
+      "id": "audio_buffer",
+      "nodeType": "AudioBufferAccumulatorNode",
+      "params": {
+        "minUtteranceDurationMs": 500,
+        "maxUtteranceDurationMs": 30000
+      },
+      "isStreaming": true,
+      "description": "Accumulate audio chunks into complete utterances"
+    },
+    {
+      "id": "lfm2_audio",
+      "nodeType": "LFM2AudioNode",
+      "params": {
+        "hf_repo": "liquidai/LFM2-Audio-1.5B",
+        "device": "cuda",
+        "system_prompt": "Respond with interleaved text and audio.",
+        "text_only": true,
+        "text_temperature": 0.7,
+        "text_top_k": 50,
+        "max_new_tokens": 512
+      },
+      "isStreaming": true,
+      "description": "ASR and conversational AI"
+    },
+    {
+      "id": "kokoro_tts",
+      "nodeType": "KokoroTTSNode",
+      "params": {
+        "model_id": "kokoro-v0_19",
+        "voice": "af_bella",
+        "speed": 1.0,
+        "device": "cuda"
+      },
+      "isStreaming": true,
+      "description": "Text-to-speech synthesis"
+    }
+  ],
+  "connections": [
+    {
+      "from": "audio_chunker",
+      "to": "silero_vad",
+      "type": "audio",
+      "description": "512-sample chunks to VAD"
+    },
+    {
+      "from": "silero_vad",
+      "to": "audio_buffer",
+      "type": "json",
+      "description": "VAD events control buffering"
+    },
+    {
+      "from": "audio_buffer",
+      "to": "lfm2_audio",
+      "type": "audio",
+      "description": "Complete utterances sent to LFM2"
+    },
+    {
+      "from": "lfm2_audio",
+      "to": "kokoro_tts",
+      "type": "text",
+      "description": "Text response to TTS"
+    }
+  ],
+  "config": {
+    "execution_mode": "streaming",
+    "enable_caching": true,
+    "cache_ttl_seconds": 1800,
+    "max_concurrent_sessions": 100
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "WhisperX_Python",
+    "created_at": "2025-10-25T20:29:50.657235Z",
+    "description": "WhisperX Python Pipeline"
+  },
+  "nodes": [
+    {
+      "id": "MediaReader_0",
+      "node_type": "MediaReaderNode",
+      "params": {
+        "path": "test.wav",
+        "chunk_size": 4096
+      }
+    },
+    {
+      "id": "AudioSource_1",
+      "node_type": "AudioTrackSource",
+      "params": {}
+    },
+    {
+      "id": "Resample_2",
+      "node_type": "AudioTransform",
+      "params": {
+        "output_sample_rate": 16000,
+        "output_channels": 1
+      }
+    },
+    {
+      "id": "AudioBuffer_3",
+      "node_type": "AudioBuffer",
+      "params": {
+        "buffer_size_samples": 32000
+      },
+      "is_streaming": true
+    },
+    {
+      "id": "WhisperX_4",
+      "node_type": "WhisperXTranscriber",
+      "params": {
+        "model_size": "tiny",
+        "device": "cpu",
+        "compute_type": "float32",
+        "batch_size": 16,
+        "language": "en",
+        "align_model": false,
+        "vad_onset": 0.5,
+        "vad_offset": 0.363
+      },
+      "is_streaming": true
+    }
+  ],
+  "connections": [
+    {
+      "from": "MediaReader_0",
+      "to": "AudioSource_1"
+    },
+    {
+      "from": "AudioSource_1",
+      "to": "Resample_2"
+    },
+    {
+      "from": "Resample_2",
+      "to": "AudioBuffer_3"
+    },
+    {
+      "from": "AudioBuffer_3",
+      "to": "WhisperX_4"
+    }
+  ]
+}

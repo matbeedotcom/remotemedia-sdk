@@ -1,0 +1,26 @@
+[workspace]
+# Empty workspace declaration to keep this example independent from parent workspace
+
+[package]
+name = "custom-transport-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# ONLY runtime-core - no transport dependencies!
+remotemedia-runtime-core = { path = "../../runtime-core" }
+
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# Async trait support
+async-trait = "0.1"
+
+# For example scenarios
+serde_json = "1.0"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[bin]]
+name = "custom-transport"
+path = "src/main.rs"

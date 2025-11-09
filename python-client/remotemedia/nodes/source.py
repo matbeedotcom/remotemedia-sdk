@@ -47,7 +47,7 @@ class MediaReaderNode(Node):
             path: Path to the media file or URL
             **kwargs: Additional node parameters
         """
-        super().__init__(**kwargs)
+        super().__init__(path=path, **kwargs)
         self.path = path
 
     def process(self, data: Optional[Any] = None) -> AsyncGenerator[Any, None]:
@@ -66,7 +66,7 @@ class MediaReaderNode(Node):
         except ImportError:
             raise NodeError("PyAV and aiortc are required for MediaReaderNode. Please install them.")
 
-        player = MediaPlayer(self.path)
+        player = MediaPlayer(self.path, loop=False)
         
         if player.audio is None and player.video is None:
             logger.warning("No audio or video tracks found in the source.")
@@ -170,15 +170,29 @@ class AudioTrackSource(TrackSource):
         """
         try:
             audio_data = frame.to_ndarray()
+
+            # PyAV returns interleaved audio as shape (1, samples*channels)
+            # We need to reshape it to (channels, samples)
+            num_channels = len(frame.layout.channels)
+            if audio_data.shape[0] == 1 and num_channels > 1:
+                # Reshape from (1, samples*channels) to (channels, samples)
+                total_samples = audio_data.shape[1]
+                samples_per_channel = frame.samples
+                audio_data = audio_data.reshape(-1, num_channels).T  # Deinterleave
+                logger.debug(
+                    f"AudioTrackSource '{self.name}': deinterleaved {num_channels} channels, "
+                    f"shape now {audio_data.shape}"
+                )
+
             # Normalize and convert to float32, as expected by librosa
             if audio_data.dtype == np.int16:
                 audio_data = audio_data.astype(np.float32) / 32768.0
             elif audio_data.dtype == np.int32:
                 audio_data = audio_data.astype(np.float32) / 2147483648.0
-            
+
             logger.debug(
-                f"AudioTrackSource '{self.name}': processed audio frame with "
-                f"{frame.samples} samples at {frame.sample_rate}Hz."
+                f"AudioTrackSource '{self.name}': output shape={audio_data.shape}, "
+                f"samples={frame.samples}, rate={frame.sample_rate}Hz, channels={num_channels}"
             )
             return (audio_data, frame.sample_rate)
         except Exception as e:

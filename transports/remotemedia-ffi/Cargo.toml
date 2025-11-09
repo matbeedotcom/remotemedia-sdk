@@ -1,0 +1,48 @@
+[package]
+name = "remotemedia-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Python FFI transport for RemoteMedia pipelines"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "remotemedia_ffi"
+crate-type = ["cdylib", "rlib"]  # cdylib for Python extension, rlib for Rust
+
+[dependencies]
+# Core runtime (NO transport dependencies)
+remotemedia-runtime-core = { path = "../../runtime-core" }
+
+# Python FFI
+pyo3 = { version = "0.26", features = ["abi3-py312", "auto-initialize"], default-features = false }
+pyo3-async-runtimes = { version = "0.26", features = ["tokio-runtime"] }
+numpy = { version = "0.26" }  # rust-numpy for zero-copy numpy array support
+
+# Async runtime
+tokio = { workspace = true }
+futures = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async trait support
+async-trait = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Utilities
+base64 = "0.22"
+
+[features]
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module"]

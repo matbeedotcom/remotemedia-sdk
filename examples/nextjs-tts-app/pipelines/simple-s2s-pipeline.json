@@ -1,0 +1,55 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "simple-s2s",
+    "description": "Speech-to-speech with LFM2-Audio (text only) + Kokoro TTS",
+    "author": "RemoteMedia SDK",
+    "createdAt": "2025-01-30T00:00:00Z"
+  },
+  "nodes": [
+    {
+      "id": "lfm2_audio",
+      "nodeType": "LFM2AudioNode",
+      "params": {
+        "node_id": "lfm2_audio",
+        "hf_repo": "LiquidAI/LFM2-Audio-1.5B",
+        "system_prompt": "Perform ASR.",
+        "audio_temperature": 1.0,
+        "audio_top_k": 4,
+        "max_new_tokens": 512,
+        "sample_rate": 24000,
+        "session_timeout_minutes": 30,
+        "text_only": true
+      },
+      "isStreaming": true,
+      "description": "Audio-to-text conversation (LFM2-Audio)"
+    },
+    {
+      "id": "kokoro_tts",
+      "nodeType": "KokoroTTSNode",
+      "params": {
+        "node_id": "kokoro_tts",
+        "lang_code": "a",
+        "voice": "af_heart",
+        "speed": 1.0,
+        "sample_rate": 24000,
+        "stream_chunks": true
+      },
+      "isStreaming": true,
+      "description": "Text-to-speech synthesis (Kokoro)"
+    }
+  ],
+  "connections": [
+    {
+      "from": "lfm2_audio",
+      "to": "kokoro_tts",
+      "type": "text"
+    }
+  ],
+  "config": {
+    "execution_mode": "streaming",
+    "enable_caching": true,
+    "cache_ttl_seconds": 600,
+    "max_concurrent_sessions": 100
+  }
+}

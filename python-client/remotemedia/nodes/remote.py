@@ -41,6 +41,7 @@ class RemoteExecutionNode(Node):
         self.node_config = node_config or {}
         self.serialization_format = serialization_format
         self.is_streaming = True  # Mark as a streaming node
+        self.is_remote = True  # Mark as a remote execution node
         self.client: RemoteExecutionClient = None
 
     async def initialize(self):
@@ -102,6 +103,7 @@ class RemoteObjectExecutionNode(Node):
         self.client: Optional[RemoteExecutionClient] = None
         self.session_id: Optional[str] = None
         self.is_streaming = getattr(self.obj_to_execute, 'is_streaming', False)
+        self.is_remote = True  # Mark as a remote execution node
 
     async def initialize(self):
         """
