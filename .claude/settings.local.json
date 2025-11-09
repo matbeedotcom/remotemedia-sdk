@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(maturin develop:*)",
+      "Bash(python:*)",
+      "Bash(tee:*)",
+      "Bash(timeout 10 python:*)",
+      "WebFetch(domain:docs.rs)",
+      "Bash(cmake --build:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo build:*)",
+      "Bash(./target/debug/analyze_pipeline.exe:*)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File scripts/build-package.ps1 browser-demo/examples/calculator.rmpkg.json test-calculator.rmpkg)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File scripts/build-package.ps1 browser-demo/examples/calculator.rmpkg.json test-calculator-ps.rmpkg)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -6,8 +6,12 @@
  * @packageDocumentation
  */
 
-// Export main client
-export { RemoteProxyClient } from './client';
+// Export main gRPC client (new)
+export { RemoteMediaClient, AudioFormat, ErrorType, RemoteMediaError } from './grpc-client.js';
+export type { AudioBuffer, PipelineManifest, ExecutionResult, VersionInfo, ChunkResult } from './grpc-client.js';
+
+// Export legacy proxy client
+export { RemoteProxyClient } from './client.js';
 
 // Export helper functions and classes
 export {
@@ -18,13 +22,13 @@ export {
   NodePipeline,
   batchProcess,
   retryOperation
-} from './helpers';
+} from './helpers.js';
 
 // Export all types
-export * from './types';
+export * from './types.js';
 
 // Export generated types for convenience
-export { NodeType, NodeMap } from '../generated-types';
+export { NodeType, NodeMap } from '../generated-types/index.js';
 
 // Version information
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';

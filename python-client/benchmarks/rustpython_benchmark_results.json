@@ -1,0 +1,59 @@
+{
+  "benchmark_suite": "RustPython Phase 1.6",
+  "timestamp": 1761205752.4249156,
+  "iterations": 50,
+  "results": [
+    {
+      "name": "Single Node Execution",
+      "runtime": "cpython",
+      "mean_ms": 0.00015399957192130387,
+      "median_ms": 0.000100000761449337,
+      "p95_ms": 0.000200001522898674,
+      "p99_ms": 0.000600004568696022,
+      "min_ms": 9.999348549172282e-05,
+      "max_ms": 0.000600004568696022,
+      "std_dev_ms": 8.854904834080477e-05,
+      "iterations": 50,
+      "throughput_ops_per_sec": 6493524.543763117
+    },
+    {
+      "name": "Stateful Node (Counter)",
+      "runtime": "cpython",
+      "mean_ms": 0.0001859998155850917,
+      "median_ms": 0.000200001522898674,
+      "p95_ms": 0.000200001522898674,
+      "p99_ms": 0.000300002284348011,
+      "min_ms": 0.000100000761449337,
+      "max_ms": 0.000300002284348011,
+      "std_dev_ms": 4.045632081781858e-05,
+      "iterations": 50,
+      "throughput_ops_per_sec": 5376349.416553681
+    },
+    {
+      "name": "Data-Intensive (List Processing)",
+      "runtime": "cpython",
+      "mean_ms": 0.0035380000190343708,
+      "median_ms": 0.0035000048228539526,
+      "p95_ms": 0.0036000055843032897,
+      "p99_ms": 0.0036999990697950125,
+      "min_ms": 0.0034999975468963385,
+      "max_ms": 0.0036999990697950125,
+      "std_dev_ms": 5.303081131284031e-05,
+      "iterations": 50,
+      "throughput_ops_per_sec": 282645.5609440417
+    },
+    {
+      "name": "Mixed Data Types",
+      "runtime": "cpython",
+      "mean_ms": 0.00040400089346803725,
+      "median_ms": 0.000400003045797348,
+      "p95_ms": 0.0004999965312890708,
+      "p99_ms": 0.000500003807246685,
+      "min_ms": 0.000300002284348011,
+      "max_ms": 0.000500003807246685,
+      "std_dev_ms": 2.8284276822557124e-05,
+      "iterations": 50,
+      "throughput_ops_per_sec": 2475242.050619662
+    }
+  ]
+}

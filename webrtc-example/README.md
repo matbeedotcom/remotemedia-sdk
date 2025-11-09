@@ -83,6 +83,11 @@ Real-time audio/video communication with WebRTC.
 - `webrtc_pipeline_server.py` - WebRTC server with audio pipeline
 - `webrtc_client.html` - Browser-based client
 
+**⚡ Performance (v0.2.0+):**
+- Audio preprocessing: **<10ms** (down from 380ms in v0.1.x)
+- Rust-accelerated resampling: **72x faster** than Python
+- Real-time latency for smooth speech-to-speech interaction
+
 ```bash
 cd webrtc_examples
 # Basic server
@@ -93,6 +98,33 @@ USE_ML=true python webrtc_pipeline_server.py
 ```
 
 Open browser: `http://localhost:8080/webrtc_client.html`
+
+**Migration from v0.1.x:**
+
+The v0.2.0 release includes a major performance improvement through Rust-accelerated audio nodes. If you're upgrading from v0.1.x:
+
+```python
+# OLD (v0.1.x) - ~380ms latency:
+from remotemedia.nodes.audio import AudioTransform
+pipeline.add_node(AudioTransform(
+    output_sample_rate=16000,
+    output_channels=1,
+    name="AudioTransform"
+))
+
+# NEW (v0.2.0+) - <10ms latency:
+from remotemedia.nodes.audio import AudioResampleNode
+pipeline.add_node(AudioResampleNode(
+    target_sample_rate=16000,
+    runtime_hint="rust",  # Enable 72x Rust acceleration
+    name="AudioResample"
+))
+```
+
+The Rust runtime is automatically detected and used when available. Install with:
+```bash
+pip install remotemedia-runtime  # Or build from source
+```
 
 ### 🚀 Advanced Remote Execution (`remote_class_execution_demo/`)
 

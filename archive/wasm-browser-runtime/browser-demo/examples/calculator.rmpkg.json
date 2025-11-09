@@ -1,0 +1,29 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "calculator-demo",
+    "description": "Simple calculator pipeline (multiply then add)",
+    "author": "RemoteMedia SDK",
+    "version": "1.0.0"
+  },
+  "runtime": {
+    "target": "wasm32-wasi",
+    "min_version": "0.1.0",
+    "features": ["rust-only"]
+  },
+  "nodes": [
+    {
+      "id": "multiply",
+      "node_type": "MultiplyNode",
+      "params": {"multiplier": 2}
+    },
+    {
+      "id": "add",
+      "node_type": "AddNode",
+      "params": {"addend": 10}
+    }
+  ],
+  "connections": [
+    {"from": "multiply", "to": "add"}
+  ]
+}

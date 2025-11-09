@@ -2,8 +2,8 @@
  * Helper utilities and convenience functions for RemoteMedia Node.js Client
  */
 
-import { RemoteProxyClient } from './client';
-import { RemoteExecutorConfig, RemoteNodeProxy, NodeConfig } from './types';
+import { RemoteProxyClient } from './client.js';
+import { RemoteExecutorConfig, RemoteNodeProxy, NodeConfig } from './types.js';
 
 /**
  * Execute function interface for simplified node execution

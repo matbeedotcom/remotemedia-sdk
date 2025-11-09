@@ -7,6 +7,8 @@ processing pipelines.
 
 from .pipeline import Pipeline
 from .node import Node, RemoteExecutorConfig
+from .multiprocessing.node import MultiprocessNode, NodeConfig, NodeStatus
+from .multiprocessing.data import RuntimeData, DataType, AudioMetadata, VideoMetadata
 from .exceptions import (
     RemoteMediaError,
     PipelineError,
@@ -17,8 +19,15 @@ from .exceptions import (
 
 __all__ = [
     "Pipeline",
-    "Node", 
+    "Node",
     "RemoteExecutorConfig",
+    "MultiprocessNode",
+    "NodeConfig",
+    "NodeStatus",
+    "RuntimeData",
+    "DataType",
+    "AudioMetadata",
+    "VideoMetadata",
     "RemoteMediaError",
     "PipelineError",
     "NodeError",

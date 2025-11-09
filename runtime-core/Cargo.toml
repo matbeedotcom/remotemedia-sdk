@@ -1,0 +1,82 @@
+[package]
+name = "remotemedia-runtime-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Core runtime library for RemoteMedia pipelines - transport-agnostic execution engine"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "remotemedia_runtime_core"
+crate-type = ["rlib"]
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+futures = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+toml = { workspace = true }
+bincode = { workspace = true }
+
+# Async trait support
+async-trait = { workspace = true }
+
+# Audio processing (for native nodes)
+rubato = { workspace = true }
+rustfft = { workspace = true }
+bytemuck = { workspace = true }
+ort = { workspace = true, optional = true }
+ndarray = { workspace = true }
+
+# IPC for multiprocess
+iceoryx2 = { workspace = true, optional = true }
+iceoryx2-bb-log = { workspace = true, optional = true }
+iceoryx2-bb-container = { workspace = true, optional = true }
+iceoryx2-bb-elementary = { workspace = true, optional = true }
+
+# Logging and tracing
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Platform-specific
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+num_cpus = { workspace = true }
+regex = { workspace = true }
+ctrlc = { workspace = true }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+criterion = { workspace = true }
+tempfile = { workspace = true }
+rand = { workspace = true }
+chrono = { workspace = true }
+hound = { workspace = true }
+
+[features]
+default = ["multiprocess", "silero-vad"]
+multiprocess = ["iceoryx2", "iceoryx2-bb-log", "iceoryx2-bb-container", "iceoryx2-bb-elementary"]
+silero-vad = ["ort"]
+
+# NOTE: NO transport-specific features (grpc-transport, python-ffi, etc.)
+# Those belong in separate transport crates

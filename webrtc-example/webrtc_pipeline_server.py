@@ -156,7 +156,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "examples" / "audio_exampl
 
 from remotemedia.core.pipeline import Pipeline
 from remotemedia.core.node import RemoteExecutorConfig, Node
-from remotemedia.nodes.audio import AudioTransform, VoiceActivityDetector
+from remotemedia.nodes.audio import AudioResampleNode, VoiceActivityDetector
 from remotemedia.nodes.ml import UltravoxNode
 from kokoro_tts import KokoroTTSNode
 from remotemedia.nodes.transform import TextTransformNode
@@ -204,13 +204,13 @@ def create_speech_to_speech_pipeline(remote_host: str = "127.0.0.1") -> Pipeline
     6. Synthesizes responses using Kokoro TTS
     7. Streams audio back to WebRTC client
     """
-    pipeline = Pipeline()
+    pipeline = Pipeline(enable_metrics=True)  # Enable metrics to measure latency
     
-    # Audio preprocessing - resample for VAD and Ultravox
-    pipeline.add_node(AudioTransform(
-        output_sample_rate=16000,
-        output_channels=1,
-        name="AudioTransform"
+    # Audio preprocessing - resample for VAD and Ultravox with Rust acceleration
+    pipeline.add_node(AudioResampleNode(
+        target_sample_rate=16000,
+        runtime_hint="rust",  # Enable Rust acceleration for 72x speedup
+        name="AudioResample"
     ))
     
     # Voice Activity Detection with metadata

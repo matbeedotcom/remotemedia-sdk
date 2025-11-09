@@ -5,28 +5,28 @@
  */
 
 // Base interfaces
-export * from './base';
+export * from './base.js';
 
 // Node types and configurations
-export * from './node-types';
-export * from './config-types';
+export * from './node-types.js';
+export * from './config-types.js';
 
 // Individual node interfaces
-export * from './pass-through-node';
-export * from './buffer-node';
-export * from './audio-transform';
-export * from './audio-buffer';
-export * from './audio-resampler';
-export * from './video-transform';
-export * from './video-buffer';
-export * from './video-resizer';
-export * from './data-transform';
-export * from './format-converter';
-export * from './calculator-node';
-export * from './code-executor-node';
-export * from './text-processor-node';
-export * from './serialized-class-executor-node';
-export * from './transformers-pipeline-node';
+export * from './pass-through-node.js';
+export * from './buffer-node.js';
+export * from './audio-transform.js';
+export * from './audio-buffer.js';
+export * from './audio-resampler.js';
+export * from './video-transform.js';
+export * from './video-buffer.js';
+export * from './video-resizer.js';
+export * from './data-transform.js';
+export * from './format-converter.js';
+export * from './calculator-node.js';
+export * from './code-executor-node.js';
+export * from './text-processor-node.js';
+export * from './serialized-class-executor-node.js';
+export * from './transformers-pipeline-node.js';
 
 // Client interface
-export * from './client';
+export * from './client.js';
