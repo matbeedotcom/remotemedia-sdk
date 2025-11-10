@@ -43,9 +43,6 @@ pub mod retry;
 #[cfg(feature = "grpc-client")]
 pub mod grpc;
 
-// HTTP client
-pub mod http;
-
 // WebRTC client
 pub mod webrtc;
 
@@ -57,7 +54,6 @@ pub use retry::{RetryConfig, RetryExecutor};
 #[cfg(feature = "grpc-client")]
 pub use grpc::{GrpcPipelineClient, GrpcStreamSession};
 
-pub use http::{HttpPipelineClient, HttpStreamSession};
 pub use webrtc::{WebRtcPipelineClient, WebRtcStreamSession};
 
 /// Transport protocol type
@@ -290,8 +286,10 @@ pub async fn create_transport_client(
             }
         }
         TransportType::Http => {
-            let client = http::HttpPipelineClient::new(config.endpoint, config.auth_token).await?;
-            Ok(Box::new(client))
+            // HTTP client has been moved to separate remotemedia-http crate
+            Err(crate::Error::ConfigError(
+                "HTTP client moved to remotemedia-http crate - use TransportPluginRegistry instead".to_string(),
+            ))
         }
         TransportType::Webrtc => {
             // Extract ICE servers from extra_config
