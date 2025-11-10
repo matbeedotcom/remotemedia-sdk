@@ -1,0 +1,92 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "microservices-composition",
+    "description": "Example demonstrating composition of multiple remote services with different transports"
+  },
+  "nodes": [
+    {
+      "id": "local_input",
+      "node_type": "PassthroughNode",
+      "params": {}
+    },
+    {
+      "id": "remote_stt_grpc",
+      "node_type": "RemotePipelineNode",
+      "params": {
+        "transport": "grpc",
+        "endpoint": "localhost:50051",
+        "manifest": {
+          "version": "v1",
+          "nodes": [
+            {
+              "id": "whisper",
+              "node_type": "WhisperSTT",
+              "params": {
+                "model": "base.en"
+              }
+            }
+          ]
+        },
+        "timeout_ms": 15000,
+        "retry": {
+          "max_retries": 2,
+          "backoff_ms": 1000
+        }
+      }
+    },
+    {
+      "id": "remote_translation_http",
+      "node_type": "RemotePipelineNode",
+      "params": {
+        "transport": "http",
+        "endpoint": "http://localhost:8080",
+        "manifest_url": "http://localhost:8080/manifests/translation-v1",
+        "timeout_ms": 10000,
+        "auth_token": "${TRANSLATION_API_KEY}"
+      }
+    },
+    {
+      "id": "remote_tts_http",
+      "node_type": "RemotePipelineNode",
+      "params": {
+        "transport": "http",
+        "endpoint": "http://localhost:8081",
+        "pipeline_name": "kokoro-tts-v2",
+        "manifest_endpoint": "http://localhost:8081",
+        "timeout_ms": 12000
+      }
+    },
+    {
+      "id": "local_output",
+      "node_type": "PassthroughNode",
+      "params": {}
+    }
+  ],
+  "connections": [
+    {
+      "from": "local_input",
+      "to": "remote_stt_grpc",
+      "from_port": "default",
+      "to_port": "default"
+    },
+    {
+      "from": "remote_stt_grpc",
+      "to": "remote_translation_http",
+      "from_port": "default",
+      "to_port": "default"
+    },
+    {
+      "from": "remote_translation_http",
+      "to": "remote_tts_http",
+      "from_port": "default",
+      "to_port": "default"
+    },
+    {
+      "from": "remote_tts_http",
+      "to": "local_output",
+      "from_port": "default",
+      "to_port": "default"
+    }
+  ]
+}

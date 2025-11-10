@@ -43,6 +43,12 @@ pub mod retry;
 #[cfg(feature = "grpc-client")]
 pub mod grpc;
 
+// HTTP client
+pub mod http;
+
+// WebRTC client
+pub mod webrtc;
+
 // Re-export key types
 pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState};
 pub use load_balancer::{Endpoint, EndpointPool, LoadBalanceStrategy};
@@ -50,6 +56,9 @@ pub use retry::{RetryConfig, RetryExecutor};
 
 #[cfg(feature = "grpc-client")]
 pub use grpc::{GrpcPipelineClient, GrpcStreamSession};
+
+pub use http::{HttpPipelineClient, HttpStreamSession};
+pub use webrtc::{WebRtcPipelineClient, WebRtcStreamSession};
 
 /// Transport protocol type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,4 +231,164 @@ pub trait ClientStreamSession: Send + Sync {
     /// * `true` - Session is active and can send/receive
     /// * `false` - Session is closed or failed
     fn is_active(&self) -> bool;
+}
+
+/// Transport factory configuration
+#[derive(Debug, Clone)]
+pub struct TransportConfig {
+    /// Transport type
+    pub transport_type: TransportType,
+    /// Endpoint URL/address
+    pub endpoint: String,
+    /// Optional authentication token
+    pub auth_token: Option<String>,
+    /// Transport-specific configuration (for WebRTC: ICE servers, signaling URL, etc.)
+    pub extra_config: Option<serde_json::Value>,
+}
+
+/// Create a transport client based on transport type
+///
+/// This factory function dispatches to the appropriate client implementation
+/// based on the transport type.
+///
+/// # Arguments
+///
+/// * `config` - Transport configuration
+///
+/// # Returns
+///
+/// * `Ok(Box<dyn PipelineClient>)` - Transport client
+/// * `Err(Error)` - Failed to create client
+///
+/// # Example
+///
+/// ```ignore
+/// let config = TransportConfig {
+///     transport_type: TransportType::Http,
+///     endpoint: "http://localhost:8080".to_string(),
+///     auth_token: None,
+///     extra_config: None,
+/// };
+/// let client = create_transport_client(config).await?;
+/// ```
+pub async fn create_transport_client(
+    config: TransportConfig,
+) -> crate::Result<Box<dyn PipelineClient>> {
+    match config.transport_type {
+        TransportType::Grpc => {
+            #[cfg(feature = "grpc-client")]
+            {
+                let client =
+                    grpc::GrpcPipelineClient::new(config.endpoint, config.auth_token).await?;
+                Ok(Box::new(client))
+            }
+            #[cfg(not(feature = "grpc-client"))]
+            {
+                Err(crate::Error::ConfigError(
+                    "gRPC client not enabled - compile with 'grpc-client' feature".to_string(),
+                ))
+            }
+        }
+        TransportType::Http => {
+            let client = http::HttpPipelineClient::new(config.endpoint, config.auth_token).await?;
+            Ok(Box::new(client))
+        }
+        TransportType::Webrtc => {
+            // Extract ICE servers from extra_config
+            let ice_servers = if let Some(extra) = config.extra_config {
+                if let Some(servers) = extra.get("ice_servers") {
+                    serde_json::from_value(servers.clone()).unwrap_or_default()
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![]
+            };
+
+            let client = webrtc::WebRtcPipelineClient::new(
+                config.endpoint,
+                ice_servers,
+                config.auth_token,
+            )
+            .await?;
+            Ok(Box::new(client))
+        }
+    }
+}
+
+/// Validate transport-specific configuration
+///
+/// Performs transport-specific validation checks:
+/// - gRPC: Validate endpoint format
+/// - HTTP: Validate base URL format
+/// - WebRTC: Validate signaling URL and ICE server configuration
+///
+/// # Arguments
+///
+/// * `config` - Transport configuration
+///
+/// # Returns
+///
+/// * `Ok(())` - Configuration is valid
+/// * `Err(Error)` - Configuration validation failed
+pub fn validate_transport_config(config: &TransportConfig) -> crate::Result<()> {
+    match config.transport_type {
+        TransportType::Grpc => {
+            // gRPC endpoint validation
+            if config.endpoint.is_empty() {
+                return Err(crate::Error::ConfigError(
+                    "gRPC endpoint cannot be empty".to_string(),
+                ));
+            }
+            // Basic format check
+            if config.endpoint.contains("://") && !config.endpoint.starts_with("http") {
+                return Err(crate::Error::ConfigError(format!(
+                    "gRPC endpoint has invalid scheme: {}",
+                    config.endpoint
+                )));
+            }
+        }
+        TransportType::Http => {
+            // HTTP base URL validation
+            if config.endpoint.is_empty() {
+                return Err(crate::Error::ConfigError(
+                    "HTTP base_url cannot be empty".to_string(),
+                ));
+            }
+            if !config.endpoint.starts_with("http://") && !config.endpoint.starts_with("https://")
+            {
+                return Err(crate::Error::ConfigError(format!(
+                    "HTTP base_url must start with http:// or https://, got: {}",
+                    config.endpoint
+                )));
+            }
+        }
+        TransportType::Webrtc => {
+            // WebRTC signaling URL validation
+            if config.endpoint.is_empty() {
+                return Err(crate::Error::ConfigError(
+                    "WebRTC signaling_url cannot be empty".to_string(),
+                ));
+            }
+            if !config.endpoint.starts_with("ws://") && !config.endpoint.starts_with("wss://") {
+                return Err(crate::Error::ConfigError(format!(
+                    "WebRTC signaling_url must start with ws:// or wss://, got: {}",
+                    config.endpoint
+                )));
+            }
+
+            // Validate ICE servers if present
+            if let Some(extra) = &config.extra_config {
+                if let Some(servers) = extra.get("ice_servers") {
+                    if !servers.is_array() {
+                        return Err(crate::Error::ConfigError(
+                            "WebRTC ice_servers must be an array".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
