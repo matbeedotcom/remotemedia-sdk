@@ -22,7 +22,7 @@ mod fixtures;
 async fn test_create_remote_node() {
     let params = json!({
         "transport": "grpc",
-        "endpoint": "localhost:50051",
+        "endpoint": "localhost:59999",
         "manifest": {
             "version": "v1",
             "nodes": [{
@@ -69,7 +69,7 @@ async fn test_create_remote_node_invalid_config() {
 async fn test_create_remote_node_unsupported_transport() {
     let params = json!({
         "transport": "unknown",
-        "endpoint": "localhost:50051",
+        "endpoint": "localhost:59999",
         "manifest": {
             "version": "v1",
             "nodes": [],
@@ -133,7 +133,7 @@ async fn test_single_remote_node() {
 async fn test_remote_timeout() {
     let params = json!({
         "transport": "grpc",
-        "endpoint": "localhost:50051",
+        "endpoint": "localhost:59999",
         "manifest": {
             "version": "v1",
             "nodes": [{
@@ -143,7 +143,7 @@ async fn test_remote_timeout() {
             }],
             "connections": []
         },
-        "timeout_ms": 1000 // 1 second timeout
+        "timeout_ms": 1 // 1 second timeout
     });
 
     let mut node = RemotePipelineNode::new("test_remote".to_string(), params).unwrap();
@@ -167,7 +167,7 @@ async fn test_remote_timeout() {
 async fn test_remote_retry() {
     let params = json!({
         "transport": "grpc",
-        "endpoint": "localhost:50051",
+        "endpoint": "localhost:59999",
         "manifest": {
             "version": "v1",
             "nodes": [{
@@ -201,7 +201,7 @@ async fn test_auth_token_env_substitution() {
 
     let params = json!({
         "transport": "grpc",
-        "endpoint": "localhost:50051",
+        "endpoint": "localhost:59999",
         "manifest": {
             "version": "v1",
             "nodes": [],
@@ -246,7 +246,7 @@ async fn test_multi_transport_pipeline() {
     assert!(remote_nodes.len() >= 2, "Should have multiple remote nodes");
 
     // TODO: When mock servers are implemented:
-    // 1. Start mock gRPC server on localhost:50051
+    // 1. Start mock gRPC server on localhost:59999
     // 2. Start mock HTTP server on localhost:8080
     // 3. Execute pipeline and verify data flows through all transports
     // 4. Verify output matches expected result
@@ -270,7 +270,7 @@ async fn test_circular_dependency_detection() {
             "node_type": "RemotePipelineNode",
             "params": {
                 "transport": "grpc",
-                "endpoint": "localhost:50051",
+                "endpoint": "localhost:59999",
                 "manifest": {
                     "version": "v1",
                     "metadata": {"name": "pipeline-b"},
@@ -279,7 +279,7 @@ async fn test_circular_dependency_detection() {
                         "node_type": "RemotePipelineNode",
                         "params": {
                             "transport": "grpc",
-                            "endpoint": "localhost:50051",
+                            "endpoint": "localhost:59999",
                             "manifest": {
                                 "version": "v1",
                                 "metadata": {"name": "pipeline-a"},
