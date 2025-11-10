@@ -4,9 +4,10 @@ use crate::nodes::calculator::CalculatorNode;
 use crate::nodes::passthrough::PassThroughNode;
 use crate::nodes::python_streaming::PythonStreamingNode;
 use crate::nodes::remote_pipeline::RemotePipelineNodeFactory;
-use crate::nodes::sync_av::SynchronizedAudioVideoNode;
+// Temporarily disabled - incomplete implementation
+// use crate::nodes::sync_av::SynchronizedAudioVideoNode;
 use crate::nodes::video_flip::VideoFlipNode;
-use crate::nodes::video_processor::VideoProcessorNode;
+// use crate::nodes::video_processor::VideoProcessorNode;
 use crate::nodes::{
     AsyncNodeWrapper, StreamingNode, StreamingNodeFactory, StreamingNodeRegistry, SyncNodeWrapper,
 };
@@ -34,6 +35,8 @@ impl StreamingNodeFactory for CalculatorNodeFactory {
     }
 }
 
+// Temporarily disabled - VideoProcessorNode has incomplete implementation
+/*
 struct VideoProcessorNodeFactory;
 impl StreamingNodeFactory for VideoProcessorNodeFactory {
     fn create(
@@ -51,6 +54,7 @@ impl StreamingNodeFactory for VideoProcessorNodeFactory {
         "VideoProcessorNode"
     }
 }
+*/
 
 struct VideoFlipNodeFactory;
 impl StreamingNodeFactory for VideoFlipNodeFactory {
@@ -76,6 +80,8 @@ impl StreamingNodeFactory for VideoFlipNodeFactory {
     }
 }
 
+// Temporarily disabled - SynchronizedAudioVideoNode has incomplete implementation
+/*
 struct SynchronizedAudioVideoNodeFactory;
 impl StreamingNodeFactory for SynchronizedAudioVideoNodeFactory {
     fn create(
@@ -93,6 +99,7 @@ impl StreamingNodeFactory for SynchronizedAudioVideoNodeFactory {
         "SynchronizedAudioVideoNode"
     }
 }
+*/
 
 struct PassThroughNodeFactory;
 impl StreamingNodeFactory for PassThroughNodeFactory {
@@ -624,9 +631,10 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
 
     // Register all built-in streaming nodes
     registry.register(Arc::new(CalculatorNodeFactory));
-    registry.register(Arc::new(VideoProcessorNodeFactory));
+    // Temporarily disabled - incomplete implementations
+    // registry.register(Arc::new(VideoProcessorNodeFactory));
     registry.register(Arc::new(VideoFlipNodeFactory));
-    registry.register(Arc::new(SynchronizedAudioVideoNodeFactory));
+    // registry.register(Arc::new(SynchronizedAudioVideoNodeFactory));
     registry.register(Arc::new(PassThroughNodeFactory));
 
     // Register audio processing nodes
