@@ -27,9 +27,11 @@
 // Core modules
 pub mod adapters;
 pub mod auth;
+pub mod client;
 pub mod execution;
 pub mod limits;
 pub mod metrics;
+pub mod plugin;
 pub mod server;
 pub mod streaming;
 pub mod version;
@@ -72,6 +74,10 @@ pub use adapters::{
 pub use execution::ExecutionServiceImpl;
 pub use server::GrpcServer;
 pub use streaming::StreamingServiceImpl;
+
+// Re-export client and plugin types
+pub use client::{GrpcPipelineClient, GrpcStreamSession};
+pub use plugin::GrpcTransportPlugin;
 
 /// Error type for gRPC service operations
 #[derive(Debug, thiserror::Error)]

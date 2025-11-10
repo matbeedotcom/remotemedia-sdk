@@ -38,19 +38,126 @@
 
 use crate::Result;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 // Re-export submodules
 pub mod client;
 pub mod data;
+pub mod plugin_registry;
 pub mod runner;
 pub mod session;
 
 // Re-export key types for convenience
 pub use client::{ClientStreamSession, PipelineClient, TransportType};
 pub use data::TransportData;
+pub use plugin_registry::TransportPluginRegistry;
 pub use runner::PipelineRunner;
 pub use session::{StreamSession, StreamSessionHandle};
+
+/// Configuration for creating a transport client
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientConfig {
+    /// Base URL or address for the client connection
+    pub address: String,
+    /// Optional authentication token
+    pub auth_token: Option<String>,
+    /// Connection timeout in milliseconds
+    pub timeout_ms: Option<u64>,
+    /// Transport-specific configuration (JSON)
+    ///
+    /// Different transports may require additional configuration:
+    /// - **gRPC**: No extra config needed
+    /// - **WebRTC**: `{"ice_servers": ["stun:..."]}`
+    /// - **HTTP**: `{"retry_count": 3, "headers": {...}}`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_config: Option<serde_json::Value>,
+}
+
+/// Configuration for creating a transport server
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerConfig {
+    /// Server bind address
+    pub address: String,
+    /// Optional TLS/SSL configuration
+    pub tls_config: Option<TlsConfig>,
+}
+
+/// TLS/SSL configuration for servers
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsConfig {
+    /// Path to certificate file
+    pub cert_path: String,
+    /// Path to private key file
+    pub key_path: String,
+}
+
+/// Transport plugin trait for registering transport implementations
+///
+/// This trait allows transport implementations (gRPC, WebRTC, HTTP, etc.)
+/// to be dynamically registered and instantiated by name.
+#[async_trait]
+pub trait TransportPlugin: Send + Sync {
+    /// Get the unique name of this transport plugin (e.g., "grpc", "webrtc")
+    fn name(&self) -> &'static str;
+
+    /// Create a client for this transport
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Client configuration including address and auth
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Box<dyn PipelineClient>)` - Configured client instance
+    /// * `Err(Error)` - Client creation failed
+    async fn create_client(&self, config: &ClientConfig) -> Result<Box<dyn PipelineClient>>;
+
+    /// Create a server for this transport
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Server configuration including bind address
+    /// * `runner` - Pipeline runner for executing pipelines
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Box<dyn PipelineTransport>)` - Configured server instance
+    /// * `Err(Error)` - Server creation failed
+    async fn create_server(
+        &self,
+        config: &ServerConfig,
+        runner: Arc<PipelineRunner>,
+    ) -> Result<Box<dyn PipelineTransport>>;
+
+    /// Validate transport-specific configuration
+    ///
+    /// This method should be called before creating clients or servers to
+    /// validate any transport-specific configuration in ClientConfig or ServerConfig.
+    ///
+    /// # Arguments
+    ///
+    /// * `extra_config` - Transport-specific configuration as JSON
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Configuration is valid
+    /// * `Err(Error)` - Configuration validation failed
+    ///
+    /// # Example
+    ///
+    /// For WebRTC, this might validate ice_servers structure:
+    /// ```json
+    /// {
+    ///   "ice_servers": ["stun:stun.l.google.com:19302"]
+    /// }
+    /// ```
+    fn validate_config(&self, extra_config: &serde_json::Value) -> Result<()> {
+        // Default implementation: no validation needed
+        let _ = extra_config;
+        Ok(())
+    }
+}
 
 /// Transport-agnostic pipeline execution interface
 ///
