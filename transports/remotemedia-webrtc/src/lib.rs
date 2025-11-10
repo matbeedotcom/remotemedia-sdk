@@ -60,6 +60,8 @@
 // Public modules
 pub mod config;
 pub mod error;
+pub mod client;
+pub mod plugin;
 
 // Internal modules
 #[cfg(not(feature = "grpc-signaling"))]
@@ -83,12 +85,14 @@ pub mod generated {
 }
 
 // Re-exports for public API
+pub use client::{WebRtcPipelineClient, WebRtcStreamSession};
 pub use config::{
     AudioCodec, ConfigOptions, DataChannelMode, TurnServerConfig, VideoCodec, VideoResolution,
     WebRtcTransportConfig,
 };
 pub use error::{Error, Result};
 pub use peer::{ConnectionState, PeerInfo};
+pub use plugin::WebRtcTransportPlugin;
 pub use session::{Session, SessionId, SessionManager, SessionState};
 pub use transport::WebRtcTransport;
 
