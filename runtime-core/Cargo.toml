@@ -78,6 +78,10 @@ tempfile = { workspace = true }
 rand = { workspace = true }
 chrono = { workspace = true }
 hound = { workspace = true }
+anyhow = { workspace = true }
+remotemedia-grpc = { path = "../transports/remotemedia-grpc" }
+axum = { workspace = true }
+tokio-stream = { workspace = true }
 
 [features]
 default = ["multiprocess", "silero-vad"]
