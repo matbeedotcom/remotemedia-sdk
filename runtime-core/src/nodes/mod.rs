@@ -23,8 +23,10 @@ pub mod registry;
 pub mod remote_pipeline;
 pub mod streaming_node;
 pub mod streaming_registry;
-pub mod sync_av;
-pub mod video_processor;
+
+// Temporarily disabled - incomplete implementation
+// pub mod sync_av;
+// pub mod video_processor;
 
 #[cfg(feature = "whisper")]
 mod whisper;
