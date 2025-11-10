@@ -99,6 +99,15 @@ pub enum Error {
         reason: String,
     },
 
+    /// Circular dependency detected in remote pipeline references
+    #[error("Circular dependency detected: {reason}\nDependency chain: {}", chain.join(" -> "))]
+    CircularDependency {
+        /// Chain of manifest names/identifiers showing the cycle
+        chain: Vec<String>,
+        /// Description of the circular dependency
+        reason: String,
+    },
+
     /// Generic error
     #[error("{0}")]
     Other(String),

@@ -4,6 +4,7 @@
 //! metadata for transport-specific information.
 
 use crate::data::RuntimeData;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Transport-agnostic data container
@@ -34,7 +35,7 @@ use std::collections::HashMap;
 /// let data = TransportData::new(RuntimeData::Text("hello".into()))
 ///     .with_metadata("request_id".into(), "abc123".into());
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransportData {
     /// Core data payload (audio, text, image, binary)
     pub data: RuntimeData,

@@ -39,6 +39,8 @@ use crate::manifest::Manifest;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 /// Source of the remote pipeline manifest
 ///
@@ -73,12 +75,16 @@ pub enum ManifestSource {
     ///
     /// ```json
     /// {
-    ///   "manifest_url": "https://api.example.com/pipelines/tts-v2.json"
+    ///   "manifest_url": "https://api.example.com/pipelines/tts-v2.json",
+    ///   "auth_header": "Bearer ${API_TOKEN}"
     /// }
     /// ```
     Url {
         /// URL to fetch manifest from
         manifest_url: String,
+        /// Optional authentication header value (supports env var substitution)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        auth_header: Option<String>,
     },
 
     /// Predefined pipeline name
@@ -90,12 +96,22 @@ pub enum ManifestSource {
     ///
     /// ```json
     /// {
-    ///   "pipeline_name": "whisper-large-v3"
+    ///   "pipeline_name": "whisper-large-v3",
+    ///   "manifest_endpoint": "https://api.example.com",
+    ///   "auth_header": "Bearer ${API_TOKEN}"
     /// }
     /// ```
     Name {
         /// Pipeline name known to remote server
         pipeline_name: String,
+        /// Optional endpoint to fetch manifest from (e.g., "https://api.example.com")
+        /// If specified, fetches from: {manifest_endpoint}/manifests/{pipeline_name}
+        /// If not specified, creates minimal manifest for server-side resolution
+        #[serde(skip_serializing_if = "Option::is_none")]
+        manifest_endpoint: Option<String>,
+        /// Optional authentication header value (supports env var substitution)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        auth_header: Option<String>,
     },
 }
 
@@ -340,8 +356,8 @@ impl ExecutionContext {
 ///
 /// Supports three loading modes:
 /// - Inline: Use embedded JSON directly
-/// - URL: Fetch from HTTP(S) endpoint
-/// - Name: Create minimal manifest with pipeline name (server resolves)
+/// - URL: Fetch from HTTP(S) endpoint with optional auth
+/// - Name: Fetch from {manifest_endpoint}/manifests/{name} or create minimal manifest
 pub async fn load_manifest_from_source(source: &ManifestSource) -> Result<Manifest> {
     match source {
         ManifestSource::Inline { manifest } => {
@@ -351,9 +367,20 @@ pub async fn load_manifest_from_source(source: &ManifestSource) -> Result<Manife
             })
         }
 
-        ManifestSource::Url { manifest_url } => {
+        ManifestSource::Url { manifest_url, auth_header } => {
+            // Build request with optional auth header
+            let client = reqwest::Client::new();
+            let mut request = client.get(manifest_url);
+
+            // Add auth header if present (with env var substitution)
+            if let Some(auth) = auth_header {
+                let resolved_auth = substitute_env_vars(auth)?;
+                request = request.header("authorization", resolved_auth);
+            }
+
             // Fetch from URL
-            let response = reqwest::get(manifest_url)
+            let response = request
+                .send()
                 .await
                 .map_err(|e| Error::ManifestFetchFailed {
                     url: manifest_url.clone(),
@@ -378,20 +405,61 @@ pub async fn load_manifest_from_source(source: &ManifestSource) -> Result<Manife
             })
         }
 
-        ManifestSource::Name { pipeline_name } => {
-            // Create minimal manifest with pipeline name
-            // Remote server will resolve the actual pipeline
-            let json = format!(
-                r#"{{"version":"v1","metadata":{{"name":"{}"}}}}"#,
-                pipeline_name
-            );
+        ManifestSource::Name { pipeline_name, manifest_endpoint, auth_header } => {
+            // If manifest_endpoint is specified, fetch from /manifests/{name}
+            if let Some(endpoint) = manifest_endpoint {
+                let url = format!("{}/manifests/{}", endpoint.trim_end_matches('/'), pipeline_name);
 
-            serde_json::from_str(&json).map_err(|e| {
-                Error::InvalidManifest(format!(
-                    "Failed to create manifest for pipeline '{}': {}",
-                    pipeline_name, e
-                ))
-            })
+                // Build request with optional auth header
+                let client = reqwest::Client::new();
+                let mut request = client.get(&url);
+
+                // Add auth header if present (with env var substitution)
+                if let Some(auth) = auth_header {
+                    let resolved_auth = substitute_env_vars(auth)?;
+                    request = request.header("authorization", resolved_auth);
+                }
+
+                // Fetch manifest
+                let response = request
+                    .send()
+                    .await
+                    .map_err(|e| Error::ManifestFetchFailed {
+                        url: url.clone(),
+                        reason: format!("HTTP request failed: {}", e),
+                    })?;
+
+                if !response.status().is_success() {
+                    return Err(Error::ManifestFetchFailed {
+                        url: url.clone(),
+                        reason: format!("HTTP {} {}", response.status().as_u16(), response.status().canonical_reason().unwrap_or("Unknown")),
+                    });
+                }
+
+                let json_str = response.text().await.map_err(|e| Error::ManifestFetchFailed {
+                    url: url.clone(),
+                    reason: format!("Failed to read response body: {}", e),
+                })?;
+
+                serde_json::from_str(&json_str).map_err(|e| Error::ManifestFetchFailed {
+                    url: url.clone(),
+                    reason: format!("Failed to parse manifest JSON: {}", e),
+                })
+            } else {
+                // Create minimal manifest with pipeline name
+                // Remote server will resolve the actual pipeline
+                let json = format!(
+                    r#"{{"version":"v1","metadata":{{"name":"{}"}}}}"#,
+                    pipeline_name
+                );
+
+                serde_json::from_str(&json).map_err(|e| {
+                    Error::InvalidManifest(format!(
+                        "Failed to create manifest for pipeline '{}': {}",
+                        pipeline_name, e
+                    ))
+                })
+            }
         }
     }
 }
@@ -655,56 +723,34 @@ impl RemotePipelineNode {
         Ok(())
     }
 
-    /// Get or create the transport client
+    /// Get or create the transport client using the factory
     #[cfg(feature = "grpc-client")]
     async fn get_client(&self) -> crate::Result<Box<dyn crate::transport::client::PipelineClient>> {
-        let mut guard = self.client.lock().await;
+        use crate::transport::client::{create_transport_client, TransportConfig, TransportType};
 
-        if let Some(ref client) = *guard {
-            // Clone the Arc-wrapped client
-            // Note: This returns a trait object, we need to create a new instance
-            // For now, create a new client each time
-        }
-
-        // Create new client based on transport type
-        match self.config.transport.as_str() {
-            "grpc" => {
-                #[cfg(feature = "grpc-client")]
-                {
-                    let grpc_client = crate::transport::client::grpc::GrpcPipelineClient::new(
-                        self.get_primary_endpoint(),
-                        self.config.auth_token.clone(),
-                    )
-                    .await?;
-                    let client: Box<dyn crate::transport::client::PipelineClient> =
-                        Box::new(grpc_client);
-                    *guard = Some(client);
-                    // Return a new instance since we can't clone trait objects easily
-                    let new_client = crate::transport::client::grpc::GrpcPipelineClient::new(
-                        self.get_primary_endpoint(),
-                        self.config.auth_token.clone(),
-                    )
-                    .await?;
-                    Ok(Box::new(new_client))
-                }
-                #[cfg(not(feature = "grpc-client"))]
-                {
-                    Err(crate::Error::ConfigError(
-                        "gRPC client not enabled - compile with 'grpc-client' feature".into(),
-                    ))
-                }
+        // Parse transport type
+        let transport_type = match self.config.transport.as_str() {
+            "grpc" => TransportType::Grpc,
+            "http" => TransportType::Http,
+            "webrtc" => TransportType::Webrtc,
+            _ => {
+                return Err(crate::Error::ConfigError(format!(
+                    "Unknown transport type: {}",
+                    self.config.transport
+                )))
             }
-            "http" => Err(crate::Error::ConfigError(
-                "HTTP transport not yet implemented".into(),
-            )),
-            "webrtc" => Err(crate::Error::ConfigError(
-                "WebRTC transport not yet implemented".into(),
-            )),
-            _ => Err(crate::Error::ConfigError(format!(
-                "Unknown transport type: {}",
-                self.config.transport
-            ))),
-        }
+        };
+
+        // Build transport config
+        let transport_config = TransportConfig {
+            transport_type,
+            endpoint: self.get_primary_endpoint(),
+            auth_token: self.config.auth_token.clone(),
+            extra_config: None, // TODO: Extract from RemotePipelineConfig if needed
+        };
+
+        // Create client using factory
+        create_transport_client(transport_config).await
     }
 
     /// Execute with retry logic
@@ -941,7 +987,7 @@ mod tests {
         let source: ManifestSource = serde_json::from_str(json).unwrap();
 
         match source {
-            ManifestSource::Url { manifest_url } => {
+            ManifestSource::Url { manifest_url, .. } => {
                 assert_eq!(manifest_url, "https://example.com/pipeline.json");
             }
             _ => panic!("Expected Url variant"),
@@ -954,7 +1000,7 @@ mod tests {
         let source: ManifestSource = serde_json::from_str(json).unwrap();
 
         match source {
-            ManifestSource::Name { pipeline_name } => {
+            ManifestSource::Name { pipeline_name, .. } => {
                 assert_eq!(pipeline_name, "whisper-large-v3");
             }
             _ => panic!("Expected Name variant"),
@@ -979,4 +1025,270 @@ mod tests {
         let result = substitute_env_vars("${NONEXISTENT_VAR}");
         assert!(result.is_err());
     }
+}
+
+//
+// Manifest caching (T085)
+//
+
+/// Cached manifest entry with TTL
+#[derive(Debug, Clone)]
+struct CachedManifest {
+    /// The cached manifest
+    manifest: Manifest,
+    /// When this entry was created
+    cached_at: Instant,
+}
+
+/// In-memory TTL cache for manifests
+///
+/// This cache prevents repeated fetches of the same manifest from remote URLs.
+/// Entries expire after a configurable TTL (default 60 seconds).
+///
+/// # Thread Safety
+///
+/// The cache is wrapped in Arc<RwLock<>> for concurrent access from multiple nodes.
+pub struct ManifestCache {
+    /// Cache storage (key = manifest URL or name, value = cached manifest with timestamp)
+    cache: RwLock<HashMap<String, CachedManifest>>,
+    /// Time-to-live for cache entries
+    ttl: Duration,
+}
+
+impl ManifestCache {
+    /// Create a new manifest cache with default TTL (60 seconds)
+    pub fn new() -> Self {
+        Self::with_ttl(Duration::from_secs(60))
+    }
+
+    /// Create a new manifest cache with custom TTL
+    pub fn with_ttl(ttl: Duration) -> Self {
+        Self {
+            cache: RwLock::new(HashMap::new()),
+            ttl,
+        }
+    }
+
+    /// Get manifest from cache if present and not expired
+    pub fn get(&self, key: &str) -> Option<Manifest> {
+        let cache = self.cache.read().ok()?;
+        let entry = cache.get(key)?;
+
+        // Check if entry has expired
+        if entry.cached_at.elapsed() > self.ttl {
+            drop(cache); // Release read lock
+            self.remove(key); // Clean up expired entry
+            return None;
+        }
+
+        Some(entry.manifest.clone())
+    }
+
+    /// Store manifest in cache
+    pub fn put(&self, key: String, manifest: Manifest) {
+        let entry = CachedManifest {
+            manifest,
+            cached_at: Instant::now(),
+        };
+
+        if let Ok(mut cache) = self.cache.write() {
+            cache.insert(key, entry);
+        }
+    }
+
+    /// Remove manifest from cache
+    pub fn remove(&self, key: &str) {
+        if let Ok(mut cache) = self.cache.write() {
+            cache.remove(key);
+        }
+    }
+
+    /// Clear all entries from cache
+    pub fn clear(&self) {
+        if let Ok(mut cache) = self.cache.write() {
+            cache.clear();
+        }
+    }
+
+    /// Remove expired entries from cache
+    pub fn cleanup_expired(&self) {
+        if let Ok(mut cache) = self.cache.write() {
+            let now = Instant::now();
+            cache.retain(|_, entry| now.duration_since(entry.cached_at) <= self.ttl);
+        }
+    }
+}
+
+impl Default for ManifestCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Global manifest cache instance
+///
+/// This is a singleton cache shared across all RemotePipelineNode instances.
+static MANIFEST_CACHE: std::sync::OnceLock<Arc<ManifestCache>> = std::sync::OnceLock::new();
+
+/// Get the global manifest cache
+pub fn manifest_cache() -> Arc<ManifestCache> {
+    MANIFEST_CACHE
+        .get_or_init(|| Arc::new(ManifestCache::new()))
+        .clone()
+}
+
+/// Load manifest with caching support
+///
+/// This wraps `load_manifest_from_source` and adds caching for URL and Name sources.
+/// Inline manifests are not cached (they're already embedded in configuration).
+pub async fn load_manifest_from_source_cached(source: &ManifestSource) -> Result<Manifest> {
+    let cache = manifest_cache();
+
+    // Generate cache key based on source
+    let cache_key = match source {
+        ManifestSource::Inline { .. } => {
+            // Don't cache inline manifests
+            return load_manifest_from_source(source).await;
+        }
+        ManifestSource::Url { manifest_url, .. } => manifest_url.clone(),
+        ManifestSource::Name { pipeline_name, manifest_endpoint, .. } => {
+            if let Some(endpoint) = manifest_endpoint {
+                format!("{}/manifests/{}", endpoint, pipeline_name)
+            } else {
+                format!("name:{}", pipeline_name)
+            }
+        }
+    };
+
+    // Check cache first
+    if let Some(cached) = cache.get(&cache_key) {
+        tracing::debug!("Manifest cache hit for: {}", cache_key);
+        return Ok(cached);
+    }
+
+    // Cache miss - load from source
+    tracing::debug!("Manifest cache miss for: {}", cache_key);
+    let manifest = load_manifest_from_source(source).await?;
+
+    // Store in cache
+    cache.put(cache_key, manifest.clone());
+
+    Ok(manifest)
+}
+
+//
+// Circular dependency detection (T086-T089)
+//
+
+use std::collections::HashSet;
+
+/// Maximum recursion depth for manifest loading (prevents infinite loops)
+const MAX_RECURSION_DEPTH: usize = 10;
+
+/// Detect circular dependencies in remote pipeline references
+///
+/// This performs a depth-first search through manifest references, tracking visited
+/// manifests to detect cycles. It also enforces a maximum recursion depth limit.
+///
+/// # Arguments
+///
+/// * `manifest` - The manifest to check
+/// * `visited` - Set of already-visited manifest identifiers
+/// * `path` - Current path of manifests (for error reporting)
+/// * `depth` - Current recursion depth
+///
+/// # Returns
+///
+/// * `Ok(())` - No circular dependencies detected
+/// * `Err(Error::CircularDependency)` - Circular dependency detected
+///
+/// # Example
+///
+/// ```ignore
+/// let mut visited = HashSet::new();
+/// let mut path = Vec::new();
+/// detect_circular_dependencies(&manifest, &mut visited, &mut path, 0)?;
+/// ```
+pub fn detect_circular_dependencies(
+    manifest: &Manifest,
+    visited: &mut HashSet<String>,
+    path: &mut Vec<String>,
+    depth: usize,
+) -> Result<()> {
+    // Check recursion depth limit
+    if depth > MAX_RECURSION_DEPTH {
+        return Err(Error::CircularDependency {
+            chain: path.clone(),
+            reason: format!(
+                "Maximum recursion depth ({}) exceeded - possible circular dependency",
+                MAX_RECURSION_DEPTH
+            ),
+        });
+    }
+
+    // Generate manifest identifier (use metadata.name or hash of manifest)
+    let manifest_id = manifest.metadata.name.clone();
+
+    // Check if we've already visited this manifest in current path
+    if path.contains(&manifest_id) {
+        // Circular dependency detected!
+        path.push(manifest_id.clone());
+        return Err(Error::CircularDependency {
+            chain: path.clone(),
+            reason: format!(
+                "Circular dependency detected: manifest '{}' references itself",
+                manifest_id
+            ),
+        });
+    }
+
+    // Add to visited set (globally)
+    if visited.contains(&manifest_id) {
+        // Already processed this manifest in a different branch - safe to skip
+        return Ok(());
+    }
+
+    visited.insert(manifest_id.clone());
+    path.push(manifest_id.clone());
+
+    // Check all nodes in manifest for RemotePipelineNode references
+    for node in &manifest.nodes {
+        if node.node_type == "RemotePipelineNode" {
+            // Try to parse the params as RemotePipelineConfig
+            if let Ok(config) = serde_json::from_value::<RemotePipelineConfig>(node.params.clone()) {
+                // Check the manifest source
+                match &config.manifest_source {
+                    ManifestSource::Inline { manifest: nested_manifest } => {
+                        // Recursively check nested manifest
+                        if let Ok(nested) = serde_json::from_value::<Manifest>(nested_manifest.clone()) {
+                            detect_circular_dependencies(&nested, visited, path, depth + 1)?;
+                        }
+                    }
+                    ManifestSource::Url { .. } | ManifestSource::Name { .. } => {
+                        // For URL/Name sources, we can't check without fetching
+                        // This would be done at runtime
+                        // For now, just log a warning
+                        tracing::warn!(
+                            "Cannot statically check circular dependencies for URL/Name manifest sources in node '{}'",
+                            node.id
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // Remove from path (backtrack)
+    path.pop();
+
+    Ok(())
+}
+
+/// Validate manifest for circular dependencies (convenience wrapper)
+///
+/// This is the main entry point for circular dependency checking.
+pub fn validate_no_circular_dependencies(manifest: &Manifest) -> Result<()> {
+    let mut visited = HashSet::new();
+    let mut path = Vec::new();
+    detect_circular_dependencies(manifest, &mut visited, &mut path, 0)
 }
