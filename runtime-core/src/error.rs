@@ -59,6 +59,46 @@ pub enum Error {
         context: String,
     },
 
+    /// Remote pipeline execution error
+    #[error("Remote execution failed: {0}")]
+    RemoteExecutionFailed(String),
+
+    /// Remote execution timeout
+    #[error("Remote execution timeout after {timeout_ms}ms: {context}")]
+    RemoteTimeout {
+        /// Timeout duration in milliseconds
+        timeout_ms: u64,
+        /// Additional context
+        context: String,
+    },
+
+    /// Circuit breaker is open (too many failures)
+    #[error("Circuit breaker open for endpoint {endpoint}: {reason}")]
+    CircuitBreakerOpen {
+        /// Endpoint URL
+        endpoint: String,
+        /// Reason for circuit breaker activation
+        reason: String,
+    },
+
+    /// All configured endpoints failed
+    #[error("All {count} endpoints failed: {details}")]
+    AllEndpointsFailed {
+        /// Number of endpoints that failed
+        count: usize,
+        /// Failure details
+        details: String,
+    },
+
+    /// Failed to fetch remote manifest
+    #[error("Manifest fetch failed from {url}: {reason}")]
+    ManifestFetchFailed {
+        /// Manifest URL
+        url: String,
+        /// Failure reason
+        reason: String,
+    },
+
     /// Generic error
     #[error("{0}")]
     Other(String),

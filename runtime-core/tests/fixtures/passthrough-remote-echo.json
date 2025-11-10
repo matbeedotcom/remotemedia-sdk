@@ -1,0 +1,47 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "passthrough-remote-echo",
+    "description": "Local passthrough node feeding into remote echo pipeline - simple test case"
+  },
+  "nodes": [
+    {
+      "id": "local_pass",
+      "node_type": "PassThrough",
+      "params": {}
+    },
+    {
+      "id": "remote_echo",
+      "node_type": "RemotePipelineNode",
+      "params": {
+        "transport": "grpc",
+        "endpoint": "localhost:50051",
+        "manifest": {
+          "version": "v1",
+          "metadata": {
+            "name": "remote-echo-pipeline"
+          },
+          "nodes": [
+            {
+              "id": "echo",
+              "node_type": "PassThrough",
+              "params": {}
+            }
+          ],
+          "connections": []
+        },
+        "timeout_ms": 5000,
+        "retry": {
+          "max_retries": 2,
+          "backoff_ms": 500
+        }
+      }
+    }
+  ],
+  "connections": [
+    {
+      "from": "local_pass",
+      "to": "remote_echo"
+    }
+  ]
+}

@@ -20,6 +20,7 @@ pub mod passthrough;
 pub mod python_nodes;
 pub mod python_streaming;
 pub mod registry;
+pub mod remote_pipeline;
 pub mod streaming_node;
 pub mod streaming_registry;
 pub mod sync_av;

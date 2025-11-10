@@ -1,0 +1,55 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "local-vad-remote-tts",
+    "description": "Local VAD node feeding into remote TTS pipeline - demonstrates GPU offloading use case"
+  },
+  "nodes": [
+    {
+      "id": "local_vad",
+      "node_type": "SileroVADNode",
+      "params": {
+        "threshold": 0.5,
+        "sample_rate": 16000,
+        "min_speech_duration_ms": 250,
+        "min_silence_duration_ms": 100
+      }
+    },
+    {
+      "id": "remote_tts",
+      "node_type": "RemotePipelineNode",
+      "params": {
+        "transport": "grpc",
+        "endpoint": "localhost:50051",
+        "manifest": {
+          "version": "v1",
+          "metadata": {
+            "name": "remote-tts-pipeline"
+          },
+          "nodes": [
+            {
+              "id": "tts",
+              "node_type": "KokoroTTSNode",
+              "params": {
+                "voice": "af_bella",
+                "speed": 1.0
+              }
+            }
+          ],
+          "connections": []
+        },
+        "timeout_ms": 10000,
+        "retry": {
+          "max_retries": 3,
+          "backoff_ms": 1000
+        }
+      }
+    }
+  ],
+  "connections": [
+    {
+      "from": "local_vad",
+      "to": "remote_tts"
+    }
+  ]
+}
