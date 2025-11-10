@@ -39,22 +39,10 @@ pub mod circuit_breaker;
 pub mod load_balancer;
 pub mod retry;
 
-// gRPC client (feature-gated)
-#[cfg(feature = "grpc-client")]
-pub mod grpc;
-
-// WebRTC client
-pub mod webrtc;
-
 // Re-export key types
 pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState};
 pub use load_balancer::{Endpoint, EndpointPool, LoadBalanceStrategy};
 pub use retry::{RetryConfig, RetryExecutor};
-
-#[cfg(feature = "grpc-client")]
-pub use grpc::{GrpcPipelineClient, GrpcStreamSession};
-
-pub use webrtc::{WebRtcPipelineClient, WebRtcStreamSession};
 
 /// Transport protocol type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -286,44 +274,19 @@ pub async fn create_transport_client(
 ) -> crate::Result<Box<dyn PipelineClient>> {
     match config.transport_type {
         TransportType::Grpc => {
-            #[cfg(feature = "grpc-client")]
-            {
-                let client =
-                    grpc::GrpcPipelineClient::new(config.endpoint, config.auth_token).await?;
-                Ok(Box::new(client))
-            }
-            #[cfg(not(feature = "grpc-client"))]
-            {
-                Err(crate::Error::ConfigError(
-                    "gRPC client not enabled - compile with 'grpc-client' feature".to_string(),
-                ))
-            }
+            Err(crate::Error::ConfigError(
+                "gRPC client moved to remotemedia-grpc crate - use TransportPluginRegistry instead. See docs/MIGRATION_TO_PLUGINS.md".to_string(),
+            ))
         }
         TransportType::Http => {
-            // HTTP client has been moved to separate remotemedia-http crate
             Err(crate::Error::ConfigError(
-                "HTTP client moved to remotemedia-http crate - use TransportPluginRegistry instead".to_string(),
+                "HTTP client moved to remotemedia-http crate - use TransportPluginRegistry instead. See docs/MIGRATION_TO_PLUGINS.md".to_string(),
             ))
         }
         TransportType::Webrtc => {
-            // Extract ICE servers from extra_config
-            let ice_servers = if let Some(extra) = config.extra_config {
-                if let Some(servers) = extra.get("ice_servers") {
-                    serde_json::from_value(servers.clone()).unwrap_or_default()
-                } else {
-                    vec![]
-                }
-            } else {
-                vec![]
-            };
-
-            let client = webrtc::WebRtcPipelineClient::new(
-                config.endpoint,
-                ice_servers,
-                config.auth_token,
-            )
-            .await?;
-            Ok(Box::new(client))
+            Err(crate::Error::ConfigError(
+                "WebRTC client moved to remotemedia-webrtc crate - use TransportPluginRegistry instead. See docs/MIGRATION_TO_PLUGINS.md".to_string(),
+            ))
         }
     }
 }

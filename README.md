@@ -318,6 +318,64 @@ cargo build -p remotemedia-webrtc --features full
 
 See [BUILD_CONFIGURATION.md](BUILD_CONFIGURATION.md) for all build options.
 
+### Plugin-Based Transport System (v0.5.0+)
+
+RemoteMedia SDK v0.5.0 introduces a **plugin-based transport system** for maximum flexibility:
+
+**Key Features:**
+- Transport plugins are self-contained in separate crates
+- Add custom transports without modifying core
+- Dynamic registration at runtime
+- Clean separation of concerns
+
+**Quick Example:**
+```rust
+use remotemedia_runtime_core::transport::plugin_registry::global_registry;
+use std::sync::Arc;
+
+// Register built-in transports at startup
+fn init_transports() -> Result<()> {
+    let registry = global_registry();
+
+    #[cfg(feature = "grpc-client")]
+    {
+        use remotemedia_grpc::GrpcTransportPlugin;
+        registry.register(Arc::new(GrpcTransportPlugin))?;
+    }
+
+    // Create client using plugin
+    let plugin = registry.get("grpc").expect("grpc not registered");
+    let client = plugin.create_client(&config).await?;
+
+    Ok(())
+}
+```
+
+**Custom Transport Plugin:**
+```rust
+use remotemedia_runtime_core::transport::TransportPlugin;
+use async_trait::async_trait;
+
+pub struct MyCustomTransportPlugin;
+
+#[async_trait]
+impl TransportPlugin for MyCustomTransportPlugin {
+    fn name(&self) -> &str { "my-transport" }
+
+    async fn create_client(&self, config: &ClientConfig)
+        -> Result<Box<dyn PipelineClient>>
+    {
+        // Your implementation
+        Ok(Box::new(MyCustomClient::new(config)))
+    }
+}
+
+// Register your plugin
+global_registry().register(Arc::new(MyCustomTransportPlugin))?;
+```
+
+See [MIGRATION_TO_PLUGINS.md](docs/MIGRATION_TO_PLUGINS.md) for migration guide and [specs/006-remote-pipeline-node/](specs/006-remote-pipeline-node/) for detailed design.
+
 ### WASM Runtime
 
 ```bash
@@ -364,6 +422,10 @@ npm run test-package -- calculator.rmpkg
 - **[Native Acceleration Guide](docs/NATIVE_ACCELERATION.md)** - Architecture, FFI, and data flow
 - **[Performance Tuning](docs/PERFORMANCE_TUNING.md)** - Optimization strategies and benchmarks
 - **[Migration Guide](docs/MIGRATION_GUIDE.md)** - Upgrading from v0.1.x to v0.2.0
+
+### Transport System
+- **[Plugin Migration Guide](docs/MIGRATION_TO_PLUGINS.md)** - Migrating to v0.5.0 plugin system
+- **[RemotePipelineNode Spec](specs/006-remote-pipeline-node/)** - Transport plugin architecture
 
 ### Browser Execution
 - **[WASM Execution Guide](docs/WASM_EXECUTION.md)** - Native vs WASM execution differences
