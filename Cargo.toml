@@ -57,6 +57,7 @@ prost-types = "0.14"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors"] }
 hyper = "1.1"
+axum = "0.7"
 
 # Python FFI (for FFI transport crate)
 pyo3 = { version = "0.26", features = ["abi3-py312", "auto-initialize"], default-features = false }
