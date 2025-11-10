@@ -41,11 +41,13 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 // Re-export submodules
+pub mod client;
 pub mod data;
 pub mod runner;
 pub mod session;
 
 // Re-export key types for convenience
+pub use client::{ClientStreamSession, PipelineClient, TransportType};
 pub use data::TransportData;
 pub use runner::PipelineRunner;
 pub use session::{StreamSession, StreamSessionHandle};

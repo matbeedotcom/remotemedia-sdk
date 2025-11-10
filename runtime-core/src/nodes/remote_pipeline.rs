@@ -1,0 +1,982 @@
+//! Remote pipeline execution node
+//!
+//! This module implements a node that delegates execution to remote pipeline servers.
+//! It acts as a proxy, forwarding RuntimeData to remote servers and returning results.
+//!
+//! # Use Cases
+//!
+//! - **GPU Offloading**: Run STT/TTS on GPU servers while keeping VAD/preprocessing local
+//! - **Load Distribution**: Route to nearest/healthiest server from geographic pool
+//! - **Microservices**: Compose pipelines from independently-deployed services
+//!
+//! # Example Configuration
+//!
+//! ```json
+//! {
+//!   "id": "remote_tts",
+//!   "node_type": "RemotePipelineNode",
+//!   "params": {
+//!     "transport": "grpc",
+//!     "endpoint": "tts-server.example.com:50051",
+//!     "manifest": {
+//!       "version": "v1",
+//!       "nodes": [{
+//!         "id": "kokoro",
+//!         "node_type": "KokoroTTS",
+//!         "params": {"voice": "af_bella"}
+//!       }]
+//!     },
+//!     "timeout_ms": 10000,
+//!     "retry": {
+//!       "max_retries": 3,
+//!       "backoff_ms": 1000
+//!     }
+//!   }
+//! }
+//! ```
+
+use crate::manifest::Manifest;
+use crate::{Error, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+/// Source of the remote pipeline manifest
+///
+/// Specifies where to load the pipeline configuration that will be executed remotely.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ManifestSource {
+    /// Inline manifest JSON
+    ///
+    /// The complete manifest is embedded in the node configuration.
+    ///
+    /// # Example
+    ///
+    /// ```json
+    /// {
+    ///   "manifest": {
+    ///     "version": "v1",
+    ///     "nodes": [{"id": "tts", "node_type": "KokoroTTS", "params": {}}]
+    ///   }
+    /// }
+    /// ```
+    Inline {
+        /// Manifest JSON object
+        manifest: serde_json::Value,
+    },
+
+    /// Remote manifest URL
+    ///
+    /// Fetch the manifest from an HTTP(S) URL.
+    ///
+    /// # Example
+    ///
+    /// ```json
+    /// {
+    ///   "manifest_url": "https://api.example.com/pipelines/tts-v2.json"
+    /// }
+    /// ```
+    Url {
+        /// URL to fetch manifest from
+        manifest_url: String,
+    },
+
+    /// Predefined pipeline name
+    ///
+    /// Reference a pipeline by name that the remote server knows about.
+    /// The server maintains a registry of named pipelines.
+    ///
+    /// # Example
+    ///
+    /// ```json
+    /// {
+    ///   "pipeline_name": "whisper-large-v3"
+    /// }
+    /// ```
+    Name {
+        /// Pipeline name known to remote server
+        pipeline_name: String,
+    },
+}
+
+/// Configuration for remote pipeline execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemotePipelineConfig {
+    /// Transport protocol to use
+    pub transport: String,
+
+    /// Primary endpoint URL
+    ///
+    /// For single endpoint: "localhost:50051"
+    /// For load balancing: first endpoint in `endpoints` array
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+
+    /// Multiple endpoints for load balancing
+    ///
+    /// If specified, takes precedence over `endpoint` field
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoints: Option<Vec<String>>,
+
+    /// Manifest source (inline, URL, or predefined name)
+    #[serde(flatten)]
+    pub manifest_source: ManifestSource,
+
+    /// Execution timeout in milliseconds
+    ///
+    /// Default: 30000ms (30 seconds)
+    #[serde(default = "default_timeout")]
+    pub timeout_ms: u64,
+
+    /// Retry configuration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry: Option<RetryConfig>,
+
+    /// Circuit breaker configuration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub circuit_breaker: Option<CircuitBreakerConfig>,
+
+    /// Load balancing strategy
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load_balance_strategy: Option<LoadBalanceStrategy>,
+
+    /// Health check configuration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health_check: Option<HealthCheckConfig>,
+
+    /// Authentication token
+    ///
+    /// Supports environment variable substitution: "${API_TOKEN}"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
+
+    /// Additional metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, String>>,
+}
+
+fn default_timeout() -> u64 {
+    30000
+}
+
+/// Retry configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryConfig {
+    /// Maximum number of retry attempts
+    ///
+    /// Default: 3
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+
+    /// Initial backoff duration in milliseconds
+    ///
+    /// Backoff increases exponentially: backoff_ms * 2^attempt
+    /// Default: 1000ms (1 second)
+    #[serde(default = "default_backoff_ms")]
+    pub backoff_ms: u64,
+}
+
+fn default_max_retries() -> u32 {
+    3
+}
+
+fn default_backoff_ms() -> u64 {
+    1000
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: default_max_retries(),
+            backoff_ms: default_backoff_ms(),
+        }
+    }
+}
+
+/// Circuit breaker configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CircuitBreakerConfig {
+    /// Number of consecutive failures before opening circuit
+    ///
+    /// Default: 5
+    #[serde(default = "default_failure_threshold")]
+    pub failure_threshold: u32,
+
+    /// Number of consecutive successes to close circuit from half-open
+    ///
+    /// Default: 2
+    #[serde(default = "default_success_threshold")]
+    pub success_threshold: u32,
+
+    /// Duration to wait in open state before transitioning to half-open (milliseconds)
+    ///
+    /// Default: 60000ms (60 seconds)
+    #[serde(default = "default_reset_timeout")]
+    pub reset_timeout_ms: u64,
+}
+
+fn default_failure_threshold() -> u32 {
+    5
+}
+
+fn default_success_threshold() -> u32 {
+    2
+}
+
+fn default_reset_timeout() -> u64 {
+    60000
+}
+
+impl Default for CircuitBreakerConfig {
+    fn default() -> Self {
+        Self {
+            failure_threshold: default_failure_threshold(),
+            success_threshold: default_success_threshold(),
+            reset_timeout_ms: default_reset_timeout(),
+        }
+    }
+}
+
+/// Load balancing strategy
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoadBalanceStrategy {
+    /// Round-robin selection
+    RoundRobin,
+    /// Select endpoint with fewest active connections
+    LeastConnections,
+    /// Random selection
+    Random,
+}
+
+impl Default for LoadBalanceStrategy {
+    fn default() -> Self {
+        LoadBalanceStrategy::RoundRobin
+    }
+}
+
+/// Health check configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthCheckConfig {
+    /// Health check interval in milliseconds
+    ///
+    /// Default: 5000ms (5 seconds)
+    #[serde(default = "default_health_interval")]
+    pub interval_ms: u64,
+
+    /// Timeout for individual health checks in milliseconds
+    ///
+    /// Default: 2000ms (2 seconds)
+    #[serde(default = "default_health_timeout")]
+    pub timeout_ms: u64,
+}
+
+fn default_health_interval() -> u64 {
+    5000
+}
+
+fn default_health_timeout() -> u64 {
+    2000
+}
+
+impl Default for HealthCheckConfig {
+    fn default() -> Self {
+        Self {
+            interval_ms: default_health_interval(),
+            timeout_ms: default_health_timeout(),
+        }
+    }
+}
+
+/// Runtime execution context for remote pipeline execution
+///
+/// Tracks state during a remote execution attempt
+#[derive(Debug, Clone)]
+pub struct ExecutionContext {
+    /// Number of attempts made so far
+    pub attempt_count: u32,
+
+    /// Total elapsed time in milliseconds
+    pub elapsed_ms: u64,
+
+    /// Selected endpoint for this execution
+    pub selected_endpoint: String,
+
+    /// Authentication context (resolved token)
+    pub auth_context: Option<String>,
+
+    /// Start time (for timing)
+    pub start_time: std::time::Instant,
+}
+
+impl ExecutionContext {
+    /// Create new execution context
+    pub fn new(endpoint: String, auth_token: Option<String>) -> Self {
+        Self {
+            attempt_count: 0,
+            elapsed_ms: 0,
+            selected_endpoint: endpoint,
+            auth_context: auth_token,
+            start_time: std::time::Instant::now(),
+        }
+    }
+
+    /// Update elapsed time
+    pub fn update_elapsed(&mut self) {
+        self.elapsed_ms = self.start_time.elapsed().as_millis() as u64;
+    }
+
+    /// Increment attempt count
+    pub fn increment_attempt(&mut self) {
+        self.attempt_count += 1;
+    }
+}
+
+//
+// Manifest loading utilities (T018-T020)
+//
+
+/// Load manifest from configured source
+///
+/// Supports three loading modes:
+/// - Inline: Use embedded JSON directly
+/// - URL: Fetch from HTTP(S) endpoint
+/// - Name: Create minimal manifest with pipeline name (server resolves)
+pub async fn load_manifest_from_source(source: &ManifestSource) -> Result<Manifest> {
+    match source {
+        ManifestSource::Inline { manifest } => {
+            // Parse inline JSON value directly to Manifest
+            serde_json::from_value(manifest.clone()).map_err(|e| {
+                Error::InvalidManifest(format!("Failed to parse inline manifest: {}", e))
+            })
+        }
+
+        ManifestSource::Url { manifest_url } => {
+            // Fetch from URL
+            let response = reqwest::get(manifest_url)
+                .await
+                .map_err(|e| Error::ManifestFetchFailed {
+                    url: manifest_url.clone(),
+                    reason: format!("HTTP request failed: {}", e),
+                })?;
+
+            if !response.status().is_success() {
+                return Err(Error::ManifestFetchFailed {
+                    url: manifest_url.clone(),
+                    reason: format!("HTTP {} {}", response.status().as_u16(), response.status().canonical_reason().unwrap_or("Unknown")),
+                });
+            }
+
+            let json_str = response.text().await.map_err(|e| Error::ManifestFetchFailed {
+                url: manifest_url.clone(),
+                reason: format!("Failed to read response body: {}", e),
+            })?;
+
+            serde_json::from_str(&json_str).map_err(|e| Error::ManifestFetchFailed {
+                url: manifest_url.clone(),
+                reason: format!("Failed to parse manifest JSON: {}", e),
+            })
+        }
+
+        ManifestSource::Name { pipeline_name } => {
+            // Create minimal manifest with pipeline name
+            // Remote server will resolve the actual pipeline
+            let json = format!(
+                r#"{{"version":"v1","metadata":{{"name":"{}"}}}}"#,
+                pipeline_name
+            );
+
+            serde_json::from_str(&json).map_err(|e| {
+                Error::InvalidManifest(format!(
+                    "Failed to create manifest for pipeline '{}': {}",
+                    pipeline_name, e
+                ))
+            })
+        }
+    }
+}
+
+/// Substitute environment variables in auth tokens
+///
+/// Supports syntax: "${VAR_NAME}" or "$VAR_NAME"
+///
+/// # Example
+///
+/// ```ignore
+/// let token = "${API_TOKEN}";
+/// let resolved = substitute_env_vars(token)?;
+/// // resolved = actual value of API_TOKEN environment variable
+/// ```
+pub fn substitute_env_vars(value: &str) -> Result<String> {
+    if !value.contains('$') {
+        // No substitution needed
+        return Ok(value.to_string());
+    }
+
+    let mut result = value.to_string();
+
+    // Handle ${VAR} syntax
+    let re = regex::Regex::new(r"\$\{([A-Z_][A-Z0-9_]*)\}").unwrap();
+    for cap in re.captures_iter(value) {
+        let var_name = &cap[1];
+        let var_value = std::env::var(var_name).map_err(|_| {
+            Error::ConfigError(format!(
+                "Environment variable '{}' not found (referenced in auth_token)",
+                var_name
+            ))
+        })?;
+        result = result.replace(&format!("${{{}}}", var_name), &var_value);
+    }
+
+    // Handle $VAR syntax (without braces)
+    let re = regex::Regex::new(r"\$([A-Z_][A-Z0-9_]*)").unwrap();
+    for cap in re.captures_iter(&result.clone()) {
+        let var_name = &cap[1];
+        if !value.contains(&format!("${{{}}}", var_name)) {
+            // Only substitute if not already done with braces
+            let var_value = std::env::var(var_name).map_err(|_| {
+                Error::ConfigError(format!(
+                    "Environment variable '{}' not found (referenced in auth_token)",
+                    var_name
+                ))
+            })?;
+            result = result.replace(&format!("${}", var_name), &var_value);
+        }
+    }
+
+    Ok(result)
+}
+
+/// Validate manifest compatibility
+///
+/// Checks:
+/// - Version is supported ("v1")
+/// - Node types are reasonable (not empty, valid identifiers)
+/// - No obvious circular references in manifest itself
+///
+/// Note: Full circular dependency detection happens at execution time
+/// when traversing node connections.
+pub fn validate_manifest(manifest: &Manifest) -> Result<()> {
+    // Check version
+    if manifest.version != "v1" {
+        return Err(Error::InvalidManifest(format!(
+            "Unsupported manifest version: '{}' (expected 'v1')",
+            manifest.version
+        )));
+    }
+
+    // Check that nodes array is not empty
+    if manifest.nodes.is_empty() {
+        return Err(Error::InvalidManifest(
+            "Manifest must contain at least one node".to_string(),
+        ));
+    }
+
+    // Validate node IDs (no duplicates, valid identifiers)
+    let mut seen_ids = std::collections::HashSet::new();
+    for node in &manifest.nodes {
+        if !seen_ids.insert(&node.id) {
+            return Err(Error::InvalidManifest(format!(
+                "Duplicate node ID: '{}'",
+                node.id
+            )));
+        }
+
+        if node.id.is_empty() {
+            return Err(Error::InvalidManifest(
+                "Node ID cannot be empty".to_string(),
+            ));
+        }
+
+        if node.node_type.is_empty() {
+            return Err(Error::InvalidManifest(format!(
+                "Node '{}' has empty node_type",
+                node.id
+            )));
+        }
+    }
+
+    // Validate connections reference existing nodes
+    for conn in &manifest.connections {
+        if !seen_ids.contains(&conn.from) {
+            return Err(Error::InvalidManifest(format!(
+                "Connection references unknown source node: '{}'",
+                conn.from
+            )));
+        }
+        if !seen_ids.contains(&conn.to) {
+            return Err(Error::InvalidManifest(format!(
+                "Connection references unknown target node: '{}'",
+                conn.to
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+//
+// RemotePipelineNode Implementation (T023-T036)
+//
+
+/// Remote pipeline execution node
+///
+/// This node delegates processing to a remote gRPC server running a pipeline.
+/// It acts as a client, sending RuntimeData to the server and returning results.
+///
+/// # Configuration
+///
+/// The node is configured via `params` in the manifest, which must deserialize to
+/// `RemotePipelineConfig`. See `RemotePipelineConfig` documentation for details.
+///
+/// # Example
+///
+/// ```json
+/// {
+///   "id": "remote_tts",
+///   "node_type": "RemotePipelineNode",
+///   "params": {
+///     "transport": "grpc",
+///     "endpoint": "localhost:50051",
+///     "manifest": {
+///       "version": "v1",
+///       "nodes": [...]
+///     },
+///     "timeout_ms": 10000
+///   }
+/// }
+/// ```
+pub struct RemotePipelineNode {
+    /// Node ID from manifest
+    pub node_id: String,
+
+    /// Parsed configuration
+    pub config: RemotePipelineConfig,
+
+    /// Resolved manifest to execute remotely
+    pub manifest: Option<Manifest>,
+
+    /// gRPC client (created lazily on first use)
+    #[cfg(feature = "grpc-client")]
+    client: std::sync::Arc<tokio::sync::Mutex<Option<Box<dyn crate::transport::client::PipelineClient>>>>,
+}
+
+impl RemotePipelineNode {
+    /// Create new RemotePipelineNode from configuration
+    ///
+    /// # Arguments
+    ///
+    /// * `node_id` - Unique node identifier
+    /// * `params` - Configuration as serde_json::Value (will be deserialized to RemotePipelineConfig)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(RemotePipelineNode)` - Successfully created node
+    /// * `Err(Error)` - Failed to parse configuration
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let params = serde_json::json!({
+    ///     "transport": "grpc",
+    ///     "endpoint": "localhost:50051",
+    ///     "manifest": { "version": "v1", "nodes": [] }
+    /// });
+    /// let node = RemotePipelineNode::new("remote1".into(), params)?;
+    /// ```
+    pub fn new(node_id: String, params: serde_json::Value) -> crate::Result<Self> {
+        // Parse configuration
+        let config: RemotePipelineConfig = serde_json::from_value(params)
+            .map_err(|e| crate::Error::ConfigError(format!(
+                "Failed to parse RemotePipelineConfig: {}",
+                e
+            )))?;
+
+        // Validate transport type
+        if config.transport != "grpc" && config.transport != "http" && config.transport != "webrtc" {
+            return Err(crate::Error::ConfigError(format!(
+                "Unsupported transport type: '{}' (supported: grpc, http, webrtc)",
+                config.transport
+            )));
+        }
+
+        // Ensure at least one endpoint is specified
+        if config.endpoint.is_none() && config.endpoints.is_none() {
+            return Err(crate::Error::ConfigError(
+                "At least one endpoint must be specified (via 'endpoint' or 'endpoints')".into()
+            ));
+        }
+
+        // Resolve auth token environment variables if present
+        let mut config = config;
+        if let Some(ref token) = config.auth_token {
+            config.auth_token = Some(substitute_env_vars(token)?);
+        }
+
+        Ok(Self {
+            node_id,
+            config,
+            manifest: None,
+            #[cfg(feature = "grpc-client")]
+            client: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+        })
+    }
+
+    /// Get the primary endpoint from configuration
+    ///
+    /// Returns the first endpoint from `endpoints` array, or the single `endpoint` field.
+    fn get_primary_endpoint(&self) -> String {
+        if let Some(ref endpoints) = self.config.endpoints {
+            endpoints.first().cloned().unwrap_or_default()
+        } else {
+            self.config.endpoint.clone().unwrap_or_default()
+        }
+    }
+
+    /// Initialize the node (load manifest from source)
+    ///
+    /// This is called once before any processing.
+    pub async fn initialize(&mut self) -> crate::Result<()> {
+        // Load manifest from configured source
+        let manifest = load_manifest_from_source(&self.config.manifest_source).await?;
+
+        // Validate the manifest
+        validate_manifest(&manifest)?;
+
+        self.manifest = Some(manifest);
+
+        tracing::info!(
+            "RemotePipelineNode '{}' initialized with transport={}, endpoint={}",
+            self.node_id,
+            self.config.transport,
+            self.get_primary_endpoint()
+        );
+
+        Ok(())
+    }
+
+    /// Get or create the transport client
+    #[cfg(feature = "grpc-client")]
+    async fn get_client(&self) -> crate::Result<Box<dyn crate::transport::client::PipelineClient>> {
+        let mut guard = self.client.lock().await;
+
+        if let Some(ref client) = *guard {
+            // Clone the Arc-wrapped client
+            // Note: This returns a trait object, we need to create a new instance
+            // For now, create a new client each time
+        }
+
+        // Create new client based on transport type
+        match self.config.transport.as_str() {
+            "grpc" => {
+                #[cfg(feature = "grpc-client")]
+                {
+                    let grpc_client = crate::transport::client::grpc::GrpcPipelineClient::new(
+                        self.get_primary_endpoint(),
+                        self.config.auth_token.clone(),
+                    )
+                    .await?;
+                    let client: Box<dyn crate::transport::client::PipelineClient> =
+                        Box::new(grpc_client);
+                    *guard = Some(client);
+                    // Return a new instance since we can't clone trait objects easily
+                    let new_client = crate::transport::client::grpc::GrpcPipelineClient::new(
+                        self.get_primary_endpoint(),
+                        self.config.auth_token.clone(),
+                    )
+                    .await?;
+                    Ok(Box::new(new_client))
+                }
+                #[cfg(not(feature = "grpc-client"))]
+                {
+                    Err(crate::Error::ConfigError(
+                        "gRPC client not enabled - compile with 'grpc-client' feature".into(),
+                    ))
+                }
+            }
+            "http" => Err(crate::Error::ConfigError(
+                "HTTP transport not yet implemented".into(),
+            )),
+            "webrtc" => Err(crate::Error::ConfigError(
+                "WebRTC transport not yet implemented".into(),
+            )),
+            _ => Err(crate::Error::ConfigError(format!(
+                "Unknown transport type: {}",
+                self.config.transport
+            ))),
+        }
+    }
+
+    /// Execute with retry logic
+    async fn execute_with_retry(
+        &self,
+        manifest: std::sync::Arc<Manifest>,
+        input: crate::transport::TransportData,
+    ) -> crate::Result<crate::transport::TransportData> {
+        let retry_config = self.config.retry.as_ref();
+        let max_retries = retry_config.map(|r| r.max_retries).unwrap_or(0);
+        let backoff_ms = retry_config.map(|r| r.backoff_ms).unwrap_or(1000);
+
+        let mut last_error = None;
+        let mut ctx = ExecutionContext::new(
+            self.get_primary_endpoint(),
+            self.config.auth_token.clone(),
+        );
+
+        for attempt in 0..=max_retries {
+            ctx.increment_attempt();
+
+            // Apply exponential backoff (skip on first attempt)
+            if attempt > 0 {
+                let delay = backoff_ms * 2u64.pow(attempt - 1);
+                tracing::debug!(
+                    "RemotePipelineNode '{}': Retry attempt {} after {}ms",
+                    self.node_id,
+                    attempt,
+                    delay
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
+
+            // Get client
+            #[cfg(feature = "grpc-client")]
+            let client = match self.get_client().await {
+                Ok(c) => c,
+                Err(e) => {
+                    last_error = Some(e);
+                    continue;
+                }
+            };
+
+            #[cfg(not(feature = "grpc-client"))]
+            return Err(crate::Error::ConfigError(
+                "gRPC client not enabled - compile with 'grpc-client' feature".into(),
+            ));
+
+            // Execute with timeout
+            let timeout_ms = self.config.timeout_ms;
+            let timeout_duration = std::time::Duration::from_millis(timeout_ms);
+
+            #[cfg(feature = "grpc-client")]
+            {
+                let result = tokio::time::timeout(
+                    timeout_duration,
+                    client.execute_unary(manifest.clone(), input.clone()),
+                )
+                .await;
+
+                match result {
+                    Ok(Ok(output)) => {
+                        ctx.update_elapsed();
+                        tracing::info!(
+                            "RemotePipelineNode '{}': Success after {} attempts, {}ms elapsed",
+                            self.node_id,
+                            ctx.attempt_count,
+                            ctx.elapsed_ms
+                        );
+                        return Ok(output);
+                    }
+                    Ok(Err(e)) => {
+                        last_error = Some(e);
+                        tracing::warn!(
+                            "RemotePipelineNode '{}': Attempt {} failed: {}",
+                            self.node_id,
+                            attempt + 1,
+                            last_error.as_ref().unwrap()
+                        );
+                    }
+                    Err(_elapsed) => {
+                        last_error = Some(crate::Error::RemoteTimeout {
+                            timeout_ms,
+                            context: format!(
+                                "Node '{}' timed out after {}ms",
+                                self.node_id, timeout_ms
+                            ),
+                        });
+                        tracing::warn!(
+                            "RemotePipelineNode '{}': Attempt {} timed out after {}ms",
+                            self.node_id,
+                            attempt + 1,
+                            timeout_ms
+                        );
+                    }
+                }
+            }
+        }
+
+        // All retries exhausted
+        ctx.update_elapsed();
+        Err(last_error.unwrap_or_else(|| {
+            crate::Error::RemoteExecutionFailed(format!(
+                "Node '{}' failed after {} attempts",
+                self.node_id,
+                ctx.attempt_count
+            ))
+        }))
+    }
+}
+
+/// Factory for creating RemotePipelineNode instances
+pub struct RemotePipelineNodeFactory;
+
+impl crate::nodes::StreamingNodeFactory for RemotePipelineNodeFactory {
+    fn create(
+        &self,
+        node_id: String,
+        params: &serde_json::Value,
+        _session_id: Option<String>,
+    ) -> crate::Result<Box<dyn crate::nodes::StreamingNode>> {
+        // Create node
+        let mut node = RemotePipelineNode::new(node_id, params.clone())?;
+
+        // Note: We can't call async initialize() here in sync context
+        // The node will be initialized later by the executor or before first use
+        // For now, we load the manifest synchronously using blocking
+        if let ManifestSource::Inline { manifest } = &node.config.manifest_source {
+            // For inline manifests, we can load synchronously
+            let manifest_obj: Manifest = serde_json::from_value(manifest.clone())
+                .map_err(|e| crate::Error::InvalidManifest(format!(
+                    "Failed to parse inline manifest: {}",
+                    e
+                )))?;
+            validate_manifest(&manifest_obj)?;
+            node.manifest = Some(manifest_obj);
+        }
+        // For URL and Name sources, manifest will be loaded on first process() call
+        // or during async initialize()
+
+        Ok(Box::new(crate::nodes::AsyncNodeWrapper(std::sync::Arc::new(
+            node,
+        ))))
+    }
+
+    fn node_type(&self) -> &str {
+        "RemotePipelineNode"
+    }
+
+    fn is_python_node(&self) -> bool {
+        false
+    }
+
+    fn is_multi_output_streaming(&self) -> bool {
+        false // Remote nodes use unary execution for now
+    }
+}
+
+// Implement AsyncStreamingNode for RemotePipelineNode
+#[async_trait::async_trait]
+impl crate::nodes::AsyncStreamingNode for RemotePipelineNode {
+    fn node_type(&self) -> &str {
+        "RemotePipelineNode"
+    }
+
+    async fn initialize(&self) -> crate::Result<()> {
+        // The initialization is done in RemotePipelineNode::initialize which is &mut
+        // For now, we'll just log that init was called
+        tracing::debug!(
+            "RemotePipelineNode '{}' AsyncStreamingNode::initialize called",
+            self.node_id
+        );
+        Ok(())
+    }
+
+    async fn process(
+        &self,
+        data: crate::data::RuntimeData,
+    ) -> crate::Result<crate::data::RuntimeData> {
+        // Get the manifest
+        let manifest = self.manifest.as_ref().ok_or_else(|| {
+            crate::Error::Execution(format!(
+                "RemotePipelineNode '{}' not initialized - manifest is None",
+                self.node_id
+            ))
+        })?;
+
+        // Convert RuntimeData to TransportData
+        let input = crate::transport::TransportData::new(data);
+
+        // Execute with retry and timeout
+        let output = self
+            .execute_with_retry(std::sync::Arc::new(manifest.clone()), input)
+            .await?;
+
+        // Extract RuntimeData from TransportData
+        Ok(output.data)
+    }
+
+    async fn process_streaming<F>(
+        &self,
+        data: crate::data::RuntimeData,
+        _session_id: Option<String>,
+        mut callback: F,
+    ) -> crate::Result<usize>
+    where
+        F: FnMut(crate::data::RuntimeData) -> crate::Result<()> + Send,
+    {
+        // For unary execution, just call process and invoke callback once
+        let output = self.process(data).await?;
+        callback(output)?;
+        Ok(1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_manifest_source_inline_deserialization() {
+        let json = r#"{"manifest": {"version": "v1", "nodes": []}}"#;
+        let source: ManifestSource = serde_json::from_str(json).unwrap();
+
+        match source {
+            ManifestSource::Inline { .. } => (),
+            _ => panic!("Expected Inline variant"),
+        }
+    }
+
+    #[test]
+    fn test_manifest_source_url_deserialization() {
+        let json = r#"{"manifest_url": "https://example.com/pipeline.json"}"#;
+        let source: ManifestSource = serde_json::from_str(json).unwrap();
+
+        match source {
+            ManifestSource::Url { manifest_url } => {
+                assert_eq!(manifest_url, "https://example.com/pipeline.json");
+            }
+            _ => panic!("Expected Url variant"),
+        }
+    }
+
+    #[test]
+    fn test_manifest_source_name_deserialization() {
+        let json = r#"{"pipeline_name": "whisper-large-v3"}"#;
+        let source: ManifestSource = serde_json::from_str(json).unwrap();
+
+        match source {
+            ManifestSource::Name { pipeline_name } => {
+                assert_eq!(pipeline_name, "whisper-large-v3");
+            }
+            _ => panic!("Expected Name variant"),
+        }
+    }
+
+    #[test]
+    fn test_env_var_substitution() {
+        std::env::set_var("TEST_TOKEN", "secret123");
+
+        let result = substitute_env_vars("Bearer ${TEST_TOKEN}").unwrap();
+        assert_eq!(result, "Bearer secret123");
+
+        let result2 = substitute_env_vars("Bearer $TEST_TOKEN").unwrap();
+        assert_eq!(result2, "Bearer secret123");
+
+        std::env::remove_var("TEST_TOKEN");
+    }
+
+    #[test]
+    fn test_env_var_missing_error() {
+        let result = substitute_env_vars("${NONEXISTENT_VAR}");
+        assert!(result.is_err());
+    }
+}

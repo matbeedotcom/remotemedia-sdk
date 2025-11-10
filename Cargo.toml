@@ -1,10 +1,9 @@
 [workspace]
 members = [
-    "runtime",
-    "runtime-core",  # Phase 2: Core abstractions
-    "transports/remotemedia-grpc",  # Phase 4: gRPC transport
-    "transports/remotemedia-ffi",   # Phase 5: Python FFI transport
-    "transports/remotemedia-webrtc", # Phase 7: WebRTC transport (placeholder)
+    "runtime-core",  # Core abstractions
+    "transports/remotemedia-grpc",  # gRPC transport
+    "transports/remotemedia-ffi",   # Python FFI transport
+    "transports/remotemedia-webrtc", # WebRTC transport
 ]
 exclude = [
     "examples/*",  # Examples are independent projects demonstrating usage
@@ -89,7 +88,7 @@ sha2 = "0.10"
 hex = "0.4"
 base64 = "0.21"
 num_cpus = "1.16"
-reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
 ctrlc = "3.4"
 regex = "1.10"
 

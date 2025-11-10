@@ -3,6 +3,7 @@
 use crate::nodes::calculator::CalculatorNode;
 use crate::nodes::passthrough::PassThroughNode;
 use crate::nodes::python_streaming::PythonStreamingNode;
+use crate::nodes::remote_pipeline::RemotePipelineNodeFactory;
 use crate::nodes::sync_av::SynchronizedAudioVideoNode;
 use crate::nodes::video_flip::VideoFlipNode;
 use crate::nodes::video_processor::VideoProcessorNode;
@@ -635,6 +636,9 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
 
     // Register text processing nodes
     registry.register(Arc::new(TextCollectorNodeFactory));
+
+    // Register remote pipeline node
+    registry.register(Arc::new(RemotePipelineNodeFactory));
 
     // Register Silero VAD node (Rust ONNX)
     #[cfg(feature = "silero-vad")]

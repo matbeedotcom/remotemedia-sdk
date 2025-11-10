@@ -56,6 +56,11 @@ windows = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 
+# gRPC client (for remote pipeline nodes)
+tonic = { workspace = true, optional = true }
+prost = { workspace = true, optional = true }
+prost-types = { workspace = true, optional = true }
+
 # Utilities
 uuid = { workspace = true }
 sha2 = { workspace = true }
@@ -64,6 +69,7 @@ num_cpus = { workspace = true }
 regex = { workspace = true }
 ctrlc = { workspace = true }
 reqwest = { workspace = true }
+rand = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }
@@ -77,6 +83,7 @@ hound = { workspace = true }
 default = ["multiprocess", "silero-vad"]
 multiprocess = ["iceoryx2", "iceoryx2-bb-log", "iceoryx2-bb-container", "iceoryx2-bb-elementary"]
 silero-vad = ["ort"]
+grpc-client = ["tonic", "prost", "prost-types"]
 
-# NOTE: NO transport-specific features (grpc-transport, python-ffi, etc.)
-# Those belong in separate transport crates
+# NOTE: grpc-client is for RemotePipelineNode client functionality only
+# Full transport implementations belong in separate transport crates
