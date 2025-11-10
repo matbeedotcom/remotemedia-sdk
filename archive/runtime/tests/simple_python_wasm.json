@@ -1,0 +1,17 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "simple-python-wasm",
+    "description": "Simple Python code execution for WASM testing"
+  },
+  "nodes": [
+    {
+      "id": "multiply",
+      "node_type": "Python",
+      "params": {
+        "code": "x = 5\nresult = x * 2\nprint(f'Multiply result: {result}')"
+      }
+    }
+  ],
+  "connections": []
+}

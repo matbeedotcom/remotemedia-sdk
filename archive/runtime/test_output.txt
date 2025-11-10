@@ -1,0 +1,19 @@
+error: no test target named `grpc_integration`.
+Available test targets:
+    executor_integration_tests
+    test_cpython_numpy
+    test_error_handling
+    test_example_pipelines
+    test_grpc_service
+    test_marshaling_roundtrip
+    test_performance
+    test_phase_1_11_data_flow
+    test_pipeline_orchestration
+    test_python_manifest
+    test_python_sdk_nodes
+    test_retry
+    test_sdk_nodes
+    test_vad_node_direct
+    test_vad_pipeline
+    timeout_tests
+
