@@ -15,7 +15,9 @@ use crate::{
     ServiceConfig,
 };
 
-use remotemedia_runtime_core::transport::PipelineRunner;
+use async_trait::async_trait;
+use remotemedia_runtime_core::transport::{PipelineRunner, PipelineTransport, StreamSession, TransportData};
+use remotemedia_runtime_core::manifest::Manifest;
 use std::sync::Arc;
 use tonic::{service::LayerExt as _, transport::Server};
 use tracing::{info, warn};
@@ -300,5 +302,34 @@ mod tests {
         let runner = Arc::new(PipelineRunner::new().unwrap());
         let server = GrpcServer::new(config, runner).unwrap();
         assert!(!server.auth_config().require_auth);
+    }
+}
+
+/// Implement PipelineTransport for GrpcServer
+///
+/// This allows GrpcServer to be used as a transport server that can execute
+/// pipelines via the PipelineRunner.
+#[async_trait]
+impl PipelineTransport for GrpcServer {
+    /// Execute a pipeline with unary semantics
+    ///
+    /// Delegates to the PipelineRunner to execute the pipeline synchronously.
+    async fn execute(
+        &self,
+        manifest: Arc<Manifest>,
+        input: TransportData,
+    ) -> remotemedia_runtime_core::Result<TransportData> {
+        self.runner.execute_unary(manifest, input).await
+    }
+
+    /// Start a streaming pipeline session
+    ///
+    /// Delegates to the PipelineRunner to create a streaming session.
+    async fn stream(
+        &self,
+        manifest: Arc<Manifest>,
+    ) -> remotemedia_runtime_core::Result<Box<dyn StreamSession>> {
+        let session = self.runner.create_stream_session(manifest).await?;
+        Ok(Box::new(session))
     }
 }
