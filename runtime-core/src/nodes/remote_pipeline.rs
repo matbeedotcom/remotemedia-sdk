@@ -723,34 +723,53 @@ impl RemotePipelineNode {
         Ok(())
     }
 
-    /// Get or create the transport client using the factory
+    /// Get or create the transport client using the plugin registry
     #[cfg(feature = "grpc-client")]
     async fn get_client(&self) -> crate::Result<Box<dyn crate::transport::client::PipelineClient>> {
-        use crate::transport::client::{create_transport_client, TransportConfig, TransportType};
+        use crate::transport::plugin_registry::global_registry;
+        use crate::transport::ClientConfig;
 
-        // Parse transport type
-        let transport_type = match self.config.transport.as_str() {
-            "grpc" => TransportType::Grpc,
-            "http" => TransportType::Http,
-            "webrtc" => TransportType::Webrtc,
-            _ => {
-                return Err(crate::Error::ConfigError(format!(
-                    "Unknown transport type: {}",
-                    self.config.transport
-                )))
-            }
-        };
+        // Look up transport plugin by name
+        let transport_name = &self.config.transport;
+        let plugin = global_registry()
+            .get(transport_name)
+            .ok_or_else(|| {
+                let available = global_registry().list();
+                crate::Error::ConfigError(format!(
+                    "Transport '{}' not found. Available transports: {}. \
+                     Make sure to register the transport plugin at application startup.",
+                    transport_name,
+                    available.join(", ")
+                ))
+            })?;
 
-        // Build transport config
-        let transport_config = TransportConfig {
-            transport_type,
-            endpoint: self.get_primary_endpoint(),
-            auth_token: self.config.auth_token.clone(),
-            extra_config: None, // TODO: Extract from RemotePipelineConfig if needed
-        };
+        // Build ClientConfig from manifest params
+        // We need to reconstruct params as a JSON object with endpoint and optional fields
+        let mut params = serde_json::Map::new();
+        params.insert(
+            "endpoint".to_string(),
+            serde_json::Value::String(self.get_primary_endpoint()),
+        );
 
-        // Create client using factory
-        create_transport_client(transport_config).await
+        if let Some(ref token) = self.config.auth_token {
+            params.insert("auth_token".to_string(), serde_json::Value::String(token.clone()));
+        }
+
+        params.insert(
+            "timeout_ms".to_string(),
+            serde_json::Value::Number(self.config.timeout_ms.into()),
+        );
+
+        let params_value = serde_json::Value::Object(params);
+        let client_config = ClientConfig::from_manifest_params(&params_value)?;
+
+        // Validate transport-specific config
+        if let Some(extra) = &client_config.extra_config {
+            plugin.validate_config(extra)?;
+        }
+
+        // Create client via plugin
+        plugin.create_client(&client_config).await
     }
 
     /// Execute with retry logic

@@ -74,6 +74,48 @@ pub struct ClientConfig {
     pub extra_config: Option<serde_json::Value>,
 }
 
+impl ClientConfig {
+    /// Create ClientConfig from manifest parameters
+    ///
+    /// Extracts transport configuration from pipeline manifest node parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `params` - Node parameters from manifest (contains endpoint, auth_token, etc.)
+    ///
+    /// # Returns
+    ///
+    /// ClientConfig with extracted values
+    pub fn from_manifest_params(params: &serde_json::Value) -> crate::Result<Self> {
+        let address = params
+            .get("endpoint")
+            .or_else(|| params.get("address"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| crate::Error::ConfigError(
+                "Missing 'endpoint' or 'address' in transport config".to_string()
+            ))?
+            .to_string();
+
+        let auth_token = params
+            .get("auth_token")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let timeout_ms = params
+            .get("timeout_ms")
+            .and_then(|v| v.as_u64());
+
+        let extra_config = params.get("extra_config").cloned();
+
+        Ok(Self {
+            address,
+            auth_token,
+            timeout_ms,
+            extra_config,
+        })
+    }
+}
+
 /// Configuration for creating a transport server
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
@@ -224,4 +266,64 @@ pub trait PipelineTransport: Send + Sync {
         &self,
         manifest: Arc<crate::manifest::Manifest>,
     ) -> Result<Box<dyn StreamSession>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_client_config_from_manifest_params() {
+        let params = json!({
+            "endpoint": "localhost:50051",
+            "auth_token": "test-token",
+            "timeout_ms": 5000,
+            "extra_config": {
+                "ice_servers": ["stun:stun.l.google.com:19302"]
+            }
+        });
+
+        let config = ClientConfig::from_manifest_params(&params).unwrap();
+
+        assert_eq!(config.address, "localhost:50051");
+        assert_eq!(config.auth_token, Some("test-token".to_string()));
+        assert_eq!(config.timeout_ms, Some(5000));
+        assert!(config.extra_config.is_some());
+    }
+
+    #[test]
+    fn test_client_config_from_manifest_params_minimal() {
+        let params = json!({
+            "endpoint": "localhost:50051"
+        });
+
+        let config = ClientConfig::from_manifest_params(&params).unwrap();
+
+        assert_eq!(config.address, "localhost:50051");
+        assert_eq!(config.auth_token, None);
+        assert_eq!(config.timeout_ms, None);
+        assert_eq!(config.extra_config, None);
+    }
+
+    #[test]
+    fn test_client_config_from_manifest_params_missing_endpoint() {
+        let params = json!({
+            "auth_token": "test-token"
+        });
+
+        let result = ClientConfig::from_manifest_params(&params);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_client_config_from_manifest_params_address_fallback() {
+        // Test that "address" works as fallback for "endpoint"
+        let params = json!({
+            "address": "localhost:8080"
+        });
+
+        let config = ClientConfig::from_manifest_params(&params).unwrap();
+        assert_eq!(config.address, "localhost:8080");
+    }
 }

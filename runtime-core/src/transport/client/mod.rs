@@ -244,8 +244,12 @@ pub struct TransportConfig {
 
 /// Create a transport client based on transport type
 ///
-/// This factory function dispatches to the appropriate client implementation
-/// based on the transport type.
+/// # Deprecated
+///
+/// This function is deprecated in favor of the plugin registry system.
+/// Use `global_registry().get(name).create_client(config)` instead.
+///
+/// See `docs/MIGRATION_TO_PLUGINS.md` for migration guide.
 ///
 /// # Arguments
 ///
@@ -259,6 +263,7 @@ pub struct TransportConfig {
 /// # Example
 ///
 /// ```ignore
+/// // Old approach (deprecated):
 /// let config = TransportConfig {
 ///     transport_type: TransportType::Http,
 ///     endpoint: "http://localhost:8080".to_string(),
@@ -266,7 +271,16 @@ pub struct TransportConfig {
 ///     extra_config: None,
 /// };
 /// let client = create_transport_client(config).await?;
+///
+/// // New approach (recommended):
+/// use crate::transport::plugin_registry::global_registry;
+/// let plugin = global_registry().get("http").expect("http transport not registered");
+/// let client = plugin.create_client(&config).await?;
 /// ```
+#[deprecated(
+    since = "0.5.0",
+    note = "Use TransportPluginRegistry instead. See docs/MIGRATION_TO_PLUGINS.md"
+)]
 pub async fn create_transport_client(
     config: TransportConfig,
 ) -> crate::Result<Box<dyn PipelineClient>> {
