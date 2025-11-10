@@ -83,7 +83,7 @@ async fn test_create_remote_node_unsupported_transport() {
 /// This test requires a running gRPC server or uses a mock server.
 /// Currently disabled until mock server is implemented.
 #[tokio::test]
-#[ignore] // Enable when mock server is available
+
 async fn test_single_remote_node() {
     let params = json!({
         "transport": "grpc",
@@ -117,7 +117,7 @@ async fn test_single_remote_node() {
 /// This test verifies that timeouts are enforced correctly.
 /// Currently disabled until mock server is implemented.
 #[tokio::test]
-#[ignore] // Enable when mock server is available
+
 async fn test_remote_timeout() {
     let params = json!({
         "transport": "grpc",
@@ -151,7 +151,7 @@ async fn test_remote_timeout() {
 /// This test verifies that retries work correctly.
 /// Currently disabled until mock server is implemented.
 #[tokio::test]
-#[ignore] // Enable when mock server is available
+
 async fn test_remote_retry() {
     let params = json!({
         "transport": "grpc",
@@ -213,7 +213,7 @@ async fn test_auth_token_env_substitution() {
 /// This test verifies that a pipeline can use multiple transport types (gRPC, HTTP, WebRTC)
 /// in a single pipeline.
 #[tokio::test]
-#[ignore] // Enable when mock servers are available
+
 async fn test_multi_transport_pipeline() {
     use remotemedia_runtime_core::manifest::Manifest;
     use std::fs;
@@ -271,10 +271,12 @@ async fn test_circular_dependency_detection() {
                             "manifest": {
                                 "version": "v1",
                                 "metadata": {"name": "pipeline-a"},
-                                "nodes": []
+                                "nodes": [],
+                                "connections": []
                             }
                         }
-                    }]
+                    }],
+                    "connections": []
                 }
             }
         }],
@@ -300,7 +302,7 @@ async fn test_circular_dependency_detection() {
 ///
 /// This test verifies that manifests can be loaded from remote URLs with authentication.
 #[tokio::test]
-#[ignore] // Enable when mock HTTP server is available
+
 async fn test_remote_manifest_loading() {
     use remotemedia_runtime_core::nodes::remote_pipeline::{
         load_manifest_from_source, ManifestSource,
@@ -331,7 +333,7 @@ async fn test_remote_manifest_loading() {
 ///
 /// This test verifies that manifests can be loaded via /manifests/{name} endpoint.
 #[tokio::test]
-#[ignore] // Enable when mock HTTP server is available
+
 async fn test_manifest_name_resolution() {
     use remotemedia_runtime_core::nodes::remote_pipeline::{
         load_manifest_from_source, ManifestSource,
@@ -365,6 +367,7 @@ async fn test_manifest_caching() {
     // Create a test manifest
     let manifest_json = json!({
         "version": "v1",
+        "metadata": {"name": "test-manifest"},
         "nodes": [],
         "connections": []
     });
