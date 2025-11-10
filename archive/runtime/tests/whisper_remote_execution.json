@@ -1,0 +1,79 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "audio-transcription-hybrid",
+    "description": "Audio transcription with automatic remote execution for Whisper"
+  },
+  "capabilities": {
+    "fully_local": false,
+    "requires_remote": true,
+    "remote_nodes": ["whisper-transcribe"]
+  },
+  "nodes": [
+    {
+      "id": "audio-input",
+      "node_type": "AudioInput",
+      "params": {
+        "source": "microphone"
+      },
+      "execution": {
+        "placement": "local",
+        "reason": "lightweight_input_node"
+      }
+    },
+    {
+      "id": "resample",
+      "node_type": "ResampleNode",
+      "params": {
+        "target_rate": 16000
+      },
+      "execution": {
+        "placement": "prefer_local",
+        "reason": "simple_transform"
+      }
+    },
+    {
+      "id": "whisper-transcribe",
+      "node_type": "WhisperNode",
+      "params": {
+        "model": "base.en",
+        "language": "en"
+      },
+      "capabilities": {
+        "memory_gb": 0.5,
+        "cpu": {
+          "cores": 4
+        }
+      },
+      "execution": {
+        "placement": "remote",
+        "reason": "requires_native_libs_and_threads",
+        "fallback": null
+      },
+      "runtime_hint": "cpython"
+    },
+    {
+      "id": "text-output",
+      "node_type": "TextOutput",
+      "params": {},
+      "execution": {
+        "placement": "local",
+        "reason": "lightweight_output_node"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "from": "audio-input",
+      "to": "resample"
+    },
+    {
+      "from": "resample",
+      "to": "whisper-transcribe"
+    },
+    {
+      "from": "whisper-transcribe",
+      "to": "text-output"
+    }
+  ]
+}
