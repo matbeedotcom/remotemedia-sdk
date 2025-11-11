@@ -8,9 +8,8 @@ use super::video::{VideoEncoder, VideoDecoder, VideoEncoderConfig, VideoFrame, V
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
-use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
+use webrtc::track::track_local::TrackLocalWriter;
 use webrtc::media::Sample;
 use remotemedia_runtime_core::data::RuntimeData;
 
