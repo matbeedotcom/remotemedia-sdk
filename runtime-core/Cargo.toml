@@ -71,6 +71,10 @@ ctrlc = { workspace = true }
 reqwest = { workspace = true }
 rand = { workspace = true }
 
+# Low-latency streaming optimizations (spec 007)
+crossbeam = { workspace = true }
+hdrhistogram = { workspace = true }
+
 [dev-dependencies]
 tokio-test = { workspace = true }
 criterion = { workspace = true }
@@ -91,3 +95,33 @@ grpc-client = ["tonic", "prost", "prost-types"]
 
 # NOTE: grpc-client is for RemotePipelineNode client functionality only
 # Full transport implementations belong in separate transport crates
+
+# Integration tests for low-latency streaming (spec 007)
+[[test]]
+name = "test_speculative_vad"
+path = "tests/integration/test_speculative_vad.rs"
+
+[[test]]
+name = "test_control_messages"
+path = "tests/integration/test_control_messages.rs"
+
+# Benchmarks for latency measurement
+[[bench]]
+name = "bench_latency"
+path = "benches/bench_latency.rs"
+harness = false
+
+[[bench]]
+name = "bench_real_vad_comparison"
+path = "benches/bench_real_vad_comparison.rs"
+harness = false
+
+[[bench]]
+name = "bench_utterance_completion"
+path = "benches/bench_utterance_completion.rs"
+harness = false
+
+[[bench]]
+name = "bench_real_pipeline"
+path = "benches/bench_real_pipeline.rs"
+harness = false

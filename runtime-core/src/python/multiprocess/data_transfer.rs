@@ -56,6 +56,44 @@ impl RuntimeData {
         }
     }
 
+    /// Create control message runtime data (spec 007)
+    ///
+    /// Serializes control message as JSON for IPC transfer per wire format spec.
+    ///
+    /// # Arguments
+    /// * `message_type` - The control message type
+    /// * `segment_id` - Optional segment ID for cancellation
+    /// * `timestamp_ms` - Message timestamp in milliseconds
+    /// * `metadata` - Additional metadata
+    /// * `session_id` - Session identifier
+    pub fn control_message(
+        message_type: &crate::data::ControlMessageType,
+        segment_id: Option<&str>,
+        timestamp_ms: u64,
+        metadata: &serde_json::Value,
+        session_id: &str,
+    ) -> Self {
+        // Serialize control message fields as JSON payload
+        let payload_json = serde_json::json!({
+            "message_type": message_type,
+            "segment_id": segment_id,
+            "timestamp_ms": timestamp_ms,
+            "metadata": metadata,
+        });
+
+        let payload = serde_json::to_vec(&payload_json).unwrap_or_default();
+
+        Self {
+            data_type: DataType::ControlMessage,
+            session_id: session_id.to_string(),
+            timestamp: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_micros() as u64,
+            payload,
+        }
+    }
+
     /// Convert to bytes for IPC transfer
     pub fn to_bytes(&self) -> Vec<u8> {
         // Simple format: type (1 byte) | session_len (2 bytes) | session | timestamp (8 bytes) | payload_len (4 bytes) | payload
@@ -93,7 +131,8 @@ impl RuntimeData {
             2 => DataType::Video,
             3 => DataType::Text,
             4 => DataType::Tensor,
-            _ => return Err("Invalid data type".to_string()),
+            5 => DataType::ControlMessage,
+            _ => return Err(format!("Invalid data type: {}", bytes[pos])),
         };
         pos += 1;
 
@@ -152,6 +191,7 @@ pub enum DataType {
     Video = 2,
     Text = 3,
     Tensor = 4,
+    ControlMessage = 5, // Spec 007: Control messages for low-latency streaming
 }
 
 #[cfg(test)]
@@ -181,5 +221,52 @@ mod tests {
         assert_eq!(recovered.data_type, DataType::Text);
         assert_eq!(recovered.session_id, "test_session");
         assert_eq!(String::from_utf8_lossy(&recovered.payload), "Hello, IPC!");
+    }
+
+    #[test]
+    fn test_control_message_roundtrip() {
+        // Test control message serialization/deserialization
+        let message_type = crate::data::ControlMessageType::CancelSpeculation {
+            from_timestamp: 1000,
+            to_timestamp: 2000,
+        };
+
+        let metadata = serde_json::json!({
+            "reason": "test_cancellation",
+            "confidence": 0.85,
+        });
+
+        let data = RuntimeData::control_message(
+            &message_type,
+            Some("segment_123"),
+            1500,
+            &metadata,
+            "test_session",
+        );
+
+        // Verify data type
+        assert_eq!(data.data_type, DataType::ControlMessage);
+        assert_eq!(data.session_id, "test_session");
+
+        // Roundtrip through binary serialization
+        let bytes = data.to_bytes();
+        let recovered = RuntimeData::from_bytes(&bytes).unwrap();
+
+        assert_eq!(recovered.data_type, DataType::ControlMessage);
+        assert_eq!(recovered.session_id, "test_session");
+
+        // Deserialize payload as JSON
+        let payload_json: serde_json::Value =
+            serde_json::from_slice(&recovered.payload).unwrap();
+
+        assert_eq!(
+            payload_json["segment_id"].as_str().unwrap(),
+            "segment_123"
+        );
+        assert_eq!(payload_json["timestamp_ms"].as_u64().unwrap(), 1500);
+        assert_eq!(
+            payload_json["metadata"]["reason"].as_str().unwrap(),
+            "test_cancellation"
+        );
     }
 }

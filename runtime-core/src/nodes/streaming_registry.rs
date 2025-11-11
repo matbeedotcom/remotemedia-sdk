@@ -333,6 +333,94 @@ impl StreamingNodeFactory for SileroVADNodeFactory {
     }
 }
 
+// Spec 007: Speculative VAD Gate for low-latency streaming
+struct SpeculativeVADGateFactory;
+impl StreamingNodeFactory for SpeculativeVADGateFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::speculative_vad_gate::{SpeculativeVADConfig, SpeculativeVADGate};
+
+        // Parse configuration parameters
+        let config = if params.is_null() {
+            SpeculativeVADConfig::default()
+        } else {
+            let lookback_ms = params
+                .get("lookbackMs")
+                .or(params.get("lookback_ms"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .unwrap_or(150);
+
+            let lookahead_ms = params
+                .get("lookaheadMs")
+                .or(params.get("lookahead_ms"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .unwrap_or(50);
+
+            let sample_rate = params
+                .get("sampleRate")
+                .or(params.get("sample_rate"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .unwrap_or(16000);
+
+            let vad_threshold = params
+                .get("vadThreshold")
+                .or(params.get("vad_threshold"))
+                .and_then(|v| v.as_f64())
+                .map(|v| v as f32)
+                .unwrap_or(0.5);
+
+            let min_speech_ms = params
+                .get("minSpeechMs")
+                .or(params.get("min_speech_ms"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .unwrap_or(250);
+
+            let min_silence_ms = params
+                .get("minSilenceMs")
+                .or(params.get("min_silence_ms"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .unwrap_or(100);
+
+            let pad_ms = params
+                .get("padMs")
+                .or(params.get("pad_ms"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .unwrap_or(30);
+
+            SpeculativeVADConfig {
+                lookback_ms,
+                lookahead_ms,
+                sample_rate,
+                vad_threshold,
+                min_speech_ms,
+                min_silence_ms,
+                pad_ms,
+            }
+        };
+
+        let node = SpeculativeVADGate::with_config(config);
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "SpeculativeVADGate"
+    }
+
+    fn is_multi_output_streaming(&self) -> bool {
+        true // Outputs audio + optional cancellation messages
+    }
+}
+
 struct LFM2AudioNodeFactory;
 impl StreamingNodeFactory for LFM2AudioNodeFactory {
     fn create(
@@ -651,6 +739,9 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
     // Register Silero VAD node (Rust ONNX)
     #[cfg(feature = "silero-vad")]
     registry.register(Arc::new(SileroVADNodeFactory));
+
+    // Register Speculative VAD Gate (Spec 007 - low-latency streaming)
+    registry.register(Arc::new(SpeculativeVADGateFactory));
 
     // Register Python TTS nodes
     registry.register(Arc::new(KokoroTTSNodeFactory));

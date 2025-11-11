@@ -19,6 +19,10 @@ pub mod scheduler;
 pub mod data_conversion;
 pub mod executor_bridge;
 
+// Low-latency streaming modules (spec 007)
+pub mod latency_metrics;
+pub mod node_capabilities;
+
 // Re-export key types for convenience
 pub use error::ExecutionErrorExt;
 pub use graph::{PipelineGraph as Graph, PipelineNode as Node};

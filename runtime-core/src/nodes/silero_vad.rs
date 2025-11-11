@@ -347,6 +347,48 @@ impl AsyncStreamingNode for SileroVADNode {
             Ok(2)
         }
     }
+
+    /// Process control messages for flow control
+    ///
+    /// Handles:
+    /// - CancelSpeculation: Log but no action (VAD doesn't buffer)
+    /// - Other messages: Ignore
+    async fn process_control_message(
+        &self,
+        message: RuntimeData,
+        _session_id: Option<String>,
+    ) -> Result<bool> {
+        match message {
+            RuntimeData::ControlMessage {
+                message_type,
+                segment_id,
+                ..
+            } => {
+                use crate::data::ControlMessageType;
+
+                match message_type {
+                    ControlMessageType::CancelSpeculation { .. } => {
+                        // VAD doesn't buffer data, so cancellation is a no-op
+                        // Just log for debugging
+                        tracing::debug!(
+                            "VAD received cancellation for segment {:?}, no action needed",
+                            segment_id
+                        );
+                        Ok(true)
+                    }
+                    ControlMessageType::BatchHint { .. } => {
+                        // VAD processes samples immediately, batching not applicable
+                        Ok(false)
+                    }
+                    ControlMessageType::DeadlineWarning { .. } => {
+                        // VAD is already optimized for low latency
+                        Ok(false)
+                    }
+                }
+            }
+            _ => Ok(false), // Not a control message
+        }
+    }
 }
 
 impl SileroVADNode {

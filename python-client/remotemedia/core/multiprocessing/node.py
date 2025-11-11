@@ -408,6 +408,69 @@ class MultiprocessNode(BaseNode):
 
         self.status = NodeStatus.READY
 
+    async def _handle_control_message(self, data: RuntimeData) -> None:
+        """
+        Handle control messages for flow control (spec 007).
+
+        Control messages allow the pipeline to:
+        - Cancel speculative segments (CancelSpeculation)
+        - Flush buffers (FlushBuffer)
+        - Adjust batching policies (BatchHint)
+        - Handle deadline warnings (DeadlineWarning)
+
+        Args:
+            data: Control message RuntimeData
+
+        Default behavior:
+        - CancelSpeculation: Cancel any ongoing processing for the segment
+        - Other messages: Log and ignore
+
+        Nodes can override process_control_message() to implement custom handling.
+        """
+        try:
+            from remotemedia.core.multiprocessing.data import ControlMessageType, ControlMessageMetadata
+
+            if not isinstance(data.metadata, ControlMessageMetadata):
+                self.logger.warning(f"Control message received but metadata is not ControlMessageMetadata: {type(data.metadata)}")
+                return
+
+            msg_type = data.metadata.message_type
+            segment_id = data.metadata.segment_id
+
+            if msg_type == ControlMessageType.CANCEL_SPECULATION:
+                # Cancellation: stop any ongoing processing for this segment
+                self.logger.info(
+                    f"Received CancelSpeculation for segment {segment_id} "
+                    f"(from={data.metadata.from_timestamp}, to={data.metadata.to_timestamp})"
+                )
+
+                # Default behavior: log the cancellation
+                # Nodes that maintain segment state should override process_control_message()
+                # to actually cancel/discard the segment
+
+                # Call custom handler if defined
+                if hasattr(self, 'process_control_message'):
+                    await self.process_control_message(data)
+
+            elif msg_type == ControlMessageType.BATCH_HINT:
+                self.logger.debug(f"Received BatchHint: suggested_batch_size={data.metadata.suggested_batch_size}")
+                # Batching hints can be used by nodes that accumulate inputs
+                if hasattr(self, 'process_control_message'):
+                    await self.process_control_message(data)
+
+            elif msg_type == ControlMessageType.DEADLINE_WARNING:
+                self.logger.debug(f"Received DeadlineWarning: deadline_us={data.metadata.deadline_us}")
+                # Nodes can prioritize processing when deadline approaches
+                if hasattr(self, 'process_control_message'):
+                    await self.process_control_message(data)
+
+            else:
+                self.logger.warning(f"Unknown control message type: {msg_type}")
+
+        except Exception as e:
+            self.logger.error(f"Error handling control message: {e}", exc_info=True)
+            # Don't raise - control message errors shouldn't stop the pipeline
+
     async def _process_loop(self) -> None:
         """
         Main processing loop.
@@ -429,6 +492,12 @@ class MultiprocessNode(BaseNode):
                 if data is None:
                     # No data available, yield to event loop without artificial delay
                     await asyncio.sleep(0)
+                    continue
+
+                # Check if this is a control message (spec 007)
+                if hasattr(data, 'is_control_message') and data.is_control_message():
+                    # Handle control message instead of regular processing
+                    await self._handle_control_message(data)
                     continue
 
                 # Process the message

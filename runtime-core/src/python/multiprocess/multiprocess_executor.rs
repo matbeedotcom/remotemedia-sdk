@@ -678,6 +678,21 @@ impl MultiprocessExecutor {
                 // Binary data
                 IPCRuntimeData::text(&format!("Binary data: {} bytes", bytes.len()), session_id)
             }
+            MainRD::ControlMessage {
+                message_type,
+                segment_id,
+                timestamp_ms,
+                metadata,
+            } => {
+                // Spec 007: Control message for flow control
+                IPCRuntimeData::control_message(
+                    message_type,
+                    segment_id.as_deref(),
+                    *timestamp_ms,
+                    metadata,
+                    session_id,
+                )
+            }
             _ => {
                 // For now, convert unsupported types to text representation
                 IPCRuntimeData::text(&format!("{:?}", data), session_id)
