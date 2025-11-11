@@ -22,4 +22,6 @@ Write-Host "Pipeline: $env:WEBRTC_PIPELINE_MANIFEST" -ForegroundColor Cyan
 Write-Host "Press Ctrl+C to stop" -ForegroundColor Yellow
 Write-Host ""
 
-..\..\target\debug\webrtc_server.exe
+# ..\..\target\debug\webrtc_server.exe
+cargo run --bin webrtc_server --features grpc-signaling -- --mode grpc --grpc-address 0.0.0.0:50051 --manifest .\examples\vad_bidirectional.json
+
