@@ -5,43 +5,83 @@
 //! # Usage
 //!
 //! ```bash
-//! # Start with defaults (ws://localhost:8080 signaling, max 10 peers)
-//! cargo run --bin webrtc_server
+//! # Start gRPC signaling server (default: 0.0.0.0:50051)
+//! cargo run --bin webrtc_server --features grpc-signaling -- \
+//!   --mode grpc \
+//!   --grpc-address 0.0.0.0:50051 \
+//!   --manifest ./examples/loopback.yaml
 //!
-//! # Start with custom signaling URL
-//! WEBRTC_SIGNALING_URL="ws://0.0.0.0:8080" cargo run --bin webrtc_server
-//!
-//! # Configure peer limits
-//! WEBRTC_MAX_PEERS=20 cargo run --bin webrtc_server
+//! # Start WebSocket client mode (connects to signaling server)
+//! cargo run --bin webrtc_server -- \
+//!   --mode websocket \
+//!   --signaling-url ws://localhost:8080
 //!
 //! # Configure STUN/TURN servers
-//! WEBRTC_STUN_SERVERS="stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302" \
-//! cargo run --bin webrtc_server
-//!
-//! # Enable data channels
-//! WEBRTC_ENABLE_DATA_CHANNEL=true cargo run --bin webrtc_server
-//!
-//! # Build with codecs
-//! cargo run --bin webrtc_server --features codecs
+//! cargo run --bin webrtc_server -- \
+//!   --stun-servers stun:stun.l.google.com:19302 \
+//!   --max-peers 20
 //! ```
-//!
-//! # Environment Variables
-//!
-//! - `WEBRTC_SIGNALING_URL`: Signaling server WebSocket URL (default: `ws://localhost:8080`)
-//! - `WEBRTC_STUN_SERVERS`: Comma-separated list of STUN servers (default: `stun:stun.l.google.com:19302`)
-//! - `WEBRTC_TURN_SERVERS`: Comma-separated list of TURN servers (default: none)
-//! - `WEBRTC_MAX_PEERS`: Maximum number of concurrent peer connections (default: `10`)
-//! - `WEBRTC_ENABLE_DATA_CHANNEL`: Enable data channel support (default: `true`)
-//! - `WEBRTC_JITTER_BUFFER_MS`: Jitter buffer size in milliseconds (default: `100`)
-//! - `RUST_LOG`: Logging level (default: `info`, options: `trace`, `debug`, `info`, `warn`, `error`)
 
+use clap::Parser;
 use remotemedia_webrtc::{TurnServerConfig, WebRtcTransport, WebRtcTransportConfig};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+/// RemoteMedia WebRTC Server
+///
+/// Real-time media streaming server with WebRTC transport.
+/// Supports both gRPC signaling (server mode) and WebSocket signaling (client mode).
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Server mode: 'grpc' for signaling server, 'websocket' for signaling client
+    #[arg(short, long, default_value = "websocket", env = "WEBRTC_MODE")]
+    mode: ServerMode,
+
+    /// gRPC signaling server address (gRPC mode only)
+    #[arg(long, default_value = "0.0.0.0:50051", env = "GRPC_SIGNALING_ADDRESS")]
+    grpc_address: String,
+
+    /// Pipeline manifest path (gRPC mode only)
+    #[arg(long, default_value = "./examples/loopback.yaml", env = "WEBRTC_PIPELINE_MANIFEST")]
+    manifest: PathBuf,
+
+    /// WebSocket signaling URL (WebSocket mode only)
+    #[arg(long, default_value = "ws://localhost:8080", env = "WEBRTC_SIGNALING_URL")]
+    signaling_url: String,
+
+    /// STUN servers (comma-separated)
+    #[arg(long, value_delimiter = ',', default_value = "stun:stun.l.google.com:19302")]
+    stun_servers: Vec<String>,
+
+    /// Maximum concurrent peer connections
+    #[arg(long, default_value_t = 10, env = "WEBRTC_MAX_PEERS")]
+    max_peers: u32,
+
+    /// Enable data channel support
+    #[arg(long, default_value_t = true, env = "WEBRTC_ENABLE_DATA_CHANNEL")]
+    enable_data_channel: bool,
+
+    /// Jitter buffer size in milliseconds
+    #[arg(long, default_value_t = 100, env = "WEBRTC_JITTER_BUFFER_MS")]
+    jitter_buffer_ms: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum ServerMode {
+    /// gRPC signaling server mode
+    Grpc,
+    /// WebSocket signaling client mode
+    Websocket,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Parse command line arguments
+    let args = Args::parse();
+
     // Set up Ctrl+C handler at the very start
     let shutdown_flag = Arc::new(AtomicBool::new(false));
     let shutdown_flag_handler = Arc::clone(&shutdown_flag);
@@ -77,78 +117,76 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .enable_all()
         .build()?;
 
-    runtime.block_on(async_main(shutdown_flag))
+    runtime.block_on(async_main(args, shutdown_flag))
 }
 
-async fn async_main(shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
+async fn async_main(args: Args, shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing (logging)
     init_tracing();
 
     info!(
         version = env!("CARGO_PKG_VERSION"),
+        mode = ?args.mode,
         "RemoteMedia WebRTC Server starting"
     );
 
-    // Check if gRPC signaling is enabled
-    #[cfg(feature = "grpc-signaling")]
-    let enable_grpc = std::env::var("WEBRTC_ENABLE_GRPC_SIGNALING")
-        .map(|v| v.to_lowercase() == "true")
-        .unwrap_or(false);
-
-    #[cfg(not(feature = "grpc-signaling"))]
-    let enable_grpc = false;
-
-    if enable_grpc {
-        #[cfg(feature = "grpc-signaling")]
-        {
-            info!("Starting in gRPC signaling server mode");
-            run_grpc_signaling_server(shutdown_flag).await?;
+    match args.mode {
+        ServerMode::Grpc => {
+            #[cfg(feature = "grpc-signaling")]
+            {
+                info!("Starting in gRPC signaling server mode");
+                run_grpc_signaling_server(args, shutdown_flag).await?;
+            }
+            #[cfg(not(feature = "grpc-signaling"))]
+            {
+                return Err("gRPC signaling requested but feature not enabled. Build with --features grpc-signaling".into());
+            }
         }
-        #[cfg(not(feature = "grpc-signaling"))]
-        {
-            return Err("gRPC signaling requested but feature not enabled. Build with --features grpc-signaling".into());
+        ServerMode::Websocket => {
+            info!("Starting in WebSocket signaling client mode");
+            run_websocket_client_mode(args, shutdown_flag).await?;
         }
-    } else {
-        info!("Starting in WebSocket signaling client mode");
-        run_websocket_client_mode(shutdown_flag).await?;
     }
 
     Ok(())
 }
 
 #[cfg(feature = "grpc-signaling")]
-async fn run_grpc_signaling_server(shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_grpc_signaling_server(args: Args, shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
     use remotemedia_webrtc::signaling::grpc::WebRtcSignalingService;
     use remotemedia_runtime_core::transport::PipelineRunner;
     use remotemedia_runtime_core::manifest::Manifest;
     use tonic::transport::Server;
     use std::sync::Arc;
 
-    // Load gRPC signaling configuration
-    let grpc_address = std::env::var("GRPC_SIGNALING_ADDRESS")
-        .unwrap_or_else(|_| "0.0.0.0:50051".to_string());
-
-    let manifest_path = std::env::var("WEBRTC_PIPELINE_MANIFEST")
-        .unwrap_or_else(|_| "./examples/loopback.yaml".to_string());
-
     info!(
-        grpc_address = %grpc_address,
-        manifest_path = %manifest_path,
+        grpc_address = %args.grpc_address,
+        manifest_path = ?args.manifest,
+        stun_servers = ?args.stun_servers,
+        max_peers = args.max_peers,
         "gRPC signaling server configuration"
     );
 
     // Load pipeline manifest from file
-    let manifest_json = std::fs::read_to_string(&manifest_path)?;
+    let manifest_json = std::fs::read_to_string(&args.manifest)?;
     let manifest: Manifest = serde_json::from_str(&manifest_json)?;
     let manifest = Arc::new(manifest);
-    info!("Loaded pipeline manifest: {}", manifest_path);
+    info!("Loaded pipeline manifest: {:?}", args.manifest);
 
     // Create PipelineRunner
     let runner = Arc::new(PipelineRunner::new()?);
     info!("PipelineRunner initialized");
 
-    // Load WebRTC transport configuration from environment
-    let config = Arc::new(load_config_from_env()?);
+    // Build WebRTC transport configuration from arguments
+    let config = Arc::new(WebRtcTransportConfig {
+        signaling_url: args.signaling_url.clone(),
+        stun_servers: args.stun_servers.clone(),
+        turn_servers: vec![], // TODO: Add TURN server parsing
+        max_peers: args.max_peers,
+        enable_data_channel: args.enable_data_channel,
+        jitter_buffer_size_ms: args.jitter_buffer_ms,
+        ..Default::default()
+    });
     info!("WebRTC transport configuration loaded");
 
     // Create gRPC signaling service with config, runner, and manifest
@@ -164,10 +202,10 @@ async fn run_grpc_signaling_server(shutdown_flag: Arc<AtomicBool>) -> Result<(),
 
     let signaling_server = signaling_service.into_server();
 
-    info!("gRPC signaling server listening on {}", grpc_address);
+    info!("gRPC signaling server listening on {}", args.grpc_address);
 
     // Parse address
-    let addr: std::net::SocketAddr = grpc_address.parse()?;
+    let addr: std::net::SocketAddr = args.grpc_address.parse()?;
 
     // Start gRPC server with shutdown
     let shutdown_future = async move {
@@ -186,11 +224,21 @@ async fn run_grpc_signaling_server(shutdown_flag: Arc<AtomicBool>) -> Result<(),
     Ok(())
 }
 
-async fn run_websocket_client_mode(shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
-    // Load configuration from environment
-    let config = load_config_from_env()?;
+async fn run_websocket_client_mode(args: Args, shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
+    // Build configuration from arguments
+    let config = WebRtcTransportConfig {
+        signaling_url: args.signaling_url.clone(),
+        stun_servers: args.stun_servers.clone(),
+        turn_servers: vec![], // TODO: Add TURN server parsing
+        max_peers: args.max_peers,
+        enable_data_channel: args.enable_data_channel,
+        jitter_buffer_size_ms: args.jitter_buffer_ms,
+        ..Default::default()
+    };
 
-    // Log configuration
+    // Validate and log configuration
+    config.validate()?;
+
     info!(
         signaling_url = %config.signaling_url,
         max_peers = config.max_peers,
@@ -235,78 +283,4 @@ fn init_tracing() {
         .with(env_filter)
         .with(tracing_subscriber::fmt::layer())
         .init();
-}
-
-fn load_config_from_env() -> Result<WebRtcTransportConfig, Box<dyn std::error::Error>> {
-    let signaling_url = std::env::var("WEBRTC_SIGNALING_URL")
-        .unwrap_or_else(|_| "ws://localhost:8080".to_string());
-
-    let max_peers = std::env::var("WEBRTC_MAX_PEERS")
-        .ok()
-        .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(10);
-
-    let stun_servers = std::env::var("WEBRTC_STUN_SERVERS")
-        .unwrap_or_else(|_| "stun:stun.l.google.com:19302".to_string())
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>();
-
-    // TURN servers format: "turn:example.com:3478:username:credential,turns:example.com:5349:user2:cred2"
-    let turn_servers = std::env::var("WEBRTC_TURN_SERVERS")
-        .ok()
-        .and_then(|v| {
-            let servers: Vec<TurnServerConfig> = v
-                .split(',')
-                .filter_map(|s| {
-                    let parts: Vec<&str> = s.trim().split(':').collect();
-                    if parts.len() >= 4 {
-                        // Format: turn://host:port:username:credential
-                        Some(TurnServerConfig {
-                            url: format!("{}://{}:{}", parts[0], parts[1], parts[2]),
-                            username: parts[3].to_string(),
-                            credential: parts.get(4).unwrap_or(&"").to_string(),
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            if servers.is_empty() {
-                None
-            } else {
-                Some(servers)
-            }
-        })
-        .unwrap_or_default();
-
-    let enable_data_channel = std::env::var("WEBRTC_ENABLE_DATA_CHANNEL")
-        .ok()
-        .and_then(|v| v.parse::<bool>().ok())
-        .unwrap_or(true);
-
-    let jitter_buffer_size_ms = std::env::var("WEBRTC_JITTER_BUFFER_MS")
-        .ok()
-        .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(100);
-
-    if stun_servers.is_empty() {
-        warn!("No STUN servers configured - NAT traversal may fail");
-    }
-
-    let config = WebRtcTransportConfig {
-        signaling_url,
-        stun_servers,
-        turn_servers,
-        max_peers,
-        enable_data_channel,
-        jitter_buffer_size_ms,
-        ..Default::default()
-    };
-
-    // Validate configuration
-    config.validate()?;
-
-    Ok(config)
 }
