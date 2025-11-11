@@ -18,7 +18,13 @@ fn compile_protos() {
         .build_server(true)
         .build_client(true)
         .out_dir("src/generated")
-        .compile_protos(&["protos/webrtc_signaling.proto"], &["protos/"])
+        .compile_protos(
+            &[
+                "protos/webrtc_signaling.proto",
+                "protos/common.proto",
+            ],
+            &["protos/"]
+        )
         .unwrap_or_else(|e| panic!("Failed to compile protos: {}", e));
 
     println!("cargo:warning=Successfully compiled protocol buffers");

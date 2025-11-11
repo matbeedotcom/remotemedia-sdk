@@ -66,6 +66,17 @@ pub mod data {
 
     use serde::{Deserialize, Serialize};
 
+    // Low-latency streaming data structures (spec 007)
+    pub mod buffering_policy;
+    pub mod control_message;
+    pub mod ring_buffer;
+    pub mod speculative_segment;
+
+    pub use buffering_policy::{BufferingPolicy, MergeStrategy};
+    pub use control_message::{ControlMessage, ControlMessageType};
+    pub use ring_buffer::RingBuffer;
+    pub use speculative_segment::{SegmentStatus, SpeculativeSegment};
+
     /// Audio format enumeration
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     pub enum AudioFormat {
@@ -153,6 +164,17 @@ pub mod data {
         Text(String),
         /// Binary data
         Binary(Vec<u8>),
+        /// Control message for pipeline flow control (spec 007)
+        ControlMessage {
+            /// Type of control message
+            message_type: ControlMessageType,
+            /// Optional target segment ID for cancellation
+            segment_id: Option<String>,
+            /// Timestamp when message was created (milliseconds)
+            timestamp_ms: u64,
+            /// Extensible metadata
+            metadata: serde_json::Value,
+        },
     }
 
     impl RuntimeData {
@@ -165,6 +187,7 @@ pub mod data {
                 RuntimeData::Json(_) => "json",
                 RuntimeData::Text(_) => "text",
                 RuntimeData::Binary(_) => "binary",
+                RuntimeData::ControlMessage { .. } => "control_message",
             }
         }
 
@@ -181,6 +204,7 @@ pub mod data {
                 },
                 RuntimeData::Text(s) => s.len(),
                 RuntimeData::Binary(b) => b.len(),
+                RuntimeData::ControlMessage { .. } => 1,
             }
         }
 
@@ -195,6 +219,12 @@ pub mod data {
                 }
                 RuntimeData::Text(s) => s.len(),
                 RuntimeData::Binary(b) => b.len(),
+                RuntimeData::ControlMessage { segment_id, metadata, .. } => {
+                    // Approximate size: type + timestamp + segment_id + metadata
+                    let segment_id_size = segment_id.as_ref().map(|s| s.len()).unwrap_or(0);
+                    let metadata_size = serde_json::to_string(metadata).map(|s| s.len()).unwrap_or(0);
+                    std::mem::size_of::<ControlMessageType>() + 8 + segment_id_size + metadata_size
+                }
             }
         }
     }

@@ -137,6 +137,34 @@ pub trait AsyncStreamingNode: Send + Sync {
         callback(output)?;
         Ok(1)
     }
+
+    /// Process control message for pipeline flow control
+    ///
+    /// This method allows nodes to handle control messages such as:
+    /// - CancelSpeculation: Cancel processing of a speculative segment
+    /// - FlushBuffer: Flush any buffered data immediately
+    /// - UpdatePolicy: Update batching or buffering policies
+    ///
+    /// Default implementation ignores control messages. Nodes that need to handle
+    /// control messages should override this method.
+    ///
+    /// # Arguments
+    /// * `message` - The control message data
+    /// * `session_id` - Optional session ID for session-scoped control
+    ///
+    /// # Returns
+    /// * `Ok(true)` if the message was handled
+    /// * `Ok(false)` if the message was ignored
+    /// * `Err(_)` if handling failed
+    async fn process_control_message(
+        &self,
+        _message: RuntimeData,
+        _session_id: Option<String>,
+    ) -> Result<bool, Error> {
+        // Default: ignore control messages
+        // Nodes that need control message handling should override this
+        Ok(false)
+    }
 }
 
 /// Unified streaming node trait that can handle both sync and async nodes
@@ -188,6 +216,34 @@ pub trait StreamingNode: Send + Sync {
         let output = self.process_async(data).await?;
         callback(output)?;
         Ok(1)
+    }
+
+    /// Process control message for pipeline flow control
+    ///
+    /// This method allows nodes to handle control messages such as:
+    /// - CancelSpeculation: Cancel processing of a speculative segment
+    /// - FlushBuffer: Flush any buffered data immediately
+    /// - UpdatePolicy: Update batching or buffering policies
+    ///
+    /// Default implementation ignores control messages. Nodes that need to handle
+    /// control messages should override this method.
+    ///
+    /// # Arguments
+    /// * `message` - The control message data
+    /// * `session_id` - Optional session ID for session-scoped control
+    ///
+    /// # Returns
+    /// * `Ok(true)` if the message was handled
+    /// * `Ok(false)` if the message was ignored
+    /// * `Err(_)` if handling failed
+    async fn process_control_message(
+        &self,
+        _message: RuntimeData,
+        _session_id: Option<String>,
+    ) -> Result<bool, Error> {
+        // Default: ignore control messages
+        // Nodes that need control message handling should override this
+        Ok(false)
     }
 }
 

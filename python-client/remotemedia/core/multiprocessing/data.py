@@ -20,6 +20,7 @@ class DataType(Enum):
     VIDEO = 2
     TEXT = 3
     TENSOR = 4
+    CONTROL_MESSAGE = 5  # Spec 007: Control messages for low-latency streaming
 
 
 class AudioFormat(Enum):
@@ -83,6 +84,60 @@ class TensorMetadata:
     dtype: TensorType
 
 
+class ControlMessageType(Enum):
+    """Control message types (spec 007)."""
+    CANCEL_SPECULATION = "CancelSpeculation"
+    BATCH_HINT = "BatchHint"
+    DEADLINE_WARNING = "DeadlineWarning"
+
+
+@dataclass
+class ControlMessageMetadata:
+    """Control message metadata (spec 007)."""
+    message_type: ControlMessageType
+    segment_id: Optional[str] = None
+    from_timestamp: Optional[int] = None  # For CancelSpeculation
+    to_timestamp: Optional[int] = None    # For CancelSpeculation
+    suggested_batch_size: Optional[int] = None  # For BatchHint
+    deadline_us: Optional[int] = None     # For DeadlineWarning
+    extra: Optional[dict] = None  # Additional metadata
+
+    @classmethod
+    def from_json(cls, data: dict) -> 'ControlMessageMetadata':
+        """Create from JSON payload deserialized from IPC."""
+        msg_type_data = data.get('message_type', {})
+
+        # Determine message type
+        if 'CancelSpeculation' in msg_type_data:
+            msg_type = ControlMessageType.CANCEL_SPECULATION
+            details = msg_type_data['CancelSpeculation']
+            return cls(
+                message_type=msg_type,
+                segment_id=data.get('segment_id'),
+                from_timestamp=details.get('from_timestamp'),
+                to_timestamp=details.get('to_timestamp'),
+                extra=data.get('metadata')
+            )
+        elif 'BatchHint' in msg_type_data:
+            msg_type = ControlMessageType.BATCH_HINT
+            details = msg_type_data['BatchHint']
+            return cls(
+                message_type=msg_type,
+                suggested_batch_size=details.get('suggested_batch_size'),
+                extra=data.get('metadata')
+            )
+        elif 'DeadlineWarning' in msg_type_data:
+            msg_type = ControlMessageType.DEADLINE_WARNING
+            details = msg_type_data['DeadlineWarning']
+            return cls(
+                message_type=msg_type,
+                deadline_us=details.get('deadline_us'),
+                extra=data.get('metadata')
+            )
+        else:
+            raise ValueError(f"Unknown control message type: {msg_type_data}")
+
+
 @dataclass
 class RuntimeData:
     """
@@ -93,10 +148,10 @@ class RuntimeData:
     """
 
     type: DataType
-    payload: Union[np.ndarray, bytes, str]
+    payload: Union[np.ndarray, bytes, str, dict]  # dict for control messages
     session_id: str
     timestamp: float
-    metadata: Optional[Union[AudioMetadata, VideoMetadata, TextMetadata, TensorMetadata]] = None
+    metadata: Optional[Union[AudioMetadata, VideoMetadata, TextMetadata, TensorMetadata, ControlMessageMetadata]] = None
 
     def __post_init__(self):
         """Validate and normalize data after initialization."""
@@ -116,6 +171,18 @@ class RuntimeData:
                 self.metadata = TextMetadata()
         elif self.type == DataType.TENSOR and not isinstance(self.metadata, TensorMetadata):
             raise ValueError("Tensor data requires TensorMetadata")
+        elif self.type == DataType.CONTROL_MESSAGE:
+            # Control messages should have ControlMessageMetadata
+            if self.metadata is None or not isinstance(self.metadata, ControlMessageMetadata):
+                # Try to parse from payload if it's a dict/JSON
+                if isinstance(self.payload, dict):
+                    self.metadata = ControlMessageMetadata.from_json(self.payload)
+                elif isinstance(self.payload, bytes):
+                    import json
+                    payload_json = json.loads(self.payload.decode('utf-8'))
+                    self.metadata = ControlMessageMetadata.from_json(payload_json)
+                else:
+                    raise ValueError("ControlMessage requires ControlMessageMetadata or JSON payload")
 
     @property
     def size(self) -> int:
@@ -305,6 +372,63 @@ class RuntimeData:
             timestamp=time.time(),
             metadata=metadata
         )
+
+    @classmethod
+    def control_message(cls,
+                       message_type: ControlMessageType,
+                       segment_id: Optional[str] = None,
+                       session_id: str = "",
+                       **kwargs) -> "RuntimeData":
+        """
+        Create control message runtime data (spec 007).
+
+        Args:
+            message_type: Type of control message
+            segment_id: Optional segment ID for cancellation
+            session_id: Session identifier
+            **kwargs: Additional fields (from_timestamp, to_timestamp, suggested_batch_size, deadline_us, metadata)
+
+        Returns:
+            RuntimeData instance for control message
+        """
+        metadata = ControlMessageMetadata(
+            message_type=message_type,
+            segment_id=segment_id,
+            from_timestamp=kwargs.get('from_timestamp'),
+            to_timestamp=kwargs.get('to_timestamp'),
+            suggested_batch_size=kwargs.get('suggested_batch_size'),
+            deadline_us=kwargs.get('deadline_us'),
+            extra=kwargs.get('metadata')
+        )
+
+        # Payload is a dict representation for easy access
+        payload = {
+            'message_type': message_type.value,
+            'segment_id': segment_id,
+            **kwargs
+        }
+
+        return cls(
+            type=DataType.CONTROL_MESSAGE,
+            payload=payload,
+            session_id=session_id,
+            timestamp=time.time(),
+            metadata=metadata
+        )
+
+    def data_type(self) -> str:
+        """Get the data type as a string."""
+        return self.type.name.lower()
+
+    def is_control_message(self) -> bool:
+        """Check if this is a control message."""
+        return self.type == DataType.CONTROL_MESSAGE
+
+    def is_cancellation(self) -> bool:
+        """Check if this is a cancellation control message."""
+        return (self.type == DataType.CONTROL_MESSAGE and
+                isinstance(self.metadata, ControlMessageMetadata) and
+                self.metadata.message_type == ControlMessageType.CANCEL_SPECULATION)
 
     def to_bytes(self) -> bytes:
         """

@@ -76,9 +76,17 @@ mod channels;
 mod session;
 mod transport;
 
+// Protobuf adapters (only with grpc-signaling)
+#[cfg(feature = "grpc-signaling")]
+mod adapters;
+
 // Generated protobuf code (gRPC signaling)
 #[cfg(feature = "grpc-signaling")]
 pub mod generated {
+    // Common types (DataBuffer, etc.) from remotemedia.v1 package
+    include!("generated/remotemedia.v1.rs");
+
+    // WebRTC signaling types from remotemedia.v1.webrtc package
     pub mod webrtc {
         include!("generated/remotemedia.v1.webrtc.rs");
     }

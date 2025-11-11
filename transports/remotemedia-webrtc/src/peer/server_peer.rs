@@ -14,7 +14,7 @@ use remotemedia_runtime_core::{
     transport::{PipelineRunner, StreamSession, StreamSessionHandle, TransportData},
     data::RuntimeData,
 };
-use prost::Message; // For Protobuf decode
+use prost::Message;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn, error};
@@ -186,23 +186,12 @@ impl ServerPeer {
                             info!("Received data channel message: {} bytes from peer {}", msg.data.len(), peer_id);
 
                             // Deserialize Protobuf DataBuffer
-                            match remotemedia_runtime::grpc_service::generated::DataBuffer::decode(&msg.data[..]) {
+                            match crate::generated::DataBuffer::decode(&msg.data[..]) {
                                 Ok(data_buffer) => {
-                                    // Convert Protobuf → RuntimeData
-                                    match remotemedia_runtime::data::conversions::convert_proto_to_runtime_data(data_buffer) {
-                                        Ok(runtime_data) => {
-                                            info!("Decoded RuntimeData from data channel: type={}",
-                                                match &runtime_data {
-                                                    remotemedia_runtime::data::RuntimeData::Audio(_) => "Audio",
-                                                    remotemedia_runtime::data::RuntimeData::Video(_) => "Video",
-                                                    remotemedia_runtime::data::RuntimeData::Tensor(_) => "Tensor",
-                                                    remotemedia_runtime::data::RuntimeData::Json(_) => "Json",
-                                                    remotemedia_runtime::data::RuntimeData::Text(t) => {
-                                                        info!("Text data: {}", t);
-                                                        "Text"
-                                                    },
-                                                    remotemedia_runtime::data::RuntimeData::Binary(_) => "Binary",
-                                                });
+                                    // Convert Protobuf DataBuffer → RuntimeData
+                                    match crate::adapters::data_buffer_to_runtime_data(&data_buffer) {
+                                        Some(runtime_data) => {
+                                            info!("Decoded RuntimeData from data channel: type={}", runtime_data.data_type());
 
                                             // Create TransportData
                                             let transport_data = remotemedia_runtime_core::transport::TransportData {
@@ -215,8 +204,8 @@ impl ServerPeer {
                                                 error!("Failed to forward data channel message to pipeline: {}", e);
                                             }
                                         }
-                                        Err(e) => {
-                                            error!("Failed to convert DataBuffer to RuntimeData: {}", e);
+                                        None => {
+                                            error!("Failed to convert DataBuffer to RuntimeData: invalid data type");
                                         }
                                     }
                                 }

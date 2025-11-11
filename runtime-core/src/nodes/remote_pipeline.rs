@@ -983,6 +983,45 @@ impl crate::nodes::AsyncStreamingNode for RemotePipelineNode {
         callback(output)?;
         Ok(1)
     }
+
+    async fn process_control_message(
+        &self,
+        message: crate::data::RuntimeData,
+        _session_id: Option<String>,
+    ) -> crate::Result<bool> {
+        // Forward control messages to remote transport
+        // The transport layer will handle serialization (JSON for gRPC/WebRTC/HTTP)
+
+        match &message {
+            crate::data::RuntimeData::ControlMessage { .. } => {
+                tracing::debug!(
+                    "RemotePipelineNode '{}' forwarding control message to remote transport",
+                    self.node_id
+                );
+
+                // Convert to TransportData and send via remote transport
+                // Note: For now, control messages are sent as data (will be handled by transport)
+                // TODO: Once T042-T045 are complete, this will use proper transport control message APIs
+                let transport_data = crate::transport::TransportData::new(message);
+
+                // Get manifest
+                let manifest = self.manifest.as_ref().ok_or_else(|| {
+                    crate::Error::Execution(format!(
+                        "RemotePipelineNode '{}' not initialized - manifest is None",
+                        self.node_id
+                    ))
+                })?;
+
+                // Execute via transport (control messages flow through the same pipeline)
+                let _result = self
+                    .execute_with_retry(std::sync::Arc::new(manifest.clone()), transport_data)
+                    .await?;
+
+                Ok(true) // Message was handled (forwarded)
+            }
+            _ => Ok(false), // Not a control message
+        }
+    }
 }
 
 #[cfg(test)]

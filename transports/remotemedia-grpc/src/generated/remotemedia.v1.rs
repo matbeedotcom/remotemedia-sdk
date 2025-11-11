@@ -23,7 +23,7 @@ pub struct DataBuffer {
         ::prost::alloc::string::String,
     >,
     /// Data type discriminator (exactly one must be set)
-    #[prost(oneof = "data_buffer::DataType", tags = "1, 2, 3, 4, 5, 6")]
+    #[prost(oneof = "data_buffer::DataType", tags = "1, 2, 3, 4, 5, 6, 7")]
     pub data_type: ::core::option::Option<data_buffer::DataType>,
 }
 /// Nested message and enum types in `DataBuffer`.
@@ -43,6 +43,9 @@ pub mod data_buffer {
         Text(super::TextBuffer),
         #[prost(message, tag = "6")]
         Binary(super::BinaryBuffer),
+        /// Spec 007: Control messages for low-latency streaming
+        #[prost(message, tag = "7")]
+        Control(super::ControlMessage),
     }
 }
 /// Multi-channel audio data with sample rate and format metadata
@@ -200,6 +203,73 @@ pub struct BinaryBuffer {
     /// Not validated by protocol (client responsibility)
     #[prost(string, tag = "2")]
     pub mime_type: ::prost::alloc::string::String,
+}
+/// Control message for pipeline flow control
+///
+/// Enables low-latency optimizations:
+///
+/// * CancelSpeculation: Cancel processing of speculative audio segments
+/// * BatchHint: Suggest batching parameters to downstream nodes
+/// * DeadlineWarning: Signal approaching soft deadlines
+///
+/// Example (Cancel speculation):
+/// ControlMessage {
+/// message_type: { cancel_speculation: { from_timestamp: 1000, to_timestamp: 2000 } },
+/// segment_id: "seg_abc123",
+/// timestamp_ms: 1500
+/// }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ControlMessage {
+    /// Optional target segment ID for cancellation
+    #[prost(string, tag = "4")]
+    pub segment_id: ::prost::alloc::string::String,
+    /// Message creation timestamp (milliseconds since epoch)
+    #[prost(uint64, tag = "5")]
+    pub timestamp_ms: u64,
+    /// Extensible metadata (JSON encoded)
+    /// Example: {"reason": "vad_false_positive", "confidence": 0.3}
+    #[prost(string, tag = "6")]
+    pub metadata: ::prost::alloc::string::String,
+    /// Control message type (exactly one must be set)
+    #[prost(oneof = "control_message::MessageType", tags = "1, 2, 3")]
+    pub message_type: ::core::option::Option<control_message::MessageType>,
+}
+/// Nested message and enum types in `ControlMessage`.
+pub mod control_message {
+    /// Control message type (exactly one must be set)
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum MessageType {
+        #[prost(message, tag = "1")]
+        CancelSpeculation(super::CancelSpeculation),
+        #[prost(message, tag = "2")]
+        BatchHint(super::BatchHint),
+        #[prost(message, tag = "3")]
+        DeadlineWarning(super::DeadlineWarning),
+    }
+}
+/// Cancel a speculative segment (retroactive cancellation)
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CancelSpeculation {
+    /// Start timestamp of segment to cancel (sample index or microseconds)
+    #[prost(uint64, tag = "1")]
+    pub from_timestamp: u64,
+    /// End timestamp of segment to cancel
+    #[prost(uint64, tag = "2")]
+    pub to_timestamp: u64,
+}
+/// Hint to increase batch size for throughput
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BatchHint {
+    /// Suggested batch size for downstream nodes
+    #[prost(uint32, tag = "1")]
+    pub suggested_batch_size: u32,
+}
+/// Soft deadline approaching (not a hard timeout)
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeadlineWarning {
+    /// Deadline in microseconds from now
+    #[prost(uint64, tag = "1")]
+    pub deadline_us: u64,
 }
 /// Performance metrics for pipeline execution
 ///
