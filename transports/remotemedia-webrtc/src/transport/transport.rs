@@ -2,7 +2,7 @@
 
 use crate::{
     config::WebRtcTransportConfig,
-    media::tracks::{runtime_data_to_rtp, rtp_to_runtime_data},
+    media::tracks::runtime_data_to_rtp,
     peer::{PeerConnection, PeerInfo, PeerManager},
     session::{Session, SessionId, SessionManager},
     signaling::{IceCandidateParams, SignalingClient},

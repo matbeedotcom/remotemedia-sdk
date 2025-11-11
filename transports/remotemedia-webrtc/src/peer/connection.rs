@@ -1,6 +1,6 @@
 //! WebRTC peer connection management
 
-use crate::media::audio::{AudioEncoder, AudioEncoderConfig};
+use crate::media::audio::AudioEncoderConfig;
 use crate::media::tracks::AudioTrack;
 use crate::media::tracks::VideoTrack;
 use crate::media::video::{VideoEncoderConfig};
