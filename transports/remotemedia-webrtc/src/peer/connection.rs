@@ -1,8 +1,6 @@
 //! WebRTC peer connection management
 
-#[cfg(feature = "opus-codec")]
 use crate::media::audio::{AudioEncoder, AudioEncoderConfig};
-#[cfg(feature = "opus-codec")]
 use crate::media::tracks::AudioTrack;
 use crate::media::tracks::VideoTrack;
 use crate::media::video::{VideoEncoderConfig};
@@ -68,14 +66,12 @@ pub struct PeerConnection {
     connected_at: Arc<RwLock<Option<SystemTime>>>,
 
     /// Audio track for sending audio (if configured)
-    #[cfg(feature = "opus-codec")]
     audio_track: Arc<RwLock<Option<Arc<AudioTrack>>>>,
 
     /// Video track for sending video (if configured)
     video_track: Arc<RwLock<Option<Arc<VideoTrack>>>>,
 
     /// Audio RTP sender (retained to prevent track cleanup)
-    #[cfg(feature = "opus-codec")]
     audio_sender: Arc<RwLock<Option<Arc<RTCRtpSender>>>>,
 
     /// Video RTP sender (retained to prevent track cleanup)
@@ -192,10 +188,8 @@ impl PeerConnection {
             peer_connection,
             created_at: SystemTime::now(),
             connected_at,
-            #[cfg(feature = "opus-codec")]
             audio_track: Arc::new(RwLock::new(None)),
             video_track: Arc::new(RwLock::new(None)),
-            #[cfg(feature = "opus-codec")]
             audio_sender: Arc::new(RwLock::new(None)),
             video_sender: Arc::new(RwLock::new(None)),
         })
@@ -393,7 +387,6 @@ impl PeerConnection {
     /// # Returns
     ///
     /// Returns the created AudioTrack wrapped in Arc for shared ownership.
-    #[cfg(feature = "opus-codec")]
     pub async fn add_audio_track(&self, config: AudioEncoderConfig) -> Result<Arc<AudioTrack>> {
         info!("Adding audio track to peer {}", self.peer_id);
 
@@ -477,7 +470,6 @@ impl PeerConnection {
     }
 
     /// Get the audio track (if configured)
-    #[cfg(feature = "opus-codec")]
     pub async fn audio_track(&self) -> Option<Arc<AudioTrack>> {
         self.audio_track.read().await.clone()
     }
@@ -539,7 +531,6 @@ mod tests {
 
         assert_eq!(pc.peer_id(), "peer-test");
         assert_eq!(pc.state().await, ConnectionState::New);
-        #[cfg(feature = "opus-codec")]
         assert!(pc.audio_track().await.is_none());
         assert!(pc.video_track().await.is_none());
     }
@@ -555,7 +546,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "opus-codec")]
     async fn test_add_audio_track() {
         let config = WebRtcTransportConfig::default();
         let pc = PeerConnection::new("peer-test".to_string(), &config).await.unwrap();
@@ -580,7 +570,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "opus-codec")]
     async fn test_add_both_tracks() {
         let config = WebRtcTransportConfig::default();
         let pc = PeerConnection::new("peer-test".to_string(), &config).await.unwrap();
@@ -599,7 +588,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "opus-codec")]
     async fn test_create_offer_with_tracks() {
         let config = WebRtcTransportConfig::default();
         let pc = PeerConnection::new("peer-test".to_string(), &config).await.unwrap();
