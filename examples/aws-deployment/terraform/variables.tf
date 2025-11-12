@@ -40,3 +40,4 @@ variable "rust_log_level" {
   default     = "info"
 }
 
+

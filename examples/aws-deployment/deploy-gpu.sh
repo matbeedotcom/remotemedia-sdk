@@ -142,3 +142,4 @@ echo "   • Scale to zero during off-hours (saves 50%)"
 echo "   • Monitor costs in AWS Cost Explorer"
 echo ""
 
+

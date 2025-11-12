@@ -261,3 +261,4 @@ aws ecr batch-delete-image \
 **Difficulty**: Beginner  
 **Cost**: ~$256/month (or ~$80/month with Fargate Spot)
 
+

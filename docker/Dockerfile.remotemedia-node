@@ -1,20 +1,24 @@
-# RemoteMedia Docker Node with Python Package
+# RemoteMedia Docker Node with PyTorch Base
+#
+# Uses pytorch/pytorch base image with CUDA 12.4 + cuDNN 9
+# Includes: Python 3.11, PyTorch 2.5.1, NumPy, CUDA libraries
 #
 # Build from workspace root:
-#   docker build -f docker/Dockerfile.remotemedia-node -t remotemedia/python-node:py3.10 .
+#   docker build -f docker/Dockerfile.remotemedia-node -t remotemedia/pytorch-node:latest .
 #
 # Test:
-#   docker run --rm remotemedia/python-node:py3.10
+#   docker run --rm remotemedia/pytorch-node:latest
 #
 # Interactive:
-#   docker run --rm -it remotemedia/python-node:py3.10 /bin/bash
+#   docker run --rm -it remotemedia/pytorch-node:latest /bin/bash
 
-ARG PYTHON_VERSION=3.11
+ARG PYTORCH_VERSION=2.5.1
 
 # ===========================================================================
 # Stage 1: Builder - Install dependencies with build tools
 # ===========================================================================
-FROM python:${PYTHON_VERSION}-slim as builder
+# Use PyTorch base image which includes Python, CUDA, and ML libraries
+FROM pytorch/pytorch:${PYTORCH_VERSION}-cuda12.4-cudnn9-runtime as builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -25,9 +29,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Create virtual environment
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# PyTorch base uses conda, so use conda environment instead of venv
+# The base conda env is already active
 
 # Install remotemedia shared package first (protobuf definitions)
 COPY remotemedia /tmp/remotemedia-shared/remotemedia
@@ -60,9 +63,9 @@ COPY python-client/remotemedia ./remotemedia
 RUN pip install --no-cache-dir --no-deps .
 
 # ===========================================================================
-# Stage 2: Runtime - Minimal runtime environment
+# Stage 2: Runtime - PyTorch runtime environment
 # ===========================================================================
-FROM python:${PYTHON_VERSION}-slim as runtime
+FROM pytorch/pytorch:${PYTORCH_VERSION}-cuda12.4-cudnn9-runtime as runtime
 
 # Install only runtime system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -71,9 +74,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy virtual environment from builder
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# Copy installed packages from builder
+# PyTorch base uses conda, packages are in /opt/conda
 
 # Create iceoryx2 directory with proper permissions
 RUN mkdir -p /tmp/iceoryx2 && chmod 777 /tmp/iceoryx2
