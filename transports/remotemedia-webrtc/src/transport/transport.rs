@@ -354,8 +354,9 @@ impl WebRtcTransport {
             .await
             .ok_or_else(|| Error::MediaTrackError(format!("Peer {} has no audio track", peer_id)))?;
 
-        // Send audio via track
-        audio_track.send_audio(samples).await?;
+        // Send audio via track with default 24kHz sample rate (for backwards compatibility)
+        // TODO: Add sample_rate parameter to this method
+        audio_track.send_audio(samples, 24000).await?;
 
         Ok(())
     }

@@ -9,7 +9,6 @@
 /// - State management for streaming audio
 /// - JSON output with VAD results
 use crate::data::RuntimeData;
-use crate::data::{AudioBuffer, TensorBuffer};
 use crate::error::{Error, Result};
 use crate::nodes::AsyncStreamingNode;
 use async_trait::async_trait;

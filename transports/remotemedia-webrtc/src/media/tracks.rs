@@ -54,21 +54,36 @@ impl AudioTrack {
     /// # Arguments
     ///
     /// * `samples` - Audio samples as f32 (range -1.0 to 1.0)
+    /// * `sample_rate` - Sample rate of the audio in Hz
     ///
     /// # Note
     ///
     /// This method encodes the audio to Opus and sends it via WebRTC samples.
     /// Opus requires specific frame sizes (2.5, 5, 10, 20, 40, or 60ms).
-    /// We chunk the input into 20ms frames (480 samples @ 24kHz, 960 @ 48kHz).
-    pub async fn send_audio(&self, samples: Arc<Vec<f32>>) -> Result<()> {
+    /// We chunk the input into 20ms frames (320 @ 16kHz, 480 @ 24kHz, 960 @ 48kHz).
+    /// The encoder will be recreated if the sample rate changes.
+    pub async fn send_audio(&self, samples: Arc<Vec<f32>>, sample_rate: u32) -> Result<()> {
         use tracing::debug;
 
-        // Determine frame size based on sample rate (20ms frame)
-        // 24kHz: 20ms = 480 samples
-        // 48kHz: 20ms = 960 samples
-        let encoder = self.encoder.read().await;
-        let sample_rate = encoder.config.sample_rate;
-        drop(encoder);
+        // Check if encoder needs to be recreated for different sample rate
+        {
+            let encoder = self.encoder.read().await;
+            if encoder.config.sample_rate != sample_rate {
+                drop(encoder);
+                let old_rate = self.encoder.read().await.config.sample_rate;
+                debug!("Sample rate changed from {} to {} Hz, recreating encoder", old_rate, sample_rate);
+
+                let mut encoder_write = self.encoder.write().await;
+                let new_config = crate::media::audio::AudioEncoderConfig {
+                    sample_rate,
+                    channels: encoder_write.config.channels,
+                    bitrate: encoder_write.config.bitrate,
+                    complexity: encoder_write.config.complexity,
+                };
+                *encoder_write = crate::media::audio::AudioEncoder::new(new_config)?;
+                debug!("Encoder recreated with sample rate: {} Hz", sample_rate);
+            }
+        }
 
         let frame_size = (sample_rate as usize * 20) / 1000; // 20ms frame
         let frame_duration = Duration::from_millis(20);

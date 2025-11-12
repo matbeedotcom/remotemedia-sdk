@@ -101,23 +101,18 @@ impl ServerPeer {
         info!("Created pipeline session for peer {}", self.peer_id);
 
         // Add audio track for sending pipeline audio output to client (requires opus-codec feature)
-        #[cfg(feature = "opus-codec")]
-        {
-            let audio_config = crate::media::audio::AudioEncoderConfig {
-                sample_rate: 24000, // Match TTS output
-                channels: 1,
-                bitrate: 64000,
-                complexity: 10,
-            };
+        // Note: This sets the Opus clock rate in SDP - must match pipeline output sample rate
+        let audio_config = crate::media::audio::AudioEncoderConfig {
+            sample_rate: 48000, // Match client input/output sample rate
+            channels: 1,
+            bitrate: 64000,
+            complexity: 10,
+        };
 
-            self.peer_connection.add_audio_track(audio_config).await
-                .map_err(|e| Error::InternalError(format!("Failed to add audio track: {}", e)))?;
+        self.peer_connection.add_audio_track(audio_config).await
+            .map_err(|e| Error::InternalError(format!("Failed to add audio track: {}", e)))?;
 
-            info!("Added audio track to peer connection for {}", self.peer_id);
-        }
-
-        #[cfg(not(feature = "opus-codec"))]
-        info!("Opus codec not enabled - audio track not added");
+        info!("Added audio track to peer connection for {}", self.peer_id);
 
         // Set up bidirectional media routing and data channel (this will set up the data channel handler)
         self.setup_media_routing_and_data_channel(session_handle).await?;
@@ -219,12 +214,10 @@ impl ServerPeer {
             }));
 
         // Set up incoming track handlers (audio from client microphone)
-        #[cfg(feature = "opus-codec")]
-        {
-            let peer_id_for_track = self.peer_id.clone();
-            let peer_connection_for_track = Arc::clone(&self.peer_connection);
+        let peer_id_for_track = self.peer_id.clone();
+        let peer_connection_for_track = Arc::clone(&self.peer_connection);
 
-            self.peer_connection.on_track(move |track, _receiver, _transceiver| {
+        self.peer_connection.on_track(move |track, _receiver, _transceiver| {
                 let peer_id = peer_id_for_track.clone();
                 let dc_input_tx = dc_input_tx_for_track.clone();
                 let peer_connection = Arc::clone(&peer_connection_for_track);
@@ -293,7 +286,6 @@ impl ServerPeer {
                     });
                 })
             }).await;
-        }
 
         // Spawn task to handle bidirectional routing
         let peer_id = self.peer_id.clone();
@@ -376,21 +368,13 @@ impl ServerPeer {
             RuntimeData::Audio { samples, sample_rate, channels } => {
                 debug!("Sending audio: {} samples, {}Hz, {} channels", samples.len(), sample_rate, channels);
 
-                #[cfg(feature = "opus-codec")]
-                {
-                    // Get the audio track
-                    if let Some(audio_track) = peer_connection.audio_track().await {
-                        // Send audio samples through the track
-                        audio_track.send_audio(Arc::new(samples.clone())).await?;
-                        debug!("Audio sent successfully");
-                    } else {
-                        warn!("No audio track configured for peer, cannot send audio");
-                    }
-                }
-
-                #[cfg(not(feature = "opus-codec"))]
-                {
-                    warn!("Opus codec not enabled - cannot send audio (enable 'opus-codec' feature)");
+                // Get the audio track
+                if let Some(audio_track) = peer_connection.audio_track().await {
+                    // Send audio samples through the track with dynamic sample rate
+                    audio_track.send_audio(Arc::new(samples.clone()), *sample_rate).await?;
+                    debug!("Audio sent successfully");
+                } else {
+                    warn!("No audio track configured for peer, cannot send audio");
                 }
             }
             RuntimeData::Video { .. } => {

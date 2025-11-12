@@ -37,7 +37,6 @@
 //! }
 //! ```
 
-#![warn(missing_docs)]
 #![warn(clippy::all)]
 #![allow(clippy::arc_with_non_send_sync)] // iceoryx2 types are intentionally !Send
 

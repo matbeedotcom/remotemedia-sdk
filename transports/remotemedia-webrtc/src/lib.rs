@@ -54,7 +54,6 @@
 //! let session = transport.stream(manifest).await?;
 //! ```
 
-#![warn(missing_docs)]
 #![warn(clippy::all)]
 
 // Public modules
