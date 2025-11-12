@@ -16,3 +16,8 @@ Requests==2.32.4
 setuptools==75.1.0
 soundfile==0.13.1
 iceoryx2>=0.4.0
+# OmniASR dependencies (install with: pip install -e ".[omniasr]")
+# omnilingual-asr>=0.1.0
+# silero-vad>=5.0.0
+# torch>=2.0.0
+# torchaudio>=2.0.0
