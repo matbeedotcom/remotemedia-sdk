@@ -69,6 +69,12 @@ setup(
             "pyarrow>=14.0.0",  # For zero-copy data transfer
             "msgpack>=1.0.0",  # Fast serialization for control messages
         ],
+        "omniasr": [
+            "omnilingual-asr>=0.1.0",  # OmniASR multilingual transcription (200+ languages)
+            "silero-vad>=5.0.0",  # Voice Activity Detection (Python fallback)
+            "torch>=2.0.0",  # PyTorch for model execution
+            "torchaudio>=2.0.0",  # Audio utilities
+        ],
     },
     entry_points={
         "console_scripts": [
