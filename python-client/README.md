@@ -442,7 +442,32 @@ pip install -e .
 
 # Or install from PyPI (when available)
 pip install remotemedia
+
+# Install with OmniASR support (multilingual transcription)
+pip install -e ".[omniasr]"
 ```
+
+## Environment Variables
+
+### OmniASR Transcription
+
+When using the OmniASR node for multilingual speech transcription:
+
+- **`FAIRSEQ2_CACHE_DIR`** (optional): Directory for caching downloaded OmniASR models
+  - Default: `~/.cache/fairseq2/`
+  - Example: `export FAIRSEQ2_CACHE_DIR=/data/models/fairseq2`
+  - Models are 1-6 GB depending on variant (omniASR_LLM_1B vs omniASR_LLM_300M)
+
+- **`HF_TOKEN`** (optional): HuggingFace authentication token
+  - Required only if accessing gated/private models
+  - Example: `export HF_TOKEN=hf_...`
+  - Get token from: https://huggingface.co/settings/tokens
+
+### General Configuration
+
+- **`REMOTEMEDIA_LOG_LEVEL`** (optional): Logging verbosity
+  - Values: `DEBUG`, `INFO`, `WARNING`, `ERROR`
+  - Default: `INFO`
 
 ## Project Structure
 

@@ -75,6 +75,10 @@ rand = { workspace = true }
 crossbeam = { workspace = true }
 hdrhistogram = { workspace = true }
 
+# Docker executor (spec 009)
+bollard = { version = "0.19", optional = true }
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+
 [dev-dependencies]
 tokio-test = { workspace = true }
 criterion = { workspace = true }
@@ -92,6 +96,7 @@ default = ["multiprocess", "silero-vad"]
 multiprocess = ["iceoryx2", "iceoryx2-bb-log", "iceoryx2-bb-container", "iceoryx2-bb-elementary"]
 silero-vad = ["ort"]
 grpc-client = ["tonic", "prost", "prost-types"]
+docker-executor = ["bollard", "rusqlite", "multiprocess"]
 
 # NOTE: grpc-client is for RemotePipelineNode client functionality only
 # Full transport implementations belong in separate transport crates

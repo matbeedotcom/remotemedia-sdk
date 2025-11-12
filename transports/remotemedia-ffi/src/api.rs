@@ -94,6 +94,9 @@ pub fn execute_pipeline(
                 RuntimeData::Tensor { .. } => {
                     serde_json::json!({ "type": "tensor", "note": "Tensor data not fully supported in FFI yet" })
                 }
+                RuntimeData::ControlMessage { .. } => {
+                    serde_json::json!({ "type": "control_message", "note": "Control message data not fully supported in FFI yet" })
+                }
             };
 
             let outputs_py = json_to_python(py, &output_json)?;
@@ -202,6 +205,9 @@ pub fn execute_pipeline_with_input<'py>(
                 }
                 RuntimeData::Tensor { .. } => {
                     serde_json::json!({ "type": "tensor", "note": "Tensor data not fully supported in FFI yet" })
+                }
+                RuntimeData::ControlMessage { .. } => {
+                    serde_json::json!({ "type": "control_message", "note": "Control message data not fully supported in FFI yet" })
                 }
             };
 

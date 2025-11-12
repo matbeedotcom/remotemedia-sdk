@@ -1,0 +1,417 @@
+# Manifest Schema Extension: Docker Executor
+#
+# This document defines the schema extension for Docker-based node execution.
+# It extends the existing NodeManifest structure from runtime-core/src/manifest.rs
+# to support Docker executor type configuration.
+#
+# Feature: specs/009-docker-node-execution
+# Requirements: FR-004, FR-013, FR-014
+
+---
+# Extension to NodeManifest
+NodeManifest:
+  properties:
+    # Existing fields (from runtime-core/src/manifest.rs)
+    id:
+      type: string
+      required: true
+      description: "Unique node ID within pipeline"
+
+    node_type:
+      type: string
+      required: true
+      description: "Node type (e.g., 'AudioSource', 'HFPipelineNode')"
+
+    params:
+      type: object
+      required: false
+      description: "Node-specific parameters"
+
+    is_streaming:
+      type: boolean
+      default: false
+      description: "Whether this is a streaming node"
+
+    capabilities:
+      type: object
+      required: false
+      description: "Capability requirements (GPU, CPU, memory)"
+
+    host:
+      type: string
+      required: false
+      description: "Optional execution host"
+
+    runtime_hint:
+      type: string
+      enum: ["rust_python", "cpython", "cpython_wasm", "auto"]
+      required: false
+      description: "Runtime hint for Python node execution"
+
+    execution:
+      type: object
+      required: false
+      description: "Execution metadata for capability-aware placement"
+
+    # NEW FIELD: Docker executor configuration (FR-004)
+    docker:
+      type: object
+      required: false  # Only required when executor == "docker"
+      description: "Docker executor configuration"
+      properties:
+        # FR-013: Python version specification
+        python_version:
+          type: string
+          required: true
+          enum: ["3.9", "3.10", "3.11"]
+          description: "Python runtime version for the container"
+          examples:
+            - "3.10"
+            - "3.11"
+
+        # FR-004: System dependencies
+        system_dependencies:
+          type: array
+          required: false
+          default: []
+          items:
+            type: string
+          description: "System packages to install (via apt-get)"
+          examples:
+            - ["ffmpeg", "libsndfile1"]
+            - ["libsox-fmt-all"]
+
+        # FR-004: Python package dependencies
+        python_packages:
+          type: array
+          required: false
+          default: []
+          items:
+            type: string
+          description: "Python packages to install (via pip). Supports version pinning."
+          examples:
+            - ["numpy==1.24.0", "torch>=2.0.0"]
+            - ["transformers", "librosa"]
+
+        # FR-014: Resource limits (strict enforcement)
+        resource_limits:
+          type: object
+          required: true
+          description: "Resource limits enforced via Docker hard limits"
+          properties:
+            memory_mb:
+              type: integer
+              required: true
+              minimum: 128
+              description: "Memory limit in megabytes (minimum 128MB for Python runtime)"
+              examples:
+                - 2048  # 2GB
+                - 4096  # 4GB
+
+            cpu_cores:
+              type: number
+              required: true
+              minimum: 0.1
+              description: "CPU cores limit (fractional values allowed)"
+              examples:
+                - 2.0
+                - 0.5
+
+        # FR-013: Custom base image support (hybrid approach)
+        base_image:
+          type: string
+          required: false
+          description: |
+            Custom Docker base image. If not specified, uses standard image for python_version.
+            Standard images: python:3.9-slim, python:3.10-slim, python:3.11-slim (with iceoryx2 pre-installed).
+            Custom images must include iceoryx2 client libraries and accessible /tmp, /dev paths.
+          examples:
+            - "python:3.10-slim"  # Standard
+            - "ghcr.io/yourorg/custom-python:3.11"  # Custom
+
+        # Optional: Environment variables
+        env:
+          type: object
+          required: false
+          default: {}
+          description: "Environment variables to set in container"
+          additionalProperties:
+            type: string
+          examples:
+            - PYTHONUNBUFFERED: "1"
+              MODEL_PATH: "/models/whisper-base"
+
+        # Optional: Volume mounts (beyond default iceoryx2 mounts)
+        volumes:
+          type: array
+          required: false
+          default: []
+          items:
+            type: object
+            properties:
+              host_path:
+                type: string
+                required: true
+              container_path:
+                type: string
+                required: true
+              read_only:
+                type: boolean
+                default: false
+          description: "Additional volume mounts (iceoryx2 mounts are automatic)"
+          examples:
+            - - host_path: "/data/models"
+                container_path: "/models"
+                read_only: true
+
+---
+# Validation Rules
+
+validation:
+  # FR-004: executor field must be "docker" when docker config present
+  - rule: "If 'docker' field present, must set executor='docker' or omit executor (defaults to docker)"
+    example: |
+      nodes:
+        - id: omniasr_node
+          node_type: OmniASRNode
+          docker:  # This triggers docker executor
+            python_version: "3.10"
+            resource_limits:
+              memory_mb: 2048
+              cpu_cores: 2.0
+
+  # FR-013: Python version must be supported
+  - rule: "docker.python_version must be one of ['3.9', '3.10', '3.11']"
+    error_message: "Unsupported Python version. Supported versions: 3.9, 3.10, 3.11"
+
+  # FR-014: Resource limits must be reasonable
+  - rule: "docker.resource_limits.memory_mb >= 128"
+    error_message: "Memory limit too low. Minimum 128MB required for Python runtime."
+
+  - rule: "docker.resource_limits.cpu_cores >= 0.1"
+    error_message: "CPU limit too low. Minimum 0.1 cores required."
+
+  - rule: "docker.resource_limits.cpu_cores <= host_cpu_count"
+    error_message: "CPU limit exceeds host CPU count"
+
+  - rule: "docker.resource_limits.memory_mb <= host_available_memory_mb"
+    error_message: "Memory limit exceeds host available memory"
+
+  # FR-016: Custom base image validation (if provided)
+  - rule: "If docker.base_image provided, must be valid Docker image reference"
+    validation_steps:
+      - "Check image exists locally or in registry"
+      - "Verify iceoryx2 client libraries present"
+      - "Verify /tmp and /dev accessible"
+    error_message: "Custom base image validation failed: {reason}"
+
+  # Dependency list validation
+  - rule: "docker.system_dependencies items must be non-empty strings"
+  - rule: "docker.python_packages items must be non-empty strings"
+
+---
+# Complete Example Manifest
+
+example_manifest:
+  version: "v1"
+  metadata:
+    name: "omniasr-streaming-pipeline"
+    description: "Audio transcription pipeline with Docker-based OmniASR node"
+
+  nodes:
+    # Docker-based transcription node
+    - id: omniasr_transcribe
+      node_type: OmniASRNode
+      is_streaming: true
+      params:
+        model_name: "omnilingual-asr"
+        language: "auto"
+      docker:
+        python_version: "3.10"
+        system_dependencies:
+          - "ffmpeg"
+          - "libsndfile1"
+        python_packages:
+          - "numpy==1.24.0"
+          - "torch>=2.0.0"
+          - "omnilingual_asr==0.1.0"
+          - "iceoryx2"  # Required for IPC
+        resource_limits:
+          memory_mb: 4096  # 4GB for model
+          cpu_cores: 2.0
+        env:
+          PYTHONUNBUFFERED: "1"
+          MODEL_PATH: "/models/omnilingual"
+        volumes:
+          - host_path: "/data/models/omnilingual"
+            container_path: "/models/omnilingual"
+            read_only: true
+
+    # Native Rust VAD node (for comparison)
+    - id: vad
+      node_type: SileroVAD
+      is_streaming: true
+      params:
+        threshold: 0.5
+        min_speech_duration_ms: 250
+
+    # Multiprocess Python node (existing architecture)
+    - id: postprocess
+      node_type: TextPostprocessor
+      is_streaming: false
+      runtime_hint: "cpython"  # Uses multiprocess executor, not Docker
+      params:
+        cleanup_rules:
+          - "remove_filler_words"
+
+  connections:
+    - from: "audio_source"
+      to: "vad"
+      from_output: "audio"
+      to_input: "audio"
+    - from: "vad"
+      to: "omniasr_transcribe"
+      from_output: "audio"
+      to_input: "audio"
+    - from: "omniasr_transcribe"
+      to: "postprocess"
+      from_output: "text"
+      to_input: "text"
+
+---
+# Migration Notes
+
+migration_from_multiprocess:
+  description: "How to convert existing multiprocess nodes to Docker executor"
+  steps:
+    - step: 1
+      action: "Add docker field to node manifest"
+      before: |
+        nodes:
+          - id: my_node
+            node_type: MyNode
+            runtime_hint: "cpython"
+      after: |
+        nodes:
+          - id: my_node
+            node_type: MyNode
+            docker:
+              python_version: "3.10"
+              resource_limits:
+                memory_mb: 1024
+                cpu_cores: 1.0
+
+    - step: 2
+      action: "Move system dependencies from external setup to manifest"
+      before: "Install ffmpeg and libsndfile1 on host via apt-get"
+      after: |
+        docker:
+          system_dependencies:
+            - "ffmpeg"
+            - "libsndfile1"
+
+    - step: 3
+      action: "Specify Python package versions explicitly"
+      reasoning: "Docker images are immutable, explicit versions prevent surprises"
+      example: |
+        docker:
+          python_packages:
+            - "numpy==1.24.0"  # Pin versions
+            - "torch==2.0.1"
+
+    - step: 4
+      action: "Set appropriate resource limits based on profiling"
+      guidance: |
+        - Profile node memory usage: docker stats <container>
+        - Add 20-30% headroom to observed peak
+        - Monitor for OOMKilled status (memory too low)
+        - Adjust cpu_cores based on CPU utilization
+
+  compatibility:
+    - "Existing runtime_hint field is independent of docker executor"
+    - "docker field presence triggers Docker executor, regardless of runtime_hint"
+    - "Nodes without docker field continue using multiprocess/cpython executor"
+    - "Can mix Docker and multiprocess nodes in same pipeline"
+
+---
+# Implementation Notes
+
+rust_types:
+  # Extension to runtime-core/src/manifest.rs NodeManifest struct
+  code: |
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct NodeManifest {
+        pub id: String,
+        pub node_type: String,
+        #[serde(default)]
+        pub params: serde_json::Value,
+        #[serde(default)]
+        pub is_streaming: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub capabilities: Option<CapabilityRequirements>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub host: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub runtime_hint: Option<RuntimeHint>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub execution: Option<ExecutionMetadata>,
+
+        // NEW: Docker executor configuration
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub docker: Option<DockerExecutorConfig>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct DockerExecutorConfig {
+        pub python_version: String,
+
+        #[serde(default)]
+        pub system_dependencies: Vec<String>,
+
+        #[serde(default)]
+        pub python_packages: Vec<String>,
+
+        pub resource_limits: DockerResourceLimits,
+
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub base_image: Option<String>,
+
+        #[serde(default)]
+        pub env: std::collections::HashMap<String, String>,
+
+        #[serde(default)]
+        pub volumes: Vec<DockerVolumeMount>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct DockerResourceLimits {
+        pub memory_mb: u64,
+        pub cpu_cores: f32,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct DockerVolumeMount {
+        pub host_path: String,
+        pub container_path: String,
+        #[serde(default)]
+        pub read_only: bool,
+    }
+
+default_values:
+  - field: "docker.system_dependencies"
+    default: "[]"
+  - field: "docker.python_packages"
+    default: "[]"
+  - field: "docker.env"
+    default: "{}"
+  - field: "docker.volumes"
+    default: "[]"
+  - field: "docker.base_image"
+    default: "null (uses standard python:{version}-slim)"
+
+backward_compatibility:
+  - "All existing manifests without 'docker' field continue to work unchanged"
+  - "Adding 'docker' field is opt-in for Docker execution"
+  - "No breaking changes to existing manifest schema"

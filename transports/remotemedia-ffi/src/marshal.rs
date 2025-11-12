@@ -8,6 +8,57 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 use pyo3::IntoPyObjectExt;
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+/// Cache for Python objects to avoid unnecessary serialization
+/// when passing data between Python nodes
+#[derive(Clone)]
+pub struct PyObjectCache {
+    objects: Arc<Mutex<HashMap<String, Py<PyAny>>>>,
+    next_id: Arc<Mutex<u64>>,
+}
+
+impl PyObjectCache {
+    pub fn new() -> Self {
+        Self {
+            objects: Arc::new(Mutex::new(HashMap::new())),
+            next_id: Arc::new(Mutex::new(0)),
+        }
+    }
+
+    /// Store a Python object and return its cache ID
+    pub fn store(&self, obj: Py<PyAny>) -> String {
+        let mut next_id = self.next_id.lock().unwrap();
+        let id = format!("pyobj_{}", *next_id);
+        *next_id += 1;
+
+        let mut objects = self.objects.lock().unwrap();
+        objects.insert(id.clone(), obj);
+
+        tracing::info!("Stored Python object in cache with ID: {}", id);
+        id
+    }
+
+    /// Retrieve a Python object by ID
+    pub fn get(&self, id: &str) -> Option<Py<PyAny>> {
+        let objects = self.objects.lock().unwrap();
+        Python::attach(|py| objects.get(id).map(|obj| obj.clone_ref(py)))
+    }
+
+    /// Check if an ID exists in the cache
+    pub fn contains(&self, id: &str) -> bool {
+        let objects = self.objects.lock().unwrap();
+        objects.contains_key(id)
+    }
+
+    /// Clear all cached objects
+    pub fn clear(&self) {
+        let mut objects = self.objects.lock().unwrap();
+        objects.clear();
+        tracing::info!("Cleared Python object cache");
+    }
+}
 
 /// Convert a Python object to a JSON Value
 ///
