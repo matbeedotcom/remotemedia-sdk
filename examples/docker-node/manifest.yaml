@@ -1,0 +1,81 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "docker-transcription-pipeline",
+    "description": "Audio transcription pipeline with Docker-based Python nodes using iceoryx2 IPC",
+    "optimization": "environment_isolation",
+    "expectedLatency": "<100ms P99"
+  },
+  "nodes": [
+    {
+      "id": "input_chunker",
+      "node_type": "AudioChunkerNode",
+      "params": {
+        "chunkSize": 960
+      },
+      "is_streaming": true
+    },
+    {
+      "id": "audio_resampler",
+      "node_type": "FastResampleNode",
+      "params": {
+        "sourceRate": 48000,
+        "targetRate": 16000,
+        "quality": "Low",
+        "channels": 1
+      },
+      "is_streaming": true
+    },
+    {
+      "id": "vad",
+      "node_type": "SileroVADNode",
+      "params": {
+        "threshold": 0.5,
+        "samplingRate": 16000,
+        "minSpeechDurationMs": 250,
+        "minSilenceDurationMs": 100,
+        "speechPadMs": 30
+      },
+      "is_streaming": true
+    },
+    {
+      "id": "buffer_docker",
+      "node_type": "AudioBufferAccumulatorNode",
+      "is_streaming": true,
+      "params": {
+        "buffer_size": 16000
+      },
+      "docker": {
+        "python_version": "3.11",
+        "system_dependencies": [
+          "libsndfile1"
+        ],
+        "python_packages": [
+          "numpy==1.26.0",
+          "iceoryx2"
+        ],
+        "resource_limits": {
+          "memory_mb": 1024,
+          "cpu_cores": 1.0
+        },
+        "env": {
+          "PYTHONUNBUFFERED": "1"
+        }
+      }
+    },
+    {
+      "id": "text_collector",
+      "node_type": "TextCollectorNode",
+      "is_streaming": true,
+      "params": {
+        "max_items": 100
+      }
+    }
+  ],
+  "connections": [
+    { "from": "input_chunker", "to": "audio_resampler" },
+    { "from": "audio_resampler", "to": "vad" },
+    { "from": "vad", "to": "buffer_docker" },
+    { "from": "buffer_docker", "to": "text_collector" }
+  ]
+}
