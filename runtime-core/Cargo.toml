@@ -132,6 +132,23 @@ path = "tests/integration/test_speculative_vad.rs"
 name = "test_control_messages"
 path = "tests/integration/test_control_messages.rs"
 
+# Integration tests for Docker executor (spec 009)
+[[test]]
+name = "test_docker_executor"
+path = "tests/integration/test_docker_executor.rs"
+
+[[test]]
+name = "test_docker_multicontainer"
+path = "tests/integration/test_docker_multicontainer.rs"
+
+[[test]]
+name = "test_mixed_executors_e2e"
+path = "tests/integration/test_mixed_executors_e2e.rs"
+
+[[test]]
+name = "test_docker_e2e_pipeline"
+path = "tests/integration/test_docker_e2e_pipeline.rs"
+
 # Benchmarks for latency measurement
 [[bench]]
 name = "bench_latency"
@@ -151,4 +168,9 @@ harness = false
 [[bench]]
 name = "bench_real_pipeline"
 path = "benches/bench_real_pipeline.rs"
+harness = false
+
+[[bench]]
+name = "bench_docker_latency"
+path = "benches/bench_docker_latency.rs"
 harness = false

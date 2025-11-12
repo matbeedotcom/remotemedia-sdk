@@ -146,3 +146,34 @@ version = "0.14"
 
 [workspace.lints.rust]
 missing_docs = "allow"
+
+# Optimize dependencies in dev mode, but keep your code unoptimized for fast compilation
+[profile.dev.package."*"]
+opt-level = 1
+
+[profile.dev]
+opt-level = 0
+debug = 1  # Reduce debug info
+incremental = true
+split-debuginfo = "unpacked"  # Faster on Linux
+
+# Create a "fast" profile for everyday development
+[profile.fast]
+inherits = "dev"
+opt-level = 1
+
+# Optimize heavy crates even in dev mode
+[profile.dev.package.webrtc]
+opt-level = 2
+
+[profile.dev.package.webrtc-ice]
+opt-level = 2
+
+[profile.dev.package.openssl]
+opt-level = 2
+
+[profile.dev.package.bollard-stubs]
+opt-level = 2
+
+[profile.dev.package.pyo3-macros]
+opt-level = 2

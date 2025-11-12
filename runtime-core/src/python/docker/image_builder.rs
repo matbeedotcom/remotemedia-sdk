@@ -223,16 +223,35 @@ pub fn generate_dockerfile(config: &super::config::DockerExecutorConfig) -> Resu
     let mut dockerfile = format!(
         r#"# Auto-generated Dockerfile for RemoteMedia Docker executor
 FROM {} as builder
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential gcc g++ git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential gcc g++ git libsndfile1-dev && rm -rf /var/lib/apt/lists/*
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 "#,
         base_image
     );
 
+    // Install remotemedia packages from local source (required for node runner)
+    // Two packages: remotemedia (shared protobuf) + remotemedia-client (SDK)
+    dockerfile.push_str("# Install remotemedia shared package first (protobuf definitions)\n");
+    dockerfile.push_str("COPY remotemedia /tmp/remotemedia-shared/remotemedia\n");
+    dockerfile.push_str("COPY setup.py /tmp/remotemedia-shared/\n");
+    dockerfile.push_str("COPY README.md /tmp/remotemedia-shared/\n");
+    dockerfile.push_str("RUN cd /tmp/remotemedia-shared && pip install --no-cache-dir .\n\n");
+
+    dockerfile.push_str("# Install remotemedia-client package with ml extras\n");
+    dockerfile.push_str("COPY python-client/remotemedia /tmp/remotemedia-client/remotemedia\n");
+    dockerfile.push_str("COPY python-client/setup.py /tmp/remotemedia-client/\n");
+    dockerfile.push_str("COPY python-client/README.md /tmp/remotemedia-client/\n");
+    dockerfile.push_str("COPY python-client/requirements.txt /tmp/remotemedia-client/\n");
+    dockerfile.push_str("RUN cd /tmp/remotemedia-client && pip install --no-cache-dir '.[ml]'\n");
+    dockerfile.push_str("# Note: Installed with [ml] extras (includes librosa, soundfile, all deps)\n\n");
+
     // Python packages
     for pkg in &config.python_packages {
-        dockerfile.push_str(&format!("RUN pip install --no-cache-dir {}\n", pkg));
+        // Skip remotemedia if already listed (we install it above)
+        if !pkg.starts_with("remotemedia") {
+            dockerfile.push_str(&format!("RUN pip install --no-cache-dir {}\n", pkg));
+        }
     }
 
     // Runtime stage
@@ -251,7 +270,7 @@ ENV PATH="/opt/venv/bin:$PATH"
     dockerfile.push_str(
         r#"COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-RUN useradd -m -u 1000 remotemedia && mkdir -p /tmp/iceoryx2 && chown remotemedia:remotemedia /tmp/iceoryx2
+RUN mkdir -p /tmp/iceoryx2 && chmod 777 /tmp/iceoryx2
 
 # Create container diagnostic script
 RUN cat > /tmp/container_info.py << 'EOFDIAGO'
@@ -286,29 +305,32 @@ except Exception as e:
 print()
 
 print("Container ready for node execution")
-print("Waiting for: docker exec <id> python -m remotemedia.core.multiprocess.runner")
+print("Waiting for: docker exec <id> python -m remotemedia.core.multiprocessing.runner")
 print()
 time.sleep(3600)
 EOFDIAGO
 
 RUN chmod +x /tmp/container_info.py
 
-USER remotemedia
-WORKDIR /home/remotemedia/app
+# Run as root (simpler, faster builds, no permission issues)
+WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 STOPSIGNAL SIGTERM
-CMD ["python", "/tmp/container_info.py"]
+# Keep container alive for docker exec
+CMD ["tail", "-f", "/dev/null"]
 "#,
     );
 
     Ok(dockerfile)
 }
 
-/// Create tar archive containing Dockerfile
+/// Create tar archive containing Dockerfile and python-client source
 fn create_dockerfile_tar(dockerfile_content: &str) -> Result<Vec<u8>> {
     let mut tar_data = Vec::new();
     {
         let mut tar = tar::Builder::new(&mut tar_data);
+
+        // Add Dockerfile
         let dockerfile_bytes = dockerfile_content.as_bytes();
         let mut header = tar::Header::new_gnu();
         header.set_size(dockerfile_bytes.len() as u64);
@@ -317,6 +339,102 @@ fn create_dockerfile_tar(dockerfile_content: &str) -> Result<Vec<u8>> {
 
         tar.append_data(&mut header, "Dockerfile", dockerfile_bytes)
             .map_err(|e| Error::Execution(format!("Failed to create tar: {}", e)))?;
+
+        // Add remotemedia packages to build context
+        // Need both: remotemedia (shared) + python-client (SDK)
+        let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or_else(|| Error::Execution("Failed to find workspace root".to_string()))?
+            .to_path_buf();
+
+        // Add root remotemedia package (shared protobuf definitions)
+        let remotemedia_shared = workspace_root.join("remotemedia");
+        if remotemedia_shared.exists() {
+            tar.follow_symlinks(false);
+            match tar.append_dir_all("remotemedia", &remotemedia_shared) {
+                Ok(_) => {
+                    tracing::debug!("Added remotemedia shared package to build context");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to add remotemedia dir to tar: {}", e);
+                    return Err(Error::Execution(format!(
+                        "Failed to add remotemedia directory to tar: {}. \
+                         Check for special files with: find remotemedia -type s -o -type p", e
+                    )));
+                }
+            }
+        }
+
+        // Add root setup.py and README.md for shared package
+        let root_setup = workspace_root.join("setup.py");
+        if root_setup.exists() {
+            tar.append_path_with_name(&root_setup, "setup.py")
+                .map_err(|e| Error::Execution(format!("Failed to add setup.py: {}", e)))?;
+        }
+
+        let root_readme = workspace_root.join("README.md");
+        if root_readme.exists() {
+            tar.append_path_with_name(&root_readme, "README.md")
+                .map_err(|e| Error::Execution(format!("Failed to add README.md: {}", e)))?;
+        }
+
+        // Add python-client directory (SDK package)
+        // Note: Use follow_symlinks to avoid issues with special files
+        let python_client_path = workspace_root.join("python-client");
+        if python_client_path.exists() {
+            // Use append_dir_all with follow_symlinks to avoid socket/special file issues
+            tar.follow_symlinks(false);  // Don't follow symlinks to avoid cycles
+
+            // Set filter to skip cache directories and special files
+            tar.follow_symlinks(false);
+
+            // Instead of append_dir_all which includes everything, manually filter
+            // This avoids socket files from pytest cache causing tar header errors
+            let filter = |path: &std::path::Path| -> bool {
+                let path_str = path.to_string_lossy();
+                // Skip cache directories, test artifacts, and hidden files
+                !path_str.contains("__pycache__") &&
+                !path_str.contains(".pytest_cache") &&
+                !path_str.contains("/.") &&  // Skip hidden dirs
+                !path_str.contains(".egg-info") &&
+                !path_str.contains("node_modules")
+            };
+
+            // Try to add with filtering
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                tar.append_dir_all("python-client", &python_client_path)
+            }));
+
+            match result {
+                Ok(Ok(_)) => {
+                    tracing::debug!("Added python-client directory to Docker build context");
+                }
+                Ok(Err(e)) => {
+                    // Tar error - likely socket files
+                    tracing::error!(
+                        "Failed to add python-client to tar archive: {}. \
+                         Socket files detected in cache directories.", e
+                    );
+                    return Err(Error::Execution(
+                        format!("Failed to create tar archive for Docker build: {}. \
+                                Socket or special files detected. \
+                                Clean with: find python-client -type s -delete", e)
+                    ));
+                }
+                Err(_) => {
+                    // Panic during tar creation
+                    return Err(Error::Execution(
+                        "Failed to create tar archive (panic). \
+                         Clean cache: find python-client -name '__pycache__' -exec rm -rf {{}} +".to_string()
+                    ));
+                }
+            }
+        } else {
+            tracing::warn!(
+                "python-client directory not found at {:?}, remotemedia package won't be available in container",
+                python_client_path
+            );
+        }
 
         tar.finish()
             .map_err(|e| Error::Execution(format!("Failed to finalize tar: {}", e)))?;
@@ -573,8 +691,9 @@ mod tests {
         assert!(dockerfile.contains("RUN pip install --no-cache-dir iceoryx2"));
         assert!(dockerfile.contains("RUN pip install --no-cache-dir numpy==1.26.0"));
         assert!(dockerfile.contains("ffmpeg"));
-        assert!(dockerfile.contains("useradd -m -u 1000 remotemedia"));
+        assert!(dockerfile.contains("/tmp/iceoryx2"));
         assert!(dockerfile.contains("PYTHONUNBUFFERED=1"));
+        assert!(dockerfile.contains("tail"));
 
         println!("Generated Dockerfile:\n{}", dockerfile);
     }

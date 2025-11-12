@@ -256,6 +256,8 @@ pub mod data {
         pub format: i32,
         /// Frame number
         pub frame_number: u64,
+        /// Timestamp in microseconds
+        pub timestamp_us: u64,
     }
 
     /// Tensor buffer (standalone struct for nodes)

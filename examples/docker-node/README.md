@@ -39,6 +39,14 @@ The Docker executor enables running Python nodes in isolated containers while ma
    sudo chmod 777 /tmp/iceoryx2
    ```
 
+## Files in This Directory
+
+- **[custom_node.py](custom_node.py)**: Example Python nodes (EchoNode, AudioAmplifierNode, TextUppercaseNode)
+- **[simple_docker_node.json](simple_docker_node.json)**: Minimal single-node Docker example
+- **[manifest.yaml](manifest.yaml)**: Full pipeline with mixed executors
+- **[mixed_executors.json](mixed_executors.json)**: Demonstrates Docker + multiprocess + Rust nodes
+- **[README.md](README.md)**: This file
+
 ## Example Manifests
 
 ### Simple Docker Node ([simple_docker_node.json](simple_docker_node.json))
@@ -149,6 +157,7 @@ async fn main() -> Result<()> {
         resource_limits: ResourceLimits {
             memory_mb: 512,
             cpu_cores: 0.5,
+            gpu_devices: vec![],
         },
         ..Default::default()
     };

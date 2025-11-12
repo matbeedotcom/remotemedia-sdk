@@ -73,7 +73,13 @@ impl ContainerManager {
             image: Some(image.to_string()),
             env: Some(env),
             host_config: Some(host_config),
-            // Keep container running (will execute Python node runner)
+            // Override CMD to keep container running indefinitely
+            // Python node runner will be started via docker exec
+            cmd: Some(vec![
+                "tail".to_string(),
+                "-f".to_string(),
+                "/dev/null".to_string(),
+            ]),
             tty: Some(false),
             attach_stdout: Some(true),
             attach_stderr: Some(true),
@@ -244,29 +250,43 @@ impl ContainerManager {
 
         tracing::debug!("Executing in container {}: {:?}", container_id, cmd);
 
-        // Create exec instance
+        // Create exec instance for long-running background process
+        // Note: We don't attach stdout/stderr to avoid blocking on output
         let exec = self
             .docker
             .create_exec(
                 container_id,
                 CreateExecOptions {
                     cmd: Some(cmd),
-                    attach_stdout: Some(true),
-                    attach_stderr: Some(true),
+                    attach_stdout: Some(false),  // Don't attach to avoid blocking
+                    attach_stderr: Some(false),
                     ..Default::default()
                 },
             )
             .await
             .map_err(|e| Error::Execution(format!("Failed to create exec: {}", e)))?;
 
-        // Start exec (detached - runs in background)
+        // Start exec in detached mode (runs as background daemon)
+        use bollard::exec::StartExecOptions;
         self.docker
-            .start_exec(&exec.id, None)
+            .start_exec(&exec.id, Some(StartExecOptions {
+                detach: true,
+                tty: false,
+                output_capacity: None,
+            }))
             .await
             .map_err(|e| Error::Execution(format!("Failed to start exec: {}", e)))?;
 
-        tracing::debug!("Exec started in container");
+        tracing::info!("Python runner exec started in background (exec_id: {})", exec.id);
 
+        // Give the Python process time to start and initialize iceoryx2 channels
+        // This is critical - the Python runner needs to:
+        // 1. Import modules (remotemedia, iceoryx2)
+        // 2. Create iceoryx2 publisher/subscriber
+        // 3. Register with channel registry
+        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+        tracing::debug!("Python runner startup grace period complete");
 
         Ok(exec.id)
     }

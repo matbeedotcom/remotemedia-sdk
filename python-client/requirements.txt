@@ -10,7 +10,6 @@ librosa==0.11.0
 numpy==2.3.2
 protobuf==6.31.1
 pytest==7.4.4
-PyYAML==6.0.1
 PyYAML==6.0.2
 Requests==2.32.4
 setuptools==75.1.0

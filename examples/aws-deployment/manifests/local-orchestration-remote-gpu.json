@@ -1,0 +1,152 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "local-orchestration-remote-gpu",
+    "description": "Local pipeline with remote GPU-accelerated STT/TTS nodes on AWS",
+    "author": "RemoteMedia SDK",
+    "version": "1.0.0"
+  },
+  "nodes": [
+    {
+      "id": "input_audio",
+      "node_type": "AudioInput",
+      "params": {
+        "sample_rate": 16000,
+        "channels": 1,
+        "format": "s16le"
+      }
+    },
+    {
+      "id": "local_vad",
+      "node_type": "SileroVAD",
+      "params": {
+        "threshold": 0.5,
+        "min_speech_duration_ms": 250,
+        "min_silence_duration_ms": 500,
+        "speech_pad_ms": 30
+      }
+    },
+    {
+      "id": "local_resample",
+      "node_type": "AudioResample",
+      "params": {
+        "target_sample_rate": 16000,
+        "quality": "high"
+      }
+    },
+    {
+      "id": "remote_stt_us_east",
+      "node_type": "RemotePipelineNode",
+      "params": {
+        "transport": "grpc",
+        "endpoints": [
+          "remotemedia-nlb-123.elb.us-east-1.amazonaws.com:50051",
+          "remotemedia-nlb-456.elb.us-east-1.amazonaws.com:50051"
+        ],
+        "load_balance_strategy": "least_connections",
+        "manifest": {
+          "version": "v1",
+          "nodes": [
+            {
+              "id": "whisper_large_v3",
+              "node_type": "WhisperSTT",
+              "params": {
+                "model": "large-v3",
+                "language": "en",
+                "device": "cuda"
+              }
+            }
+          ]
+        },
+        "timeout_ms": 30000,
+        "retry": {
+          "max_retries": 3,
+          "backoff_ms": 1000
+        },
+        "circuit_breaker": {
+          "failure_threshold": 5,
+          "success_threshold": 2,
+          "reset_timeout_ms": 60000
+        },
+        "health_check": {
+          "interval_ms": 5000,
+          "timeout_ms": 2000
+        },
+        "auth_token": "${REMOTEMEDIA_API_TOKEN}"
+      }
+    },
+    {
+      "id": "local_text_processor",
+      "node_type": "PythonNode",
+      "params": {
+        "module": "text_processors.sentiment",
+        "class": "SentimentAnalyzer",
+        "config": {
+          "model": "distilbert-base-uncased-finetuned-sst-2-english"
+        }
+      }
+    },
+    {
+      "id": "remote_tts_us_east",
+      "node_type": "RemotePipelineNode",
+      "params": {
+        "transport": "grpc",
+        "endpoint": "remotemedia-nlb-789.elb.us-east-1.amazonaws.com:50051",
+        "manifest_url": "https://remotemedia-manifests-123456789.s3.amazonaws.com/kokoro-tts-v1.json",
+        "auth_header": "Bearer ${REMOTEMEDIA_API_TOKEN}",
+        "timeout_ms": 10000,
+        "retry": {
+          "max_retries": 2,
+          "backoff_ms": 500
+        }
+      }
+    },
+    {
+      "id": "output_audio",
+      "node_type": "AudioOutput",
+      "params": {
+        "sample_rate": 24000,
+        "channels": 1
+      }
+    }
+  ],
+  "connections": [
+    {
+      "from": "input_audio",
+      "to": "local_vad",
+      "params": {
+        "buffer_size": 4096
+      }
+    },
+    {
+      "from": "local_vad",
+      "to": "local_resample",
+      "params": {
+        "filter_silence": true
+      }
+    },
+    {
+      "from": "local_resample",
+      "to": "remote_stt_us_east"
+    },
+    {
+      "from": "remote_stt_us_east",
+      "to": "local_text_processor"
+    },
+    {
+      "from": "local_text_processor",
+      "to": "remote_tts_us_east"
+    },
+    {
+      "from": "remote_tts_us_east",
+      "to": "output_audio"
+    }
+  ],
+  "config": {
+    "execution_mode": "streaming",
+    "enable_metrics": true,
+    "metrics_port": 9090,
+    "log_level": "info"
+  }
+}
+
