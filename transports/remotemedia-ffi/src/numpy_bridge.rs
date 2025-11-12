@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 
-use remotemedia_runtime_core::data::AudioBuffer;
+use remotemedia_runtime_core::audio::{AudioBuffer, AudioFormat};
 
 /// Numpy array metadata for serialization
 #[derive(Debug, Clone, Serialize, Deserialize)]
