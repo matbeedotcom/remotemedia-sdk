@@ -1,0 +1,28 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "minimal-docker-test",
+    "description": "Minimal Docker test - just iceoryx2, no heavy deps"
+  },
+  "nodes": [
+    {
+      "id": "test_docker",
+      "node_type": "SimplePyTorchNode",
+      "is_streaming": true,
+      "params": {
+        "operation": "echo"
+      },
+      "docker": {
+        "python_version": "3.11",
+        "python_packages": [
+          "iceoryx2"
+        ],
+        "resource_limits": {
+          "memory_mb": 512,
+          "cpu_cores": 0.5
+        }
+      }
+    }
+  ],
+  "connections": []
+}
