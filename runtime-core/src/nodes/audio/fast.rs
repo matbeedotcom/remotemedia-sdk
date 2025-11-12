@@ -1,6 +1,6 @@
 //! Fast audio node trait with direct buffer processing (no JSON overhead)
 
-use crate::audio::{AudioBuffer, AudioData};
+use crate::audio::AudioData;
 use crate::error::Result;
 
 /// High-performance audio processing trait

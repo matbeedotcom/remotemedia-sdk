@@ -12,8 +12,6 @@ use crate::Error;
 use serde_json::Value;
 use tokio::sync::Mutex;
 
-#[cfg(feature = "multiprocess")]
-use crate::python::multiprocess::MultiprocessConfig;
 
 /// Wrapper that adapts a Python node to the AsyncStreamingNode trait
 pub struct PythonStreamingNode {

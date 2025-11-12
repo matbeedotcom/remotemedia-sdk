@@ -782,7 +782,7 @@ impl RemotePipelineNode {
         let max_retries = retry_config.map(|r| r.max_retries).unwrap_or(0);
         let backoff_ms = retry_config.map(|r| r.backoff_ms).unwrap_or(1000);
 
-        let mut last_error = None;
+        let last_error = None;
         let mut ctx = ExecutionContext::new(
             self.get_primary_endpoint(),
             self.config.auth_token.clone(),

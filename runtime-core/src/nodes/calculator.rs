@@ -13,7 +13,7 @@
 use crate::data::RuntimeData;
 use crate::nodes::SyncStreamingNode;
 use crate::Error;
-use serde_json::{json, Value};
+use serde_json::json;
 
 /// CalculatorNode for JSON processing
 pub struct CalculatorNode {

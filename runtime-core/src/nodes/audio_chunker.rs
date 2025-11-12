@@ -17,7 +17,6 @@ use crate::nodes::AsyncStreamingNode;
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::info;
 
 /// Chunker state for a session
 #[derive(Debug, Clone)]

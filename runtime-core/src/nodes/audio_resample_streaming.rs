@@ -4,7 +4,6 @@ use crate::audio::buffer::AudioData;
 /// Adapts the synchronous FastResampleNode (FastAudioNode trait) to work
 /// in the async streaming pipeline (AsyncStreamingNode trait).
 use crate::data::RuntimeData;
-use crate::data::{AudioBuffer, DataTypeHint};
 use crate::error::{Error, Result};
 use crate::nodes::{
     audio::{FastAudioNode, FastResampleNode},
