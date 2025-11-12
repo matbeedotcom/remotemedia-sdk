@@ -164,3 +164,4 @@ systemctl start spot-termination-handler
 
 echo "ECS GPU instance initialization complete"
 
+

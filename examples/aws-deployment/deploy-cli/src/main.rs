@@ -550,3 +550,4 @@ fn get_aws_account_id(cli: &Cli) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+

@@ -370,3 +370,4 @@ output "gpu_task_definition_arn" {
   description = "Task definition ARN for GPU-accelerated tasks"
 }
 
+

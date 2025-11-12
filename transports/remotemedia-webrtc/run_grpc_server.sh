@@ -248,3 +248,4 @@ echo ""
 # Run the server with command-line arguments
 exec "$BINARY" --mode grpc --grpc-address "$GRPC_ADDRESS" --manifest "$MANIFEST"
 
+

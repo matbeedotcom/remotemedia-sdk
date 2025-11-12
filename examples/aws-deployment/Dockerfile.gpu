@@ -63,3 +63,4 @@ ENV RUST_LOG=info
 ENTRYPOINT ["grpc-server"]
 CMD ["--grpc-address", "0.0.0.0:50051"]
 
+

@@ -21,3 +21,4 @@ datasources:
       tracesToLogs:
         datasourceUid: 'loki'
 
+

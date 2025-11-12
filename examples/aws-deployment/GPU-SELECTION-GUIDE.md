@@ -572,3 +572,4 @@ whisper_model = load_model("large-v3", device="cuda", compute_type="int8")
 3. **Monitor costs** in AWS Cost Explorer
 4. **Optimize** based on utilization metrics
 
+

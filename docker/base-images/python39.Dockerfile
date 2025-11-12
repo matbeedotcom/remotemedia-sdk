@@ -1,64 +1,64 @@
-# Base Docker image for Python 3.9 nodes with iceoryx2 support
-# Spec 009: Docker-based node execution
+# RemoteMedia Python 3.9 Node - Single Stage Build
 #
-# This image provides:
-# - Python 3.9 runtime
-# - iceoryx2 Python bindings for zero-copy IPC
-# - Common audio processing system libraries
-# - Non-root user for security
+# Uses pytorch/pytorch base image with CUDA support
+# Includes: Python 3.9, PyTorch, RemoteMedia SDK, iceoryx2 IPC, CUDA libraries
+#
+# Build:
+#   docker build -f docker/base-images/python39.Dockerfile -t remotemedia/python39-node:latest .
+#
+# Test:
+#   docker run --rm remotemedia/python39-node:latest python -c "import torch, remotemedia, iceoryx2; print('All OK')"
 
-# ============================================================================
-# Stage 1: Builder - Install dependencies and iceoryx2
-# ============================================================================
-FROM python:3.9-slim as builder
+ARG PYTORCH_VERSION=1.13.1
 
-# Install build dependencies
+# Use PyTorch base image with Python 3.9 (older PyTorch version for Python 3.9 compatibility)
+FROM pytorch/pytorch:${PYTORCH_VERSION}-cuda11.6-cudnn8-runtime
+
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
     g++ \
     git \
-    wget \
+    libsndfile1 \
+    libsndfile1-dev \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Create virtual environment
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# Install remotemedia shared package (protobuf definitions)
+COPY remotemedia /tmp/remotemedia-shared/remotemedia
+COPY setup.py /tmp/remotemedia-shared/
+COPY README.md /tmp/remotemedia-shared/
 
-# Install iceoryx2 Python bindings
+WORKDIR /tmp/remotemedia-shared
+RUN pip install --no-cache-dir .
+
+# Install remotemedia-client with dependencies
+COPY python-client /tmp/remotemedia-client
+
+WORKDIR /tmp/remotemedia-client
+
+# Install base dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install ML dependencies if needed
+RUN pip install --no-cache-dir -r requirements-ml.txt || true
+
+# Install iceoryx2 for IPC
 RUN pip install --no-cache-dir iceoryx2
 
-# ============================================================================
-# Stage 2: Runtime - Minimal runtime environment
-# ============================================================================
-FROM python:3.9-slim as runtime
+# Install the package
+RUN pip install --no-cache-dir --no-deps .
 
-# Install runtime system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Audio libraries (runtime only, no -dev packages)
-    libsndfile1 \
-    # Cleanup
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+# Setup for RemoteMedia execution
+RUN mkdir -p /tmp/iceoryx2 && chmod 777 /tmp/iceoryx2
 
-# Copy virtual environment from builder
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+WORKDIR /app
 
-# Create non-root user (security best practice - FR-014)
-RUN useradd -m -u 1000 remotemedia && \
-    mkdir -p /tmp/iceoryx2 && \
-    chown remotemedia:remotemedia /tmp/iceoryx2
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 
-USER remotemedia
-WORKDIR /home/remotemedia/app
-
-# Set Python environment
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
-
-# Ensure proper signal handling for graceful shutdown
 STOPSIGNAL SIGTERM
 
-# Default command (will be overridden by node runner)
-CMD ["python", "--version"]
+# Keep container alive for docker exec
+CMD ["tail", "-f", "/dev/null"]

@@ -205,132 +205,44 @@ impl ImageCache {
     }
 }
 
-/// Generate Dockerfile content from configuration (T020)
+/// Select appropriate Dockerfile based on configuration (T020)
 ///
-/// Creates a multi-stage Dockerfile with builder and runtime stages
-pub fn generate_dockerfile(config: &super::config::DockerExecutorConfig) -> Result<String> {
-    let base_image = config
-        .base_image
-        .as_ref()
-        .map(|s| s.as_str())
-        .unwrap_or_else(|| match config.python_version.as_str() {
-            "3.9" => "python:3.9-slim",
-            "3.10" => "python:3.10-slim",
-            "3.11" => "python:3.11-slim",
-            _ => "python:3.10-slim",
-        });
+/// Returns the path to the Dockerfile to use for the build
+fn select_dockerfile(_config: &super::config::DockerExecutorConfig) -> Result<std::path::PathBuf> {
+    let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| Error::Execution("Failed to find workspace root".to_string()))?
+        .to_path_buf();
 
-    let mut dockerfile = format!(
-        r#"# Auto-generated Dockerfile for RemoteMedia Docker executor
-FROM {} as builder
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential gcc g++ git libsndfile1-dev && rm -rf /var/lib/apt/lists/*
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-"#,
-        base_image
-    );
+    // Always use PyTorch Dockerfile for now (most complete, supports both ML and non-ML workloads)
+    let dockerfile_name = "Dockerfile.pytorch-node";
+    let dockerfile_path = workspace_root.join("docker").join(dockerfile_name);
 
-    // Install remotemedia packages from local source (required for node runner)
-    // Two packages: remotemedia (shared protobuf) + remotemedia-client (SDK)
-    dockerfile.push_str("# Install remotemedia shared package first (protobuf definitions)\n");
-    dockerfile.push_str("COPY remotemedia /tmp/remotemedia-shared/remotemedia\n");
-    dockerfile.push_str("COPY setup.py /tmp/remotemedia-shared/\n");
-    dockerfile.push_str("COPY README.md /tmp/remotemedia-shared/\n");
-    dockerfile.push_str("RUN cd /tmp/remotemedia-shared && pip install --no-cache-dir .\n\n");
-
-    dockerfile.push_str("# Install remotemedia-client package with ml extras\n");
-    dockerfile.push_str("COPY python-client/remotemedia /tmp/remotemedia-client/remotemedia\n");
-    dockerfile.push_str("COPY python-client/setup.py /tmp/remotemedia-client/\n");
-    dockerfile.push_str("COPY python-client/README.md /tmp/remotemedia-client/\n");
-    dockerfile.push_str("COPY python-client/requirements.txt /tmp/remotemedia-client/\n");
-    dockerfile.push_str("RUN cd /tmp/remotemedia-client && pip install --no-cache-dir '.[ml]'\n");
-    dockerfile.push_str("# Note: Installed with [ml] extras (includes librosa, soundfile, all deps)\n\n");
-
-    // Python packages
-    for pkg in &config.python_packages {
-        // Skip remotemedia if already listed (we install it above)
-        if !pkg.starts_with("remotemedia") {
-            dockerfile.push_str(&format!("RUN pip install --no-cache-dir {}\n", pkg));
-        }
+    if !dockerfile_path.exists() {
+        return Err(Error::Execution(format!(
+            "Dockerfile not found at {:?}. Please ensure the docker/{} file exists.",
+            dockerfile_path, dockerfile_name
+        )));
     }
 
-    // Runtime stage
-    dockerfile.push_str(&format!("\nFROM {} as runtime\n", base_image));
-
-    // System dependencies
-    if !config.system_dependencies.is_empty() {
-        dockerfile.push_str("RUN apt-get update && apt-get install -y --no-install-recommends");
-        for dep in &config.system_dependencies {
-            dockerfile.push_str(&format!(" {}", dep));
-        }
-        dockerfile.push_str(" && rm -rf /var/lib/apt/lists/*\n");
-    }
-
-    // Create diagnostic script as a separate file to avoid quote escaping issues
-    dockerfile.push_str(
-        r#"COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-RUN mkdir -p /tmp/iceoryx2 && chmod 777 /tmp/iceoryx2
-
-# Create container diagnostic script
-RUN cat > /tmp/container_info.py << 'EOFDIAGO'
-#!/usr/bin/env python3
-import sys, os, subprocess, time
-
-print("=== RemoteMedia Docker Container ===")
-print(f"Python: {sys.version.split()[0]}")
-print(f"User: {os.getenv('USER', 'unknown')} (UID {os.getuid()})")
-print(f"Working dir: {os.getcwd()}")
-print()
-
-print("Installed packages:")
-subprocess.run(["pip", "list", "--format=columns"])
-print()
-
-print("iceoryx2 setup:")
-print(f"  /tmp/iceoryx2 exists: {os.path.exists('/tmp/iceoryx2')}")
-print(f"  /tmp/iceoryx2 writable: {os.access('/tmp/iceoryx2', os.W_OK)}")
-print(f"  /dev/shm exists: {os.path.exists('/dev/shm')}")
-print()
-
-print("iceoryx2 import test:")
-try:
-    import iceoryx2
-    print("  ✓ iceoryx2 imported successfully")
-    print(f"  Module: {iceoryx2.__file__}")
-    attrs = [x for x in dir(iceoryx2) if not x.startswith('_')]
-    print(f"  API: {attrs[:10]}...")
-except Exception as e:
-    print(f"  ✗ FAILED: {e}")
-print()
-
-print("Container ready for node execution")
-print("Waiting for: docker exec <id> python -m remotemedia.core.multiprocessing.runner")
-print()
-time.sleep(3600)
-EOFDIAGO
-
-RUN chmod +x /tmp/container_info.py
-
-# Run as root (simpler, faster builds, no permission issues)
-WORKDIR /app
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
-STOPSIGNAL SIGTERM
-# Keep container alive for docker exec
-CMD ["tail", "-f", "/dev/null"]
-"#,
-    );
-
-    Ok(dockerfile)
+    tracing::debug!("Using Dockerfile: {}", dockerfile_name);
+    Ok(dockerfile_path)
 }
 
 /// Create tar archive containing Dockerfile and python-client source
-fn create_dockerfile_tar(dockerfile_content: &str) -> Result<Vec<u8>> {
+fn create_dockerfile_tar(config: &super::config::DockerExecutorConfig) -> Result<Vec<u8>> {
     let mut tar_data = Vec::new();
     {
         let mut tar = tar::Builder::new(&mut tar_data);
 
-        // Add Dockerfile
+        // Get the path to the actual Dockerfile
+        let dockerfile_path = select_dockerfile(config)?;
+
+        // Read the Dockerfile content
+        let dockerfile_content = std::fs::read_to_string(&dockerfile_path)
+            .map_err(|e| Error::Execution(format!("Failed to read Dockerfile: {}", e)))?;
+
+        // Add Dockerfile to tar archive
         let dockerfile_bytes = dockerfile_content.as_bytes();
         let mut header = tar::Header::new_gnu();
         header.set_size(dockerfile_bytes.len() as u64);
@@ -338,7 +250,7 @@ fn create_dockerfile_tar(dockerfile_content: &str) -> Result<Vec<u8>> {
         header.set_cksum();
 
         tar.append_data(&mut header, "Dockerfile", dockerfile_bytes)
-            .map_err(|e| Error::Execution(format!("Failed to create tar: {}", e)))?;
+            .map_err(|e| Error::Execution(format!("Failed to add Dockerfile to tar: {}", e)))?;
 
         // Add remotemedia packages to build context
         // Need both: remotemedia (shared) + python-client (SDK)
@@ -461,11 +373,8 @@ pub async fn build_docker_image(
 
     tracing::info!("Building new Docker image for node: {}", node_id);
 
-    // T020: Generate Dockerfile
-    let dockerfile = generate_dockerfile(config)?;
-
-    // Create tar archive
-    let tar_bytes = create_dockerfile_tar(&dockerfile)?;
+    // T020: Create tar archive with the actual Dockerfile from docker/ directory
+    let tar_bytes = create_dockerfile_tar(config)?;
 
     // T019: Build using bollard
     let image_name = format!("remotemedia/{}", node_id);
@@ -668,13 +577,13 @@ mod tests {
     }
 
     #[test]
-    fn test_dockerfile_generation() {
+    fn test_dockerfile_selection() {
         use crate::python::docker::config::*;
 
         let config = DockerExecutorConfig {
             python_version: "3.11".to_string(),
             system_dependencies: vec!["ffmpeg".to_string()],
-            python_packages: vec!["iceoryx2".to_string(), "numpy==1.26.0".to_string()],
+            python_packages: vec!["numpy==1.26.0".to_string()],
             resource_limits: ResourceLimits {
                 memory_mb: 1024,
                 cpu_cores: 1.0,
@@ -684,18 +593,11 @@ mod tests {
             env: Default::default(),
         };
 
-        let dockerfile = generate_dockerfile(&config).unwrap();
-
-        // Verify key elements
-        assert!(dockerfile.contains("FROM python:3.11-slim"));
-        assert!(dockerfile.contains("RUN pip install --no-cache-dir iceoryx2"));
-        assert!(dockerfile.contains("RUN pip install --no-cache-dir numpy==1.26.0"));
-        assert!(dockerfile.contains("ffmpeg"));
-        assert!(dockerfile.contains("/tmp/iceoryx2"));
-        assert!(dockerfile.contains("PYTHONUNBUFFERED=1"));
-        assert!(dockerfile.contains("tail"));
-
-        println!("Generated Dockerfile:\n{}", dockerfile);
+        // Verify we always use pytorch-node for now
+        if let Ok(path) = select_dockerfile(&config) {
+            assert!(path.to_string_lossy().contains("pytorch-node"));
+            println!("Selected Dockerfile: {:?}", path);
+        }
     }
 }
 

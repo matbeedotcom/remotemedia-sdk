@@ -128,6 +128,7 @@ async fn test_e2e_simple_docker_pipeline() {
         // Step 3: Initialize (create container)
         println!("\nStep 3: Initializing container...");
         let session_id = format!("e2e_simple_{}", uuid::Uuid::new_v4());
+        println!("  Session ID: {}", session_id);
         let init_start = Instant::now();
 
         match executor.initialize(session_id.clone()).await {
@@ -135,10 +136,86 @@ async fn test_e2e_simple_docker_pipeline() {
                 let init_duration = init_start.elapsed();
                 println!("✓ Container initialized in {:?}", init_duration);
 
-                // Fetch container logs immediately after init
-                println!("\n--- Container Logs (stdout/stderr) ---");
+                // Get container details
                 use std::process::Command;
                 let container_name = format!("remotemedia_{}_{}", session_id, docker_node.id);
+                println!("\n--- Container Technical Details ---");
+                println!("  Container Name: {}", container_name);
+
+                // Get container ID (hash)
+                let container_id_output = Command::new("docker")
+                    .args(&["ps", "--filter", &format!("name={}", container_name), "--format", "{{.ID}}"])
+                    .output();
+
+                let container_id = if let Ok(output) = container_id_output {
+                    String::from_utf8_lossy(&output.stdout).trim().to_string()
+                } else {
+                    "unknown".to_string()
+                };
+                println!("  Container ID (short): {}", container_id);
+
+                // Get full container hash
+                if !container_id.is_empty() && container_id != "unknown" {
+                    let full_hash_output = Command::new("docker")
+                        .args(&["inspect", &container_id, "--format", "{{.Id}}"])
+                        .output();
+
+                    if let Ok(output) = full_hash_output {
+                        let full_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        println!("  Container Hash (full): {}", full_hash);
+                    }
+                }
+
+                // Get image details
+                let image_output = Command::new("docker")
+                    .args(&["ps", "--filter", &format!("name={}", container_name), "--format", "{{.Image}}"])
+                    .output();
+
+                if let Ok(output) = image_output {
+                    let image = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    println!("  Image: {}", image);
+
+                    // Get image hash
+                    if !image.is_empty() {
+                        let image_hash_output = Command::new("docker")
+                            .args(&["inspect", &image, "--format", "{{.Id}}"])
+                            .output();
+
+                        if let Ok(output) = image_hash_output {
+                            let image_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                            println!("  Image Hash: {}", image_hash);
+                        }
+                    }
+                }
+
+                // Get container size
+                let size_output = Command::new("docker")
+                    .args(&["ps", "--filter", &format!("name={}", container_name), "--format", "{{.Size}}"])
+                    .output();
+
+                if let Ok(output) = size_output {
+                    let size = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !size.is_empty() {
+                        println!("  Container Size: {}", size);
+                    }
+                }
+
+                // Get ports
+                let ports_output = Command::new("docker")
+                    .args(&["ps", "--filter", &format!("name={}", container_name), "--format", "{{.Ports}}"])
+                    .output();
+
+                if let Ok(output) = ports_output {
+                    let ports = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !ports.is_empty() {
+                        println!("  Ports: {}", ports);
+                    }
+                }
+
+                println!("--- End Container Technical Details ---");
+
+                // Fetch container logs immediately after init
+                println!("\n--- Container Logs (stdout/stderr) ---");
 
                 let logs_output = Command::new("docker")
                     .args(&["logs", &container_name])
@@ -169,10 +246,13 @@ async fn test_e2e_simple_docker_pipeline() {
                 println!("--- End Container Logs ---\n");
 
                 // Step 4: Verify container in registry
-                println!("Step 4: Verifying container registration...");
+                println!("\nStep 4: Verifying container registration and status...");
                 let count = container_count().await;
-                println!("✓ Container count: {}", count);
+                println!("✓ Container count in registry: {}", count);
                 assert_eq!(count, 1, "Should have 1 container registered");
+
+                // Detailed container status
+                println!("\n--- Container Runtime Status ---");
 
                 // Show container status
                 let status_output = Command::new("docker")
@@ -181,18 +261,67 @@ async fn test_e2e_simple_docker_pipeline() {
 
                 if let Ok(output) = status_output {
                     let status = String::from_utf8_lossy(&output.stdout);
-                    println!("  Container status: {}", status.trim());
+                    println!("  Status: {}", status.trim());
                 }
 
-                // Show container inspect (useful for debugging)
+                // Show detailed container state from inspect
                 let inspect_output = Command::new("docker")
-                    .args(&["inspect", &container_name, "--format", "{{json .State}}"])
+                    .args(&["inspect", &container_name, "--format",
+                           "Running: {{.State.Running}}, PID: {{.State.Pid}}, StartedAt: {{.State.StartedAt}}, RestartCount: {{.RestartCount}}"])
                     .output();
 
                 if let Ok(output) = inspect_output {
                     let state = String::from_utf8_lossy(&output.stdout);
-                    println!("  Container state: {}", state.trim());
+                    println!("  {}", state.trim());
                 }
+
+                // Get resource stats
+                let stats_output = Command::new("docker")
+                    .args(&["stats", "--no-stream", "--format",
+                           "CPU: {{.CPUPerc}}, Memory: {{.MemUsage}}, PIDs: {{.PIDs}}",
+                           &container_name])
+                    .output();
+
+                if let Ok(output) = stats_output {
+                    let stats = String::from_utf8_lossy(&output.stdout);
+                    if !stats.trim().is_empty() {
+                        println!("  Resources: {}", stats.trim());
+                    }
+                }
+
+                // Get mount information
+                let mounts_output = Command::new("docker")
+                    .args(&["inspect", &container_name, "--format", "{{range .Mounts}}{{.Type}}: {{.Source}} -> {{.Destination}}\n{{end}}"])
+                    .output();
+
+                if let Ok(output) = mounts_output {
+                    let mounts = String::from_utf8_lossy(&output.stdout);
+                    if !mounts.trim().is_empty() {
+                        println!("  Mounts:");
+                        for line in mounts.lines() {
+                            if !line.is_empty() {
+                                println!("    - {}", line);
+                            }
+                        }
+                    }
+                }
+
+                // Get environment variables (filter for relevant ones)
+                let env_output = Command::new("docker")
+                    .args(&["inspect", &container_name, "--format", "{{range .Config.Env}}{{.}}\n{{end}}"])
+                    .output();
+
+                if let Ok(output) = env_output {
+                    let env_vars = String::from_utf8_lossy(&output.stdout);
+                    println!("  Key Environment Variables:");
+                    for line in env_vars.lines() {
+                        if line.contains("PYTHON") || line.contains("PATH") || line.contains("ICEORYX") {
+                            println!("    - {}", line);
+                        }
+                    }
+                }
+
+                println!("--- End Container Runtime Status ---");
 
                 // Step 5: Send test data (if multiprocess feature enabled)
                 println!("\nStep 5: Sending test audio data...");
