@@ -173,11 +173,13 @@ runtime/wasmtime-v*/
 # .claude/commands/openspec/
 
 # Rust specific
+target/
 *.rlib
 *.prof
 *.profraw
 debug/
 release/
 Cargo.lock  # For libraries; remove this line if building binaries
+*.rs.bk
 
 nul

@@ -350,7 +350,7 @@ def run() -> None:
     """
     Entry point for the runner module.
 
-    This is called when running: python -m remotemedia.core.multiprocess.runner
+    This is called when running: python -m remotemedia.core.multiprocessing.runner
     """
     try:
         asyncio.run(main())

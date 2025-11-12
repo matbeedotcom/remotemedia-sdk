@@ -230,6 +230,7 @@ mod tests {
         let valid = ResourceLimits {
             memory_mb: 2048,
             cpu_cores: 2.0,
+            gpu_devices: vec![],
         };
         assert!(valid.validate().is_ok());
 
@@ -237,6 +238,7 @@ mod tests {
         let low_mem = ResourceLimits {
             memory_mb: 64,
             cpu_cores: 1.0,
+            gpu_devices: vec![],
         };
         assert!(low_mem.validate().is_err());
 
@@ -244,6 +246,7 @@ mod tests {
         let low_cpu = ResourceLimits {
             memory_mb: 512,
             cpu_cores: 0.05,
+            gpu_devices: vec![],
         };
         assert!(low_cpu.validate().is_err());
     }
@@ -257,6 +260,7 @@ mod tests {
             resource_limits: ResourceLimits {
                 memory_mb: 2048,
                 cpu_cores: 2.0,
+                gpu_devices: vec![],
             },
             base_image: None,
             env: Default::default(),

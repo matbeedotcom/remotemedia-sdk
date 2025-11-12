@@ -19,6 +19,7 @@
 //! - `image_builder`: Docker image building and caching
 //! - `docker_executor`: Main executor implementing StreamingNodeExecutor trait
 //! - `ipc_bridge`: Adapts multiprocess IPC patterns for containers
+//! - `container_registry`: Global registry for sharing containers across sessions (FR-012, FR-015)
 //!
 //! # Feature Flag
 //!
@@ -28,10 +29,14 @@
 
 pub mod config;
 pub mod container_manager;
+pub mod container_registry;
 pub mod docker_executor;
+pub mod health_check;
 pub mod image_builder;
 pub mod ipc_bridge;
 
 // Re-export main types
 pub use config::{DockerExecutorConfig, DockerizedNodeConfiguration, ResourceLimits};
+pub use container_registry::{ContainerSessionInstance, HealthStatus};
 pub use docker_executor::DockerExecutor;
+pub use health_check::spawn_health_monitor;

@@ -1,0 +1,90 @@
+# RemoteMedia Docker Node with Python Package
+#
+# Build from workspace root:
+#   docker build -f docker/Dockerfile.remotemedia-node -t remotemedia/python-node:py3.10 .
+#
+# Test:
+#   docker run --rm remotemedia/python-node:py3.10
+#
+# Interactive:
+#   docker run --rm -it remotemedia/python-node:py3.10 /bin/bash
+
+ARG PYTHON_VERSION=3.11
+
+# ===========================================================================
+# Stage 1: Builder - Install dependencies with build tools
+# ===========================================================================
+FROM python:${PYTHON_VERSION}-slim as builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    git \
+    libsndfile1-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install remotemedia shared package first (protobuf definitions)
+COPY remotemedia /tmp/remotemedia-shared/remotemedia
+COPY setup.py /tmp/remotemedia-shared/
+COPY README.md /tmp/remotemedia-shared/
+
+WORKDIR /tmp/remotemedia-shared
+RUN pip install --no-cache-dir .
+
+# Install remotemedia-client package
+WORKDIR /tmp/remotemedia-client
+
+# First, copy only requirements files and setup.py for better caching
+# This layer will only rebuild if requirements change, not on code changes
+COPY python-client/requirements.txt python-client/requirements-ml.txt python-client/setup.py python-client/README.md ./
+
+# Install base dependencies from requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install ML dependencies from requirements-ml.txt
+RUN pip install --no-cache-dir -r requirements-ml.txt
+
+# Install iceoryx2 (required for IPC)
+RUN pip install --no-cache-dir iceoryx2
+
+# Now copy the rest of the code (this layer rebuilds on code changes)
+COPY python-client/remotemedia ./remotemedia
+
+# Install the package itself (no dependencies, just the package)
+RUN pip install --no-cache-dir --no-deps .
+
+# ===========================================================================
+# Stage 2: Runtime - Minimal runtime environment
+# ===========================================================================
+FROM python:${PYTHON_VERSION}-slim as runtime
+
+# Install only runtime system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1 \
+    libsndfile1-dev \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Create iceoryx2 directory with proper permissions
+RUN mkdir -p /tmp/iceoryx2 && chmod 777 /tmp/iceoryx2
+
+# Run as root for simplicity (faster builds, no permission issues)
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+STOPSIGNAL SIGTERM
+
+# Keep container alive (Python runner will be started via docker exec)
+CMD ["tail", "-f", "/dev/null"]

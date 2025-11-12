@@ -1,0 +1,65 @@
+# GPU-enabled Docker build for RemoteMedia gRPC Server
+# Optimized for NVIDIA GPUs on AWS ECS/EKS
+
+# Stage 1: Build
+FROM rust:1.75-slim-bookworm as builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy workspace files
+COPY Cargo.toml Cargo.lock ./
+COPY runtime-core ./runtime-core
+COPY transports ./transports
+COPY protos ./protos
+
+# Build with GPU-related features
+RUN cargo build --bin grpc-server --release \
+    --features grpc-signaling,docker-executor,multiprocess,silero-vad
+
+# Stage 2: Runtime with NVIDIA GPU support
+FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    curl \
+    nvidia-utils-525 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m -u 1001 -s /bin/bash remotemedia
+
+# Copy binary from builder
+COPY --from=builder /app/target/release/grpc-server /usr/local/bin/grpc-server
+
+# Set ownership
+RUN chown -R remotemedia:remotemedia /usr/local/bin/grpc-server
+
+# Switch to non-root user
+USER remotemedia
+
+# Expose gRPC port
+EXPOSE 50051
+
+# Health check (includes GPU check)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD nvidia-smi && curl -f http://localhost:50051/health || exit 1
+
+# GPU environment variables (can be overridden)
+ENV CUDA_VISIBLE_DEVICES=0
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV RUST_LOG=info
+
+# Default command
+ENTRYPOINT ["grpc-server"]
+CMD ["--grpc-address", "0.0.0.0:50051"]
+

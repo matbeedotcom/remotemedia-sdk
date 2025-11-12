@@ -14,6 +14,13 @@ Transport-agnostic execution engine for RemoteMedia pipelines.
 - ✅ **Full functionality** - All core features (executor, nodes, session routing)
 - ✅ **Plugin architecture** - Add custom transports without modifying core
 
+### Execution Modes
+
+- **Native Rust**: In-process execution with 2-16x speedup for audio nodes
+- **Multiprocess Python**: Process-isolated Python nodes with zero-copy iceoryx2 IPC
+- **Docker Executor** (Spec 009): Container-isolated Python nodes with environment isolation and resource limits
+- **WASM**: Browser execution with hybrid Rust+Pyodide support
+
 ## Installation
 
 ```toml
@@ -150,9 +157,50 @@ pub trait StreamSession: Send + Sync {
 }
 ```
 
+## Docker Executor (Spec 009)
+
+Run Python nodes in isolated Docker containers with zero-copy iceoryx2 IPC.
+
+### Quick Example
+
+```yaml
+nodes:
+  - id: ml_node
+    node_type: MyMLNode
+    docker:
+      python_version: "3.10"
+      python_packages: ["iceoryx2", "torch>=2.0"]
+      resource_limits:
+        memory_mb: 4096
+        cpu_cores: 2.0
+```
+
+### Features
+
+- Environment isolation (different Python versions/packages per node)
+- Zero-copy data transfer via iceoryx2 shared memory
+- Strict resource limits (CPU, memory, GPU)
+- Container sharing across sessions with reference counting
+- Health monitoring and automatic cleanup
+
+### Testing
+
+```bash
+# Docker executor tests
+cargo test test_docker_executor
+cargo test test_docker_multicontainer
+cargo test test_mixed_executors_manifest_loading -- --ignored
+
+# Skip if Docker unavailable
+SKIP_DOCKER_TESTS=1 cargo test
+```
+
+See [`examples/docker-node/`](../examples/docker-node/) and [`specs/009-docker-node-execution/`](../specs/009-docker-node-execution/) for details.
+
 ## Examples
 
 - **Custom Transport**: `examples/custom-transport/` - Console-based transport demonstrating the API
+- **Docker Nodes**: `examples/docker-node/` - Mixed executor pipeline (Docker + Rust + multiprocess)
 - **Unary Execution**: `examples/custom-transport/src/main.rs`
 - **Streaming**: `examples/custom-transport/examples/streaming.rs`
 

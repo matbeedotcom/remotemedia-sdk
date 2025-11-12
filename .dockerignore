@@ -1,0 +1,99 @@
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Rust build artifacts
+target/
+debug/
+release/
+*.rlib
+*.prof
+*.profraw
+*.rs.bk
+Cargo.lock
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.tox/
+.venv/
+venv/
+env/
+ENV/
+.Python
+*.py[cod]
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation
+docs/_build/
+*.md
+!README.md
+
+# Logs and temporary files
+*.log
+*.tmp
+temp/
+tmp/
+*.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Test and development
+tests/
+.coverage
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Specs and planning (OpenSpec)
+specs/
+.specify/
+.claude/
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Large binaries and archives
+wasi-sdk-*/
+wasmtime-v*/
+whisper.cpp/
+archive/
+
+# Node modules (if any)
+node_modules/
+package-lock.json
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.Spotlight-V100
+.Trashes

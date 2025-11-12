@@ -123,23 +123,81 @@ impl DockerExecutor {
         #[cfg(not(all(feature = "docker-executor", feature = "multiprocess")))]
         let image_tag = format!("python:{}-slim", self.config.config.python_version);
 
-        // 4. Create container
-        let container_name = format!("remotemedia_{}_{}", session_id, self.config.node_id);
+        // 4. Check if container already exists in global registry (FR-012)
+        #[cfg(feature = "docker-executor")]
+        let (container_id, _container_name, _is_shared) = {
+            use super::container_registry::{
+                get_or_create_container, register_container, add_session_to_container,
+                ContainerSessionInstance, HealthStatus,
+            };
 
-        let container_id = self
-            .container_manager
-            .create_container(
-                &container_name,
-                &image_tag,
-                &self.config.config.resource_limits,
-                &self.config.config.env,
-            )
-            .await?;
+            if let Some(existing) = get_or_create_container(&self.config.node_id).await {
+                tracing::info!(
+                    "Reusing existing container '{}' for node '{}' (ref_count: {})",
+                    existing.container_name,
+                    self.config.node_id,
+                    existing.ref_count() + 1
+                );
+
+                // Add this session to the existing container (FR-015)
+                add_session_to_container(&self.config.node_id, session_id.clone())
+                    .await?;
+
+                (existing.container_id, existing.container_name, true)
+            } else {
+                // Create new container
+                let container_name = format!("remotemedia_{}_{}", session_id, self.config.node_id);
+
+                let container_id = self
+                    .container_manager
+                    .create_container(
+                        &container_name,
+                        &image_tag,
+                        &self.config.config.resource_limits,
+                        &self.config.config.env,
+                    )
+                    .await?;
+
+                tracing::info!("Created new container '{}' for node '{}'", container_name, self.config.node_id);
+
+                // Start container
+                self.container_manager.start_container(&container_id).await?;
+
+                // Register in global registry
+                let mut instance = ContainerSessionInstance::new(
+                    container_id.clone(),
+                    container_name.clone(),
+                    self.config.node_id.clone(),
+                    image_tag.clone(),
+                );
+
+                instance.add_session(session_id.clone());
+                instance.update_health(HealthStatus::Healthy);
+
+                register_container(self.config.node_id.clone(), instance).await?;
+
+                (container_id, container_name, false)
+            }
+        };
+
+        #[cfg(not(feature = "docker-executor"))]
+        let (container_id, _container_name, _is_shared) = {
+            let container_name = format!("remotemedia_{}_{}", session_id, self.config.node_id);
+            let container_id = self
+                .container_manager
+                .create_container(
+                    &container_name,
+                    &image_tag,
+                    &self.config.config.resource_limits,
+                    &self.config.config.env,
+                )
+                .await?;
+
+            self.container_manager.start_container(&container_id).await?;
+            (container_id, container_name, false)
+        };
 
         self.container_id = Some(container_id.clone());
-
-        // 5. Start container
-        self.container_manager.start_container(&container_id).await?;
 
         // 5b. Start Python node runner inside container via docker exec
         // The runner will create iceoryx2 subscriber/publisher and listen for data
@@ -155,7 +213,7 @@ impl DockerExecutor {
             let cmd = vec![
                 "python".to_string(),
                 "-m".to_string(),
-                "remotemedia.core.multiprocess.runner".to_string(),
+                "remotemedia.core.multiprocessing.runner".to_string(),
                 "--node-type".to_string(),
                 self.config.node_type.clone(),
                 "--node-id".to_string(),
@@ -167,16 +225,22 @@ impl DockerExecutor {
             match self.container_manager.exec_in_container(&container_id, cmd).await {
                 Ok(exec_id) => {
                     tracing::info!(
-                        "Python runner started in container (exec: {})",
+                        "✓ Python runner started in container (exec_id: {})",
                         exec_id
                     );
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Failed to start Python runner in container (expected - remotemedia not installed): {}",
+                    tracing::error!(
+                        "Failed to start Python runner in container: {}",
                         e
                     );
-                    // Continue anyway - container infrastructure still works for testing
+                    return Err(Error::Execution(format!(
+                        "Python runner failed to start in container. \
+                         Ensure remotemedia package is installed. \
+                         Build container with: docker build -f docker/Dockerfile.remotemedia-node -t remotemedia/python-node:py3.10 . \
+                         Error: {}",
+                        e
+                    )));
                 }
             }
         }
@@ -245,9 +309,10 @@ impl DockerExecutor {
         ipc_thread.register_output_callback(callback_tx).await
     }
 
-    /// Cleanup Docker node resources (T030)
+    /// Cleanup Docker node resources (T030, T039)
     ///
-    /// Stops container, cleanups IPC channels, removes from registry
+    /// Uses reference counting (FR-015) to determine if container should be stopped.
+    /// Only stops/removes container when reference count reaches zero.
     pub async fn cleanup(&mut self) -> Result<()> {
         tracing::info!("Cleaning up Docker executor for node '{}'", self.config.node_id);
 
@@ -258,17 +323,56 @@ impl DockerExecutor {
             ipc_thread.shutdown().await?;
         }
 
-        // 2. Stop container
-        if let Some(container_id) = &self.container_id {
-            tracing::debug!("Stopping container: {}", container_id);
-            self.container_manager.stop_container(container_id).await?;
+        // 2. Remove session from container registry and check if should stop (FR-015)
+        #[cfg(feature = "docker-executor")]
+        let should_stop_container = if let Some(ref session_id) = self.session_id {
+            use super::container_registry::remove_session_from_container;
 
-            // 3. Remove container
-            tracing::debug!("Removing container: {}", container_id);
-            self.container_manager.remove_container(container_id).await?;
+            match remove_session_from_container(&self.config.node_id, session_id).await {
+                Ok(should_stop) => {
+                    if should_stop {
+                        tracing::info!(
+                            "Reference count reached zero for node '{}', will stop container",
+                            self.config.node_id
+                        );
+                    } else {
+                        tracing::debug!(
+                            "Container for node '{}' still has active sessions, keeping alive",
+                            self.config.node_id
+                        );
+                    }
+                    should_stop
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to remove session from registry (container may have been already removed): {}",
+                        e
+                    );
+                    true // Proceed with cleanup anyway
+                }
+            }
+        } else {
+            true // No session ID, stop container
+        };
+
+        #[cfg(not(feature = "docker-executor"))]
+        let should_stop_container = true;
+
+        // 3. Stop and remove container only if ref count reached zero
+        if should_stop_container {
+            if let Some(container_id) = &self.container_id {
+                tracing::debug!("Stopping container: {}", container_id);
+                self.container_manager.stop_container(container_id).await?;
+
+                // 4. Remove container
+                tracing::debug!("Removing container: {}", container_id);
+                self.container_manager.remove_container(container_id).await?;
+            }
+        } else {
+            tracing::debug!("Container kept alive for other sessions");
         }
 
-        // 4. Cleanup iceoryx2 service files
+        // 5. Cleanup iceoryx2 service files for this session
         if let (Some(session_id), Some(_)) = (&self.session_id, &self.container_id) {
             let service_pattern = format!(
                 "/tmp/iceoryx2/services/{}_{}_*",
@@ -287,7 +391,7 @@ impl DockerExecutor {
             }
         }
 
-        // 5. Clear handles
+        // 6. Clear handles
         self.container_id = None;
         self.session_id = None;
 

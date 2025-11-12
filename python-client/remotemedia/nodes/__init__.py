@@ -28,7 +28,13 @@ from .transcription import WhisperXTranscriber, RustWhisperTranscriber
 from .tts import KokoroTTSNode
 from .tts_vibevoice import VibeVoiceTTSNode
 from .simple_pytorch_test import SimplePyTorchNode
-from .ml import LFM2AudioNode
+# Optional import: LFM2AudioNode requires liquid_audio package
+try:
+    from .ml import LFM2AudioNode
+    _has_lfm2 = True
+except ImportError:
+    LFM2AudioNode = None
+    _has_lfm2 = False
 from .text_processor import TextProcessorNode
 from .transform import DataTransform
 from .video import VideoTransform, VideoBuffer, VideoResizer
@@ -97,8 +103,6 @@ __all__ = [
     "VibeVoiceTTSNode",
     # Test nodes
     "SimplePyTorchNode",
-    # ML nodes
-    "LFM2AudioNode",
     # Integration test nodes
     "ExpanderNode",
     "FilterNode",
@@ -109,4 +113,8 @@ __all__ = [
     "ConditionalExpanderNode",
     "ChainedTransformNode",
     "ErrorProneNode",
-] 
+]
+
+# Add optional ML nodes if available
+if _has_lfm2:
+    __all__.append("LFM2AudioNode") 
