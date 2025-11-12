@@ -17,8 +17,8 @@ name = "webrtc_server"
 path = "src/bin/webrtc_server.rs"
 
 [dependencies]
-# Core runtime
-remotemedia-runtime-core = { path = "../../runtime-core" }
+# Core runtime (with default features: multiprocess, silero-vad, docker-executor)
+remotemedia-runtime-core = { path = "../../runtime-core", default-features = true }
 
 # WebRTC peer connections, ICE, DTLS, SRTP
 webrtc = "0.14.0"
@@ -67,6 +67,9 @@ tower-http = { version = "0.6", features = ["cors"], optional = true }
 ctrlc = "3.4"
 num_cpus = "1.16"
 clap = { version = "4.5", features = ["derive", "env"] }
+
+# Docker execution
+bollard = { workspace = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
