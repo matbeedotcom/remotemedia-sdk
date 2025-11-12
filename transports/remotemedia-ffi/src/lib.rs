@@ -24,7 +24,6 @@
 //! asyncio.run(main())
 //! ```
 
-#![warn(missing_docs)]
 #![warn(clippy::all)]
 
 mod api;

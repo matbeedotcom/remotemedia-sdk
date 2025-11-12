@@ -26,8 +26,8 @@ webrtc = "0.14.0"
 # WebSocket signaling client
 tokio-tungstenite = "0.21"
 
-# Audio codec (optional - pure Rust implementation via unsafe-libopus)
-opus = { git = "https://github.com/DCNick3/opus-rs.git", branch = "unsafe-libopus", default-features = false, features = ["unsafe-libopus-backend"], optional = true }
+# Audio codec - pure Rust implementation via unsafe-libopus (always enabled for WebRTC)
+opus = { git = "https://github.com/DCNick3/opus-rs.git", branch = "unsafe-libopus", default-features = false, features = ["unsafe-libopus-backend"] }
 
 # Video codecs (optional until Phase 3 - requires native libs)
 media-codec-vpx = { version = "0.5", optional = true }
@@ -77,8 +77,7 @@ tonic-prost-build = { workspace = true }
 
 [features]
 default = []
-opus-codec = ["dep:opus"]
-codecs = ["opus-codec", "dep:media-codec-vpx"]
+codecs = ["dep:media-codec-vpx"]
 h264 = ["dep:openh264"]
 grpc-signaling = [
     "dep:tonic",

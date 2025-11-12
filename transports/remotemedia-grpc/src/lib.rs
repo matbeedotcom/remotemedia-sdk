@@ -21,7 +21,6 @@
 //! - execution.proto: PipelineExecutionService, ExecutePipeline RPC
 //! - streaming.proto: StreamingPipelineService, StreamPipeline RPC
 
-#![warn(missing_docs)]
 #![warn(clippy::all)]
 
 // Core modules

@@ -190,14 +190,15 @@ impl SessionRouter {
         let peer = self.peer_manager.get_peer(peer_id).await?;
 
         match data {
-            RuntimeData::Audio { samples, .. } => {
+            RuntimeData::Audio { samples, sample_rate, .. } => {
                 let audio_track = peer
                     .audio_track()
                     .await
                     .ok_or_else(|| Error::MediaTrackError("No audio track configured".to_string()))?;
 
                 // Send audio directly (handles encoding + RTP transmission)
-                audio_track.send_audio(Arc::new(samples.clone())).await?;
+                // Use sample rate from RuntimeData
+                audio_track.send_audio(Arc::new(samples.clone()), *sample_rate).await?;
                 Ok(())
             }
             RuntimeData::Video { width, height, pixel_data, format, timestamp_us, .. } => {
@@ -304,7 +305,7 @@ mod tests {
     #[tokio::test]
     async fn test_session_router_creation() {
         let session = Arc::new(Session::new("test-session".to_string()));
-        let peer_manager = Arc::new(PeerManager::new());
+        let peer_manager = Arc::new(PeerManager::new(10).unwrap());
 
         let router = SessionRouter::new(
             "test-session".to_string(),
