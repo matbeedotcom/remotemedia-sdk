@@ -14,7 +14,7 @@ crate-type = ["cdylib", "rlib"]  # cdylib for Python extension, rlib for Rust
 
 [dependencies]
 # Core runtime (NO transport dependencies)
-remotemedia-runtime-core = { path = "../../runtime-core" }
+remotemedia-runtime-core = { path = "../../runtime-core", default-features = true }
 
 # Python FFI
 pyo3 = { version = "0.26", features = ["abi3-py312", "auto-initialize"], default-features = false }

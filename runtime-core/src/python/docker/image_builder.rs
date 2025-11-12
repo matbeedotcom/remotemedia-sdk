@@ -353,13 +353,12 @@ pub async fn build_docker_image(
     let image_name = format!("remotemedia/{}", node_id);
     let image_tag = format!("{}:py{}-{}", image_name, config.python_version, &config_hash[..8]);
 
-    let build_options = bollard::image::BuildImageOptions {
-        dockerfile: "Dockerfile".to_string(),
-        t: image_tag.clone(),
-        rm: true,
-        pull: true,
-        ..Default::default()
-    };
+    let build_options = bollard::query_parameters::BuildImageOptionsBuilder::default()
+        .dockerfile("Dockerfile")
+        .t(&image_tag)
+        .rm(true)
+        .pull("true")
+        .build();
 
     // T019: Build image using bollard
     use futures::StreamExt;
@@ -561,6 +560,7 @@ mod tests {
             resource_limits: ResourceLimits {
                 memory_mb: 1024,
                 cpu_cores: 1.0,
+                gpu_devices: vec![],
             },
             base_image: None,
             env: Default::default(),

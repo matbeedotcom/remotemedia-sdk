@@ -313,6 +313,7 @@ mod tests {
                 resource_limits: ResourceLimits {
                     memory_mb: 1024,
                     cpu_cores: 1.0,
+                    gpu_devices: vec![],
                 },
                 base_image: None,
                 env: Default::default(),

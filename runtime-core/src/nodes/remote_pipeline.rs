@@ -813,10 +813,11 @@ impl RemotePipelineNode {
                 }
             };
 
-            #[cfg(not(feature = "grpc-client"))]
-            return Err(crate::Error::ConfigError(
-                "gRPC client not enabled - compile with 'grpc-client' feature".into(),
-            ));
+            #[cfg(not(feature = "grpc-client"))] {
+                return Err(crate::Error::ConfigError(
+                    "gRPC client not enabled - compile with 'grpc-client' feature".into(),
+                ));
+            }
 
             // Execute with timeout
             let timeout_ms = self.config.timeout_ms;

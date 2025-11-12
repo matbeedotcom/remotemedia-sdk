@@ -14,7 +14,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 # Core runtime (NO transport dependencies)
-remotemedia-runtime-core = { path = "../../runtime-core" }
+remotemedia-runtime-core = { path = "../../runtime-core", default-features = true }
 
 # gRPC dependencies
 tonic = { workspace = true }

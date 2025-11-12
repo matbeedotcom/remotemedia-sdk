@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 # ONLY runtime-core - no transport dependencies!
-remotemedia-runtime-core = { path = "../../runtime-core" }
+remotemedia-runtime-core = { path = "../../runtime-core", default-features = true }
 
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
