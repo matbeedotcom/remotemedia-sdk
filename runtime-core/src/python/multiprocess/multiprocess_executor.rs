@@ -19,9 +19,9 @@ use super::data_transfer::RuntimeData as IPCRuntimeData;
 #[cfg(feature = "multiprocess")]
 use super::health_monitor::{HealthMonitor, ProcessEvent};
 #[cfg(feature = "multiprocess")]
-use super::ipc_channel::{ChannelHandle, ChannelRegistry, Publisher};
+use super::ipc_channel::{ChannelHandle, ChannelRegistry};
 #[cfg(feature = "multiprocess")]
-use super::process_manager::{ExitReason, ProcessHandle, ProcessManager, ProcessStatus};
+use super::process_manager::{ExitReason, ProcessHandle, ProcessManager};
 
 // NOTE: Publisher caching attempts and why they failed:
 //
@@ -661,7 +661,7 @@ impl MultiprocessExecutor {
         data: &crate::data::RuntimeData,
         session_id: &str,
     ) -> IPCRuntimeData {
-        use super::data_transfer::DataType;
+        
         use crate::data::RuntimeData as MainRD;
 
         match data {

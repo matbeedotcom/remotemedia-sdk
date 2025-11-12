@@ -1,4 +1,4 @@
-use crate::audio::buffer::{AudioBuffer, AudioData, AudioFormat};
+use crate::audio::buffer::AudioData;
 use crate::error::{Error, Result};
 use crate::nodes::audio::fast::FastAudioNode;
 

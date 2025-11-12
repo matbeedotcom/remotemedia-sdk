@@ -4,7 +4,7 @@
 //! to select between Rust-native and Python-fallback implementations.
 
 use crate::error::{Error, Result};
-use crate::executor::node_executor::{NodeContext, NodeExecutor};
+use crate::executor::node_executor::NodeExecutor;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;

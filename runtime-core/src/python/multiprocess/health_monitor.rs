@@ -3,7 +3,7 @@
 //! Provides event-driven monitoring of process health without polling,
 //! using OS signals for immediate notification of process termination.
 
-use crate::{Error, Result};
+use crate::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

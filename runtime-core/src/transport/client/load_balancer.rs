@@ -32,10 +32,8 @@
 
 use super::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState};
 use crate::{Error, Result};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, warn};
 
 /// Load balancing strategy
 ///

@@ -191,7 +191,7 @@ impl ResourceLimits {
     /// Convert to Docker HostConfig format
     #[cfg(feature = "docker-executor")]
     pub fn to_docker_host_config(&self) -> bollard::models::HostConfig {
-        use bollard::models::{DeviceMapping, DeviceRequest};
+        use bollard::models::DeviceRequest;
 
         let mut host_config = bollard::models::HostConfig {
             memory: Some(self.memory_mb as i64 * 1_048_576), // Convert MB to bytes

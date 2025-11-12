@@ -4,7 +4,7 @@
 
 use crate::{Error, Result};
 use bollard::container::{RemoveContainerOptions, StopContainerOptions};
-use bollard::models::{ContainerCreateBody, HostConfig};
+use bollard::models::ContainerCreateBody;
 use bollard::query_parameters::CreateContainerOptions;
 use bollard::secret::HostConfigLogConfig;
 use bollard::Docker;
@@ -240,7 +240,7 @@ impl ContainerManager {
         container_id: &str,
         cmd: Vec<String>,
     ) -> Result<String> {
-        use bollard::exec::{CreateExecOptions, StartExecResults};
+        use bollard::exec::CreateExecOptions;
 
         tracing::debug!("Executing in container {}: {:?}", container_id, cmd);
 

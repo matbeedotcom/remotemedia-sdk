@@ -11,7 +11,7 @@
 //! 4. **Segment tracking**: Track speculative segments with SpeculativeSegment metadata
 //! 5. **Metrics tracking**: Record speculation acceptance rate for monitoring
 
-use crate::data::{ControlMessageType, RuntimeData, SegmentStatus, SpeculativeSegment};
+use crate::data::{ControlMessageType, RuntimeData, SpeculativeSegment};
 use crate::executor::latency_metrics::LatencyMetrics;
 use crate::nodes::AsyncStreamingNode;
 use crate::Error;

@@ -7,7 +7,6 @@ use crate::data::RuntimeData;
 use crate::Error;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 /// Node execution status
