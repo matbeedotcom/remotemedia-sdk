@@ -4,7 +4,7 @@
 //! and managing the image lifecycle.
 
 use crate::{Result, Error};
-use crate::python::multiprocess::docker_support::DockerNodeConfig;
+use crate::python::multiprocess::docker_support::{DockerNodeConfig, SecurityConfig};
 use bollard::image::{BuildImageOptions, ListImagesOptions, TagImageOptions};
 use bollard::Docker;
 use bytes::Bytes;
@@ -761,6 +761,7 @@ mod tests {
             shm_size_mb: 2048,
             env_vars: HashMap::new(),
             volumes: vec![],
+            security: SecurityConfig::default(),
         }
     }
 
@@ -1004,16 +1005,17 @@ mod tests {
             shm_size_mb: 512,
             env_vars: HashMap::new(),
             volumes: vec![],
+            security: SecurityConfig::default(),
         };
 
         // Build image for the first time
-        let image1 = builder.build_image(&config).await.unwrap();
+        let image1 = builder.build_image(&config, false).await.unwrap();
         assert!(!image1.image_id.is_empty());
         assert!(!image1.image_tag.is_empty());
         assert!(image1.size_bytes > 0);
 
         // Build same config again - should use cache
-        let image2 = builder.build_image(&config).await.unwrap();
+        let image2 = builder.build_image(&config, false).await.unwrap();
         assert_eq!(image1.image_id, image2.image_id);
         assert_eq!(image1.config_hash, image2.config_hash);
 
@@ -1023,7 +1025,8 @@ mod tests {
         assert_eq!(size, image1.size_bytes);
 
         // Clean up - remove the test image
-        let _ = docker.remove_image(&image1.image_tag, None, None).await;
+        use bollard::query_parameters::RemoveImageOptions;
+        let _ = docker.remove_image(&image1.image_tag, Some(RemoveImageOptions::default()), None).await;
     }
 
     #[tokio::test]

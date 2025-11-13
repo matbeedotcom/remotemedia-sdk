@@ -1,0 +1,467 @@
+{
+    "name": "development_pipeline",
+    "version": "1.0.0",
+    "description": "Developer-friendly configuration with live code reload, verbose logging, and debugging tools",
+    "nodes": [
+        {
+            "id": "input",
+            "node_type": "Input",
+            "executor": null,
+            "config": {},
+            "metadata": {
+                "description": "Pipeline input node"
+            }
+        },
+        {
+            "id": "dev_node_hot_reload",
+            "node_type": "dev.HotReloadNode",
+            "executor": "multiprocess",
+            "config": {
+                "reload_on_change": true,
+                "watch_patterns": ["*.py"]
+            },
+            "metadata": {
+                "description": "Development node with live code reload via volume mounts",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.11",
+                    "base_image": "python:3.11-slim",
+                    "python_packages": [
+                        "watchdog>=3.0.0",
+                        "ipdb>=0.13.0",
+                        "rich>=13.0.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "vim",
+                        "less",
+                        "procps"
+                    ],
+                    "memory_mb": 512,
+                    "cpu_cores": 1.0,
+                    "shm_size_mb": 1024,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "PYTHONDONTWRITEBYTECODE": "1",
+                        "PYTHONBREAKPOINT": "ipdb.set_trace",
+                        "PYTHONDEVMODE": "1",
+                        "PYTHONASYNCIODEBUG": "1",
+                        "LOG_LEVEL": "DEBUG",
+                        "COLORTERM": "truecolor",
+                        "DEV_MODE": "true"
+                    },
+                    "gpu_devices": [],
+                    "volumes": [
+                        {
+                            "host_path": "/home/user/remotemedia-sdk/python-client/remotemedia",
+                            "container_path": "/workspace/remotemedia",
+                            "read_only": false,
+                            "mount_type": "bind"
+                        },
+                        {
+                            "host_path": "/home/user/remotemedia-sdk/examples/docker-node",
+                            "container_path": "/workspace/examples",
+                            "read_only": false,
+                            "mount_type": "bind"
+                        }
+                    ]
+                },
+                "development_features": [
+                    "Live code reload: Edit Python files on host, container picks up changes",
+                    "PYTHONDONTWRITEBYTECODE: Prevents .pyc files for cleaner git status",
+                    "PYTHONDEVMODE: Enables additional runtime checks and warnings",
+                    "PYTHONASYNCIODEBUG: Detailed asyncio debugging output",
+                    "ipdb: Interactive debugger with breakpoint() support",
+                    "rich: Beautiful console output for logs and errors",
+                    "watchdog: File system monitoring for auto-reload",
+                    "vim/less: In-container file viewing and editing",
+                    "procps: Process monitoring tools (ps, top)"
+                ],
+                "workflow": [
+                    "1. Edit code in your IDE on host",
+                    "2. Container detects changes via volume mount",
+                    "3. watchdog triggers reload automatically",
+                    "4. Test changes immediately without rebuild",
+                    "5. Add breakpoint() in code for interactive debugging"
+                ]
+            }
+        },
+        {
+            "id": "verbose_logging_node",
+            "node_type": "dev.VerboseLoggingNode",
+            "executor": "multiprocess",
+            "config": {
+                "log_all_data": true,
+                "log_timestamps": true,
+                "log_stack_traces": true
+            },
+            "metadata": {
+                "description": "Node with comprehensive debug logging and telemetry",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.10",
+                    "base_image": "python:3.10-slim",
+                    "python_packages": [
+                        "structlog>=23.0.0",
+                        "colorlog>=6.7.0",
+                        "python-json-logger>=2.0.0",
+                        "opentelemetry-api>=1.20.0",
+                        "opentelemetry-sdk>=1.20.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "curl",
+                        "jq"
+                    ],
+                    "memory_mb": 512,
+                    "cpu_cores": 1.0,
+                    "shm_size_mb": 1024,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "LOG_LEVEL": "DEBUG",
+                        "LOG_FORMAT": "json",
+                        "LOG_OUTPUT": "stdout",
+                        "STRUCTLOG_DEV": "true",
+                        "OTEL_TRACES_EXPORTER": "console",
+                        "OTEL_METRICS_EXPORTER": "console",
+                        "DEBUG_MEMORY": "true",
+                        "DEBUG_TIMING": "true"
+                    },
+                    "gpu_devices": [],
+                    "volumes": [
+                        {
+                            "host_path": "/tmp/remotemedia_logs",
+                            "container_path": "/logs",
+                            "read_only": false,
+                            "mount_type": "bind"
+                        }
+                    ]
+                },
+                "logging_features": [
+                    "structlog: Structured logging with context",
+                    "colorlog: Color-coded log levels for readability",
+                    "JSON logs: Machine-parseable log format",
+                    "OpenTelemetry: Distributed tracing support",
+                    "Memory debugging: Track allocations and leaks",
+                    "Timing debugging: Measure function execution time",
+                    "Log persistence: Logs written to host volume"
+                ],
+                "log_analysis": [
+                    "View logs: docker logs remotemedia_<node_id> -f",
+                    "Search logs: grep -r 'ERROR' /tmp/remotemedia_logs/",
+                    "Parse JSON: jq '.level,.message' /tmp/remotemedia_logs/node.json",
+                    "Tail logs: tail -f /tmp/remotemedia_logs/*.log"
+                ]
+            }
+        },
+        {
+            "id": "profiling_node",
+            "node_type": "dev.ProfilingNode",
+            "executor": "multiprocess",
+            "config": {
+                "enable_profiling": true,
+                "profile_output_dir": "/profiles"
+            },
+            "metadata": {
+                "description": "Node with performance profiling and metrics collection",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.11",
+                    "base_image": "python:3.11-slim",
+                    "python_packages": [
+                        "py-spy>=0.3.0",
+                        "memory-profiler>=0.61.0",
+                        "line-profiler>=4.0.0",
+                        "pyinstrument>=4.5.0",
+                        "prometheus-client>=0.18.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "gcc",
+                        "g++",
+                        "gdb"
+                    ],
+                    "memory_mb": 1024,
+                    "cpu_cores": 2.0,
+                    "shm_size_mb": 1024,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "PYTHONPROFILEIMPORTTIME": "1",
+                        "ENABLE_PROFILING": "true",
+                        "PROFILE_MEMORY": "true",
+                        "PROFILE_CPU": "true",
+                        "PROFILE_OUTPUT": "/profiles",
+                        "PROMETHEUS_PORT": "9090"
+                    },
+                    "gpu_devices": [],
+                    "volumes": [
+                        {
+                            "host_path": "/tmp/remotemedia_profiles",
+                            "container_path": "/profiles",
+                            "read_only": false,
+                            "mount_type": "bind"
+                        }
+                    ]
+                },
+                "profiling_tools": [
+                    "py-spy: Low-overhead sampling profiler (no code changes)",
+                    "memory-profiler: Line-by-line memory usage",
+                    "line-profiler: Line-by-line execution time",
+                    "pyinstrument: Statistical profiler with flame graphs",
+                    "prometheus-client: Expose metrics for Prometheus",
+                    "gdb: Native debugger for crashes and core dumps"
+                ],
+                "usage_examples": [
+                    "CPU profile: docker exec remotemedia_<node_id> py-spy record -o /profiles/cpu.svg --pid 1",
+                    "Memory profile: docker exec remotemedia_<node_id> python -m memory_profiler script.py",
+                    "Flame graph: docker exec remotemedia_<node_id> pyinstrument -o /profiles/flame.html script.py",
+                    "Import timing: Check PYTHONPROFILEIMPORTTIME output in logs",
+                    "Metrics: curl http://localhost:9090/metrics"
+                ]
+            }
+        },
+        {
+            "id": "test_fixtures_node",
+            "node_type": "dev.TestFixturesNode",
+            "executor": "multiprocess",
+            "config": {
+                "load_test_data": true,
+                "mock_external_apis": true
+            },
+            "metadata": {
+                "description": "Node with test fixtures and mocking for isolated development",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.11",
+                    "base_image": "python:3.11-slim",
+                    "python_packages": [
+                        "pytest>=7.4.0",
+                        "pytest-asyncio>=0.21.0",
+                        "pytest-mock>=3.11.0",
+                        "hypothesis>=6.88.0",
+                        "faker>=19.0.0",
+                        "responses>=0.23.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [],
+                    "memory_mb": 512,
+                    "cpu_cores": 1.0,
+                    "shm_size_mb": 1024,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "PYTEST_CURRENT_TEST": "",
+                        "TESTING": "true",
+                        "MOCK_EXTERNAL_APIS": "true",
+                        "TEST_DATA_DIR": "/test_data"
+                    },
+                    "gpu_devices": [],
+                    "volumes": [
+                        {
+                            "host_path": "/home/user/remotemedia-sdk/tests/fixtures",
+                            "container_path": "/test_data",
+                            "read_only": true,
+                            "mount_type": "bind"
+                        }
+                    ]
+                },
+                "testing_features": [
+                    "pytest: Full test framework available in container",
+                    "pytest-asyncio: Test async node implementations",
+                    "pytest-mock: Mock dependencies and external services",
+                    "hypothesis: Property-based testing for edge cases",
+                    "faker: Generate realistic test data",
+                    "responses: Mock HTTP requests and APIs",
+                    "Test fixtures: Access real test data from host"
+                ],
+                "development_workflow": [
+                    "Write tests alongside code",
+                    "Run tests in isolated container environment",
+                    "Mock external dependencies for offline development",
+                    "Use test fixtures for consistent data",
+                    "Validate changes before committing"
+                ]
+            }
+        },
+        {
+            "id": "output",
+            "node_type": "Output",
+            "executor": null,
+            "config": {},
+            "metadata": {
+                "description": "Pipeline output node"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "input",
+            "target": "dev_node_hot_reload",
+            "field_mapping": {
+                "source_field": "data",
+                "target_field": "input"
+            }
+        },
+        {
+            "source": "dev_node_hot_reload",
+            "target": "verbose_logging_node",
+            "field_mapping": {
+                "source_field": "output",
+                "target_field": "input"
+            }
+        },
+        {
+            "source": "verbose_logging_node",
+            "target": "profiling_node",
+            "field_mapping": {
+                "source_field": "output",
+                "target_field": "input"
+            }
+        },
+        {
+            "source": "profiling_node",
+            "target": "test_fixtures_node",
+            "field_mapping": {
+                "source_field": "output",
+                "target_field": "input"
+            }
+        },
+        {
+            "source": "test_fixtures_node",
+            "target": "output",
+            "field_mapping": {
+                "source_field": "output",
+                "target_field": "results"
+            }
+        }
+    ],
+    "config": {
+        "batch_size": 1,
+        "timeout_ms": 300000,
+        "retry_policy": {
+            "max_retries": 0,
+            "backoff_ms": 0
+        },
+        "runtime_config": {
+            "enable_docker": true,
+            "docker_fallback_to_multiprocess": false,
+            "docker_image_cache_size": 5,
+            "docker_cleanup_on_exit": false,
+            "keep_containers_on_error": true
+        }
+    },
+    "metadata": {
+        "author": "RemoteMedia SDK",
+        "created": "2024-12-20",
+        "tags": ["docker", "development", "debugging", "hot-reload", "profiling"],
+        "description": "Development-optimized pipeline with live code reload, verbose logging, profiling tools, and debugging support",
+        "development_workflow": {
+            "setup": [
+                "1. Update volume mount paths to match your local filesystem",
+                "2. Start pipeline with this manifest",
+                "3. Containers mount your source code directories",
+                "4. Edit code in your IDE - changes appear in container instantly"
+            ],
+            "debugging": [
+                "1. Add breakpoint() in Python code",
+                "2. Attach to container: docker attach remotemedia_<node_id>",
+                "3. Interactive ipdb debugger starts at breakpoint",
+                "4. Inspect variables, step through code, continue execution"
+            ],
+            "profiling": [
+                "1. Enable profiling in node config",
+                "2. Run pipeline with realistic workload",
+                "3. Collect profiles from /tmp/remotemedia_profiles/",
+                "4. Analyze CPU usage, memory allocations, bottlenecks"
+            ],
+            "logging": [
+                "1. Logs stream to console in color-coded format",
+                "2. JSON logs persisted to /tmp/remotemedia_logs/",
+                "3. Use jq, grep, or log analysis tools",
+                "4. Adjust LOG_LEVEL to DEBUG, INFO, WARNING, ERROR"
+            ]
+        },
+        "volume_mount_best_practices": [
+            "Use absolute paths for host_path",
+            "Mount source directories for live editing",
+            "Mount test fixtures as read-only",
+            "Mount log/profile output directories as read-write",
+            "Avoid mounting node_modules or __pycache__ directories",
+            "Update .dockerignore to skip unnecessary files"
+        ],
+        "debugging_tools": {
+            "interactive_debugger": {
+                "tool": "ipdb",
+                "usage": "breakpoint() in code, docker attach to container",
+                "commands": "n(ext), s(tep), c(ontinue), p(rint), l(ist), q(uit)"
+            },
+            "memory_debugging": {
+                "tool": "memory-profiler",
+                "usage": "@profile decorator + python -m memory_profiler",
+                "output": "Line-by-line memory usage"
+            },
+            "cpu_profiling": {
+                "tool": "py-spy",
+                "usage": "py-spy record -o profile.svg --pid <pid>",
+                "output": "Flame graph SVG"
+            },
+            "async_debugging": {
+                "tool": "PYTHONASYNCIODEBUG",
+                "usage": "Set env var, check logs for async warnings",
+                "detects": "Unhandled exceptions, slow callbacks"
+            }
+        },
+        "environment_variables": {
+            "PYTHONUNBUFFERED": "Disable output buffering for real-time logs",
+            "PYTHONDONTWRITEBYTECODE": "Prevent .pyc files (cleaner volume mounts)",
+            "PYTHONBREAKPOINT": "Set default breakpoint function (ipdb.set_trace)",
+            "PYTHONDEVMODE": "Enable development mode warnings",
+            "PYTHONASYNCIODEBUG": "Debug mode for asyncio",
+            "LOG_LEVEL": "Logging verbosity (DEBUG, INFO, WARNING, ERROR)",
+            "DEV_MODE": "Application knows it's in development environment"
+        },
+        "container_management": {
+            "keep_on_error": "docker_cleanup_on_exit: false",
+            "inspect_container": "docker exec -it remotemedia_<node_id> /bin/bash",
+            "view_logs": "docker logs remotemedia_<node_id> -f --tail 100",
+            "check_files": "docker exec remotemedia_<node_id> ls -la /workspace",
+            "manual_cleanup": "docker rm -f $(docker ps -aq --filter name=remotemedia_)"
+        },
+        "ide_integration": {
+            "vscode": [
+                "Install Remote-Containers extension",
+                "Attach to running container",
+                "Debug Python code directly in container",
+                "Set breakpoints in IDE"
+            ],
+            "pycharm": [
+                "Configure Docker interpreter",
+                "Add Docker container as remote Python interpreter",
+                "Run/debug configurations work with container"
+            ]
+        },
+        "performance_notes": {
+            "volume_mount_overhead": "5-10% slower than native due to file system sync",
+            "dev_mode_overhead": "Additional checks and logging add 10-20% latency",
+            "profiling_overhead": "py-spy <5%, memory-profiler ~20%, line-profiler ~100%",
+            "recommendation": "Use separate production manifest without dev features"
+        },
+        "troubleshooting": {
+            "code_changes_not_reflected": [
+                "Check volume mount paths are correct",
+                "Verify watchdog is running: docker exec ps aux | grep watchdog",
+                "Restart container if needed: docker restart remotemedia_<node_id>",
+                "Check for Python import caching issues"
+            ],
+            "debugger_not_attaching": [
+                "Ensure PYTHONBREAKPOINT is set to ipdb.set_trace",
+                "Use docker attach, not docker exec, for interactive debugging",
+                "Check ipdb is installed in container: docker exec pip list | grep ipdb"
+            ],
+            "logs_not_appearing": [
+                "Verify PYTHONUNBUFFERED=1 is set",
+                "Check LOG_LEVEL is DEBUG for maximum verbosity",
+                "Ensure log volume mount exists: ls /tmp/remotemedia_logs"
+            ]
+        }
+    }
+}

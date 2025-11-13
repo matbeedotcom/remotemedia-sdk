@@ -1,0 +1,328 @@
+{
+    "name": "gpu_accelerated_pipeline",
+    "version": "1.0.0",
+    "description": "GPU-accelerated ML inference pipeline demonstrating NVIDIA GPU passthrough and high-memory workloads",
+    "nodes": [
+        {
+            "id": "input",
+            "node_type": "Input",
+            "executor": null,
+            "config": {},
+            "metadata": {
+                "description": "Pipeline input - accepts audio/video/text data"
+            }
+        },
+        {
+            "id": "audio_preprocessor",
+            "node_type": "audio.AudioPreprocessor",
+            "executor": "multiprocess",
+            "config": {
+                "sample_rate": 16000,
+                "channels": 1,
+                "normalize": true,
+                "remove_dc_offset": true
+            },
+            "metadata": {
+                "description": "Lightweight CPU-only preprocessing - runs outside Docker for minimal latency",
+                "use_docker": false,
+                "notes": [
+                    "Native multiprocess execution is faster for simple operations",
+                    "No heavy dependencies needed here"
+                ]
+            }
+        },
+        {
+            "id": "speech_recognition",
+            "node_type": "ml.WhisperASR",
+            "executor": "multiprocess",
+            "config": {
+                "model_size": "large-v3",
+                "language": "en",
+                "task": "transcribe",
+                "batch_size": 8,
+                "use_fp16": true
+            },
+            "metadata": {
+                "description": "GPU-accelerated Whisper ASR - large model requiring CUDA",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.10",
+                    "base_image": "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime",
+                    "python_packages": [
+                        "openai-whisper>=20230918",
+                        "torch>=2.1.0",
+                        "torchaudio>=2.1.0",
+                        "numpy>=1.24.0",
+                        "numba>=0.58.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "ffmpeg",
+                        "libsndfile1",
+                        "libsndfile1-dev"
+                    ],
+                    "memory_mb": 8192,
+                    "cpu_cores": 4.0,
+                    "shm_size_mb": 4096,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "CUDA_VISIBLE_DEVICES": "0",
+                        "TORCH_CUDA_ARCH_LIST": "7.0;7.5;8.0;8.6;9.0",
+                        "CUDA_LAUNCH_BLOCKING": "0",
+                        "CUDNN_BENCHMARK": "1",
+                        "MODEL_CACHE_DIR": "/models/whisper"
+                    },
+                    "gpu_devices": ["0"],
+                    "volumes": [
+                        {
+                            "host_path": "/data/models/whisper",
+                            "container_path": "/models/whisper",
+                            "read_only": true,
+                            "mount_type": "bind"
+                        }
+                    ]
+                },
+                "performance_notes": [
+                    "GPU device 0 is passed through via --gpus flag",
+                    "8GB memory allows loading large-v3 model with batch processing",
+                    "4GB shared memory required for PyTorch DataLoader with multiple workers",
+                    "FP16 inference reduces memory usage by 50% with minimal accuracy loss"
+                ]
+            }
+        },
+        {
+            "id": "nlp_processor",
+            "node_type": "ml.TransformerNLP",
+            "executor": "multiprocess",
+            "config": {
+                "model_name": "bert-large-uncased",
+                "task": "sentiment_analysis",
+                "max_length": 512,
+                "use_gpu": true
+            },
+            "metadata": {
+                "description": "GPU-accelerated BERT for NLP tasks - demonstrates multi-GPU setup",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.11",
+                    "base_image": "nvidia/cuda:12.2.0-cudnn8-runtime-ubuntu22.04",
+                    "python_packages": [
+                        "transformers>=4.35.0",
+                        "torch>=2.1.0",
+                        "accelerate>=0.24.0",
+                        "sentencepiece>=0.1.99",
+                        "protobuf>=4.24.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "python3.11",
+                        "python3.11-dev",
+                        "python3-pip",
+                        "git"
+                    ],
+                    "memory_mb": 16384,
+                    "cpu_cores": 8.0,
+                    "shm_size_mb": 8192,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "CUDA_VISIBLE_DEVICES": "1",
+                        "TRANSFORMERS_CACHE": "/models/transformers",
+                        "HF_HOME": "/models/huggingface",
+                        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512",
+                        "TOKENIZERS_PARALLELISM": "true"
+                    },
+                    "gpu_devices": ["1"],
+                    "volumes": [
+                        {
+                            "host_path": "/data/models/transformers",
+                            "container_path": "/models/transformers",
+                            "read_only": true,
+                            "mount_type": "bind"
+                        },
+                        {
+                            "host_path": "/data/models/huggingface",
+                            "container_path": "/models/huggingface",
+                            "read_only": true,
+                            "mount_type": "bind"
+                        }
+                    ]
+                },
+                "performance_notes": [
+                    "GPU device 1 used - allows parallel processing with Whisper on GPU 0",
+                    "16GB memory for large BERT models with long sequences",
+                    "8GB shared memory for efficient batch processing",
+                    "Custom CUDA allocator config prevents OOM errors",
+                    "Read-only volume mounts for model weights"
+                ]
+            }
+        },
+        {
+            "id": "video_inference",
+            "node_type": "ml.YOLOv8Detection",
+            "executor": "multiprocess",
+            "config": {
+                "model_variant": "yolov8x",
+                "confidence_threshold": 0.5,
+                "iou_threshold": 0.45,
+                "max_detections": 100
+            },
+            "metadata": {
+                "description": "GPU-accelerated object detection - demonstrates all GPUs passthrough",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.10",
+                    "base_image": "ultralytics/ultralytics:latest-cuda",
+                    "python_packages": [
+                        "ultralytics>=8.0.0",
+                        "torch>=2.0.0",
+                        "torchvision>=0.15.0",
+                        "opencv-python-headless>=4.8.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "libgl1-mesa-glx",
+                        "libglib2.0-0",
+                        "libsm6",
+                        "libxext6",
+                        "libxrender-dev"
+                    ],
+                    "memory_mb": 6144,
+                    "cpu_cores": 4.0,
+                    "shm_size_mb": 4096,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "CUDA_VISIBLE_DEVICES": "all",
+                        "OPENCV_OPENCL_RUNTIME": "disabled",
+                        "OMP_NUM_THREADS": "4"
+                    },
+                    "gpu_devices": ["all"],
+                    "volumes": [
+                        {
+                            "host_path": "/data/models/yolo",
+                            "container_path": "/models/yolo",
+                            "read_only": true,
+                            "mount_type": "bind"
+                        }
+                    ]
+                },
+                "performance_notes": [
+                    "All GPUs available via gpu_devices: ['all']",
+                    "6GB memory sufficient for YOLOv8x with 640x640 input",
+                    "OpenCV OpenCL disabled to avoid conflicts with CUDA",
+                    "OMP_NUM_THREADS limits CPU overhead during GPU inference"
+                ]
+            }
+        },
+        {
+            "id": "output",
+            "node_type": "Output",
+            "executor": null,
+            "config": {},
+            "metadata": {
+                "description": "Pipeline output - returns processed results"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "input",
+            "target": "audio_preprocessor",
+            "field_mapping": {
+                "source_field": "audio_data",
+                "target_field": "raw_audio"
+            }
+        },
+        {
+            "source": "audio_preprocessor",
+            "target": "speech_recognition",
+            "field_mapping": {
+                "source_field": "processed_audio",
+                "target_field": "audio"
+            }
+        },
+        {
+            "source": "speech_recognition",
+            "target": "nlp_processor",
+            "field_mapping": {
+                "source_field": "transcription",
+                "target_field": "text"
+            }
+        },
+        {
+            "source": "input",
+            "target": "video_inference",
+            "field_mapping": {
+                "source_field": "video_frames",
+                "target_field": "frames"
+            }
+        },
+        {
+            "source": "nlp_processor",
+            "target": "output",
+            "field_mapping": {
+                "source_field": "analysis",
+                "target_field": "text_analysis"
+            }
+        },
+        {
+            "source": "video_inference",
+            "target": "output",
+            "field_mapping": {
+                "source_field": "detections",
+                "target_field": "object_detections"
+            }
+        }
+    ],
+    "config": {
+        "batch_size": 1,
+        "timeout_ms": 120000,
+        "retry_policy": {
+            "max_retries": 2,
+            "backoff_ms": 2000
+        },
+        "runtime_config": {
+            "enable_docker": true,
+            "docker_fallback_to_multiprocess": false,
+            "docker_image_cache_size": 20,
+            "docker_cleanup_on_exit": true,
+            "require_gpu": true
+        }
+    },
+    "metadata": {
+        "author": "RemoteMedia SDK",
+        "created": "2024-12-20",
+        "tags": ["docker", "gpu", "ml", "cuda", "high-memory", "production"],
+        "description": "Production-grade GPU-accelerated ML pipeline demonstrating NVIDIA GPU passthrough, high memory allocation, and parallel GPU execution",
+        "requirements": [
+            "NVIDIA GPU with CUDA 11.7+ or 12.x support",
+            "NVIDIA Container Toolkit installed (nvidia-docker2)",
+            "Docker daemon with GPU support enabled",
+            "At least 2 NVIDIA GPUs for parallel execution",
+            "32GB+ host RAM recommended",
+            "Pre-downloaded model weights mounted as volumes"
+        ],
+        "best_practices": [
+            "Use official CUDA base images for GPU workloads",
+            "Specify exact CUDA architecture list (TORCH_CUDA_ARCH_LIST)",
+            "Allocate 2x model size for memory_mb to allow batch processing",
+            "Set shm_size_mb to at least 50% of memory_mb for PyTorch",
+            "Use read-only volume mounts for model weights",
+            "Pin exact package versions for reproducibility",
+            "Enable CUDNN benchmarking for consistent tensor sizes",
+            "Assign different GPU IDs to parallel nodes to avoid contention"
+        ],
+        "performance_characteristics": {
+            "latency": "GPU inference adds ~10-50ms vs CPU",
+            "throughput": "10-100x faster than CPU for large models",
+            "memory": "Zero-copy IPC between containers via iceoryx2",
+            "startup": "~10-15s for GPU initialization + model loading",
+            "parallel_execution": "Multiple GPUs enable concurrent inference"
+        },
+        "verification_commands": [
+            "docker run --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi",
+            "docker ps --filter 'name=remotemedia_' --format '{{.Names}}: {{.Status}}'",
+            "docker stats --filter 'name=remotemedia_' --format 'table {{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.NetIO}}'",
+            "nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv"
+        ]
+    }
+}

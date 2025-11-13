@@ -1,0 +1,40 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "secure-docker-node-example",
+    "description": "Docker-based Python node with T057 security hardening enabled"
+  },
+  "nodes": [
+    {
+      "id": "secure_echo",
+      "node_type": "EchoNode",
+      "is_streaming": true,
+      "params": {
+        "operation": "echo"
+      },
+      "docker": {
+        "python_version": "3.11",
+        "python_packages": [
+          "iceoryx2"
+        ],
+        "resource_limits": {
+          "memory_mb": 2048,
+          "cpu_cores": 1.0,
+          "gpu_devices": []
+        },
+        "security": {
+          "cap_drop": ["ALL"],
+          "cap_add": ["IPC_LOCK", "SYS_NICE"],
+          "read_only_rootfs": true,
+          "security_opt": ["no-new-privileges:true"],
+          "user": "1000",
+          "group": "1000",
+          "enable_apparmor": true,
+          "apparmor_profile": "docker-default",
+          "tmpfs_mounts": ["/tmp", "/var/tmp", "/run"]
+        }
+      }
+    }
+  ],
+  "connections": []
+}

@@ -140,6 +140,21 @@ pub struct MultiprocessConfig {
     /// Enable backpressure on channels
     #[serde(default = "default_backpressure")]
     pub enable_backpressure: bool,
+
+    /// Docker fallback policy when Docker is unavailable
+    #[serde(default = "default_docker_fallback_policy")]
+    pub docker_fallback_policy: DockerFallbackPolicy,
+}
+
+/// Policy for handling Docker unavailability
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum DockerFallbackPolicy {
+    /// Allow fallback to native multiprocess with warning (default)
+    Allow,
+    /// Deny fallback and return error if Docker is unavailable
+    Deny,
+    /// Allow fallback with explicit warning log
+    AllowWithWarning,
 }
 
 // Default value functions for serde
@@ -163,6 +178,10 @@ fn default_backpressure() -> bool {
     true
 }
 
+fn default_docker_fallback_policy() -> DockerFallbackPolicy {
+    DockerFallbackPolicy::AllowWithWarning
+}
+
 impl Default for MultiprocessConfig {
     fn default() -> Self {
         Self {
@@ -171,6 +190,7 @@ impl Default for MultiprocessConfig {
             init_timeout_secs: 300,  // 5 minutes for model loading
             python_executable: std::path::PathBuf::from("python"),
             enable_backpressure: true,
+            docker_fallback_policy: DockerFallbackPolicy::AllowWithWarning,
         }
     }
 }
@@ -1100,6 +1120,68 @@ impl MultiprocessExecutor {
         Ok(session.init_progress.values().cloned().collect())
     }
 
+    /// Check if Docker is available and handle fallback according to policy
+    ///
+    /// Returns `Ok(true)` if Docker should be used, `Ok(false)` if fallback to multiprocess,
+    /// or `Err` if Docker is unavailable and fallback is denied by policy.
+    #[cfg(feature = "docker")]
+    async fn should_use_docker(&self, node_id: &str) -> Result<bool> {
+        if let Some(docker_support) = &self.docker_support {
+            // Docker support exists, check if daemon is responsive
+            if docker_support.check_availability().await {
+                tracing::debug!("Docker is available for node '{}'", node_id);
+                Ok(true)
+            } else {
+                tracing::warn!(
+                    "Docker daemon is not responsive for node '{}'. Applying fallback policy: {:?}",
+                    node_id,
+                    self.config.docker_fallback_policy
+                );
+                self.handle_docker_unavailable_fallback(node_id)
+            }
+        } else {
+            tracing::warn!(
+                "Docker support not initialized for node '{}'. Applying fallback policy: {:?}",
+                node_id,
+                self.config.docker_fallback_policy
+            );
+            self.handle_docker_unavailable_fallback(node_id)
+        }
+    }
+
+    /// Handle Docker unavailable scenario according to fallback policy
+    #[cfg(feature = "docker")]
+    fn handle_docker_unavailable_fallback(&self, node_id: &str) -> Result<bool> {
+        match self.config.docker_fallback_policy {
+            DockerFallbackPolicy::Deny => {
+                Err(Error::Execution(format!(
+                    "Docker is unavailable for node '{}' and fallback is denied by policy. \
+                     Possible causes:\n\
+                     - Docker daemon is not running (start: 'systemctl start docker' or open Docker Desktop)\n\
+                     - Docker is not installed (install: https://docs.docker.com/get-docker/)\n\
+                     - Permission denied (fix: 'sudo usermod -aG docker $USER', then log out/in)\n\
+                     \nTo allow fallback to native multiprocess, set docker_fallback_policy to 'Allow' or 'AllowWithWarning'.",
+                    node_id
+                )))
+            }
+            DockerFallbackPolicy::Allow => {
+                tracing::info!(
+                    "Docker unavailable for node '{}', falling back to native multiprocess execution",
+                    node_id
+                );
+                Ok(false)
+            }
+            DockerFallbackPolicy::AllowWithWarning => {
+                tracing::warn!(
+                    "Docker unavailable for node '{}', falling back to native multiprocess execution. \
+                     This may result in different behavior than Docker-isolated execution.",
+                    node_id
+                );
+                Ok(false)
+            }
+        }
+    }
+
     /// Wait for a Python process to signal it's ready via iceoryx2 control channel
     async fn wait_for_ready_signal_ipc(
         &self,
@@ -1607,11 +1689,22 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
             tracing::info!("Docker mode requested, initializing Docker support...");
             match DockerSupport::new().await {
                 Ok(ds) => {
-                    tracing::info!("Docker support initialized successfully");
-                    self.docker_support = Some(Arc::new(ds));
+                    // Additional availability check to ensure Docker daemon is responsive
+                    if ds.check_availability().await {
+                        tracing::info!("Docker support initialized and daemon is responsive");
+                        self.docker_support = Some(Arc::new(ds));
+                    } else {
+                        tracing::warn!(
+                            "Docker daemon is not responsive. Docker support will not be available."
+                        );
+                        // Don't set docker_support - will trigger fallback below
+                    }
                 }
                 Err(e) => {
-                    tracing::warn!("Docker support unavailable: {}. Will attempt fallback to regular multiprocess.", e);
+                    tracing::warn!(
+                        "Failed to initialize Docker support: {}. Docker will not be available.",
+                        e
+                    );
                     // Don't fail immediately - we'll handle this below when checking docker_support
                 }
             }
@@ -1664,7 +1757,14 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
                 #[cfg(feature = "docker")]
                 {
                     if use_docker {
-                        if let Some(docker_support) = &self.docker_support {
+                        // Check Docker availability and apply fallback policy
+                        let should_use_docker = self.should_use_docker(&ctx.node_id).await?;
+
+                        if should_use_docker {
+                            // Docker is available, proceed with container spawn
+                            let docker_support = self.docker_support.as_ref()
+                                .expect("Docker support should be Some when should_use_docker returns true");
+
                             if let Some(docker_config) = docker_config {
                                 // Validate Docker configuration
                                 docker_config.validate()?;
@@ -1692,16 +1792,17 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
                                 ));
                             }
                         } else {
-                            tracing::warn!(
-                                "Docker mode requested but Docker support unavailable, falling back to regular process"
+                            // Fallback to regular multiprocess execution
+                            tracing::info!(
+                                "Using native multiprocess execution for node '{}' (Docker fallback applied)",
+                                ctx.node_id
                             );
-                            // Fall back to regular multiprocess execution
                             self.process_manager
                                 .spawn_node(&ctx.node_type, &ctx.node_id, &ctx.params, &session_id)
                                 .await?
                         }
                     } else {
-                        // Regular multiprocess execution
+                        // Regular multiprocess execution (Docker not requested)
                         self.process_manager
                             .spawn_node(&ctx.node_type, &ctx.node_id, &ctx.params, &session_id)
                             .await?

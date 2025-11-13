@@ -32,3 +32,12 @@ python_executable = "python"
 # When false, may drop data if consumer is slow
 # Default: true
 enable_backpressure = true
+
+# Docker fallback policy when Docker is unavailable
+# Controls what happens when a node requests Docker but Docker daemon is not available
+# Options:
+#   - "Allow": Silently fall back to native multiprocess (minimal logging)
+#   - "AllowWithWarning": Fall back with explicit warning logs (default, recommended)
+#   - "Deny": Return error and fail the node initialization
+# Default: "AllowWithWarning"
+docker_fallback_policy = "AllowWithWarning"
