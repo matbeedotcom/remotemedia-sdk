@@ -71,6 +71,28 @@ pub enum ProcessEvent {
         cpu_usage: Option<f32>,
         timestamp: Instant,
     },
+
+    /// Container resource limit exceeded
+    #[cfg(feature = "docker")]
+    ResourceLimitExceeded {
+        container_id: String,
+        node_id: String,
+        resource_type: ResourceLimitType,
+        exit_code: Option<i64>,
+        timestamp: Instant,
+    },
+}
+
+/// Type of resource limit that was exceeded
+#[cfg(feature = "docker")]
+#[derive(Debug, Clone)]
+pub enum ResourceLimitType {
+    /// Memory limit exceeded (OOM killed)
+    Memory,
+    /// CPU throttling detected
+    CpuThrottling,
+    /// Unknown resource limit
+    Unknown,
 }
 
 /// Health statistics for a process
@@ -105,6 +127,12 @@ pub struct ContainerHealth {
     pub memory_usage: Option<u64>,
     pub cpu_usage: Option<f32>,
     pub last_check: Instant,
+    /// Exit code if container has stopped
+    pub exit_code: Option<i64>,
+    /// OOM killed status
+    pub oom_killed: bool,
+    /// Error message if container exited with error
+    pub error_message: Option<String>,
 }
 
 /// Health monitor for process supervision
@@ -383,6 +411,24 @@ impl HealthMonitor {
             .and_then(|s| s.running)
             .unwrap_or(false);
 
+        // Extract exit code and OOM killed status from container state
+        let exit_code = inspect_result
+            .state
+            .as_ref()
+            .and_then(|s| s.exit_code);
+
+        let oom_killed = inspect_result
+            .state
+            .as_ref()
+            .and_then(|s| s.oom_killed)
+            .unwrap_or(false);
+
+        let error_message = inspect_result
+            .state
+            .as_ref()
+            .and_then(|s| s.error.clone())
+            .filter(|e| !e.is_empty());
+
         // Get container stats if running
         // Note: Stats collection is optional and may not be available in all environments
         let (memory_usage, cpu_usage) = if is_running {
@@ -411,7 +457,44 @@ impl HealthMonitor {
             memory_usage,
             cpu_usage,
             last_check: Instant::now(),
+            exit_code,
+            oom_killed,
+            error_message: error_message.clone(),
         };
+
+        // Check for resource limit violations
+        if !is_running {
+            if let Some(resource_limit_type) =
+                self.detect_resource_limit_violation(exit_code, oom_killed, cpu_usage) {
+
+                tracing::error!(
+                    "Container {} for node {} exceeded resource limit: {:?}",
+                    container_id,
+                    node_id,
+                    resource_limit_type
+                );
+
+                // Send resource limit exceeded event
+                let _ = self
+                    .event_sender
+                    .send(ProcessEvent::ResourceLimitExceeded {
+                        container_id: container_id.to_string(),
+                        node_id: node_id.to_string(),
+                        resource_type: resource_limit_type.clone(),
+                        exit_code,
+                        timestamp: Instant::now(),
+                    });
+
+                // Return error with clear message
+                let error_msg = self.format_resource_limit_error(
+                    &resource_limit_type,
+                    exit_code,
+                    error_message.as_deref()
+                );
+
+                return Err(crate::Error::Execution(error_msg));
+            }
+        }
 
         // Send health check event
         let _ = self
@@ -428,9 +511,10 @@ impl HealthMonitor {
         // Log and handle unhealthy containers
         if !is_running {
             tracing::warn!(
-                "Container {} for node {} is not running",
+                "Container {} for node {} is not running (exit code: {:?})",
                 container_id,
-                node_id
+                node_id,
+                exit_code
             );
             self.handle_unhealthy_container(container_id, node_id)
                 .await?;
@@ -596,6 +680,85 @@ impl HealthMonitor {
             node_id
         )))
     }
+
+    /// Detect if a container exit was due to resource limit violation
+    #[cfg(feature = "docker")]
+    fn detect_resource_limit_violation(
+        &self,
+        exit_code: Option<i64>,
+        oom_killed: bool,
+        cpu_usage: Option<f32>,
+    ) -> Option<ResourceLimitType> {
+        // Check for OOM kill (exit code 137 or oom_killed flag)
+        if oom_killed {
+            tracing::debug!("OOM killed flag is set");
+            return Some(ResourceLimitType::Memory);
+        }
+
+        if let Some(code) = exit_code {
+            // Exit code 137 typically indicates SIGKILL from OOM killer
+            // Exit code 143 is SIGTERM, which can also be related to resource issues
+            if code == 137 {
+                tracing::debug!("Exit code 137 detected (OOM killed)");
+                return Some(ResourceLimitType::Memory);
+            }
+        }
+
+        // Check for CPU throttling (high CPU usage when container stopped)
+        // This is a heuristic - containers with sustained high CPU usage may hit CPU limits
+        if let Some(usage) = cpu_usage {
+            if usage > 95.0 {
+                tracing::debug!("High CPU usage detected: {}%", usage);
+                return Some(ResourceLimitType::CpuThrottling);
+            }
+        }
+
+        None
+    }
+
+    /// Format a clear error message for resource limit violations
+    #[cfg(feature = "docker")]
+    fn format_resource_limit_error(
+        &self,
+        resource_type: &ResourceLimitType,
+        exit_code: Option<i64>,
+        error_message: Option<&str>,
+    ) -> String {
+        let base_message = match resource_type {
+            ResourceLimitType::Memory => {
+                "Container killed due to memory limit exceeded (OOM)"
+            }
+            ResourceLimitType::CpuThrottling => {
+                "Container terminated due to CPU throttling (CPU limit exceeded)"
+            }
+            ResourceLimitType::Unknown => {
+                "Container terminated due to unknown resource limit"
+            }
+        };
+
+        let mut message = base_message.to_string();
+
+        if let Some(code) = exit_code {
+            message.push_str(&format!(" (exit code: {})", code));
+        }
+
+        if let Some(err) = error_message {
+            message.push_str(&format!(". Error: {}", err));
+        }
+
+        // Add helpful suggestions
+        match resource_type {
+            ResourceLimitType::Memory => {
+                message.push_str(". Consider increasing the memory limit for this container.");
+            }
+            ResourceLimitType::CpuThrottling => {
+                message.push_str(". Consider increasing the CPU limit for this container.");
+            }
+            ResourceLimitType::Unknown => {}
+        }
+
+        message
+    }
 }
 
 /// Global event bus for process events
@@ -717,6 +880,9 @@ mod tests {
             memory_usage: Some(1024 * 1024 * 50), // 50MB
             cpu_usage: Some(15.5),
             last_check: Instant::now(),
+            exit_code: None,
+            oom_killed: false,
+            error_message: None,
         };
 
         assert_eq!(health.container_id, "test123");
@@ -724,6 +890,7 @@ mod tests {
         assert!(health.is_running);
         assert_eq!(health.memory_usage, Some(1024 * 1024 * 50));
         assert_eq!(health.cpu_usage, Some(15.5));
+        assert!(!health.oom_killed);
     }
 
     #[tokio::test]
@@ -752,6 +919,103 @@ mod tests {
             .send(ProcessEvent::ContainerUnhealthy {
                 container_id: "test_container".to_string(),
                 node_id: "test_node".to_string(),
+                timestamp: Instant::now(),
+            });
+
+        // Process events
+        monitor.process_events().await;
+
+        // Allow async handler to complete
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        assert!(*event_received.read().await);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "docker")]
+    async fn test_resource_limit_detection_oom() {
+        let monitor = HealthMonitor::new(30);
+
+        // Test OOM detection with exit code 137
+        let result = monitor.detect_resource_limit_violation(Some(137), false, None);
+        assert!(matches!(result, Some(ResourceLimitType::Memory)));
+
+        // Test OOM detection with oom_killed flag
+        let result = monitor.detect_resource_limit_violation(None, true, None);
+        assert!(matches!(result, Some(ResourceLimitType::Memory)));
+
+        // Test OOM detection with both
+        let result = monitor.detect_resource_limit_violation(Some(137), true, None);
+        assert!(matches!(result, Some(ResourceLimitType::Memory)));
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "docker")]
+    async fn test_resource_limit_detection_no_violation() {
+        let monitor = HealthMonitor::new(30);
+
+        // Test no resource limit violation
+        let result = monitor.detect_resource_limit_violation(Some(0), false, Some(50.0));
+        assert!(result.is_none());
+
+        let result = monitor.detect_resource_limit_violation(Some(1), false, Some(30.0));
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "docker")]
+    async fn test_format_resource_limit_error() {
+        let monitor = HealthMonitor::new(30);
+
+        // Test memory limit error formatting
+        let error = monitor.format_resource_limit_error(
+            &ResourceLimitType::Memory,
+            Some(137),
+            Some("Out of memory"),
+        );
+        assert!(error.contains("Container killed due to memory limit exceeded (OOM)"));
+        assert!(error.contains("exit code: 137"));
+        assert!(error.contains("Out of memory"));
+        assert!(error.contains("Consider increasing the memory limit"));
+
+        // Test CPU throttling error formatting
+        let error = monitor.format_resource_limit_error(
+            &ResourceLimitType::CpuThrottling,
+            None,
+            None,
+        );
+        assert!(error.contains("CPU throttling"));
+        assert!(error.contains("Consider increasing the CPU limit"));
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "docker")]
+    async fn test_resource_limit_exceeded_event() {
+        let monitor = HealthMonitor::new(30);
+
+        let event_received = Arc::new(RwLock::new(false));
+        let event_received_clone = event_received.clone();
+
+        // Register event handler
+        monitor
+            .on_event(move |event| {
+                if matches!(event, ProcessEvent::ResourceLimitExceeded { .. }) {
+                    let event_received = event_received_clone.clone();
+                    tokio::spawn(async move {
+                        *event_received.write().await = true;
+                    });
+                }
+            })
+            .await;
+
+        // Send a resource limit exceeded event
+        let _ = monitor
+            .event_sender
+            .send(ProcessEvent::ResourceLimitExceeded {
+                container_id: "test_container".to_string(),
+                node_id: "test_node".to_string(),
+                resource_type: ResourceLimitType::Memory,
+                exit_code: Some(137),
                 timestamp: Instant::now(),
             });
 

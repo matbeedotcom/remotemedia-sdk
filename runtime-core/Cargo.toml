@@ -155,6 +155,11 @@ path = "tests/integration/test_docker_multiprocess_e2e.rs"
 name = "test_docker_image_builder"
 path = "tests/integration/test_docker_image_builder.rs"
 
+# Test for Docker resource limit enforcement (T041)
+[[test]]
+name = "test_docker_resource_limits"
+path = "tests/integration/test_docker_resource_limits.rs"
+
 # Benchmarks for latency measurement
 [[bench]]
 name = "bench_latency"

@@ -2,7 +2,29 @@
 //!
 //! Provides Docker container management functionality integrated with
 //! the multiprocess executor system, including container lifecycle,
-//! IPC volume mounting, and health monitoring.
+//! IPC volume mounting, health monitoring, and resource usage monitoring.
+//!
+//! # Resource Monitoring
+//!
+//! The module provides real-time resource usage monitoring via Docker's stats API:
+//!
+//! ```no_run
+//! use remotemedia_runtime_core::python::multiprocess::docker_support::DockerSupport;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let docker_support = DockerSupport::new().await?;
+//! let container_id = "my_container_id";
+//!
+//! // Monitor resource usage
+//! let stats = docker_support.monitor_resource_usage(container_id).await?;
+//! println!("CPU: {:.2}%", stats.cpu_percent);
+//! println!("Memory: {} MB", stats.memory_mb);
+//! if let Some(limit) = stats.memory_limit_mb {
+//!     println!("Memory Limit: {} MB", limit);
+//! }
+//! # Ok(())
+//! # }
+//! ```
 
 use crate::{Error, Result};
 use bollard::Docker;
@@ -67,6 +89,19 @@ pub struct VolumeMount {
 
 fn default_shm_size() -> u64 {
     2048 // 2GB default for shared memory
+}
+
+/// Resource usage statistics from Docker container
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceUsageStats {
+    /// CPU usage as percentage (0-100% per core, can exceed 100% for multi-core)
+    pub cpu_percent: f32,
+
+    /// Current memory usage in megabytes
+    pub memory_mb: u64,
+
+    /// Memory limit in megabytes (if set)
+    pub memory_limit_mb: Option<u64>,
 }
 
 impl DockerNodeConfig {
@@ -623,7 +658,7 @@ impl DockerSupport {
         config: &DockerNodeConfig,
     ) -> Result<String> {
         use bollard::container::{Config, CreateContainerOptions};
-        use bollard::models::HostConfig;
+        use bollard::models::{HostConfig, DeviceRequest};
 
         info!(
             node_id = %node_id,
@@ -672,6 +707,41 @@ impl DockerSupport {
 
         host_config.binds = Some(binds);
         info!("Configured IPC volume mounts for iceoryx2: /tmp and /dev");
+
+        // T037: GPU device passthrough for NVIDIA
+        if !config.gpu_devices.is_empty() {
+            debug!(
+                gpu_devices = ?config.gpu_devices,
+                "Configuring GPU device passthrough for NVIDIA"
+            );
+
+            // Check if "all" is specified or specific device IDs
+            let is_all_devices = config.gpu_devices.contains(&"all".to_string());
+            let device_ids = if is_all_devices {
+                // Request all available GPUs
+                None
+            } else {
+                // Request specific GPU device IDs
+                Some(config.gpu_devices.clone())
+            };
+
+            let device_request = DeviceRequest {
+                driver: Some("nvidia".to_string()),
+                count: if is_all_devices { Some(-1) } else { None }, // -1 means all devices
+                device_ids,
+                capabilities: Some(vec![vec!["gpu".to_string()]]),
+                options: None,
+            };
+
+            host_config.device_requests = Some(vec![device_request]);
+
+            info!(
+                gpu_count = if is_all_devices { "all".to_string() } else { config.gpu_devices.len().to_string() },
+                "Configured NVIDIA GPU device passthrough"
+            );
+        } else {
+            debug!("No GPU devices requested, skipping GPU configuration");
+        }
 
         // Prepare container configuration
         let default_image = format!("python:{}", config.python_version);
@@ -925,6 +995,157 @@ impl DockerSupport {
             "Container logs retrieved"
         );
         Ok(logs)
+    }
+
+    /// Monitor resource usage of a Docker container
+    ///
+    /// Queries the Docker stats API to retrieve real-time resource usage metrics
+    /// for a running container. This includes CPU percentage, memory usage, and
+    /// memory limits.
+    ///
+    /// # Arguments
+    ///
+    /// * `container_id` - The ID or name of the container to monitor
+    ///
+    /// # Returns
+    ///
+    /// Returns `ResourceUsageStats` containing:
+    /// - `cpu_percent`: CPU usage as percentage (can exceed 100% for multi-core)
+    /// - `memory_mb`: Current memory usage in megabytes
+    /// - `memory_limit_mb`: Memory limit in megabytes (if configured)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Container does not exist
+    /// - Container is stopped or not running
+    /// - Failed to retrieve stats from Docker daemon
+    #[instrument(skip(self))]
+    pub async fn monitor_resource_usage(&self, container_id: &str) -> Result<ResourceUsageStats> {
+        use futures::StreamExt;
+
+        debug!(
+            container_id = %container_id,
+            "Monitoring container resource usage"
+        );
+
+        // First verify the container is running
+        let is_running = self.is_container_running(container_id).await?;
+        if !is_running {
+            warn!(
+                container_id = %container_id,
+                "Cannot monitor resource usage: container is not running"
+            );
+            return Err(Error::Execution(format!(
+                "Container {} is not running, cannot retrieve stats",
+                container_id
+            )));
+        }
+
+        // Use stats API with one-shot mode (don't stream continuously)
+        let options = Some(
+            bollard::query_parameters::StatsOptionsBuilder::new()
+                .stream(false)
+                .one_shot(true)
+                .build(),
+        );
+
+        let mut stats_stream = self.docker.stats(container_id, options);
+
+        // Get the first (and only) stats result
+        if let Some(stats_result) = stats_stream.next().await {
+            let stats = stats_result.map_err(|e| {
+                error!(
+                    container_id = %container_id,
+                    error = %e,
+                    "Failed to retrieve container stats"
+                );
+                Error::Execution(format!("Failed to get container stats: {}", e))
+            })?;
+
+            // Extract memory usage and limit from MemoryStats
+            let (memory_usage, memory_limit) = if let Some(memory_stats) = stats.memory_stats.as_ref() {
+                let usage = memory_stats.usage.unwrap_or(0);
+                let limit = memory_stats.limit;
+                (usage, limit)
+            } else {
+                warn!(
+                    container_id = %container_id,
+                    "Memory stats not available"
+                );
+                (0, None)
+            };
+
+            // Calculate CPU usage percentage
+            let cpu_percent = if let (Some(cpu_stats), Some(precpu_stats)) =
+                (stats.cpu_stats.as_ref(), stats.precpu_stats.as_ref())
+            {
+                // Get total CPU usage
+                let total_usage = cpu_stats
+                    .cpu_usage
+                    .as_ref()
+                    .and_then(|u| u.total_usage)
+                    .unwrap_or(0);
+                let prev_total_usage = precpu_stats
+                    .cpu_usage
+                    .as_ref()
+                    .and_then(|u| u.total_usage)
+                    .unwrap_or(0);
+
+                let cpu_delta = total_usage.saturating_sub(prev_total_usage);
+
+                // Get system CPU usage
+                let system_usage = cpu_stats.system_cpu_usage.unwrap_or(0);
+                let prev_system_usage = precpu_stats.system_cpu_usage.unwrap_or(0);
+                let system_delta = system_usage.saturating_sub(prev_system_usage);
+
+                // Calculate percentage based on number of CPU cores
+                if system_delta > 0 && cpu_delta > 0 {
+                    let cpu_count = cpu_stats.online_cpus.unwrap_or(1) as f64;
+                    ((cpu_delta as f64 / system_delta as f64) * cpu_count * 100.0) as f32
+                } else {
+                    0.0
+                }
+            } else {
+                warn!(
+                    container_id = %container_id,
+                    "CPU stats not available"
+                );
+                0.0
+            };
+
+            // Convert bytes to megabytes
+            let memory_mb = memory_usage / 1_048_576;
+            let memory_limit_mb = memory_limit.map(|limit| limit / 1_048_576);
+
+            let resource_stats = ResourceUsageStats {
+                cpu_percent,
+                memory_mb,
+                memory_limit_mb,
+            };
+
+            debug!(
+                container_id = %container_id,
+                cpu_percent = cpu_percent,
+                memory_mb = memory_mb,
+                memory_limit_mb = ?memory_limit_mb,
+                "Successfully retrieved container resource usage"
+            );
+
+            // Log the resource usage using the existing logger
+            DockerLogger::log_resource_usage(container_id, cpu_percent, memory_mb);
+
+            Ok(resource_stats)
+        } else {
+            error!(
+                container_id = %container_id,
+                "Stats stream returned no data"
+            );
+            Err(Error::Execution(format!(
+                "Failed to get container stats: no data returned for container {}",
+                container_id
+            )))
+        }
     }
 
     /// Clean up stopped containers for a session

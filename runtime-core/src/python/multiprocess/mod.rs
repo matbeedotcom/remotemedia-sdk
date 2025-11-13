@@ -16,6 +16,9 @@ pub use multiprocess_executor::{
     InitStatus, MultiprocessConfig, MultiprocessExecutor, SessionState,
 };
 
+#[cfg(feature = "docker")]
+pub use docker_support::ResourceUsageStats;
+
 /// Execution mode for Python nodes
 #[derive(Debug, Clone)]
 pub enum ExecutionMode {
