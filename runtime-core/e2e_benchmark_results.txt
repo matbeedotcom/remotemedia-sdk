@@ -1,0 +1,1616 @@
+warning: remotemedia-grpc@0.4.0: Successfully compiled protocol buffers
+warning: unexpected `cfg` condition value: `whisper`
+  --> runtime-core/src/nodes/mod.rs:31:7
+   |
+31 | #[cfg(feature = "whisper")]
+   |       ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `feature` are: `default`, `docker`, `grpc-client`, `iceoryx2`, `iceoryx2-bb-container`, `iceoryx2-bb-elementary`, `iceoryx2-bb-log`, `multiprocess`, `ort`, `prost`, `prost-types`, `silero-vad`, and `tonic`
+   = help: consider adding `whisper` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+   = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: unexpected `cfg` condition value: `whisper`
+  --> runtime-core/src/nodes/mod.rs:33:7
+   |
+33 | #[cfg(feature = "whisper")]
+   |       ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `feature` are: `default`, `docker`, `grpc-client`, `iceoryx2`, `iceoryx2-bb-container`, `iceoryx2-bb-elementary`, `iceoryx2-bb-log`, `multiprocess`, `ort`, `prost`, `prost-types`, `silero-vad`, and `tonic`
+   = help: consider adding `whisper` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unused import: `SecurityConfig`
+ --> runtime-core/src/python/multiprocess/container_builder.rs:7:69
+  |
+7 | use crate::python::multiprocess::docker_support::{DockerNodeConfig, SecurityConfig};
+  |                                                                     ^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: use of deprecated struct `bollard::container::StopContainerOptions`: use the OpenAPI generated bollard::query_parameters::StopContainerOptions and associated StopContainerOptionsBuilder
+  --> runtime-core/src/python/multiprocess/process_manager.rs:92:41
+   |
+92 |                 use bollard::container::StopContainerOptions;
+   |                                         ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated struct `bollard::container::StopContainerOptions`: use the OpenAPI generated bollard::query_parameters::StopContainerOptions and associated StopContainerOptionsBuilder
+  --> runtime-core/src/python/multiprocess/process_manager.rs:93:31
+   |
+93 |                 let options = StopContainerOptions {
+   |                               ^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated struct `bollard::container::Config`: use the OpenAPI generated bollard::models::ContainerCreateBody or bollard_stubs::models::ContainerConfig as appropriate
+    --> runtime-core/src/python/multiprocess/docker_support.rs:1864:34
+     |
+1864 |         use bollard::container::{Config, CreateContainerOptions};
+     |                                  ^^^^^^
+
+warning: use of deprecated struct `bollard::container::CreateContainerOptions`: use the OpenAPI generated bollard::query_parameters::CreateContainerOptions and associated CreateContainerOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:1864:42
+     |
+1864 |         use bollard::container::{Config, CreateContainerOptions};
+     |                                          ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated struct `bollard::container::LogsOptions`: use the OpenAPI generated bollard::query_parameters::LogsOptions and associated LogsOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2241:33
+     |
+2241 |         use bollard::container::LogsOptions;
+     |                                 ^^^^^^^^^^^
+
+warning: use of deprecated struct `bollard::container::LogsOptions`: use the OpenAPI generated bollard::query_parameters::LogsOptions and associated LogsOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2547:33
+     |
+2547 |         use bollard::container::LogsOptions;
+     |                                 ^^^^^^^^^^^
+
+warning: use of deprecated struct `bollard::container::Config`: use the OpenAPI generated bollard::models::ContainerCreateBody or bollard_stubs::models::ContainerConfig as appropriate
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2057:32
+     |
+2057 |         let container_config = Config {
+     |                                ^^^^^^
+
+warning: use of deprecated struct `bollard::container::CreateContainerOptions`: use the OpenAPI generated bollard::query_parameters::CreateContainerOptions and associated CreateContainerOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2066:23
+     |
+2066 |         let options = CreateContainerOptions {
+     |                       ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated struct `bollard::container::LogsOptions`: use the OpenAPI generated bollard::query_parameters::LogsOptions and associated LogsOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2250:23
+     |
+2250 |         let options = LogsOptions::<String> {
+     |                       ^^^^^^^^^^^
+
+warning: use of deprecated struct `bollard::container::ListContainersOptions`: use the OpenAPI generated bollard::query_parameters::ListContainersOptions and associated ListContainersOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2444:43
+     |
+2444 |         let options = bollard::container::ListContainersOptions::<String> {
+     |                                           ^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated struct `bollard::container::LogsOptions`: use the OpenAPI generated bollard::query_parameters::LogsOptions and associated LogsOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2550:23
+     |
+2550 |         let options = LogsOptions::<String> {
+     |                       ^^^^^^^^^^^
+
+warning: use of deprecated struct `bollard::image::BuildImageOptions`: use the OpenAPI generated bollard::query_parameters::BuildImageOptions and associated BuildImageOptionsBuilder
+ --> runtime-core/src/python/multiprocess/container_builder.rs:8:22
+  |
+8 | use bollard::image::{BuildImageOptions, ListImagesOptions, TagImageOptions};
+  |                      ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated struct `bollard::image::ListImagesOptions`: use the OpenAPI generated bollard::query_parameters::ListImageOptions and associated ListImageOptionsBuilder
+ --> runtime-core/src/python/multiprocess/container_builder.rs:8:41
+  |
+8 | use bollard::image::{BuildImageOptions, ListImagesOptions, TagImageOptions};
+  |                                         ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated struct `bollard::image::TagImageOptions`: use the OpenAPI generated bollard::query_parameters::TagImageOptions and associated TagImageOptionsBuilder
+ --> runtime-core/src/python/multiprocess/container_builder.rs:8:60
+  |
+8 | use bollard::image::{BuildImageOptions, ListImagesOptions, TagImageOptions};
+  |                                                            ^^^^^^^^^^^^^^^
+
+warning: use of deprecated struct `bollard::image::BuildImageOptions`: use the OpenAPI generated bollard::query_parameters::BuildImageOptions and associated BuildImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:200:29
+    |
+200 |         let build_options = BuildImageOptions {
+    |                             ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated struct `bollard::image::ListImagesOptions`: use the OpenAPI generated bollard::query_parameters::ListImageOptions and associated ListImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:264:51
+    |
+264 |         let images = self.docker.list_images(Some(ListImagesOptions {
+    |                                                   ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated struct `bollard::image::ListImagesOptions`: use the OpenAPI generated bollard::query_parameters::ListImageOptions and associated ListImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:289:51
+    |
+289 |         let images = self.docker.list_images(Some(ListImagesOptions {
+    |                                                   ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated struct `bollard::image::BuildImageOptions`: use the OpenAPI generated bollard::query_parameters::BuildImageOptions and associated BuildImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:348:45
+    |
+348 |         let build_options = bollard::image::BuildImageOptions {
+    |                                             ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated struct `bollard::image::TagImageOptions`: use the OpenAPI generated bollard::query_parameters::TagImageOptions and associated TagImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:389:27
+    |
+389 |         let tag_options = TagImageOptions {
+    |                           ^^^^^^^^^^^^^^^
+
+warning: value assigned to `last_error` is never read
+   --> runtime-core/src/executor/retry.rs:185:13
+    |
+185 |     let mut last_error: Option<Error> = None;
+    |             ^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` on by default
+
+warning: unreachable statement
+   --> runtime-core/src/nodes/remote_pipeline.rs:823:13
+    |
+817 | /                 return Err(crate::Error::ConfigError(
+818 | |                     "gRPC client not enabled - compile with 'grpc-client' feature".into(),
+819 | |                 ));
+    | |__________________- any code following this expression is unreachable
+...
+823 |               let timeout_ms = self.config.timeout_ms;
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unreachable statement
+    |
+    = note: `#[warn(unreachable_code)]` on by default
+
+warning: unused variable: `manifest`
+   --> runtime-core/src/nodes/remote_pipeline.rs:778:9
+    |
+778 |         manifest: std::sync::Arc<Manifest>,
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_manifest`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `input`
+   --> runtime-core/src/nodes/remote_pipeline.rs:779:9
+    |
+779 |         input: crate::transport::TransportData,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_input`
+
+warning: unused variable: `timeout_duration`
+   --> runtime-core/src/nodes/remote_pipeline.rs:824:17
+    |
+824 |             let timeout_duration = std::time::Duration::from_millis(timeout_ms);
+    |                 ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_timeout_duration`
+
+warning: unused variable: `event_sender`
+   --> runtime-core/src/python/multiprocess/health_monitor.rs:269:13
+    |
+269 |         let event_sender = self.event_sender.clone();
+    |             ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_event_sender`
+
+warning: unused variable: `health_stats`
+   --> runtime-core/src/python/multiprocess/health_monitor.rs:270:13
+    |
+270 |         let health_stats = self.health_stats.clone();
+    |             ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_health_stats`
+
+warning: unused variable: `session_id`
+    --> runtime-core/src/python/multiprocess/multiprocess_executor.rs:1287:9
+     |
+1287 |         session_id: &str,
+     |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_session_id`
+
+warning: unused variable: `child`
+  --> runtime-core/src/python/multiprocess/process_manager.rs:59:38
+   |
+59 |             ExecutionTarget::Process(child) => {
+   |                                      ^^^^^ help: if this is intentional, prefix it with an underscore: `_child`
+
+warning: use of deprecated field `bollard::container::StopContainerOptions::t`: use the OpenAPI generated bollard::query_parameters::StopContainerOptions and associated StopContainerOptionsBuilder
+  --> runtime-core/src/python/multiprocess/process_manager.rs:94:21
+   |
+94 |                     t: timeout.as_secs() as i64,
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `params`
+   --> runtime-core/src/python/multiprocess/process_manager.rs:508:9
+    |
+508 |         params: &Value,
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_params`
+
+warning: use of deprecated field `bollard::container::Config::image`: use the OpenAPI generated bollard::models::ContainerCreateBody or bollard_stubs::models::ContainerConfig as appropriate
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2058:13
+     |
+2058 |             image: Some(image.clone()),
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::Config::env`: use the OpenAPI generated bollard::models::ContainerCreateBody or bollard_stubs::models::ContainerConfig as appropriate
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2059:13
+     |
+2059 |             env: Some(env),
+     |             ^^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::Config::host_config`: use the OpenAPI generated bollard::models::ContainerCreateBody or bollard_stubs::models::ContainerConfig as appropriate
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2060:13
+     |
+2060 |             host_config: Some(host_config),
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::Config::labels`: use the OpenAPI generated bollard::models::ContainerCreateBody or bollard_stubs::models::ContainerConfig as appropriate
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2061:13
+     |
+2061 |             labels: Some(labels),
+     |             ^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::Config::user`: use the OpenAPI generated bollard::models::ContainerCreateBody or bollard_stubs::models::ContainerConfig as appropriate
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2062:13
+     |
+2062 |             user: Some(user_config), // T057: Run as non-root user
+     |             ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::CreateContainerOptions::name`: use the OpenAPI generated bollard::query_parameters::CreateContainerOptions and associated CreateContainerOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2067:13
+     |
+2067 |             name: container_name.clone(),
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::CreateContainerOptions::platform`: use the OpenAPI generated bollard::query_parameters::CreateContainerOptions and associated CreateContainerOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2068:13
+     |
+2068 |             platform: None,
+     |             ^^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::LogsOptions::stdout`: use the OpenAPI generated bollard::query_parameters::LogsOptions and associated LogsOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2251:13
+     |
+2251 |             stdout: true,
+     |             ^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::LogsOptions::stderr`: use the OpenAPI generated bollard::query_parameters::LogsOptions and associated LogsOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2252:13
+     |
+2252 |             stderr: true,
+     |             ^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::LogsOptions::tail`: use the OpenAPI generated bollard::query_parameters::LogsOptions and associated LogsOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2253:13
+     |
+2253 |             tail: tail.map(|n| n.to_string()).unwrap_or_else(|| "all".to_string()),
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::LogsOptions::follow`: use the OpenAPI generated bollard::query_parameters::LogsOptions and associated LogsOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2254:13
+     |
+2254 |             follow: false,
+     |             ^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::ListContainersOptions::all`: use the OpenAPI generated bollard::query_parameters::ListContainersOptions and associated ListContainersOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2445:13
+     |
+2445 |             all: true,
+     |             ^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::ListContainersOptions::filters`: use the OpenAPI generated bollard::query_parameters::ListContainersOptions and associated ListContainersOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2446:13
+     |
+2446 |             filters,
+     |             ^^^^^^^
+
+warning: use of deprecated field `bollard::container::LogsOptions::stdout`: use the OpenAPI generated bollard::query_parameters::LogsOptions and associated LogsOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2551:13
+     |
+2551 |             stdout: true,
+     |             ^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::LogsOptions::stderr`: use the OpenAPI generated bollard::query_parameters::LogsOptions and associated LogsOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2552:13
+     |
+2552 |             stderr: true,
+     |             ^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::LogsOptions::follow`: use the OpenAPI generated bollard::query_parameters::LogsOptions and associated LogsOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2553:13
+     |
+2553 |             follow: true,  // Stream logs in real-time
+     |             ^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::LogsOptions::tail`: use the OpenAPI generated bollard::query_parameters::LogsOptions and associated LogsOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2554:13
+     |
+2554 |             tail: "0".to_string(),  // Start from now (don't retrieve historical logs)
+     |             ^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::container::LogsOptions::timestamps`: use the OpenAPI generated bollard::query_parameters::LogsOptions and associated LogsOptionsBuilder
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2555:13
+     |
+2555 |             timestamps: config.include_timestamps,
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::image::BuildImageOptions::dockerfile`: use the OpenAPI generated bollard::query_parameters::BuildImageOptions and associated BuildImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:201:13
+    |
+201 |             dockerfile: "Dockerfile".to_string(),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::image::BuildImageOptions::t`: use the OpenAPI generated bollard::query_parameters::BuildImageOptions and associated BuildImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:202:13
+    |
+202 |             t: image_tag.to_string(),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::image::BuildImageOptions::rm`: use the OpenAPI generated bollard::query_parameters::BuildImageOptions and associated BuildImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:203:13
+    |
+203 |             rm: true,
+    |             ^^^^^^^^
+
+warning: use of deprecated field `bollard::image::BuildImageOptions::pull`: use the OpenAPI generated bollard::query_parameters::BuildImageOptions and associated BuildImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:204:13
+    |
+204 |             pull: true,
+    |             ^^^^^^^^^^
+
+warning: use of deprecated field `bollard::image::ListImagesOptions::all`: use the OpenAPI generated bollard::query_parameters::ListImageOptions and associated ListImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:265:13
+    |
+265 |             all: false,
+    |             ^^^^^^^^^^
+
+warning: use of deprecated field `bollard::image::ListImagesOptions::filters`: use the OpenAPI generated bollard::query_parameters::ListImageOptions and associated ListImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:266:13
+    |
+266 |             filters,
+    |             ^^^^^^^
+
+warning: unused variable: `tar_data`
+   --> runtime-core/src/python/multiprocess/container_builder.rs:198:9
+    |
+198 |         tar_data: Vec<u8>,
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_tar_data`
+
+warning: use of deprecated field `bollard::image::ListImagesOptions::all`: use the OpenAPI generated bollard::query_parameters::ListImageOptions and associated ListImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:290:13
+    |
+290 |             all: false,
+    |             ^^^^^^^^^^
+
+warning: use of deprecated field `bollard::image::ListImagesOptions::filters`: use the OpenAPI generated bollard::query_parameters::ListImageOptions and associated ListImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:291:13
+    |
+291 |             filters,
+    |             ^^^^^^^
+
+warning: use of deprecated field `bollard::image::BuildImageOptions::dockerfile`: use the OpenAPI generated bollard::query_parameters::BuildImageOptions and associated BuildImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:349:13
+    |
+349 |             dockerfile: "Dockerfile",
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::image::BuildImageOptions::t`: use the OpenAPI generated bollard::query_parameters::BuildImageOptions and associated BuildImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:350:13
+    |
+350 |             t: &image_tag,
+    |             ^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::image::BuildImageOptions::rm`: use the OpenAPI generated bollard::query_parameters::BuildImageOptions and associated BuildImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:351:13
+    |
+351 |             rm: true,
+    |             ^^^^^^^^
+
+warning: use of deprecated field `bollard::image::BuildImageOptions::forcerm`: use the OpenAPI generated bollard::query_parameters::BuildImageOptions and associated BuildImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:352:13
+    |
+352 |             forcerm: true,
+    |             ^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::image::BuildImageOptions::nocache`: use the OpenAPI generated bollard::query_parameters::BuildImageOptions and associated BuildImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:353:13
+    |
+353 |             nocache: force_rebuild,
+    |             ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::image::TagImageOptions::repo`: use the OpenAPI generated bollard::query_parameters::TagImageOptions and associated TagImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:390:13
+    |
+390 |             repo: "remotemedia/node",
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `bollard::image::TagImageOptions::tag`: use the OpenAPI generated bollard::query_parameters::TagImageOptions and associated TagImageOptionsBuilder
+   --> runtime-core/src/python/multiprocess/container_builder.rs:391:13
+    |
+391 |             tag: &config_hash[..12],
+    |             ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `executor`
+   --> runtime-core/src/transport/runner.rs:234:13
+    |
+234 |         let executor = Arc::clone(&self.executor);
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_executor`
+
+warning: unused import: `BodyExt`
+  --> runtime-core/src/python/multiprocess/container_builder.rs:11:36
+   |
+11 | use http_body_util::{Full, Either, BodyExt};
+   |                                    ^^^^^^^
+
+warning: value assigned to `last_error` is never read
+   --> runtime-core/src/executor/retry.rs:238:13
+    |
+238 |     let mut last_error: Option<Error> = None;
+    |             ^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `params`
+  --> runtime-core/src/executor/executor_bridge.rs:75:69
+   |
+75 |     async fn initialize_node(&self, node_id: &str, node_type: &str, params: &Value) -> Result<()> {
+   |                                                                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_params`
+
+warning: unused variable: `params`
+   --> runtime-core/src/executor/executor_bridge.rs:134:9
+    |
+134 |         params: &Value,
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_params`
+
+warning: unused variable: `params`
+   --> runtime-core/src/executor/executor_bridge.rs:151:69
+    |
+151 |     async fn initialize_node(&self, node_id: &str, node_type: &str, params: &Value) -> Result<()> {
+    |                                                                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_params`
+
+warning: unused variable: `arr`
+    --> runtime-core/src/executor/mod.rs:1521:21
+     |
+1521 |         if let Some(arr) = value.as_array() {
+     |                     ^^^ help: if this is intentional, prefix it with an underscore: `_arr`
+
+warning: unused variable: `is_speech`
+  --> runtime-core/src/nodes/audio/vad_fast.rs:79:13
+   |
+79 |         let is_speech = speech_frames > 0;
+   |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_is_speech`
+
+warning: unused variable: `idx`
+   --> runtime-core/src/nodes/registry.rs:207:14
+    |
+207 |         for (idx, registry) in self.registries.iter().enumerate() {
+    |              ^^^ help: if this is intentional, prefix it with an underscore: `_idx`
+
+warning: unused variable: `node_id`
+   --> runtime-core/src/nodes/streaming_registry.rs:209:9
+    |
+209 |         node_id: String,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_id`
+
+warning: unused variable: `node_id`
+   --> runtime-core/src/nodes/streaming_registry.rs:284:9
+    |
+284 |         node_id: String,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_id`
+
+warning: unused variable: `node_id`
+   --> runtime-core/src/nodes/streaming_registry.rs:457:9
+    |
+457 |         node_id: String,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_id`
+
+warning: unused variable: `data`
+   --> runtime-core/src/nodes/silero_vad.rs:217:29
+    |
+217 |     async fn process(&self, data: RuntimeData) -> Result<RuntimeData> {
+    |                             ^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+
+warning: unused variable: `data`
+   --> runtime-core/src/nodes/audio_buffer_accumulator.rs:342:29
+    |
+342 |     async fn process(&self, data: RuntimeData) -> Result<RuntimeData> {
+    |                             ^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+
+warning: unused variable: `num_samples`
+  --> runtime-core/src/nodes/audio_resample_streaming.rs:80:17
+   |
+80 |             let num_samples = f32_samples.len() as u64;
+   |                 ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_num_samples`
+
+warning: unused variable: `bytes`
+  --> runtime-core/src/nodes/audio_resample_streaming.rs:82:17
+   |
+82 |             let bytes: Vec<u8> = f32_samples.iter().flat_map(|&f| f.to_le_bytes()).collect();
+   |                 ^^^^^ help: if this is intentional, prefix it with an underscore: `_bytes`
+
+warning: unused variable: `sample_rate`
+  --> runtime-core/src/python/multiprocess/data_transfer.rs:26:35
+   |
+26 |     pub fn audio(samples: &[f32], sample_rate: u32, channels: u16, session_id: &str) -> Self {
+   |                                   ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_sample_rate`
+
+warning: unused variable: `channels`
+  --> runtime-core/src/python/multiprocess/data_transfer.rs:26:53
+   |
+26 |     pub fn audio(samples: &[f32], sample_rate: u32, channels: u16, session_id: &str) -> Self {
+   |                                                     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_channels`
+
+warning: unused variable: `session_id`
+    --> runtime-core/src/python/multiprocess/multiprocess_executor.rs:1907:17
+     |
+1907 |             let session_id = ctx
+     |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_session_id`
+
+warning: unused variable: `buffer`
+    --> runtime-core/src/python/multiprocess/docker_support.rs:2650:9
+     |
+2650 |         buffer: &mut String,
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_buffer`
+
+warning: unused variable: `session_id`
+   --> runtime-core/src/data/control_message.rs:220:13
+    |
+220 |         let session_id = String::from_utf8_lossy(&bytes[pos..pos + session_len]).to_string();
+    |             ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_session_id`
+
+warning: fields `config` and `runtime_selector` are never read
+   --> runtime-core/src/executor/mod.rs:227:5
+    |
+225 | pub struct Executor {
+    |            -------- fields in this struct
+226 |     /// Execution configuration
+227 |     config: ExecutorConfig,
+    |     ^^^^^^
+...
+236 |     runtime_selector: RuntimeSelector,
+    |     ^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: method `is_streaming_output` is never used
+    --> runtime-core/src/executor/mod.rs:1518:8
+     |
+262  | impl Executor {
+     | ------------- method in this implementation
+...
+1518 |     fn is_streaming_output(&self, value: &Value) -> bool {
+     |        ^^^^^^^^^^^^^^^^^^^
+
+warning: field `node_type` is never read
+   --> runtime-core/src/executor/node_executor.rs:108:5
+    |
+107 | pub struct PythonNodeExecutor {
+    |            ------------------ field in this struct
+108 |     node_type: String,
+    |     ^^^^^^^^^
+
+warning: field `session_id` is never read
+  --> runtime-core/src/executor/data_conversion.rs:13:5
+   |
+11 | pub struct IPCDataConverter {
+   |            ---------------- field in this struct
+12 |     /// Session ID for this converter
+13 |     session_id: String,
+   |     ^^^^^^^^^^
+
+warning: fields `source_executor_type`, `target_executor_type`, and `converter` are never read
+  --> runtime-core/src/executor/data_conversion.rs:45:5
+   |
+43 | pub struct DataBridge {
+   |            ---------- fields in this struct
+44 |     /// Source executor type
+45 |     source_executor_type: String,
+   |     ^^^^^^^^^^^^^^^^^^^^
+...
+48 |     target_executor_type: String,
+   |     ^^^^^^^^^^^^^^^^^^^^
+...
+51 |     converter: Arc<IPCDataConverter>,
+   |     ^^^^^^^^^
+
+warning: field `executor` is never read
+  --> runtime-core/src/executor/executor_bridge.rs:39:5
+   |
+37 | pub struct NativeExecutorBridge {
+   |            -------------------- field in this struct
+38 |     /// Reference to the main executor
+39 |     executor: Arc<crate::executor::Executor>,
+   |     ^^^^^^^^
+
+warning: field `channels` is never read
+  --> runtime-core/src/nodes/audio/resample_fast.rs:37:5
+   |
+34 | pub struct FastResampleNode {
+   |            ---------------- field in this struct
+...
+37 |     channels: usize,
+   |     ^^^^^^^^
+
+warning: fields `min_speech_duration_ms` and `speech_pad_ms` are never read
+  --> runtime-core/src/nodes/silero_vad.rs:57:5
+   |
+51 | pub struct SileroVADNode {
+   |            ------------- fields in this struct
+...
+57 |     min_speech_duration_ms: u32,
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+...
+61 |     speech_pad_ms: u32,
+   |     ^^^^^^^^^^^^^
+
+warning: method `convert_f32_to_bytes` is never used
+   --> runtime-core/src/nodes/audio_buffer_accumulator.rs:118:8
+    |
+67  | impl AudioBufferAccumulatorNode {
+    | ------------------------------- method in this implementation
+...
+118 |     fn convert_f32_to_bytes(&self, samples: &[f32]) -> Vec<u8> {
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `samples_to_f32` and `f32_to_audio_buffer` are never used
+  --> runtime-core/src/nodes/audio_chunker.rs:62:8
+   |
+53 | impl AudioChunkerNode {
+   | --------------------- methods in this implementation
+...
+62 |     fn samples_to_f32(&self, audio_buf: &ProtoAudioBuffer) -> Result<Vec<f32>> {
+   |        ^^^^^^^^^^^^^^
+...
+87 |     fn f32_to_audio_buffer(&self, samples: &[f32], state: &ChunkerState) -> ProtoAudioBuffer {
+   |        ^^^^^^^^^^^^^^^^^^^
+
+warning: fields `segments`, `speech_active`, and `silence_samples` are never read
+  --> runtime-core/src/nodes/speculative_vad_gate.rs:72:5
+   |
+64 | struct SessionState {
+   |        ------------ fields in this struct
+...
+72 |     segments: Vec<SpeculativeSegment>,
+   |     ^^^^^^^^
+...
+81 |     speech_active: bool,
+   |     ^^^^^^^^^^^^^
+...
+84 |     silence_samples: usize,
+   |     ^^^^^^^^^^^^^^^
+   |
+   = note: `SessionState` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `backpressure` is never read
+   --> runtime-core/src/python/multiprocess/ipc_channel.rs:328:5
+    |
+324 | pub struct Publisher<'a> {
+    |            --------- field in this struct
+...
+328 |     backpressure: bool,
+    |     ^^^^^^^^^^^^
+
+warning: field `config` is never read
+   --> runtime-core/src/python/multiprocess/process_manager.rs:203:5
+    |
+195 | pub struct ProcessManager {
+    |            -------------- field in this struct
+...
+203 |     config: MultiprocessConfig,
+    |     ^^^^^^
+
+warning: field `fields` is never read
+   --> runtime-core/src/python/multiprocess/docker_support.rs:390:5
+    |
+376 | struct ParsedLogEntry {
+    |        -------------- field in this struct
+...
+390 |     fields: HashMap<String, serde_json::Value>,
+    |     ^^^^^^
+    |
+    = note: `ParsedLogEntry` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: methods `create_build_context`, `build_image_with_progress`, and `get_image_size` are never used
+   --> runtime-core/src/python/multiprocess/container_builder.rs:164:8
+    |
+131 | impl ContainerBuilder {
+    | --------------------- methods in this implementation
+...
+164 |     fn create_build_context(&self, dockerfile_content: &str) -> Result<Vec<u8>> {
+    |        ^^^^^^^^^^^^^^^^^^^^
+...
+195 |     async fn build_image_with_progress(
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+285 |     async fn get_image_size(&self, image_id: &str) -> Result<u64> {
+    |              ^^^^^^^^^^^^^^
+
+warning: `remotemedia-runtime-core` (lib) generated 103 warnings (run `cargo fix --lib -p remotemedia-runtime-core` to apply 1 suggestion)
+warning: unexpected `cfg` condition value: `grpc-transport`
+ --> transports/remotemedia-grpc/src/version.rs:6:8
+  |
+6 | #![cfg(feature = "grpc-transport")]
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+  = help: consider adding `grpc-transport` as a feature in `Cargo.toml`
+  = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+  = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: unexpected `cfg` condition value: `grpc-transport`
+ --> transports/remotemedia-grpc/src/executor_registry.rs:6:8
+  |
+6 | #![cfg(feature = "grpc-transport")]
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+  = help: consider adding `grpc-transport` as a feature in `Cargo.toml`
+  = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `grpc-transport`
+ --> transports/remotemedia-grpc/src/manifest_parser.rs:6:8
+  |
+6 | #![cfg(feature = "grpc-transport")]
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+  = help: consider adding `grpc-transport` as a feature in `Cargo.toml`
+  = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unused imports: `PixelFormat` and `TensorDtype`
+ --> transports/remotemedia-grpc/src/adapters.rs:9:44
+  |
+9 |     DataBuffer, DeadlineWarning, JsonData, PixelFormat, TensorBuffer, TensorDtype, TextBuffer,
+  |                                            ^^^^^^^^^^^                ^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `warn`
+  --> transports/remotemedia-grpc/src/server.rs:23:21
+   |
+23 | use tracing::{info, warn};
+   |                     ^^^^
+
+warning: unused import: `ServiceConfig`
+  --> transports/remotemedia-grpc/src/streaming.rs:33:13
+   |
+33 | use crate::{ServiceConfig, ServiceError};
+   |             ^^^^^^^^^^^^^
+
+warning: unused import: `trace`
+  --> transports/remotemedia-grpc/src/streaming.rs:47:35
+   |
+47 | use tracing::{debug, error, info, trace, warn};
+   |                                   ^^^^^
+
+warning: unexpected `cfg` condition value: `multiprocess`
+   --> transports/remotemedia-grpc/src/streaming.rs:441:15
+    |
+441 |         #[cfg(feature = "multiprocess")]
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+    = help: consider adding `multiprocess` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `multiprocess`
+   --> transports/remotemedia-grpc/src/streaming.rs:451:19
+    |
+451 |             #[cfg(feature = "multiprocess")]
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+    = help: consider adding `multiprocess` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `multiprocess`
+   --> transports/remotemedia-grpc/src/streaming.rs:464:23
+    |
+464 |             #[cfg(not(feature = "multiprocess"))]
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+    = help: consider adding `multiprocess` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `multiprocess`
+   --> transports/remotemedia-grpc/src/streaming.rs:507:11
+    |
+507 |     #[cfg(feature = "multiprocess")] multiprocess_executor: Option<
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+    = help: consider adding `multiprocess` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `multiprocess`
+   --> transports/remotemedia-grpc/src/streaming.rs:547:23
+    |
+547 |                 #[cfg(feature = "multiprocess")]
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+    = help: consider adding `multiprocess` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unused import: `crate::adapters::runtime_data_to_data_buffer`
+    --> transports/remotemedia-grpc/src/streaming.rs:1171:13
+     |
+1171 |         use crate::adapters::runtime_data_to_data_buffer;
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unexpected `cfg` condition value: `multiprocess`
+  --> transports/remotemedia-grpc/src/session_router.rs:20:7
+   |
+20 | #[cfg(feature = "multiprocess")]
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+   = help: consider adding `multiprocess` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unused import: `warn`
+  --> transports/remotemedia-grpc/src/session_router.rs:18:35
+   |
+18 | use tracing::{debug, error, info, warn};
+   |                                   ^^^^
+
+warning: unexpected `cfg` condition value: `multiprocess`
+  --> transports/remotemedia-grpc/src/session_router.rs:76:11
+   |
+76 |     #[cfg(feature = "multiprocess")]
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+   = help: consider adding `multiprocess` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `multiprocess`
+   --> transports/remotemedia-grpc/src/session_router.rs:118:11
+    |
+118 |     #[cfg(feature = "multiprocess")]
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+    = help: consider adding `multiprocess` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `multiprocess`
+   --> transports/remotemedia-grpc/src/session_router.rs:105:19
+    |
+105 |             #[cfg(feature = "multiprocess")]
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+    = help: consider adding `multiprocess` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `multiprocess`
+   --> transports/remotemedia-grpc/src/session_router.rs:436:15
+    |
+436 |         #[cfg(feature = "multiprocess")]
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+    = help: consider adding `multiprocess` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `multiprocess`
+   --> transports/remotemedia-grpc/src/session_router.rs:438:15
+    |
+438 |         #[cfg(feature = "multiprocess")]
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+    = help: consider adding `multiprocess` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `multiprocess`
+   --> transports/remotemedia-grpc/src/session_router.rs:440:15
+    |
+440 |         #[cfg(feature = "multiprocess")]
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+    = help: consider adding `multiprocess` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `multiprocess`
+   --> transports/remotemedia-grpc/src/session_router.rs:451:19
+    |
+451 |             #[cfg(feature = "multiprocess")]
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `ctrlc`, `default`, `num_cpus`, and `server`
+    = help: consider adding `multiprocess` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unused variable: `py_streaming_node`
+   --> transports/remotemedia-grpc/src/streaming.rs:968:16
+    |
+968 |     let (node, py_streaming_node): (
+    |                ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_py_streaming_node`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `data_type_clone`
+    --> transports/remotemedia-grpc/src/streaming.rs:1186:13
+     |
+1186 |         let data_type_clone = data_type.clone();
+     |             ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_data_type_clone`
+
+warning: unused import: `AsyncStreamingNode`
+ --> transports/remotemedia-grpc/src/async_pipeline.rs:9:39
+  |
+9 | use remotemedia_runtime_core::nodes::{AsyncStreamingNode, StreamingNode};
+  |                                       ^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `method`
+   --> transports/remotemedia-grpc/src/metrics.rs:212:40
+    |
+212 |     pub fn record_request_start(&self, method: &str) -> std::time::Instant {
+    |                                        ^^^^^^ help: if this is intentional, prefix it with an underscore: `_method`
+
+warning: value assigned to `client_output_rx` is never read
+   --> transports/remotemedia-grpc/src/async_pipeline.rs:223:17
+    |
+223 |         let mut client_output_rx = None;
+    |                 ^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` on by default
+
+warning: unused variable: `tx`
+   --> transports/remotemedia-grpc/src/async_pipeline.rs:227:18
+    |
+227 |             let (tx, rx) = unbounded_channel();
+    |                  ^^ help: if this is intentional, prefix it with an underscore: `_tx`
+
+warning: unused variable: `upstream_nodes`
+   --> transports/remotemedia-grpc/src/async_pipeline.rs:231:25
+    |
+231 |             if let Some(upstream_nodes) = self
+    |                         ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_upstream_nodes`
+
+warning: unused variable: `rx`
+   --> transports/remotemedia-grpc/src/async_pipeline.rs:253:29
+    |
+253 |                 if let Some(rx) = node_inputs.remove(to_node) {
+    |                             ^^ help: if this is intentional, prefix it with an underscore: `_rx`
+
+warning: type `streaming::StreamSession` is more private than the item `AsyncRouter::new`
+   --> transports/remotemedia-grpc/src/async_router.rs:152:5
+    |
+152 | /     pub fn new(
+153 | |         registry: Arc<StreamingNodeRegistry>,
+154 | |         session: Arc<Mutex<StreamSession>>,
+155 | |         client_tx: mpsc::Sender<Result<StreamResponse, Status>>,
+156 | |     ) -> Self {
+    | |_____________^ associated function `AsyncRouter::new` is reachable at visibility `pub`
+    |
+note: but type `streaming::StreamSession` is only usable at visibility `pub(crate)`
+   --> transports/remotemedia-grpc/src/streaming.rs:156:1
+    |
+156 | pub(crate) struct StreamSession {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `streaming::StreamSession` is more private than the item `route_to_downstream_async`
+   --> transports/remotemedia-grpc/src/async_router.rs:331:1
+    |
+331 | / pub async fn route_to_downstream_async(
+332 | |     output_data: RuntimeData,
+333 | |     from_node_id: String,
+334 | |     session: Arc<Mutex<StreamSession>>,
+...   |
+338 | |     base_sequence: u64,
+339 | | ) -> Result<(), Status> {
+    | |_______________________^ function `route_to_downstream_async` is reachable at visibility `pub`
+    |
+note: but type `streaming::StreamSession` is only usable at visibility `pub(crate)`
+   --> transports/remotemedia-grpc/src/streaming.rs:156:1
+    |
+156 | pub(crate) struct StreamSession {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `streaming::StreamSession` is more private than the item `SessionRouter::new`
+   --> transports/remotemedia-grpc/src/session_router.rs:83:5
+    |
+83  | /     pub fn new(
+84  | |         session_id: String,
+85  | |         registry: Arc<StreamingNodeRegistry>,
+86  | |         session: Arc<Mutex<StreamSession>>,
+87  | |         client_tx: mpsc::Sender<Result<StreamResponse, Status>>,
+88  | |     ) -> (Self, mpsc::Sender<()>) {
+    | |_________________________________^ associated function `SessionRouter::new` is reachable at visibility `pub`
+    |
+note: but type `streaming::StreamSession` is only usable at visibility `pub(crate)`
+   --> transports/remotemedia-grpc/src/streaming.rs:156:1
+    |
+156 | pub(crate) struct StreamSession {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `auth_token` is never read
+  --> transports/remotemedia-grpc/src/client.rs:38:5
+   |
+33 | pub struct GrpcPipelineClient {
+   |            ------------------ field in this struct
+...
+38 |     auth_token: Option<String>,
+   |     ^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: method `create_metadata` is never used
+   --> transports/remotemedia-grpc/src/client.rs:111:8
+    |
+44  | impl GrpcPipelineClient {
+    | ----------------------- method in this implementation
+...
+111 |     fn create_metadata(&self) -> Result<tonic::metadata::MetadataMap> {
+    |        ^^^^^^^^^^^^^^^
+
+warning: field `limits` is never read
+  --> transports/remotemedia-grpc/src/execution.rs:32:5
+   |
+30 | pub struct ExecutionServiceImpl {
+   |            -------------------- field in this struct
+31 |     auth_config: AuthConfig,
+32 |     limits: ResourceLimits,
+   |     ^^^^^^
+
+warning: constant `MAX_BUFFER_CHUNKS` is never used
+  --> transports/remotemedia-grpc/src/streaming.rs:51:7
+   |
+51 | const MAX_BUFFER_CHUNKS: usize = 10;
+   |       ^^^^^^^^^^^^^^^^^
+
+warning: constant `SESSION_TIMEOUT_SECS` is never used
+  --> transports/remotemedia-grpc/src/streaming.rs:54:7
+   |
+54 | const SESSION_TIMEOUT_SECS: u64 = 300; // 5 minutes
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `node` and `py_streaming_node` are never read
+  --> transports/remotemedia-grpc/src/streaming.rs:67:5
+   |
+66 | struct CachedNode {
+   |        ---------- fields in this struct
+67 |     node: Arc<Box<dyn StreamingNode>>,
+   |     ^^^^
+68 |     /// For Python streaming nodes, store the unwrapped instance to access process_streaming()
+69 |     py_streaming_node: Option<Arc<PythonStreamingNode>>,
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: fields `auth_config` and `limits` are never read
+  --> transports/remotemedia-grpc/src/streaming.rs:79:5
+   |
+74 | pub struct StreamingServiceImpl {
+   |            -------------------- fields in this struct
+...
+79 |     auth_config: crate::auth::AuthConfig,
+   |     ^^^^^^^^^^^
+...
+82 |     limits: crate::limits::ResourceLimits,
+   |     ^^^^^^
+
+warning: field `recommended_chunk_size` is never read
+   --> transports/remotemedia-grpc/src/streaming.rs:194:5
+    |
+156 | pub(crate) struct StreamSession {
+    |                   ------------- field in this struct
+...
+194 |     recommended_chunk_size: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `is_timed_out` and `cached_nodes_count` are never used
+   --> transports/remotemedia-grpc/src/streaming.rs:250:8
+    |
+217 | impl StreamSession {
+    | ------------------ methods in this implementation
+...
+250 |     fn is_timed_out(&self) -> bool {
+    |        ^^^^^^^^^^^^
+...
+255 |     fn cached_nodes_count(&self) -> usize {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `route_to_downstream` is never used
+   --> transports/remotemedia-grpc/src/streaming.rs:925:10
+    |
+925 | async fn route_to_downstream(
+    |          ^^^^^^^^^^^^^^^^^^^
+
+warning: function `handle_data_chunk_multi` is never used
+   --> transports/remotemedia-grpc/src/streaming.rs:951:10
+    |
+951 | async fn handle_data_chunk_multi(
+    |          ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `session_id` is never read
+  --> transports/remotemedia-grpc/src/async_router.rs:43:5
+   |
+39 | struct NodeRunner {
+   |        ---------- field in this struct
+...
+43 |     session_id: Option<String>,
+   |     ^^^^^^^^^^
+
+warning: method `get_node_type` is never used
+   --> transports/remotemedia-grpc/src/session_router.rs:665:14
+    |
+80  | impl SessionRouter {
+    | ------------------ method in this implementation
+...
+665 |     async fn get_node_type(&self, node_id: &str) -> String {
+    |              ^^^^^^^^^^^^^
+
+warning: `remotemedia-grpc` (lib) generated 46 warnings (run `cargo fix --lib -p remotemedia-grpc` to apply 6 suggestions)
+   Compiling remotemedia-runtime-core v0.4.0 (/home/acidhax/dev/personal/remotemedia-sdk/runtime-core)
+error[E0432]: unresolved import `remotemedia_runtime_core::executor::execution_context`
+  --> runtime-core/benches/docker_e2e_pipeline.rs:17:15
+   |
+17 |     executor::execution_context::ExecutionContext,
+   |               ^^^^^^^^^^^^^^^^^ could not find `execution_context` in `executor`
+
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+   --> runtime-core/benches/docker_e2e_pipeline.rs:66:28
+    |
+66  |             let executor = MultiprocessExecutor::new();
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `MultiprocessConfig` is missing
+    |
+note: associated function defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:764:12
+    |
+764 |     pub fn new(config: MultiprocessConfig) -> Self {
+    |            ^^^
+help: provide the argument
+    |
+66  |             let executor = MultiprocessExecutor::new(/* MultiprocessConfig */);
+    |                                                      ++++++++++++++++++++++++
+
+error[E0599]: no method named `initialize` found for struct `MultiprocessExecutor` in the current scope
+  --> runtime-core/benches/docker_e2e_pipeline.rs:77:22
+   |
+77 |             executor.initialize(&ctx, &session_id).await.unwrap();
+   |                      ^^^^^^^^^^ method not found in `MultiprocessExecutor`
+   |
+   = help: items from traits can only be used if the trait is in scope
+help: the following traits which provide `initialize` are implemented but not in scope; perhaps you want to import one of them
+   |
+10 + use remotemedia_runtime_core::executor::node_executor::NodeExecutor;
+   |
+10 + use remotemedia_runtime_core::executor::node_executor::NodeHandler;
+   |
+10 + use remotemedia_runtime_core::nodes::AsyncStreamingNode;
+   |
+10 + use remotemedia_runtime_core::nodes::NodeExecutor;
+   |
+     and 1 other candidate
+
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+   --> runtime-core/benches/docker_e2e_pipeline.rs:89:32
+    |
+89  |                 let executor = MultiprocessExecutor::new();
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `MultiprocessConfig` is missing
+    |
+note: associated function defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:764:12
+    |
+764 |     pub fn new(config: MultiprocessConfig) -> Self {
+    |            ^^^
+help: provide the argument
+    |
+89  |                 let executor = MultiprocessExecutor::new(/* MultiprocessConfig */);
+    |                                                          ++++++++++++++++++++++++
+
+error[E0599]: no method named `initialize` found for struct `MultiprocessExecutor` in the current scope
+   --> runtime-core/benches/docker_e2e_pipeline.rs:109:26
+    |
+109 |                 executor.initialize(&ctx, &session_id).await.unwrap();
+    |                          ^^^^^^^^^^ method not found in `MultiprocessExecutor`
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: the following traits which provide `initialize` are implemented but not in scope; perhaps you want to import one of them
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeExecutor;
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeHandler;
+    |
+10  + use remotemedia_runtime_core::nodes::AsyncStreamingNode;
+    |
+10  + use remotemedia_runtime_core::nodes::NodeExecutor;
+    |
+      and 1 other candidate
+
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+   --> runtime-core/benches/docker_e2e_pipeline.rs:140:40
+    |
+140 |                         let executor = MultiprocessExecutor::new();
+    |                                        ^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `MultiprocessConfig` is missing
+    |
+note: associated function defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:764:12
+    |
+764 |     pub fn new(config: MultiprocessConfig) -> Self {
+    |            ^^^
+help: provide the argument
+    |
+140 |                         let executor = MultiprocessExecutor::new(/* MultiprocessConfig */);
+    |                                                                  ++++++++++++++++++++++++
+
+error[E0599]: no method named `initialize` found for struct `MultiprocessExecutor` in the current scope
+   --> runtime-core/benches/docker_e2e_pipeline.rs:151:46
+    |
+151 |                         rt.block_on(executor.initialize(&ctx, &session_id)).unwrap();
+    |                                              ^^^^^^^^^^ method not found in `MultiprocessExecutor`
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: the following traits which provide `initialize` are implemented but not in scope; perhaps you want to import one of them
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeExecutor;
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeHandler;
+    |
+10  + use remotemedia_runtime_core::nodes::AsyncStreamingNode;
+    |
+10  + use remotemedia_runtime_core::nodes::NodeExecutor;
+    |
+      and 1 other candidate
+
+error[E0308]: mismatched types
+   --> runtime-core/benches/docker_e2e_pipeline.rs:157:73
+    |
+157 |                         executor.send_data_to_node(node_id, session_id, test_data.clone()).await.unwrap();
+    |                                  -----------------                      ^^^^^^^^^^^^^^^^^ expected `RuntimeData`, found a different `RuntimeData`
+    |                                  |
+    |                                  arguments to this method are incorrect
+    |
+note: method defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:581:18
+    |
+581 |     pub async fn send_data_to_node(
+    |                  ^^^^^^^^^^^^^^^^^
+
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+   --> runtime-core/benches/docker_e2e_pipeline.rs:174:44
+    |
+174 | ...                   let executor = MultiprocessExecutor::new();
+    |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `MultiprocessConfig` is missing
+    |
+note: associated function defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:764:12
+    |
+764 |     pub fn new(config: MultiprocessConfig) -> Self {
+    |            ^^^
+help: provide the argument
+    |
+174 |                             let executor = MultiprocessExecutor::new(/* MultiprocessConfig */);
+    |                                                                      ++++++++++++++++++++++++
+
+error[E0599]: no method named `initialize` found for struct `MultiprocessExecutor` in the current scope
+   --> runtime-core/benches/docker_e2e_pipeline.rs:194:50
+    |
+194 | ...                   rt.block_on(executor.initialize(&ctx, &session_id)).unwrap();
+    |                                            ^^^^^^^^^^ method not found in `MultiprocessExecutor`
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: the following traits which provide `initialize` are implemented but not in scope; perhaps you want to import one of them
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeExecutor;
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeHandler;
+    |
+10  + use remotemedia_runtime_core::nodes::AsyncStreamingNode;
+    |
+10  + use remotemedia_runtime_core::nodes::NodeExecutor;
+    |
+      and 1 other candidate
+
+error[E0308]: mismatched types
+   --> runtime-core/benches/docker_e2e_pipeline.rs:200:77
+    |
+200 | ...                   executor.send_data_to_node(node_id, session_id, test_data.clone()).await.unwrap();
+    |                                -----------------                      ^^^^^^^^^^^^^^^^^ expected `RuntimeData`, found a different `RuntimeData`
+    |                                |
+    |                                arguments to this method are incorrect
+    |
+note: method defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:581:18
+    |
+581 |     pub async fn send_data_to_node(
+    |                  ^^^^^^^^^^^^^^^^^
+
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+   --> runtime-core/benches/docker_e2e_pipeline.rs:228:32
+    |
+228 |                 let executor = MultiprocessExecutor::new();
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `MultiprocessConfig` is missing
+    |
+note: associated function defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:764:12
+    |
+764 |     pub fn new(config: MultiprocessConfig) -> Self {
+    |            ^^^
+help: provide the argument
+    |
+228 |                 let executor = MultiprocessExecutor::new(/* MultiprocessConfig */);
+    |                                                          ++++++++++++++++++++++++
+
+error[E0599]: no method named `initialize` found for struct `MultiprocessExecutor` in the current scope
+   --> runtime-core/benches/docker_e2e_pipeline.rs:239:38
+    |
+239 |                 rt.block_on(executor.initialize(&ctx, &session_id)).unwrap();
+    |                                      ^^^^^^^^^^ method not found in `MultiprocessExecutor`
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: the following traits which provide `initialize` are implemented but not in scope; perhaps you want to import one of them
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeExecutor;
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeHandler;
+    |
+10  + use remotemedia_runtime_core::nodes::AsyncStreamingNode;
+    |
+10  + use remotemedia_runtime_core::nodes::NodeExecutor;
+    |
+      and 1 other candidate
+
+error[E0308]: mismatched types
+   --> runtime-core/benches/docker_e2e_pipeline.rs:251:69
+    |
+251 |                     executor.send_data_to_node(node_id, session_id, chunk.clone()).await.unwrap();
+    |                              -----------------                      ^^^^^^^^^^^^^ expected `RuntimeData`, found a different `RuntimeData`
+    |                              |
+    |                              arguments to this method are incorrect
+    |
+note: method defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:581:18
+    |
+581 |     pub async fn send_data_to_node(
+    |                  ^^^^^^^^^^^^^^^^^
+
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+   --> runtime-core/benches/docker_e2e_pipeline.rs:268:36
+    |
+268 |                     let executor = MultiprocessExecutor::new();
+    |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `MultiprocessConfig` is missing
+    |
+note: associated function defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:764:12
+    |
+764 |     pub fn new(config: MultiprocessConfig) -> Self {
+    |            ^^^
+help: provide the argument
+    |
+268 |                     let executor = MultiprocessExecutor::new(/* MultiprocessConfig */);
+    |                                                              ++++++++++++++++++++++++
+
+error[E0599]: no method named `initialize` found for struct `MultiprocessExecutor` in the current scope
+   --> runtime-core/benches/docker_e2e_pipeline.rs:288:42
+    |
+288 |                     rt.block_on(executor.initialize(&ctx, &session_id)).unwrap();
+    |                                          ^^^^^^^^^^ method not found in `MultiprocessExecutor`
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: the following traits which provide `initialize` are implemented but not in scope; perhaps you want to import one of them
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeExecutor;
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeHandler;
+    |
+10  + use remotemedia_runtime_core::nodes::AsyncStreamingNode;
+    |
+10  + use remotemedia_runtime_core::nodes::NodeExecutor;
+    |
+      and 1 other candidate
+
+error[E0308]: mismatched types
+   --> runtime-core/benches/docker_e2e_pipeline.rs:300:73
+    |
+300 |                         executor.send_data_to_node(node_id, session_id, chunk.clone()).await.unwrap();
+    |                                  -----------------                      ^^^^^^^^^^^^^ expected `RuntimeData`, found a different `RuntimeData`
+    |                                  |
+    |                                  arguments to this method are incorrect
+    |
+note: method defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:581:18
+    |
+581 |     pub async fn send_data_to_node(
+    |                  ^^^^^^^^^^^^^^^^^
+
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+   --> runtime-core/benches/docker_e2e_pipeline.rs:327:28
+    |
+327 |             let executor = MultiprocessExecutor::new();
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `MultiprocessConfig` is missing
+    |
+note: associated function defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:764:12
+    |
+764 |     pub fn new(config: MultiprocessConfig) -> Self {
+    |            ^^^
+help: provide the argument
+    |
+327 |             let executor = MultiprocessExecutor::new(/* MultiprocessConfig */);
+    |                                                      ++++++++++++++++++++++++
+
+error[E0599]: no method named `initialize` found for struct `MultiprocessExecutor` in the current scope
+   --> runtime-core/benches/docker_e2e_pipeline.rs:341:22
+    |
+341 |             executor.initialize(&ctx, &session_id).await.unwrap();
+    |                      ^^^^^^^^^^ method not found in `MultiprocessExecutor`
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: the following traits which provide `initialize` are implemented but not in scope; perhaps you want to import one of them
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeExecutor;
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeHandler;
+    |
+10  + use remotemedia_runtime_core::nodes::AsyncStreamingNode;
+    |
+10  + use remotemedia_runtime_core::nodes::NodeExecutor;
+    |
+      and 1 other candidate
+
+error[E0308]: mismatched types
+   --> runtime-core/benches/docker_e2e_pipeline.rs:345:62
+    |
+345 |             executor.send_data_to_node(node_id, &session_id, test_data).await.unwrap();
+    |                      -----------------                       ^^^^^^^^^ expected `RuntimeData`, found a different `RuntimeData`
+    |                      |
+    |                      arguments to this method are incorrect
+    |
+note: method defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:581:18
+    |
+581 |     pub async fn send_data_to_node(
+    |                  ^^^^^^^^^^^^^^^^^
+
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+   --> runtime-core/benches/docker_e2e_pipeline.rs:358:32
+    |
+358 |                 let executor = MultiprocessExecutor::new();
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `MultiprocessConfig` is missing
+    |
+note: associated function defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:764:12
+    |
+764 |     pub fn new(config: MultiprocessConfig) -> Self {
+    |            ^^^
+help: provide the argument
+    |
+358 |                 let executor = MultiprocessExecutor::new(/* MultiprocessConfig */);
+    |                                                          ++++++++++++++++++++++++
+
+error[E0599]: no method named `initialize` found for struct `MultiprocessExecutor` in the current scope
+   --> runtime-core/benches/docker_e2e_pipeline.rs:381:26
+    |
+381 |                 executor.initialize(&ctx, &session_id).await.unwrap();
+    |                          ^^^^^^^^^^ method not found in `MultiprocessExecutor`
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: the following traits which provide `initialize` are implemented but not in scope; perhaps you want to import one of them
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeExecutor;
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeHandler;
+    |
+10  + use remotemedia_runtime_core::nodes::AsyncStreamingNode;
+    |
+10  + use remotemedia_runtime_core::nodes::NodeExecutor;
+    |
+      and 1 other candidate
+
+error[E0308]: mismatched types
+   --> runtime-core/benches/docker_e2e_pipeline.rs:385:66
+    |
+385 |                 executor.send_data_to_node(node_id, &session_id, test_data).await.unwrap();
+    |                          -----------------                       ^^^^^^^^^ expected `RuntimeData`, found a different `RuntimeData`
+    |                          |
+    |                          arguments to this method are incorrect
+    |
+note: method defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:581:18
+    |
+581 |     pub async fn send_data_to_node(
+    |                  ^^^^^^^^^^^^^^^^^
+
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+   --> runtime-core/benches/docker_e2e_pipeline.rs:419:44
+    |
+419 | ...                   let executor = MultiprocessExecutor::new();
+    |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `MultiprocessConfig` is missing
+    |
+note: associated function defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:764:12
+    |
+764 |     pub fn new(config: MultiprocessConfig) -> Self {
+    |            ^^^
+help: provide the argument
+    |
+419 |                             let executor = MultiprocessExecutor::new(/* MultiprocessConfig */);
+    |                                                                      ++++++++++++++++++++++++
+
+error[E0599]: no method named `initialize` found for struct `MultiprocessExecutor` in the current scope
+   --> runtime-core/benches/docker_e2e_pipeline.rs:430:38
+    |
+430 | ...                   executor.initialize(&ctx, &session_id).await.unwrap();
+    |                                ^^^^^^^^^^ method not found in `MultiprocessExecutor`
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: the following traits which provide `initialize` are implemented but not in scope; perhaps you want to import one of them
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeExecutor;
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeHandler;
+    |
+10  + use remotemedia_runtime_core::nodes::AsyncStreamingNode;
+    |
+10  + use remotemedia_runtime_core::nodes::NodeExecutor;
+    |
+      and 1 other candidate
+
+error[E0308]: mismatched types
+   --> runtime-core/benches/docker_e2e_pipeline.rs:433:79
+    |
+433 | ...                   executor.send_data_to_node(&node_id, &session_id, test_data).await.unwrap();
+    |                                -----------------                        ^^^^^^^^^ expected `RuntimeData`, found a different `RuntimeData`
+    |                                |
+    |                                arguments to this method are incorrect
+    |
+note: method defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:581:18
+    |
+581 |     pub async fn send_data_to_node(
+    |                  ^^^^^^^^^^^^^^^^^
+
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+   --> runtime-core/benches/docker_e2e_pipeline.rs:461:48
+    |
+461 | ...                   let executor = MultiprocessExecutor::new();
+    |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `MultiprocessConfig` is missing
+    |
+note: associated function defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:764:12
+    |
+764 |     pub fn new(config: MultiprocessConfig) -> Self {
+    |            ^^^
+help: provide the argument
+    |
+461 |                                 let executor = MultiprocessExecutor::new(/* MultiprocessConfig */);
+    |                                                                          ++++++++++++++++++++++++
+
+error[E0599]: no method named `initialize` found for struct `MultiprocessExecutor` in the current scope
+   --> runtime-core/benches/docker_e2e_pipeline.rs:481:42
+    |
+481 | ...                   executor.initialize(&ctx, &session_id).await.unwrap();
+    |                                ^^^^^^^^^^ method not found in `MultiprocessExecutor`
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: the following traits which provide `initialize` are implemented but not in scope; perhaps you want to import one of them
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeExecutor;
+    |
+10  + use remotemedia_runtime_core::executor::node_executor::NodeHandler;
+    |
+10  + use remotemedia_runtime_core::nodes::AsyncStreamingNode;
+    |
+10  + use remotemedia_runtime_core::nodes::NodeExecutor;
+    |
+      and 1 other candidate
+
+error[E0308]: mismatched types
+   --> runtime-core/benches/docker_e2e_pipeline.rs:484:83
+    |
+484 | ...                   executor.send_data_to_node(&node_id, &session_id, test_data).await.unwrap();
+    |                                -----------------                        ^^^^^^^^^ expected `RuntimeData`, found a different `RuntimeData`
+    |                                |
+    |                                arguments to this method are incorrect
+    |
+note: method defined here
+   --> /home/acidhax/dev/personal/remotemedia-sdk/runtime-core/src/python/multiprocess/multiprocess_executor.rs:581:18
+    |
+581 |     pub async fn send_data_to_node(
+    |                  ^^^^^^^^^^^^^^^^^
+
+Some errors have detailed explanations: E0061, E0308, E0432, E0599.
+For more information about an error, try `rustc --explain E0061`.
+error: could not compile `remotemedia-runtime-core` (bench "docker_e2e_pipeline") due to 29 previous errors
