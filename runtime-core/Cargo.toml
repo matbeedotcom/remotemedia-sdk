@@ -185,3 +185,8 @@ harness = false
 name = "bench_docker_latency"
 path = "benches/bench_docker_latency.rs"
 harness = false
+
+[[bench]]
+name = "docker_vs_multiprocess"
+path = "benches/docker_vs_multiprocess.rs"
+harness = false
