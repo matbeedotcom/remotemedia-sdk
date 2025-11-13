@@ -190,3 +190,18 @@ harness = false
 name = "docker_vs_multiprocess"
 path = "benches/docker_vs_multiprocess.rs"
 harness = false
+
+[[bench]]
+name = "docker_e2e_pipeline"
+path = "benches/docker_e2e_pipeline.rs"
+harness = false
+
+[[bench]]
+name = "docker_e2e_pipeline_simple"
+path = "benches/docker_e2e_pipeline_simple.rs"
+harness = false
+
+[[bench]]
+name = "docker_ipc_benchmark"
+path = "benches/docker_ipc_benchmark.rs"
+harness = false
