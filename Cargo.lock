@@ -463,6 +463,7 @@ dependencies = [
  "base64 0.22.1",
  "bollard-stubs",
  "bytes",
+ "chrono",
  "futures-core",
  "futures-util",
  "hex",
@@ -493,6 +494,7 @@ version = "1.49.1-rc.28.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5731fe885755e92beff1950774068e0cae67ea6ec7587381536fca84f1779623"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
  "serde_repr",
@@ -3871,6 +3873,8 @@ dependencies = [
  "hex",
  "histogram",
  "hound",
+ "http-body-util",
+ "hyper 1.8.0",
  "iceoryx2",
  "iceoryx2-bb-container",
  "iceoryx2-bb-elementary",

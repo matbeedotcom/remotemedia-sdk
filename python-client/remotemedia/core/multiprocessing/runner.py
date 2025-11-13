@@ -15,10 +15,77 @@ import json
 import logging
 import sys
 import signal
+import os
+import pathlib
 from typing import Optional, Dict, Any
 
 from remotemedia.core import MultiprocessNode, NodeConfig, NodeStatus
 from remotemedia.core.multiprocessing import get_node_class
+
+
+def detect_container_environment() -> tuple[bool, dict[str, str]]:
+    """
+    Detect if running inside a Docker container.
+
+    Checks for common Docker indicators:
+    - /.dockerenv file (present in most Docker containers)
+    - /proc/1/cgroup contains "docker" or "container"
+    - Container environment variables (DOCKER_HOST, CONTAINER_ID, etc.)
+
+    Returns:
+        Tuple of (is_container: bool, environment_info: dict)
+            - is_container: True if running in a container
+            - environment_info: Dictionary with detection details
+    """
+    env_info = {
+        "dockerenv_file": False,
+        "cgroup_indicator": False,
+        "env_variables": False,
+        "detected_runtime": "unknown",
+    }
+
+    # Check for /.dockerenv file (most reliable indicator)
+    if pathlib.Path("/.dockerenv").exists():
+        env_info["dockerenv_file"] = True
+        env_info["detected_runtime"] = "docker"
+
+    # Check /proc/1/cgroup for container indicators
+    try:
+        cgroup_path = pathlib.Path("/proc/1/cgroup")
+        if cgroup_path.exists():
+            cgroup_content = cgroup_path.read_text()
+            if "docker" in cgroup_content.lower() or "container" in cgroup_content.lower():
+                env_info["cgroup_indicator"] = True
+                if "docker" in cgroup_content.lower():
+                    env_info["detected_runtime"] = "docker"
+                else:
+                    env_info["detected_runtime"] = "container"
+    except (OSError, PermissionError):
+        pass
+
+    # Check for container-related environment variables
+    container_env_vars = [
+        "DOCKER_HOST",
+        "DOCKER_CONTAINER",
+        "CONTAINER_ID",
+        "CONTAINERD_NAMESPACE",
+        "PODMAN_CONTAINER",
+    ]
+    for var in container_env_vars:
+        if os.environ.get(var):
+            env_info["env_variables"] = True
+            break
+
+    # Determine if we're in a container
+    is_container = (
+        env_info["dockerenv_file"]
+        or env_info["cgroup_indicator"]
+        or env_info["env_variables"]
+    )
+
+    return is_container, env_info
+
+
 # Signal handler setup
 def setup_signal_handlers(node: MultiprocessNode):
     """Setup signal handlers for graceful shutdown."""
@@ -67,8 +134,19 @@ class NodeRunner:
             # Get the node class
             node_class = get_node_class(self.config.node_type)
 
-            # Create node instance (pass config as keyword argument)
-            self.node = node_class(config=self.config)
+            # Create node instance
+            # Most nodes expect node_id as first positional argument
+            # We'll try different initialization patterns
+            try:
+                # Try with just node_id (nodes that handle config internally)
+                self.node = node_class(self.config.node_id)
+            except TypeError as e:
+                try:
+                    # Try with node_id and config separately (for nodes that need both)
+                    self.node = node_class(self.config.node_id, config=self.config)
+                except TypeError:
+                    # Fallback to config-only for nodes that don't take node_id
+                    self.node = node_class(config=self.config)
 
             # Setup signal handlers for graceful shutdown
             setup_signal_handlers(self.node)
@@ -315,6 +393,9 @@ async def main() -> None:
     else:
         params = args.params if args.params is not None else {}
 
+    # Detect container environment
+    is_container, env_info = detect_container_environment()
+
     # Create node configuration
     config = NodeConfig(
         node_id=args.node_id,
@@ -323,6 +404,25 @@ async def main() -> None:
         session_id=args.session_id,
         log_level=args.log_level
     )
+
+    # Log environment detection
+    if is_container:
+        detection_methods = []
+        if env_info.get("dockerenv_file"):
+            detection_methods.append("/.dockerenv file")
+        if env_info.get("cgroup_indicator"):
+            detection_methods.append("/proc/1/cgroup")
+        if env_info.get("env_variables"):
+            detection_methods.append("environment variables")
+
+        logger.info(
+            f"Running in container environment - "
+            f"Detection methods: {', '.join(detection_methods)} - "
+            f"Runtime: {env_info.get('detected_runtime', 'unknown')} - "
+            f"IPC will use container /dev and /tmp mounts"
+        )
+    else:
+        logger.info("Running in native environment (not in a container)")
 
     logger.info(f"Starting node runner for {config.node_type}:{config.node_id}")
 

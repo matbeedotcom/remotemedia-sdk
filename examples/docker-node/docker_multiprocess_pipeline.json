@@ -1,0 +1,89 @@
+{
+    "name": "docker_multiprocess_example",
+    "version": "1.0.0",
+    "description": "Example pipeline demonstrating Docker execution through multiprocess system",
+    "nodes": [
+        {
+            "id": "input",
+            "node_type": "Input",
+            "executor": null,
+            "config": {},
+            "metadata": {}
+        },
+        {
+            "id": "docker_echo_node",
+            "node_type": "test_echo.EchoNode",
+            "executor": "multiprocess",
+            "config": {
+                "echo_delay_ms": 10,
+                "echo_multiplier": 0.8
+            },
+            "metadata": {
+                "description": "Echo node running in Docker container",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.10",
+                    "python_packages": [
+                        "numpy>=1.24.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "ffmpeg"
+                    ],
+                    "memory_mb": 256,
+                    "cpu_cores": 0.5,
+                    "base_image": "python:3.10-slim",
+                    "shm_size_mb": 2048,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "REMOTEMEDIA_LOG_LEVEL": "DEBUG"
+                    },
+                    "gpu_devices": [],
+                    "volumes": []
+                }
+            }
+        },
+        {
+            "id": "output",
+            "node_type": "Output",
+            "executor": null,
+            "config": {},
+            "metadata": {}
+        }
+    ],
+    "edges": [
+        {
+            "source": "input",
+            "target": "docker_echo_node",
+            "field_mapping": {
+                "source_field": "data",
+                "target_field": "input"
+            }
+        },
+        {
+            "source": "docker_echo_node",
+            "target": "output",
+            "field_mapping": {
+                "source_field": "output",
+                "target_field": "data"
+            }
+        }
+    ],
+    "config": {
+        "batch_size": 1,
+        "timeout_ms": 30000,
+        "retry_policy": {
+            "max_retries": 3,
+            "backoff_ms": 1000
+        },
+        "runtime_config": {
+            "enable_docker": true,
+            "docker_fallback_to_multiprocess": true
+        }
+    },
+    "metadata": {
+        "author": "RemoteMedia SDK",
+        "created": "2024-12-20",
+        "tags": ["docker", "multiprocess", "example"]
+    }
+}

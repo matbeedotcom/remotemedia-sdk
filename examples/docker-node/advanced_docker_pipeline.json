@@ -1,0 +1,182 @@
+{
+    "name": "advanced_docker_multiprocess_pipeline",
+    "version": "1.0.0",
+    "description": "Advanced pipeline demonstrating multiple Docker containers with different configurations",
+    "nodes": [
+        {
+            "id": "input",
+            "node_type": "Input",
+            "executor": null,
+            "config": {},
+            "metadata": {}
+        },
+        {
+            "id": "audio_processor",
+            "node_type": "audio_processing.AudioProcessor",
+            "executor": "multiprocess",
+            "config": {
+                "sample_rate": 16000,
+                "channels": 1
+            },
+            "metadata": {
+                "description": "Audio processing node with FFmpeg and scipy",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.10",
+                    "python_packages": [
+                        "numpy>=1.24.0",
+                        "scipy>=1.10.0",
+                        "librosa>=0.10.0",
+                        "soundfile>=0.12.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "ffmpeg",
+                        "libsndfile1",
+                        "libsndfile1-dev"
+                    ],
+                    "memory_mb": 512,
+                    "cpu_cores": 1.0,
+                    "base_image": "python:3.10-slim",
+                    "shm_size_mb": 2048,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "NUMBA_DISABLE_JIT": "1"
+                    },
+                    "gpu_devices": [],
+                    "volumes": []
+                }
+            }
+        },
+        {
+            "id": "ml_model",
+            "node_type": "ml_inference.ModelNode",
+            "executor": "multiprocess",
+            "config": {
+                "model_name": "whisper_base",
+                "batch_size": 4
+            },
+            "metadata": {
+                "description": "ML inference node with GPU support",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.10",
+                    "python_packages": [
+                        "torch>=2.0.0",
+                        "transformers>=4.30.0",
+                        "numpy>=1.24.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [],
+                    "memory_mb": 2048,
+                    "cpu_cores": 2.0,
+                    "base_image": "pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime",
+                    "shm_size_mb": 4096,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "CUDA_VISIBLE_DEVICES": "0",
+                        "TORCH_CUDA_ARCH_LIST": "7.0;7.5;8.0;8.6"
+                    },
+                    "gpu_devices": ["0"],
+                    "volumes": [
+                        {
+                            "host_path": "/models",
+                            "container_path": "/app/models",
+                            "read_only": true
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "id": "post_processor",
+            "node_type": "text_processing.PostProcessor",
+            "executor": "multiprocess",
+            "config": {
+                "language": "en",
+                "format": "json"
+            },
+            "metadata": {
+                "description": "Lightweight post-processing node",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.11",
+                    "python_packages": [
+                        "iceoryx2"
+                    ],
+                    "system_packages": [],
+                    "memory_mb": 128,
+                    "cpu_cores": 0.5,
+                    "base_image": "python:3.11-alpine",
+                    "shm_size_mb": 512,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1"
+                    },
+                    "gpu_devices": [],
+                    "volumes": []
+                }
+            }
+        },
+        {
+            "id": "output",
+            "node_type": "Output",
+            "executor": null,
+            "config": {},
+            "metadata": {}
+        }
+    ],
+    "edges": [
+        {
+            "source": "input",
+            "target": "audio_processor",
+            "field_mapping": {
+                "source_field": "data",
+                "target_field": "input"
+            }
+        },
+        {
+            "source": "audio_processor",
+            "target": "ml_model",
+            "field_mapping": {
+                "source_field": "processed_audio",
+                "target_field": "audio"
+            }
+        },
+        {
+            "source": "ml_model",
+            "target": "post_processor",
+            "field_mapping": {
+                "source_field": "predictions",
+                "target_field": "text"
+            }
+        },
+        {
+            "source": "post_processor",
+            "target": "output",
+            "field_mapping": {
+                "source_field": "formatted_output",
+                "target_field": "data"
+            }
+        }
+    ],
+    "config": {
+        "batch_size": 1,
+        "timeout_ms": 60000,
+        "retry_policy": {
+            "max_retries": 3,
+            "backoff_ms": 1000
+        },
+        "runtime_config": {
+            "enable_docker": true,
+            "docker_fallback_to_multiprocess": true,
+            "docker_image_cache_size": 10,
+            "docker_cleanup_on_exit": true
+        }
+    },
+    "metadata": {
+        "author": "RemoteMedia SDK",
+        "created": "2024-12-20",
+        "tags": ["docker", "multiprocess", "gpu", "ml", "audio"],
+        "description": "This pipeline demonstrates advanced Docker features including GPU support, custom base images, volume mounts, and resource limits"
+    }
+}

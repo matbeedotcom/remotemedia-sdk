@@ -62,6 +62,8 @@ histogram = "0.11.3"
 crossbeam.workspace = true
 sha2.workspace = true
 hdrhistogram.workspace = true
+hyper = { workspace = true, features = ["full"] }
+http-body-util = { version = "0.1", optional = true }
 
 # Platform-specific
 [target.'cfg(unix)'.dependencies]
@@ -99,6 +101,9 @@ rusqlite = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
+# hyper and http-body-util are transitive deps from bollard, add them directly
+hyper = { workspace = true, optional = true }
+http-body-util = { version = "0.1", optional = true }
 glob = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -114,11 +119,12 @@ axum = { workspace = true }
 tokio-stream = { workspace = true }
 
 [features]
-default = ["multiprocess", "silero-vad", "docker-executor"]
+default = ["multiprocess", "silero-vad", "docker"]
 multiprocess = ["iceoryx2", "iceoryx2-bb-log", "iceoryx2-bb-container", "iceoryx2-bb-elementary"]
 silero-vad = ["ort"]
 grpc-client = ["tonic", "prost", "prost-types"]
-docker-executor = ["bollard", "rusqlite", "tar", "chrono", "bytes", "glob", "multiprocess"]
+# Docker support integrated into multiprocess system
+docker = ["dep:bollard", "dep:tar", "dep:chrono", "dep:bytes", "dep:hyper", "dep:http-body-util", "dep:glob", "dep:rusqlite"]
 
 # NOTE: grpc-client is for RemotePipelineNode client functionality only
 # Full transport implementations belong in separate transport crates
@@ -132,22 +138,22 @@ path = "tests/integration/test_speculative_vad.rs"
 name = "test_control_messages"
 path = "tests/integration/test_control_messages.rs"
 
-# Integration tests for Docker executor (spec 009)
-[[test]]
-name = "test_docker_executor"
-path = "tests/integration/test_docker_executor.rs"
+# Old Docker executor tests removed - use test_docker_multiprocess instead
 
+# Integration test for basic Docker multiprocess execution (T021)
 [[test]]
-name = "test_docker_multicontainer"
-path = "tests/integration/test_docker_multicontainer.rs"
+name = "test_docker_multiprocess"
+path = "tests/integration/test_docker_multiprocess.rs"
 
+# Comprehensive E2E test for Docker multiprocess integration
 [[test]]
-name = "test_mixed_executors_e2e"
-path = "tests/integration/test_mixed_executors_e2e.rs"
+name = "test_docker_multiprocess_e2e"
+path = "tests/integration/test_docker_multiprocess_e2e.rs"
 
+# Test for Docker image building and caching (T031)
 [[test]]
-name = "test_docker_e2e_pipeline"
-path = "tests/integration/test_docker_e2e_pipeline.rs"
+name = "test_docker_image_builder"
+path = "tests/integration/test_docker_image_builder.rs"
 
 # Benchmarks for latency measurement
 [[bench]]

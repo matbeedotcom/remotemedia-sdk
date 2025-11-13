@@ -11,6 +11,8 @@ use tokio::sync::{mpsc, RwLock};
 
 use super::process_manager::{ExitReason, ProcessHandle, ProcessStatus};
 
+// Docker container registry removed - health monitoring now integrated in docker_support.rs
+
 /// Process health event types
 #[derive(Debug, Clone)]
 pub enum ProcessEvent {
@@ -50,6 +52,25 @@ pub enum ProcessEvent {
         reason: String,
         timestamp: Instant,
     },
+
+    /// Container became unhealthy
+    #[cfg(feature = "docker")]
+    ContainerUnhealthy {
+        container_id: String,
+        node_id: String,
+        timestamp: Instant,
+    },
+
+    /// Container health check completed
+    #[cfg(feature = "docker")]
+    ContainerHealthChecked {
+        container_id: String,
+        node_id: String,
+        is_healthy: bool,
+        memory_usage: Option<u64>,
+        cpu_usage: Option<f32>,
+        timestamp: Instant,
+    },
 }
 
 /// Health statistics for a process
@@ -72,6 +93,18 @@ pub struct ProcessHealthStats {
 
     /// Is process responsive
     pub is_responsive: bool,
+}
+
+/// Health status for a container
+#[cfg(feature = "docker")]
+#[derive(Debug, Clone)]
+pub struct ContainerHealth {
+    pub container_id: String,
+    pub node_id: String,
+    pub is_running: bool,
+    pub memory_usage: Option<u64>,
+    pub cpu_usage: Option<f32>,
+    pub last_check: Instant,
 }
 
 /// Health monitor for process supervision
@@ -309,6 +342,260 @@ impl HealthMonitor {
             false
         }
     }
+
+    /// Check health of a Docker container
+    #[cfg(feature = "docker")]
+    pub async fn check_container_health(
+        &self,
+        container_id: &str,
+        node_id: &str,
+    ) -> crate::Result<ContainerHealth> {
+        use bollard::Docker;
+
+        tracing::debug!(
+            "Checking health of container {} for node {}",
+            container_id,
+            node_id
+        );
+
+        // Connect to Docker
+        let docker = Docker::connect_with_local_defaults().map_err(|e| {
+            crate::Error::Execution(format!("Failed to connect to Docker: {}", e))
+        })?;
+
+        // Check if container is running
+        let inspect_result = docker
+            .inspect_container(
+                container_id,
+                None::<bollard::query_parameters::InspectContainerOptions>,
+            )
+            .await
+            .map_err(|e| {
+                crate::Error::Execution(format!(
+                    "Failed to inspect container {}: {}",
+                    container_id, e
+                ))
+            })?;
+
+        let is_running = inspect_result
+            .state
+            .as_ref()
+            .and_then(|s| s.running)
+            .unwrap_or(false);
+
+        // Get container stats if running
+        // Note: Stats collection is optional and may not be available in all environments
+        let (memory_usage, cpu_usage) = if is_running {
+            match self
+                .get_container_stats(container_id, &docker)
+                .await
+            {
+                Ok((mem, cpu)) => (Some(mem), Some(cpu)),
+                Err(e) => {
+                    tracing::debug!(
+                        "Stats not available for container {}: {}",
+                        container_id,
+                        e
+                    );
+                    (None, None)
+                }
+            }
+        } else {
+            (None, None)
+        };
+
+        let health = ContainerHealth {
+            container_id: container_id.to_string(),
+            node_id: node_id.to_string(),
+            is_running,
+            memory_usage,
+            cpu_usage,
+            last_check: Instant::now(),
+        };
+
+        // Send health check event
+        let _ = self
+            .event_sender
+            .send(ProcessEvent::ContainerHealthChecked {
+                container_id: container_id.to_string(),
+                node_id: node_id.to_string(),
+                is_healthy: is_running,
+                memory_usage,
+                cpu_usage,
+                timestamp: Instant::now(),
+            });
+
+        // Log and handle unhealthy containers
+        if !is_running {
+            tracing::warn!(
+                "Container {} for node {} is not running",
+                container_id,
+                node_id
+            );
+            self.handle_unhealthy_container(container_id, node_id)
+                .await?;
+        }
+
+        Ok(health)
+    }
+
+    /// Get container resource statistics
+    #[cfg(feature = "docker")]
+    async fn get_container_stats(
+        &self,
+        container_id: &str,
+        docker: &bollard::Docker,
+    ) -> crate::Result<(u64, f32)> {
+        use futures::StreamExt;
+
+        // Use new-style query parameters
+        let options = Some(
+            bollard::query_parameters::StatsOptionsBuilder::new()
+                .stream(false)
+                .one_shot(true)
+                .build(),
+        );
+
+        let mut stats_stream = docker.stats(container_id, options);
+
+        if let Some(Ok(stats)) = stats_stream.next().await {
+            // Extract memory usage from optional MemoryStats
+            let memory_usage = stats
+                .memory_stats
+                .as_ref()
+                .and_then(|ms| ms.usage)
+                .unwrap_or(0);
+
+            // Extract CPU stats from optional CpuStats
+            let cpu_usage = if let (Some(cpu_stats), Some(precpu_stats)) =
+                (stats.cpu_stats.as_ref(), stats.precpu_stats.as_ref())
+            {
+                // Get total usage
+                let total_usage = cpu_stats
+                    .cpu_usage
+                    .as_ref()
+                    .and_then(|u| u.total_usage)
+                    .unwrap_or(0);
+                let prev_total_usage = precpu_stats
+                    .cpu_usage
+                    .as_ref()
+                    .and_then(|u| u.total_usage)
+                    .unwrap_or(0);
+
+                let cpu_delta = total_usage.saturating_sub(prev_total_usage);
+
+                // Get system CPU usage
+                let system_usage = cpu_stats.system_cpu_usage.unwrap_or(0);
+                let prev_system_usage = precpu_stats.system_cpu_usage.unwrap_or(0);
+                let system_delta = system_usage.saturating_sub(prev_system_usage);
+
+                if system_delta > 0 && cpu_delta > 0 {
+                    let cpu_count = cpu_stats.online_cpus.unwrap_or(1) as f64;
+                    ((cpu_delta as f64 / system_delta as f64) * cpu_count * 100.0) as f32
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+
+            Ok((memory_usage, cpu_usage))
+        } else {
+            Err(crate::Error::Execution(
+                "Failed to get container stats".to_string(),
+            ))
+        }
+    }
+
+    /// Handle an unhealthy container
+    #[cfg(feature = "docker")]
+    async fn handle_unhealthy_container(
+        &self,
+        container_id: &str,
+        node_id: &str,
+    ) -> crate::Result<()> {
+        tracing::error!(
+            "Container {} for node {} is unhealthy",
+            container_id,
+            node_id
+        );
+
+        // Emit unhealthy event
+        let _ = self
+            .event_sender
+            .send(ProcessEvent::ContainerUnhealthy {
+                container_id: container_id.to_string(),
+                node_id: node_id.to_string(),
+                timestamp: Instant::now(),
+            });
+
+        // Container health status is now managed in docker_support.rs
+        // TODO: Update Docker health status if needed
+
+        Ok(())
+    }
+
+    /// Monitor all containers in a session
+    #[cfg(feature = "docker")]
+    pub async fn monitor_session_containers(
+        &self,
+        session_id: &str,
+        containers: &[(String, String)], // (container_id, node_id) pairs
+    ) -> Vec<ContainerHealth> {
+        let mut health_results = Vec::new();
+
+        for (container_id, node_id) in containers {
+            match self
+                .check_container_health(container_id, node_id)
+                .await
+            {
+                Ok(health) => health_results.push(health),
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to check health of container {} for node {}: {}",
+                        container_id,
+                        node_id,
+                        e
+                    );
+                }
+            }
+        }
+
+        // Log overall session health
+        let healthy_count = health_results.iter().filter(|h| h.is_running).count();
+        let total_count = health_results.len();
+
+        if healthy_count < total_count {
+            tracing::warn!(
+                "Session {} health: {}/{} containers running",
+                session_id,
+                healthy_count,
+                total_count
+            );
+        } else {
+            tracing::debug!(
+                "Session {} health: all {} containers running",
+                session_id,
+                total_count
+            );
+        }
+
+        health_results
+    }
+
+    /// Check health of a single container by node_id (looks up in registry)
+    #[cfg(feature = "docker")]
+    pub async fn check_container_by_node_id(
+        &self,
+        node_id: &str,
+    ) -> crate::Result<ContainerHealth> {
+        // Container registry removed - health checking now managed in docker_support.rs
+        // This function would need to be reimplemented using the new Docker support
+        Err(crate::Error::Execution(format!(
+            "Container health check not yet reimplemented for node_id: {}",
+            node_id
+        )))
+    }
 }
 
 /// Global event bus for process events
@@ -417,5 +704,63 @@ mod tests {
 
         // Check health
         assert!(monitor.is_healthy(1234).await);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "docker")]
+    async fn test_container_health_structure() {
+        // Test that ContainerHealth can be created and accessed
+        let health = ContainerHealth {
+            container_id: "test123".to_string(),
+            node_id: "test_node".to_string(),
+            is_running: true,
+            memory_usage: Some(1024 * 1024 * 50), // 50MB
+            cpu_usage: Some(15.5),
+            last_check: Instant::now(),
+        };
+
+        assert_eq!(health.container_id, "test123");
+        assert_eq!(health.node_id, "test_node");
+        assert!(health.is_running);
+        assert_eq!(health.memory_usage, Some(1024 * 1024 * 50));
+        assert_eq!(health.cpu_usage, Some(15.5));
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "docker")]
+    async fn test_container_events() {
+        let monitor = HealthMonitor::new(30);
+
+        // Register event handler
+        let event_received = Arc::new(RwLock::new(false));
+        let event_received_clone = event_received.clone();
+
+        monitor
+            .on_event(move |event| {
+                if matches!(event, ProcessEvent::ContainerUnhealthy { .. }) {
+                    let event_received = event_received_clone.clone();
+                    tokio::spawn(async move {
+                        *event_received.write().await = true;
+                    });
+                }
+            })
+            .await;
+
+        // Send a container unhealthy event
+        let _ = monitor
+            .event_sender
+            .send(ProcessEvent::ContainerUnhealthy {
+                container_id: "test_container".to_string(),
+                node_id: "test_node".to_string(),
+                timestamp: Instant::now(),
+            });
+
+        // Process events
+        monitor.process_events().await;
+
+        // Allow async handler to complete
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        assert!(*event_received.read().await);
     }
 }

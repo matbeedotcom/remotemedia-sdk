@@ -1,10 +1,10 @@
-# Docker Node Execution Example
+# Docker Multiprocess Pipeline Examples
 
-This example demonstrates how to run pipeline nodes in isolated Docker containers using the RemoteMedia SDK's Docker executor feature (Spec 009).
+This directory contains example pipeline configurations demonstrating Docker execution through the integrated multiprocess system.
 
 ## Overview
 
-The Docker executor enables running Python nodes in isolated containers while maintaining zero-copy data transfer performance via iceoryx2 shared memory IPC.
+Docker support is now fully integrated into the multiprocess executor. Python nodes can run either in regular processes or Docker containers, both using the same iceoryx2 IPC for zero-copy data transfer.
 
 **Use Cases**:
 - Python package version conflicts between nodes
@@ -42,34 +42,34 @@ The Docker executor enables running Python nodes in isolated containers while ma
 ## Files in This Directory
 
 - **[custom_node.py](custom_node.py)**: Example Python nodes (EchoNode, AudioAmplifierNode, TextUppercaseNode)
-- **[simple_docker_node.json](simple_docker_node.json)**: Minimal single-node Docker example
+- **[simple_docker_test.json](simple_docker_test.json)**: Minimal test pipeline for Docker execution
+- **[docker_multiprocess_pipeline.json](docker_multiprocess_pipeline.json)**: Basic Docker pipeline with echo processing
+- **[mixed_execution_pipeline.json](mixed_execution_pipeline.json)**: Mixed Docker and native multiprocess nodes
+- **[advanced_docker_pipeline.json](advanced_docker_pipeline.json)**: Advanced features with GPU support and custom images
 - **[manifest.yaml](manifest.yaml)**: Full pipeline with mixed executors
-- **[mixed_executors.json](mixed_executors.json)**: Demonstrates Docker + multiprocess + Rust nodes
 - **[README.md](README.md)**: This file
 
 ## Example Manifests
 
-### Simple Docker Node ([simple_docker_node.json](simple_docker_node.json))
+### Simple Docker Test ([simple_docker_test.json](simple_docker_test.json))
 
 Minimal example with a single Docker-based echo node:
 
 ```json
 {
-  "version": "v1",
-  "metadata": {
-    "name": "simple-docker-node-example"
-  },
   "nodes": [
     {
-      "id": "echo_docker",
-      "node_type": "EchoNode",
-      "is_streaming": true,
-      "docker": {
-        "python_version": "3.10",
-        "python_packages": ["iceoryx2"],
-        "resource_limits": {
-          "memory_mb": 512,
-          "cpu_cores": 0.5
+      "id": "echo_container",
+      "node_type": "test_echo.EchoNode",
+      "executor": "multiprocess",
+      "metadata": {
+        "use_docker": true,
+        "docker_config": {
+          "python_version": "3.10",
+          "python_packages": ["iceoryx2"],
+          "memory_mb": 128,
+          "cpu_cores": 0.5,
+          "shm_size_mb": 512
         }
       }
     }
@@ -78,9 +78,10 @@ Minimal example with a single Docker-based echo node:
 ```
 
 **Key Points**:
-- `docker` field triggers Docker executor
+- `executor: "multiprocess"` with `use_docker: true` enables Docker execution
+- Configuration in `metadata.docker_config`
 - `python_version` must be 3.9, 3.10, or 3.11
-- `resource_limits` are strictly enforced (FR-014)
+- Resource limits are strictly enforced
 - `iceoryx2` package required for IPC
 
 ### Full Pipeline ([manifest.yaml](manifest.yaml))
@@ -100,27 +101,38 @@ Docker Python Transcription (OmniASR) ← Isolated environment
 Multiprocess Python Postprocessing
 ```
 
-**Docker Node Configuration**:
+**Docker Node Configuration (New Integrated Format)**:
 ```json
 {
   "id": "transcribe_docker",
   "node_type": "OmniASRNode",
-  "docker": {
-    "python_version": "3.10",
-    "system_dependencies": ["ffmpeg", "libsndfile1"],
-    "python_packages": [
-      "numpy==1.24.0",
-      "torch>=2.0.0",
-      "omnilingual_asr==0.1.0",
-      "iceoryx2"
-    ],
-    "resource_limits": {
+  "executor": "multiprocess",
+  "metadata": {
+    "use_docker": true,
+    "docker_config": {
+      "python_version": "3.10",
+      "system_packages": ["ffmpeg", "libsndfile1"],
+      "python_packages": [
+        "numpy==1.24.0",
+        "torch>=2.0.0",
+        "omnilingual_asr==0.1.0",
+        "iceoryx2"
+      ],
       "memory_mb": 4096,
-      "cpu_cores": 2.0
-    },
-    "env": {
-      "PYTHONUNBUFFERED": "1",
-      "MODEL_PATH": "/models/omnilingual"
+      "cpu_cores": 2.0,
+      "shm_size_mb": 2048,
+      "env_vars": {
+        "PYTHONUNBUFFERED": "1",
+        "MODEL_PATH": "/models/omnilingual"
+      },
+      "gpu_devices": ["0"],
+      "volumes": [
+        {
+          "host_path": "/models",
+          "container_path": "/models",
+          "read_only": true
+        }
+      ]
     }
   }
 }

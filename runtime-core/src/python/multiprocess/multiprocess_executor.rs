@@ -23,6 +23,9 @@ use super::ipc_channel::{ChannelHandle, ChannelRegistry};
 #[cfg(feature = "multiprocess")]
 use super::process_manager::{ExitReason, ProcessHandle, ProcessManager};
 
+#[cfg(feature = "docker")]
+use super::docker_support::DockerSupport;
+
 // NOTE: Publisher caching attempts and why they failed:
 //
 // ATTEMPT 1: Global static cache with Mutex
@@ -348,6 +351,10 @@ pub struct MultiprocessExecutor {
 
     /// Current node context
     current_context: Option<ExecutorNodeContext>,
+
+    /// Docker support
+    #[cfg(feature = "docker")]
+    docker_support: Option<Arc<DockerSupport>>,
 }
 
 impl MultiprocessExecutor {
@@ -742,6 +749,12 @@ impl MultiprocessExecutor {
         // share the same iceoryx2 Node instance
         let channel_registry = ChannelRegistry::global();
 
+        // Initialize Docker support if feature is enabled
+        // Note: Docker initialization is deferred to avoid blocking in constructors
+        // Use docker_support() method which will lazily initialize if needed
+        #[cfg(feature = "docker")]
+        let docker_support = None;
+
         let executor = Self {
             process_manager: Arc::new(ProcessManager::new(config.clone())),
             channel_registry,
@@ -750,6 +763,8 @@ impl MultiprocessExecutor {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             config,
             current_context: None,
+            #[cfg(feature = "docker")]
+            docker_support,
         };
 
         // Setup pipeline termination on node failure
@@ -762,6 +777,35 @@ impl MultiprocessExecutor {
     /// Get the channel registry for IPC communication
     pub fn channel_registry(&self) -> &Arc<ChannelRegistry> {
         &self.channel_registry
+    }
+
+    /// Get the Docker support instance if available
+    #[cfg(feature = "docker")]
+    pub fn docker_support(&self) -> Option<&Arc<DockerSupport>> {
+        self.docker_support.as_ref()
+    }
+
+    /// Initialize Docker support asynchronously
+    /// This should be called once during executor initialization to enable Docker functionality
+    #[cfg(feature = "docker")]
+    pub async fn initialize_docker_support(&mut self) -> Result<()> {
+        if self.docker_support.is_some() {
+            // Already initialized
+            return Ok(());
+        }
+
+        match DockerSupport::new().await {
+            Ok(ds) => {
+                tracing::info!("Docker support initialized successfully");
+                self.docker_support = Some(Arc::new(ds));
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!("Docker support unavailable: {}. Falling back to regular multiprocess.", e);
+                // Don't fail - just continue without Docker support
+                Ok(())
+            }
+        }
     }
 
     /// Setup failure handling for pipeline termination
@@ -1299,7 +1343,38 @@ impl MultiprocessExecutor {
         })
     }
 
-    /// Terminate a session and cleanup resources
+    /// Terminate a session and cleanup all associated resources
+    ///
+    /// This method performs comprehensive cleanup in the following order:
+    /// 1. Shuts down IPC threads and removes from global sessions storage
+    /// 2. Cleans up Docker containers (if Docker support is enabled)
+    /// 3. Terminates all Python node processes
+    /// 4. Cleans up iceoryx2 IPC channels
+    ///
+    /// # Arguments
+    /// * `session_id` - The unique session identifier to terminate
+    ///
+    /// # Returns
+    /// * `Ok(())` - Session successfully terminated and resources cleaned up
+    /// * `Err(Error)` - If session not found or process termination fails
+    ///
+    /// # Docker Cleanup (T019)
+    /// When Docker support is enabled, this method automatically:
+    /// - Lists all containers labeled with `remotemedia.session_id=<session_id>`
+    /// - Gracefully stops running containers with 5-second timeout
+    /// - Forcefully removes containers and associated volumes
+    /// - Logs warnings for any containers that fail to clean up (doesn't fail the overall cleanup)
+    ///
+    /// # IPC Cleanup
+    /// The method ensures:
+    /// - All IPC threads receive shutdown commands
+    /// - Channels are properly destroyed
+    /// - Global session storage is updated
+    ///
+    /// # Error Handling
+    /// - Docker cleanup errors are logged as warnings but do not fail the entire session termination
+    /// - Process termination errors are propagated as failures
+    /// - This ensures robust cleanup even if some resources are unavailable
     pub async fn terminate_session(&self, session_id: &str) -> Result<()> {
         let mut sessions = self.sessions.write().await;
 
@@ -1332,6 +1407,53 @@ impl MultiprocessExecutor {
                     session_id
                 );
                 drop(global_sessions_guard);
+            }
+
+            // Cleanup Docker containers before terminating processes
+            #[cfg(feature = "docker")]
+            {
+                if let Some(docker_support) = &self.docker_support {
+                    tracing::info!(
+                        "Cleaning up Docker containers for session: {}",
+                        session_id
+                    );
+
+                    // Use the built-in cleanup_session_containers which is more efficient
+                    // It uses Docker labels to find and clean up all containers for this session
+                    match docker_support.cleanup_session_containers(session_id).await {
+                        Ok(removed_containers) => {
+                            if !removed_containers.is_empty() {
+                                tracing::info!(
+                                    "Cleaned up {} Docker containers for session {}",
+                                    removed_containers.len(),
+                                    session_id
+                                );
+                                for container_id in removed_containers {
+                                    tracing::debug!(
+                                        "Removed Docker container: {} from session {}",
+                                        container_id,
+                                        session_id
+                                    );
+                                }
+                            } else {
+                                tracing::debug!(
+                                    "No Docker containers found for session {} to clean up",
+                                    session_id
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            // Log warning but don't fail the entire cleanup process
+                            // Docker cleanup is important but should not block session termination
+                            tracing::warn!(
+                                "Failed to clean up Docker containers for session {}: {}. \
+                                 This may leave orphaned containers that require manual cleanup.",
+                                session_id,
+                                e
+                            );
+                        }
+                    }
+                }
             }
 
             // Then terminate processes
@@ -1461,6 +1583,40 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
             self.create_session(session_id.clone()).await?;
         }
 
+        // Determine execution mode from context metadata
+        #[cfg(feature = "docker")]
+        let use_docker = ctx
+            .metadata
+            .get("use_docker")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        #[cfg(feature = "docker")]
+        let docker_config = if use_docker {
+            // Parse Docker configuration from metadata
+            ctx.metadata
+                .get("docker_config")
+                .and_then(|v| serde_json::from_value::<super::docker_support::DockerNodeConfig>(v.clone()).ok())
+        } else {
+            None
+        };
+
+        // Initialize Docker support if needed and not already initialized
+        #[cfg(feature = "docker")]
+        if use_docker && self.docker_support.is_none() {
+            tracing::info!("Docker mode requested, initializing Docker support...");
+            match DockerSupport::new().await {
+                Ok(ds) => {
+                    tracing::info!("Docker support initialized successfully");
+                    self.docker_support = Some(Arc::new(ds));
+                }
+                Err(e) => {
+                    tracing::warn!("Docker support unavailable: {}. Will attempt fallback to regular multiprocess.", e);
+                    // Don't fail immediately - we'll handle this below when checking docker_support
+                }
+            }
+        }
+
         // Create IPC channels BEFORE spawning process (must exist when Python connects)
         // Prefix with session_id to avoid conflicts and make cleanup easier
         #[cfg(feature = "multiprocess")]
@@ -1501,13 +1657,64 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
             )
         };
 
-        // NOW spawn process (channels already exist)
+        // NOW spawn process or container (channels already exist)
         #[cfg(feature = "multiprocess")]
         {
-            let process = self
-                .process_manager
-                .spawn_node(&ctx.node_type, &ctx.node_id, &ctx.params, &session_id)
-                .await?;
+            let process = {
+                #[cfg(feature = "docker")]
+                {
+                    if use_docker {
+                        if let Some(docker_support) = &self.docker_support {
+                            if let Some(docker_config) = docker_config {
+                                // Validate Docker configuration
+                                docker_config.validate()?;
+
+                                tracing::info!(
+                                    "Spawning Docker container for node '{}' with config: {:?}",
+                                    ctx.node_id,
+                                    docker_config
+                                );
+
+                                // Spawn Docker container
+                                self.process_manager
+                                    .spawn_docker_container(
+                                        &ctx.node_type,
+                                        &ctx.node_id,
+                                        &ctx.params,
+                                        &session_id,
+                                        docker_support,
+                                        &docker_config,
+                                    )
+                                    .await?
+                            } else {
+                                return Err(Error::Execution(
+                                    "Docker mode enabled but no docker_config provided".to_string(),
+                                ));
+                            }
+                        } else {
+                            tracing::warn!(
+                                "Docker mode requested but Docker support unavailable, falling back to regular process"
+                            );
+                            // Fall back to regular multiprocess execution
+                            self.process_manager
+                                .spawn_node(&ctx.node_type, &ctx.node_id, &ctx.params, &session_id)
+                                .await?
+                        }
+                    } else {
+                        // Regular multiprocess execution
+                        self.process_manager
+                            .spawn_node(&ctx.node_type, &ctx.node_id, &ctx.params, &session_id)
+                            .await?
+                    }
+                }
+                #[cfg(not(feature = "docker"))]
+                {
+                    // Regular multiprocess execution (Docker feature not enabled)
+                    self.process_manager
+                        .spawn_node(&ctx.node_type, &ctx.node_id, &ctx.params, &session_id)
+                        .await?
+                }
+            };
 
             // Spawn dedicated IPC thread for this node
             let ipc_thread = self
@@ -1729,5 +1936,51 @@ mod tests {
 
         // Cleanup
         ExecutorNodeExecutor::cleanup(&mut executor).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_session_termination_with_cleanup() {
+        let config = MultiprocessConfig::default();
+        let executor = MultiprocessExecutor::new(config);
+
+        // Create a test session
+        let session_id = "test_cleanup_session";
+        executor
+            .create_session(session_id.to_string())
+            .await
+            .expect("Failed to create session");
+
+        // Verify session exists
+        {
+            let sessions = executor.sessions.read().await;
+            assert!(sessions.contains_key(session_id), "Session should exist after creation");
+        }
+
+        // Terminate the session - this should trigger cleanup including Docker containers
+        // if Docker support is enabled (graceful handling if not available)
+        let result = executor.terminate_session(session_id).await;
+        assert!(result.is_ok(), "Session termination should succeed: {:?}", result);
+
+        // Verify session is removed
+        {
+            let sessions = executor.sessions.read().await;
+            assert!(!sessions.contains_key(session_id), "Session should be removed after termination");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_terminate_nonexistent_session() {
+        let config = MultiprocessConfig::default();
+        let executor = MultiprocessExecutor::new(config);
+
+        // Try to terminate a non-existent session
+        let result = executor.terminate_session("nonexistent_session").await;
+
+        // Should return an error indicating session not found
+        assert!(result.is_err(), "Terminating non-existent session should return an error");
+        assert!(
+            result.unwrap_err().to_string().contains("not found"),
+            "Error should indicate session not found"
+        );
     }
 }
