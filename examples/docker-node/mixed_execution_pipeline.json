@@ -1,0 +1,143 @@
+{
+    "name": "mixed_execution_pipeline",
+    "version": "1.0.0",
+    "description": "Pipeline demonstrating mixed execution: some nodes in Docker, others in native multiprocess",
+    "nodes": [
+        {
+            "id": "input",
+            "node_type": "Input",
+            "executor": null,
+            "config": {},
+            "metadata": {}
+        },
+        {
+            "id": "native_preprocessor",
+            "node_type": "audio.Preprocessor",
+            "executor": "multiprocess",
+            "config": {
+                "normalize": true,
+                "remove_silence": true
+            },
+            "metadata": {
+                "description": "Native multiprocess node (no Docker)",
+                "use_docker": false
+            }
+        },
+        {
+            "id": "docker_processor",
+            "node_type": "audio.EnhancementNode",
+            "executor": "multiprocess",
+            "config": {
+                "enhancement_level": "high",
+                "noise_reduction": true
+            },
+            "metadata": {
+                "description": "Heavy processing in Docker with specialized dependencies",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.10",
+                    "python_packages": [
+                        "numpy>=1.24.0",
+                        "scipy>=1.10.0",
+                        "noisereduce>=3.0.0",
+                        "pedalboard>=0.8.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "ffmpeg",
+                        "sox",
+                        "libsox-dev"
+                    ],
+                    "memory_mb": 1024,
+                    "cpu_cores": 1.5,
+                    "base_image": "python:3.10-slim",
+                    "shm_size_mb": 2048,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "OMP_NUM_THREADS": "2"
+                    },
+                    "gpu_devices": [],
+                    "volumes": []
+                }
+            }
+        },
+        {
+            "id": "native_formatter",
+            "node_type": "output.Formatter",
+            "executor": "multiprocess",
+            "config": {
+                "format": "wav",
+                "sample_rate": 16000
+            },
+            "metadata": {
+                "description": "Native multiprocess node for final formatting",
+                "use_docker": false
+            }
+        },
+        {
+            "id": "output",
+            "node_type": "Output",
+            "executor": null,
+            "config": {},
+            "metadata": {}
+        }
+    ],
+    "edges": [
+        {
+            "source": "input",
+            "target": "native_preprocessor",
+            "field_mapping": {
+                "source_field": "data",
+                "target_field": "audio_input"
+            }
+        },
+        {
+            "source": "native_preprocessor",
+            "target": "docker_processor",
+            "field_mapping": {
+                "source_field": "preprocessed",
+                "target_field": "audio"
+            }
+        },
+        {
+            "source": "docker_processor",
+            "target": "native_formatter",
+            "field_mapping": {
+                "source_field": "enhanced_audio",
+                "target_field": "input"
+            }
+        },
+        {
+            "source": "native_formatter",
+            "target": "output",
+            "field_mapping": {
+                "source_field": "formatted_output",
+                "target_field": "data"
+            }
+        }
+    ],
+    "config": {
+        "batch_size": 1,
+        "timeout_ms": 30000,
+        "retry_policy": {
+            "max_retries": 3,
+            "backoff_ms": 1000
+        },
+        "runtime_config": {
+            "enable_docker": true,
+            "docker_fallback_to_multiprocess": true,
+            "prefer_native_for_simple_nodes": true
+        }
+    },
+    "metadata": {
+        "author": "RemoteMedia SDK",
+        "created": "2024-12-20",
+        "tags": ["docker", "multiprocess", "mixed", "audio"],
+        "description": "Demonstrates seamless integration between Docker and native multiprocess nodes. Native nodes handle simple tasks while Docker containers run specialized workloads with heavy dependencies.",
+        "notes": [
+            "Native nodes have lower latency and startup time",
+            "Docker nodes provide dependency isolation",
+            "IPC (iceoryx2) works seamlessly between both execution modes"
+        ]
+    }
+}

@@ -1,0 +1,29 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "echo-docker-node-example",
+    "description": "Docker-based Python node with iceoryx2 IPC - EchoNode for testing"
+  },
+  "nodes": [
+    {
+      "id": "echo_docker",
+      "node_type": "EchoNode",
+      "is_streaming": true,
+      "params": {
+        "operation": "echo"
+      },
+      "docker": {
+        "python_version": "3.11",
+        "python_packages": [
+          "iceoryx2"
+        ],
+        "resource_limits": {
+          "memory_mb": 2048,
+          "cpu_cores": 1.0,
+          "gpu_devices": []
+        }
+      }
+    }
+  ],
+  "connections": []
+}

@@ -24,7 +24,7 @@ repository = "https://github.com/matbeeDOTcom/remotemedia-sdk"
 tokio = { version = "1.35", features = ["sync", "macros", "io-util", "rt", "rt-multi-thread", "time", "fs", "process"] }
 tokio-stream = "0.1"
 futures = "0.3"
-bollard = "0.19.4"
+bollard = { version = "0.19.4", features = ["chrono"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -103,6 +103,7 @@ hdrhistogram = "7.5"
 tar = "0.4"
 glob = "0.3"
 bytes = "1.0"
+http-body-util = "0.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Whisper
