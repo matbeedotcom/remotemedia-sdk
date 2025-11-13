@@ -205,3 +205,8 @@ harness = false
 name = "docker_ipc_benchmark"
 path = "benches/docker_ipc_benchmark.rs"
 harness = false
+
+[[bench]]
+name = "bench_vad_docker_pipeline"
+path = "benches/bench_vad_docker_pipeline.rs"
+harness = false
