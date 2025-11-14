@@ -62,6 +62,9 @@ impl AudioTrack {
     /// Opus requires specific frame sizes (2.5, 5, 10, 20, 40, or 60ms).
     /// We chunk the input into 20ms frames (320 @ 16kHz, 480 @ 24kHz, 960 @ 48kHz).
     /// The encoder will be recreated if the sample rate changes.
+    ///
+    /// IMPORTANT: This method paces audio transmission to match real-time playback duration.
+    /// This prevents interruptions when large audio chunks (e.g., from TTS) are sent at once.
     pub async fn send_audio(&self, samples: Arc<Vec<f32>>, sample_rate: u32) -> Result<()> {
         use tracing::debug;
 
@@ -88,8 +91,12 @@ impl AudioTrack {
         let frame_size = (sample_rate as usize * 20) / 1000; // 20ms frame
         let frame_duration = Duration::from_millis(20);
 
-        debug!("Chunking {} samples into {}sample frames @ {}Hz",
-               samples.len(), frame_size, sample_rate);
+        debug!("Chunking {} samples into {}sample frames @ {}Hz (duration: {:.2}s)",
+               samples.len(), frame_size, sample_rate, samples.len() as f64 / sample_rate as f64);
+
+        // Track when we started sending to pace transmission
+        let start_time = std::time::Instant::now();
+        let mut samples_sent = 0usize;
 
         // Process audio in chunks
         for chunk in samples.chunks(frame_size) {
@@ -123,7 +130,23 @@ impl AudioTrack {
                 .write_sample(&sample)
                 .await
                 .map_err(|e| Error::MediaTrackError(format!("Failed to write sample: {}", e)))?;
+
+            samples_sent += chunk.len();
+
+            // PACING: Sleep to match real-time playback speed
+            // Calculate how long we should have taken to send this much audio
+            let expected_duration_us = (samples_sent as f64 / sample_rate as f64 * 1_000_000.0) as u64;
+            let actual_duration_us = start_time.elapsed().as_micros() as u64;
+
+            // If we're ahead of schedule, sleep to catch up to real-time
+            if expected_duration_us > actual_duration_us {
+                let sleep_duration_us = expected_duration_us - actual_duration_us;
+                tokio::time::sleep(Duration::from_micros(sleep_duration_us)).await;
+            }
         }
+
+        debug!("Audio transmission complete: {} samples in {:.2}s",
+               samples.len(), start_time.elapsed().as_secs_f64());
 
         Ok(())
     }
