@@ -310,7 +310,7 @@ impl PipelineRunnerInner {
             loop {
                 tokio::select! {
                     Some(input_data) = input_rx.recv() => {
-                        tracing::debug!("Session {} processing input", session_id_clone);
+                        tracing::info!("[SessionRunner] Session {} received input: type={}", session_id_clone, input_data.data_type());
 
                         // Spawn execution as a background task so the select loop can continue
                         // processing new inputs while this one executes
@@ -320,9 +320,9 @@ impl PipelineRunnerInner {
                         let session_id_for_log = session_id_clone.clone();
                         let cached_nodes_clone = Arc::clone(&cached_nodes);
 
-                        tracing::debug!("Session {} spawning background task to process input", session_id_clone);
+                        tracing::info!("[SessionRunner] Session {} spawning background task to process input on node '{}'", session_id_clone, first_node_clone);
                         tokio::spawn(async move {
-                            tracing::debug!("Session {} background task started", session_id_for_exec);
+                            tracing::info!("[SessionRunner] Session {} background task started for node '{}'", session_id_for_exec, first_node_clone);
                             let session_id_for_callback = session_id_for_exec.clone();
 
                             // Get reference to the cached node
@@ -348,16 +348,16 @@ impl PipelineRunnerInner {
                                 Ok(())
                             });
 
-                            tracing::debug!("Session {} calling process_streaming_async on node '{}'", session_id_for_exec, first_node_clone);
-                            match node.process_streaming_async(input_data, Some(session_id_for_exec.clone()), callback).await {
+                            tracing::info!("[SessionRunner] Session {} calling process_streaming_async on node '{}' with data type {}", session_id_for_exec, first_node_clone, input_data.data_type());
+                            match node.process_streaming_async(input_data.clone(), Some(session_id_for_exec.clone()), callback).await {
                                 Ok(_) => {
-                                    tracing::debug!("Session {} execution completed successfully", session_id_for_log);
+                                    tracing::info!("[SessionRunner] Session {} execution completed successfully for node '{}'", session_id_for_log, first_node_clone);
                                 }
                                 Err(e) => {
-                                    tracing::error!("Session {}: Pipeline execution error: {}", session_id_for_log, e);
+                                    tracing::error!("[SessionRunner] Session {}: Pipeline execution error on node '{}': {}", session_id_for_log, first_node_clone, e);
                                 }
                             }
-                            tracing::debug!("Session {} background task finished", session_id_for_log);
+                            tracing::info!("[SessionRunner] Session {} background task finished for node '{}'", session_id_for_log, first_node_clone);
                         });
                     }
                     _ = shutdown_rx.recv() => {
