@@ -336,7 +336,7 @@ impl<'a> Publisher<'a> {
         // Serialize RuntimeData to bytes
         let bytes = data.to_bytes();
 
-        tracing::info!(
+        tracing::debug!(
             "[IPC Publisher] Channel '{}' publishing {} bytes (type: {:?})",
             self.channel_name,
             bytes.len(),
@@ -363,7 +363,7 @@ impl<'a> Publisher<'a> {
             .send()
             .map_err(|e| Error::IpcError(format!("Failed to send sample: {:?}", e)))?;
 
-        tracing::info!(
+        tracing::debug!(
             "[IPC Publisher] Channel '{}' successfully sent {} bytes",
             self.channel_name,
             bytes.len()
@@ -387,7 +387,7 @@ impl<'a> Publisher<'a> {
 
     /// Send raw bytes directly (like READY signal) - bypasses RuntimeData serialization
     pub fn send(&self, bytes: &[u8]) -> Result<()> {
-        tracing::info!(
+        tracing::debug!(
             "[IPC Publisher] Channel '{}' sending raw {} bytes",
             self.channel_name,
             bytes.len()
@@ -413,7 +413,7 @@ impl<'a> Publisher<'a> {
             .send()
             .map_err(|e| Error::IpcError(format!("Failed to send sample: {:?}", e)))?;
 
-        tracing::info!(
+        tracing::debug!(
             "[IPC Publisher] Channel '{}' successfully sent raw {} bytes",
             self.channel_name,
             bytes.len()
@@ -446,7 +446,7 @@ impl Subscriber {
             Ok(Some(sample)) => {
                 let bytes = sample.payload();
 
-                tracing::info!(
+                tracing::debug!(
                     "[IPC Subscriber] Channel '{}' received {} bytes",
                     self.channel_name,
                     bytes.len()
