@@ -20,12 +20,9 @@ from dataclasses import dataclass
 # Import base Node class from core
 from remotemedia.core.node import Node as BaseNode
 
-try:
-    from remotemedia_runtime.runtime_data import RuntimeData
-    HAS_RUNTIME_DATA = True
-except ImportError:
-    RuntimeData = None  # type: ignore
-    HAS_RUNTIME_DATA = False
+# Import RuntimeData from core multiprocessing data module
+from remotemedia.core.multiprocessing.data import RuntimeData
+HAS_RUNTIME_DATA = True
 
 
 class NodeStatus(Enum):
@@ -598,28 +595,22 @@ class MultiprocessNode(BaseNode):
             # Convert to RuntimeData based on type
             if HAS_RUNTIME_DATA:
                 import numpy as np
-                from remotemedia_runtime.runtime_data import RuntimeData as RustRD, numpy_to_audio
 
                 if data_type == 1:  # Audio
                     # Payload is f32 audio samples
                     audio_samples = np.frombuffer(payload, dtype=np.float32)
                     self.logger.info(f"Received audio via IPC: {len(audio_samples)} samples")
                     # Convert to RuntimeData.Audio (assume 24kHz mono for now)
-                    rd = numpy_to_audio(audio_samples, 24000, channels=1)
-                    rd.session_id = session_id  # Preserve session_id
+                    rd = RuntimeData.audio(audio_samples, 24000, channels=1)
                     return rd
                 elif data_type == 3:  # Text
                     text = payload.decode('utf-8')
                     # Check for ping test message
                     if text == "PING_TEST":
                         self.logger.info(f"✅ 🎯 RECEIVED PING TEST MESSAGE! IPC communication is working! ✅")
-                        rd = RustRD.text(text)
-                        rd.session_id = session_id  # Preserve session_id
-                        return rd
+                        return RuntimeData.text(text)
                     self.logger.info(f"Received text via IPC: '{text[:50]}...'")
-                    rd = RustRD.text(text)
-                    rd.session_id = session_id  # Preserve session_id
-                    return rd
+                    return RuntimeData.text(text)
                 else:
                     self.logger.warning(f"Unsupported IPC data type: {data_type}")
                     return None
@@ -654,10 +645,11 @@ class MultiprocessNode(BaseNode):
                 payload = data.as_text().encode('utf-8')
             elif data.is_audio():
                 data_type = 1  # Audio
-                samples_bytes, sample_rate, channels, format_str, num_samples = data.as_audio()
-                payload = samples_bytes
+                # Get audio data as numpy array, then convert to bytes
+                audio_array = data.as_numpy()
+                payload = audio_array.astype(np.float32).tobytes()
             else:
-                self.logger.warning(f"Unsupported data type for IPC send: {data.data_type()}")
+                self.logger.warning(f"Unsupported data type for IPC send: {data.type}")
                 return
 
             # Build IPC message

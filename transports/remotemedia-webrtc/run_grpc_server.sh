@@ -17,10 +17,10 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Default configuration
-BUILD_MODE="${BUILD_MODE:-debug}"
+BUILD_MODE="${BUILD_MODE:-release}"
 GRPC_ADDRESS="${GRPC_ADDRESS:-0.0.0.0:50051}"
-MANIFEST="${MANIFEST:-./examples/docker-node/simple_docker_node.json}"
-RUST_LOG="${RUST_LOG:-info,remotemedia=debug}"
+MANIFEST="${MANIFEST:-./examples/tts.json}"
+RUST_LOG="${RUST_LOG:-info,remotemedia=release}"
 MAX_PEERS="${MAX_PEERS:-10}"
 STUN_SERVERS="${STUN_SERVERS:-stun:stun.l.google.com:19302}"
 
@@ -203,6 +203,7 @@ if [ "$SKIP_BUILD" = false ]; then
 else
     echo -e "${YELLOW}⏭️  Skipping build step${NC}"
     echo ""
+
 fi
 
 # Check if manifest file exists
@@ -247,5 +248,4 @@ echo ""
 
 # Run the server with command-line arguments
 exec "$BINARY" --mode grpc --grpc-address "$GRPC_ADDRESS" --manifest "$MANIFEST"
-
 

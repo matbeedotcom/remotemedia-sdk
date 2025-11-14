@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, 'python-client')
 
 try:
-    from remotemedia_runtime.runtime_data import RuntimeData
+    from remotemedia.core.multiprocessing.data import RuntimeData
     print("[OK] RuntimeData imported successfully")
 except ImportError as e:
     print(f"[ERROR] Failed to import RuntimeData: {e}")

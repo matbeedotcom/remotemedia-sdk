@@ -74,7 +74,7 @@ class EchoNode(MultiprocessNode):
 
             # Import RuntimeData
             try:
-                from remotemedia_runtime.runtime_data import RuntimeData
+                from remotemedia.core.multiprocessing.data import RuntimeData
                 return RuntimeData.text(response_text)
             except ImportError:
                 logger.error("RuntimeData not available")

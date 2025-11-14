@@ -8,7 +8,7 @@ import logging
 from typing import AsyncGenerator
 
 try:
-    from remotemedia_runtime.runtime_data import RuntimeData
+    from remotemedia.core.multiprocessing.data import RuntimeData
     RUNTIME_DATA_AVAILABLE = True
 except ImportError:
     RUNTIME_DATA_AVAILABLE = False

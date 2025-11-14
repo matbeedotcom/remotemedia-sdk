@@ -430,6 +430,22 @@ class RuntimeData:
                 isinstance(self.metadata, ControlMessageMetadata) and
                 self.metadata.message_type == ControlMessageType.CANCEL_SPECULATION)
 
+    def is_text(self) -> bool:
+        """Check if this is text data."""
+        return self.type == DataType.TEXT
+
+    def is_audio(self) -> bool:
+        """Check if this is audio data."""
+        return self.type == DataType.AUDIO
+
+    def is_video(self) -> bool:
+        """Check if this is video data."""
+        return self.type == DataType.VIDEO
+
+    def is_tensor(self) -> bool:
+        """Check if this is tensor data."""
+        return self.type == DataType.TENSOR
+
     def to_bytes(self) -> bytes:
         """
         Serialize to bytes for IPC transfer.

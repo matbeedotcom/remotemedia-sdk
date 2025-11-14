@@ -54,7 +54,7 @@ from remotemedia.nodes.ml import LFM2AudioNode
 from remotemedia.nodes.audio import VoiceActivityDetector, AudioTransform
 
 try:
-    from remotemedia_runtime.runtime_data import RuntimeData, numpy_to_audio, audio_to_numpy
+    from remotemedia.core.multiprocessing.data import RuntimeData, numpy_to_audio, audio_to_numpy
     RUNTIME_DATA_AVAILABLE = True
 except ImportError:
     print("RuntimeData bindings not available. Please build the Rust extension.")
