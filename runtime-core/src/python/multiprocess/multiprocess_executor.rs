@@ -163,7 +163,7 @@ fn default_max_processes() -> Option<usize> {
 }
 
 fn default_channel_capacity() -> usize {
-    100
+    1000  // Increased from 100 to handle audio flood during initialization (50 packets/sec * 5sec init = 250+)
 }
 
 fn default_init_timeout() -> u64 {
