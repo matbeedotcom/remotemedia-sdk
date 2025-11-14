@@ -297,7 +297,7 @@ impl PipelineRunnerInner {
                         }
                     };
 
-                    tracing::info!("Session {} cached node {} (type: {})", session_id_clone, node_spec.id, node_spec.node_type);
+                    tracing::debug!("Session {} cached node {} (type: {})", session_id_clone, node_spec.id, node_spec.node_type);
                     n.insert(node_spec.id.clone(), node);
                 }
                 Arc::new(n)
@@ -322,7 +322,7 @@ impl PipelineRunnerInner {
 
                         tracing::debug!("Session {} spawning background task to process input", session_id_clone);
                         tokio::spawn(async move {
-                            tracing::info!("Session {} background task started", session_id_for_exec);
+                            tracing::debug!("Session {} background task started", session_id_for_exec);
                             let session_id_for_callback = session_id_for_exec.clone();
 
                             // Get reference to the cached node
