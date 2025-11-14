@@ -536,7 +536,7 @@ class MultiprocessNode(BaseNode):
         try:
             # Log first 5 attempts and then every 100 attempts to diagnose receive issues
             if self._receive_call_count <= 5:
-                self.logger.info(f"📡 [IPC Receive] Polling attempt #{self._receive_call_count} for node '{self.node_id}'")
+                self.logger.debug(f"📡 [IPC Receive] Polling attempt #{self._receive_call_count} for node '{self.node_id}'")
             elif self._receive_call_count % 100 == 0:
                 self.logger.debug(f"[IPC Receive] Polling for input (attempt {self._receive_call_count})")
             
@@ -544,14 +544,14 @@ class MultiprocessNode(BaseNode):
             if sample is None:
                 # Log first 5 "no data" responses
                 if self._receive_call_count <= 5:
-                    self.logger.info(f"📡 [IPC Receive] Attempt #{self._receive_call_count}: No data available yet")
+                    self.logger.debug(f"📡 [IPC Receive] Attempt #{self._receive_call_count}: No data available yet")
                 # No data available
                 return None
 
             # Get payload as bytes
             payload_bytes = bytes(sample.payload())
-            self.logger.info(f"🔵 [IPC Receive] Node '{self.node_id}' received {len(payload_bytes)} bytes from input channel")
-            self.logger.info(f"🔵 First 20 bytes (hex): {payload_bytes[:20].hex() if len(payload_bytes) >= 20 else payload_bytes.hex()}")
+            self.logger.debug(f"🔵 [IPC Receive] Node '{self.node_id}' received {len(payload_bytes)} bytes from input channel")
+            self.logger.debug(f"🔵 First 20 bytes (hex): {payload_bytes[:20].hex() if len(payload_bytes) >= 20 else payload_bytes.hex()}")
 
             # Deserialize using IPC RuntimeData format matching data_transfer.rs
             # Format: type (1 byte) | session_len (2 bytes) | session | timestamp (8 bytes) | payload_len (4 bytes) | payload
