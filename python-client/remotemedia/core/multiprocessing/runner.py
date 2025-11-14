@@ -249,25 +249,18 @@ class NodeRunner:
                 .create()
             )
             logger.info(f"✅ Output publisher created successfully")
-            
+
             logger.info(f"✅ Created IPC data channels: {self.config.session_id}_{self.config.node_id}_input (sub), {self.config.session_id}_{self.config.node_id}_output (pub)")
-            
-            # NOW send READY signal - Python is fully prepared to receive data
-            logger.info(f"Sending READY signal to Rust (subscriber is ready to receive)...")
-            ready_msg = b"READY"
-            sample = control_publisher.loan_slice_uninit(len(ready_msg))
-            for i, byte_val in enumerate(ready_msg):
-                sample.payload()[i] = byte_val
-            sample = sample.assume_init()
-            sample.send()
-            
-            logger.info(f"✅ Sent READY signal via iceoryx2 control channel: control/{self.config.session_id}_{self.config.node_id}")
-            
-            # Store node and services for later use
+
+            # Store node and services for later use BEFORE sending READY
+            # This allows the polling task to access the subscriber immediately
             self.node._iox2_node = node
             self.node._control_publisher = control_publisher
             self.node._input_subscriber = input_subscriber
             self.node._output_publisher = output_publisher
+
+            # Return the control publisher so we can send READY after starting the polling task
+            self._control_publisher_for_ready = control_publisher
 
         except ImportError:
             logger.error("iceoryx2 Python package not installed. Install with: pip install iceoryx2")
@@ -286,18 +279,32 @@ class NodeRunner:
             # Initialize node (creates the node instance)
             await self.initialize()
 
-            # Connect IPC channels and send READY signal FIRST
-            # This allows Rust to proceed with pipeline setup immediately
+            # Connect IPC channels (but DON'T send READY yet)
             await self.connect_channels()
-            logger.info(f"Sent READY signal, now initializing node resources...")
+            logger.info(f"IPC channels created, now starting polling task...")
 
-            # IMPORTANT: Start the process loop in a background task BEFORE model initialization
-            # This ensures we're actively polling for messages even while models are loading
+            # CRITICAL FIX: Start the process loop BEFORE sending READY signal
+            # This ensures Python is actively polling when Rust starts sending data
             from remotemedia.core.multiprocessing.node import NodeStatus
             self.node.status = NodeStatus.INITIALIZING
 
-            # Start background task for the process loop
+            # Start background task for the process loop (begins polling immediately)
+            logger.info(f"Starting process loop with initialization (will poll during model loading)...")
             process_loop_task = asyncio.create_task(self.node._process_loop_with_init())
+
+            # Yield control to allow the polling task to start
+            await asyncio.sleep(0)
+
+            # NOW send READY signal - Python is actively polling and ready to receive
+            logger.info(f"Sending READY signal to Rust (polling task is now active)...")
+            control_publisher = self._control_publisher_for_ready
+            ready_msg = b"READY"
+            sample = control_publisher.loan_slice_uninit(len(ready_msg))
+            for i, byte_val in enumerate(ready_msg):
+                sample.payload()[i] = byte_val
+            sample = sample.assume_init()
+            sample.send()
+            logger.info(f"✅ Sent READY signal via iceoryx2 control channel: control/{self.config.session_id}_{self.config.node_id}")
 
             # Wait for the process loop to complete
             await process_loop_task
