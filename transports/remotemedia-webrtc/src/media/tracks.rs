@@ -44,12 +44,12 @@ impl AudioTrack {
     pub fn new(track: Arc<TrackLocalStaticSample>, config: AudioEncoderConfig) -> Result<Self> {
         println!("[AUDIOTRACK] Creating new AudioTrack with ring buffer support!");
         let encoder = Arc::new(RwLock::new(AudioEncoder::new(config.clone())?));
-        let decoder = Arc::new(RwLock::new(super::audio::AudioDecoder::new(config)?));
+        let decoder = Arc::new(RwLock::new(super::audio::AudioDecoder::new(config.clone())?));
 
-        // Create audio sender with ring buffer (1500 frames = 30 seconds @ 20ms)
+        // Create audio sender with ring buffer
         // Large buffer allows TTS to generate audio in bursts without blocking
         println!("[AUDIOTRACK] About to create AudioSender...");
-        let sender = AudioSender::new(Arc::clone(&track), 1500);
+        let sender = AudioSender::new(Arc::clone(&track), config.ring_buffer_capacity);
         println!("[AUDIOTRACK] AudioSender created!");
 
         Ok(Self {
@@ -97,6 +97,7 @@ impl AudioTrack {
                     channels: encoder_write.config.channels,
                     bitrate: encoder_write.config.bitrate,
                     complexity: encoder_write.config.complexity,
+                    ring_buffer_capacity: encoder_write.config.ring_buffer_capacity,
                 };
                 *encoder_write = crate::media::audio::AudioEncoder::new(new_config)?;
                 info!("Encoder recreated with sample rate: {} Hz", sample_rate);
