@@ -305,20 +305,29 @@ class MultiprocessNode(BaseNode):
 
             # Start a background task to queue incoming messages during initialization
             async def queue_messages_during_init():
+                self.logger.info(f"🔵 Queuing task started for {self.node_id}, will poll for messages during initialization")
+                poll_count = 0
                 while self.status == NodeStatus.INITIALIZING:
+                    poll_count += 1
                     data = await self._receive_input()
                     if data is not None:
-                        self.logger.info(f"Queuing message during initialization: {data.data_type()}")
+                        self.logger.info(f"✅ Queuing message during initialization: {data.data_type()}")
                         init_queue.append(data)
                     else:
+                        # Log first 5 polls to confirm we're actively polling
+                        if poll_count <= 5:
+                            self.logger.info(f"🔵 Queue poll #{poll_count}: No data yet")
                         await asyncio.sleep(0)
+                self.logger.info(f"🔵 Queuing task finished for {self.node_id}, queued {len(init_queue)} messages")
 
             # Start queuing task
             queue_task = asyncio.create_task(queue_messages_during_init())
 
             # CRITICAL: Yield control to let the queuing task start before we block on model init
             # This ensures the subscriber is actively polling BEFORE Rust sends data
+            self.logger.info(f"Yielding to allow queuing task to start...")
             await asyncio.sleep(0.1)  # 100ms to ensure queuing task is running
+            self.logger.info(f"Queuing task should be active now, proceeding with model initialization...")
 
             # Initialize (load models, etc.) - can take a long time
             await self.initialize()
