@@ -225,8 +225,8 @@ impl PipelineRunnerInner {
         let session_id = format!("session_{}", session_num);
 
         // Create channels for communication
-        let (input_tx, mut input_rx) = mpsc::unbounded_channel();
-        let (output_tx, output_rx) = mpsc::unbounded_channel();
+        let (input_tx, mut input_rx) = mpsc::unbounded_channel::<crate::data::RuntimeData>();
+        let (output_tx, output_rx) = mpsc::unbounded_channel::<crate::data::RuntimeData>();
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
 
         // Create streaming session router task
@@ -348,8 +348,9 @@ impl PipelineRunnerInner {
                                 Ok(())
                             });
 
-                            tracing::info!("[SessionRunner] Session {} calling process_streaming_async on node '{}' with data type {}", session_id_for_exec, first_node_clone, input_data.data_type());
-                            match node.process_streaming_async(input_data.clone(), Some(session_id_for_exec.clone()), callback).await {
+                            let input_data_type = input_data.data_type();
+                            tracing::info!("[SessionRunner] Session {} calling process_streaming_async on node '{}' with data type {}", session_id_for_exec, first_node_clone, input_data_type);
+                            match node.process_streaming_async(input_data, Some(session_id_for_exec.clone()), callback).await {
                                 Ok(_) => {
                                     tracing::info!("[SessionRunner] Session {} execution completed successfully for node '{}'", session_id_for_log, first_node_clone);
                                 }
