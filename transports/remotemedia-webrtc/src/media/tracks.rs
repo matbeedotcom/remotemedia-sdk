@@ -4,6 +4,7 @@
 
 use crate::{Error, Result};
 use super::audio::{AudioEncoder, AudioEncoderConfig};
+use super::audio_sender::AudioSender;
 use super::video::{VideoEncoder, VideoDecoder, VideoEncoderConfig, VideoFrame, VideoFormat};
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,7 +27,10 @@ pub struct AudioTrack {
     /// Audio decoder (for receiving audio from remote peer)
     decoder: Arc<RwLock<super::audio::AudioDecoder>>,
 
-    /// RTP timestamp (in sample units)
+    /// Audio sender with ring buffer (for smooth real-time transmission)
+    sender: Arc<RwLock<Option<AudioSender>>>,
+
+    /// RTP timestamp (in sample units) - kept for compatibility but sender manages its own
     timestamp: Arc<RwLock<u32>>,
 }
 
@@ -38,13 +42,21 @@ impl AudioTrack {
     /// * `track` - Underlying WebRTC track
     /// * `config` - Audio encoder configuration
     pub fn new(track: Arc<TrackLocalStaticSample>, config: AudioEncoderConfig) -> Result<Self> {
+        println!("[AUDIOTRACK] Creating new AudioTrack with ring buffer support!");
         let encoder = Arc::new(RwLock::new(AudioEncoder::new(config.clone())?));
         let decoder = Arc::new(RwLock::new(super::audio::AudioDecoder::new(config)?));
+
+        // Create audio sender with ring buffer (1500 frames = 30 seconds @ 20ms)
+        // Large buffer allows TTS to generate audio in bursts without blocking
+        println!("[AUDIOTRACK] About to create AudioSender...");
+        let sender = AudioSender::new(Arc::clone(&track), 1500);
+        println!("[AUDIOTRACK] AudioSender created!");
 
         Ok(Self {
             track,
             encoder,
             decoder,
+            sender: Arc::new(RwLock::new(Some(sender))),
             timestamp: Arc::new(RwLock::new(0)),
         })
     }
@@ -58,15 +70,18 @@ impl AudioTrack {
     ///
     /// # Note
     ///
-    /// This method encodes the audio to Opus and sends it via WebRTC samples.
+    /// This method encodes audio to Opus and enqueues frames into a ring buffer.
+    /// A dedicated thread continuously dequeues frames and sends them at real-time pace.
     /// Opus requires specific frame sizes (2.5, 5, 10, 20, 40, or 60ms).
     /// We chunk the input into 20ms frames (320 @ 16kHz, 480 @ 24kHz, 960 @ 48kHz).
     /// The encoder will be recreated if the sample rate changes.
     ///
-    /// IMPORTANT: This method paces audio transmission to match real-time playback duration.
-    /// This prevents interruptions when large audio chunks (e.g., from TTS) are sent at once.
+    /// ARCHITECTURE:
+    /// - Production (this method): Encode frames as fast as possible, enqueue to ring buffer
+    /// - Transmission (dedicated thread): Dequeue frames and send at real-time pace (20ms intervals)
+    /// - This decouples TTS generation speed from playback speed, preventing interruptions
     pub async fn send_audio(&self, samples: Arc<Vec<f32>>, sample_rate: u32) -> Result<()> {
-        use tracing::debug;
+        use tracing::info;
 
         // Check if encoder needs to be recreated for different sample rate
         {
@@ -74,7 +89,7 @@ impl AudioTrack {
             if encoder.config.sample_rate != sample_rate {
                 drop(encoder);
                 let old_rate = self.encoder.read().await.config.sample_rate;
-                debug!("Sample rate changed from {} to {} Hz, recreating encoder", old_rate, sample_rate);
+                info!("Sample rate changed from {} to {} Hz, recreating encoder", old_rate, sample_rate);
 
                 let mut encoder_write = self.encoder.write().await;
                 let new_config = crate::media::audio::AudioEncoderConfig {
@@ -84,25 +99,26 @@ impl AudioTrack {
                     complexity: encoder_write.config.complexity,
                 };
                 *encoder_write = crate::media::audio::AudioEncoder::new(new_config)?;
-                debug!("Encoder recreated with sample rate: {} Hz", sample_rate);
+                info!("Encoder recreated with sample rate: {} Hz", sample_rate);
             }
         }
 
         let frame_size = (sample_rate as usize * 20) / 1000; // 20ms frame
         let frame_duration = Duration::from_millis(20);
 
-        debug!("Chunking {} samples into {}sample frames @ {}Hz (duration: {:.2}s)",
+        info!("AudioTrack: Enqueuing {} samples as {}sample frames @ {}Hz (duration: {:.2}s)",
                samples.len(), frame_size, sample_rate, samples.len() as f64 / sample_rate as f64);
 
-        // Track when we started sending to pace transmission
-        let start_time = std::time::Instant::now();
-        let mut samples_sent = 0usize;
+        let sender_guard = self.sender.read().await;
+        let sender = sender_guard.as_ref()
+            .ok_or_else(|| Error::MediaTrackError("AudioSender not initialized".to_string()))?;
 
-        // Process audio in chunks
+        let mut frames_enqueued = 0;
+
+        // Process audio in chunks and enqueue frames
         for chunk in samples.chunks(frame_size) {
             // Opus requires exact frame sizes - pad last chunk if needed
             let samples_to_encode: Vec<f32> = if chunk.len() < frame_size {
-                debug!("Padding last chunk from {} to {} samples", chunk.len(), frame_size);
                 let mut padded = chunk.to_vec();
                 padded.resize(frame_size, 0.0); // Pad with silence
                 padded
@@ -113,40 +129,13 @@ impl AudioTrack {
             // Encode this chunk
             let encoded = self.encoder.write().await.encode(&samples_to_encode)?;
 
-            // Update timestamp based on actual samples in this chunk (not padded size)
-            let mut ts = self.timestamp.write().await;
-            *ts = ts.wrapping_add(chunk.len() as u32);
-
-            // Create WebRTC sample with encoded Opus data
-            let sample = Sample {
-                data: encoded.into(),
-                duration: frame_duration,
-                timestamp: std::time::SystemTime::now(),
-                ..Default::default()
-            };
-
-            // Send sample (handles RTP packetization internally)
-            self.track
-                .write_sample(&sample)
-                .await
-                .map_err(|e| Error::MediaTrackError(format!("Failed to write sample: {}", e)))?;
-
-            samples_sent += chunk.len();
-
-            // PACING: Sleep to match real-time playback speed
-            // Calculate how long we should have taken to send this much audio
-            let expected_duration_us = (samples_sent as f64 / sample_rate as f64 * 1_000_000.0) as u64;
-            let actual_duration_us = start_time.elapsed().as_micros() as u64;
-
-            // If we're ahead of schedule, sleep to catch up to real-time
-            if expected_duration_us > actual_duration_us {
-                let sleep_duration_us = expected_duration_us - actual_duration_us;
-                tokio::time::sleep(Duration::from_micros(sleep_duration_us)).await;
-            }
+            // Enqueue frame into ring buffer (non-blocking)
+            sender.enqueue_frame(encoded, chunk.len() as u32, frame_duration).await?;
+            frames_enqueued += 1;
         }
 
-        debug!("Audio transmission complete: {} samples in {:.2}s",
-               samples.len(), start_time.elapsed().as_secs_f64());
+        info!("AudioTrack: Enqueued {} frames into ring buffer (buffer size: {})",
+               frames_enqueued, sender.buffer_len());
 
         Ok(())
     }
@@ -185,7 +174,20 @@ impl AudioTrack {
 
     /// Get current RTP timestamp
     pub async fn timestamp(&self) -> u32 {
-        *self.timestamp.read().await
+        // Use the sender's timestamp if available (more accurate for ring buffer approach)
+        if let Some(sender) = self.sender.read().await.as_ref() {
+            sender.timestamp()
+        } else {
+            *self.timestamp.read().await
+        }
+    }
+
+    /// Shutdown the audio track and wait for sender thread to complete
+    pub async fn shutdown(&self) -> Result<()> {
+        if let Some(sender) = self.sender.write().await.take() {
+            sender.shutdown().await?;
+        }
+        Ok(())
     }
 }
 
