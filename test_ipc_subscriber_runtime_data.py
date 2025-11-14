@@ -16,7 +16,7 @@ def main():
 
     # Import RuntimeData
     try:
-        from remotemedia_runtime.runtime_data import RuntimeData
+        from remotemedia.core.multiprocessing.data import RuntimeData
         import numpy as np
         print(f"[PY] RuntimeData imported successfully", flush=True)
     except ImportError as e:
