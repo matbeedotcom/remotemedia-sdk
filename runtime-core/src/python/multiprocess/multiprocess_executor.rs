@@ -584,8 +584,8 @@ impl MultiprocessExecutor {
         session_id: &str,
         input: crate::data::RuntimeData,
     ) -> Result<()> {
-        tracing::debug!(
-            "send_data_to_node: Sending to node '{}' in session '{}'",
+        tracing::info!(
+            "[send_data_to_node] START: node_id='{}', session_id='{}'",
             node_id,
             session_id
         );
@@ -593,37 +593,59 @@ impl MultiprocessExecutor {
         // Convert input to IPC format
         let ipc_data = Self::to_ipc_runtime_data(&input, session_id);
 
+        tracing::info!(
+            "[send_data_to_node] Converted RuntimeData to IPC format: type={:?}, {} bytes",
+            ipc_data.data_type,
+            ipc_data.payload.len()
+        );
+
         // Get the IPC thread from global sessions storage
         let global_sessions = global_sessions();
         let sessions = global_sessions.read().await;
 
         let session = sessions
             .get(session_id)
-            .ok_or_else(|| Error::Execution(format!("Session {} not found", session_id)))?;
+            .ok_or_else(|| {
+                let available: Vec<_> = sessions.keys().collect();
+                Error::Execution(format!("Session {} not found. Available: {:?}", session_id, available))
+            })?;
 
         let ipc_thread_cmd_tx = session
             .get(node_id)
-            .ok_or_else(|| Error::Execution(format!("IPC thread not found for node {}", node_id)))?
+            .ok_or_else(|| {
+                let available: Vec<_> = session.keys().collect();
+                Error::Execution(format!("IPC thread not found for node {}. Available: {:?}", node_id, available))
+            })?
             .clone();
 
         drop(sessions);
 
         // Send data to IPC thread (no waiting for outputs)
-        tracing::debug!(
-            "[Multiprocess] Sending data to node '{}' via IPC thread (fire-and-forget)",
+        tracing::info!(
+            "[send_data_to_node] Queuing data to IPC thread for node '{}'",
             node_id
         );
-        ipc_thread_cmd_tx
-            .send(IpcCommand::SendData { data: ipc_data })
-            .await
-            .map_err(|e| {
-                Error::Execution(format!(
+
+        match ipc_thread_cmd_tx.send(IpcCommand::SendData { data: ipc_data }).await {
+            Ok(_) => {
+                tracing::info!(
+                    "[send_data_to_node] Successfully queued data to IPC thread for node '{}'",
+                    node_id
+                );
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!(
+                    "[send_data_to_node] Failed to send to IPC thread for node '{}': {}",
+                    node_id,
+                    e
+                );
+                Err(Error::Execution(format!(
                     "Failed to send to IPC thread for node {}: {}",
                     node_id, e
-                ))
-            })?;
-
-        Ok(())
+                )))
+            }
+        }
     }
 
     /// Send data to a node's IPC thread without waiting for response (fire-and-forget)
@@ -1347,18 +1369,32 @@ impl MultiprocessExecutor {
                 match cmd_rx.try_recv() {
                     Ok(IpcCommand::SendData { data }) => {
                         // Send using persistent publisher (no delay needed!)
-                        tracing::debug!(
-                            "IPC thread sending {} bytes for node: {}",
+                        tracing::info!(
+                            "[IPC Thread] Node '{}': Received SendData command, {} bytes of type {:?}",
+                            node_id_clone,
                             data.payload.len(),
-                            node_id_clone
+                            data.data_type
                         );
 
-                        if let Err(e) = publisher.publish(data) {
-                            let _ = resp_tx.blocking_send(IpcResponse::Error(format!(
-                                "Publish failed: {}",
-                                e
-                            )));
-                            continue;
+                        match publisher.publish(data) {
+                            Ok(_) => {
+                                tracing::info!(
+                                    "[IPC Thread] Node '{}': Successfully published data to iceoryx2",
+                                    node_id_clone
+                                );
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "[IPC Thread] Node '{}': Publish failed: {}",
+                                    node_id_clone,
+                                    e
+                                );
+                                let _ = resp_tx.blocking_send(IpcResponse::Error(format!(
+                                    "Publish failed: {}",
+                                    e
+                                )));
+                                continue;
+                            }
                         }
 
                         // Acknowledge send
