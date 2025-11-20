@@ -1,0 +1,379 @@
+{
+    "name": "microservices_pipeline",
+    "version": "1.0.0",
+    "description": "Microservices architecture demonstrating isolated services with different Python versions and conflicting dependencies",
+    "nodes": [
+        {
+            "id": "input",
+            "node_type": "Input",
+            "executor": null,
+            "config": {},
+            "metadata": {
+                "description": "Pipeline input node"
+            }
+        },
+        {
+            "id": "legacy_service_py39",
+            "node_type": "legacy.DataExtractor",
+            "executor": "multiprocess",
+            "config": {
+                "extraction_mode": "full",
+                "legacy_format": true
+            },
+            "metadata": {
+                "description": "Legacy service requiring Python 3.9 and older package versions",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.9",
+                    "base_image": "python:3.9-slim",
+                    "python_packages": [
+                        "numpy==1.21.0",
+                        "pandas==1.3.0",
+                        "scikit-learn==0.24.0",
+                        "scipy==1.7.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "build-essential",
+                        "libopenblas-dev"
+                    ],
+                    "memory_mb": 512,
+                    "cpu_cores": 1.0,
+                    "shm_size_mb": 1024,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "LEGACY_MODE": "true",
+                        "NUMPY_MKL": "0"
+                    },
+                    "gpu_devices": [],
+                    "volumes": []
+                },
+                "isolation_rationale": [
+                    "Python 3.9 EOL but still required by legacy code",
+                    "numpy 1.21 incompatible with newer Python versions",
+                    "scikit-learn 0.24 has different API than 1.x",
+                    "Container isolation prevents conflicts with other services"
+                ]
+            }
+        },
+        {
+            "id": "modern_service_py311",
+            "node_type": "modern.DataProcessor",
+            "executor": "multiprocess",
+            "config": {
+                "processing_mode": "async",
+                "use_modern_apis": true
+            },
+            "metadata": {
+                "description": "Modern service leveraging Python 3.11 performance improvements",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.11",
+                    "base_image": "python:3.11-slim",
+                    "python_packages": [
+                        "numpy>=1.26.0",
+                        "pandas>=2.1.0",
+                        "polars>=0.19.0",
+                        "pyarrow>=14.0.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "gcc",
+                        "g++"
+                    ],
+                    "memory_mb": 1024,
+                    "cpu_cores": 2.0,
+                    "shm_size_mb": 2048,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "POLARS_MAX_THREADS": "2",
+                        "PYARROW_IGNORE_TIMEZONE": "1"
+                    },
+                    "gpu_devices": [],
+                    "volumes": []
+                },
+                "performance_benefits": [
+                    "Python 3.11: 10-60% faster than 3.9 due to faster CPython",
+                    "Polars: 5-10x faster DataFrame operations vs pandas",
+                    "Modern numpy 1.26+ with SIMD optimizations",
+                    "No compatibility constraints with legacy code"
+                ]
+            }
+        },
+        {
+            "id": "tensorflow_service",
+            "node_type": "ml.TensorFlowInference",
+            "executor": "multiprocess",
+            "config": {
+                "model_path": "/models/tf_model",
+                "batch_size": 16
+            },
+            "metadata": {
+                "description": "TensorFlow 2.x service isolated from PyTorch dependencies",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.10",
+                    "base_image": "tensorflow/tensorflow:2.14.0-gpu",
+                    "python_packages": [
+                        "tensorflow==2.14.0",
+                        "tensorflow-hub>=0.15.0",
+                        "keras>=2.14.0",
+                        "numpy>=1.24.0,<1.27.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "libhdf5-dev"
+                    ],
+                    "memory_mb": 4096,
+                    "cpu_cores": 3.0,
+                    "shm_size_mb": 3072,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "TF_CPP_MIN_LOG_LEVEL": "2",
+                        "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+                        "TF_GPU_THREAD_MODE": "gpu_private",
+                        "CUDA_VISIBLE_DEVICES": "0"
+                    },
+                    "gpu_devices": ["0"],
+                    "volumes": [
+                        {
+                            "host_path": "/data/models/tensorflow",
+                            "container_path": "/models",
+                            "read_only": true,
+                            "mount_type": "bind"
+                        }
+                    ]
+                },
+                "dependency_conflicts": [
+                    "TensorFlow requires numpy<1.27, PyTorch uses numpy>=1.24",
+                    "TensorFlow protobuf version conflicts with transformers",
+                    "CUDA toolkit version differs from PyTorch requirements",
+                    "Docker isolation prevents library version conflicts"
+                ]
+            }
+        },
+        {
+            "id": "pytorch_service",
+            "node_type": "ml.PyTorchInference",
+            "executor": "multiprocess",
+            "config": {
+                "model_path": "/models/pytorch_model",
+                "batch_size": 8
+            },
+            "metadata": {
+                "description": "PyTorch 2.x service isolated from TensorFlow dependencies",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.11",
+                    "base_image": "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime",
+                    "python_packages": [
+                        "torch==2.1.0",
+                        "torchvision==0.16.0",
+                        "torchaudio==2.1.0",
+                        "transformers>=4.35.0",
+                        "numpy>=1.24.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "ffmpeg",
+                        "libsndfile1"
+                    ],
+                    "memory_mb": 4096,
+                    "cpu_cores": 3.0,
+                    "shm_size_mb": 3072,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "TORCH_HOME": "/models/torch",
+                        "CUDA_VISIBLE_DEVICES": "1",
+                        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512"
+                    },
+                    "gpu_devices": ["1"],
+                    "volumes": [
+                        {
+                            "host_path": "/data/models/pytorch",
+                            "container_path": "/models",
+                            "read_only": true,
+                            "mount_type": "bind"
+                        }
+                    ]
+                },
+                "dependency_conflicts": [
+                    "PyTorch CUDA 12.1 vs TensorFlow CUDA 11.8",
+                    "Different protobuf versions required",
+                    "PyTorch uses newer numpy than TensorFlow supports",
+                    "Separate GPUs prevent CUDA context conflicts"
+                ]
+            }
+        },
+        {
+            "id": "data_aggregator",
+            "node_type": "aggregation.ServiceAggregator",
+            "executor": "multiprocess",
+            "config": {
+                "aggregation_strategy": "weighted_average",
+                "output_format": "json"
+            },
+            "metadata": {
+                "description": "Lightweight aggregator combining outputs from all services",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.11",
+                    "base_image": "python:3.11-alpine",
+                    "python_packages": [
+                        "orjson>=3.9.0",
+                        "msgpack>=1.0.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "gcc",
+                        "musl-dev"
+                    ],
+                    "memory_mb": 256,
+                    "cpu_cores": 0.5,
+                    "shm_size_mb": 512,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1"
+                    },
+                    "gpu_devices": [],
+                    "volumes": []
+                },
+                "microservice_pattern": [
+                    "Alpine base for minimal image size (~50MB)",
+                    "Only JSON serialization dependencies",
+                    "No heavy ML frameworks needed",
+                    "Low resource allocation sufficient"
+                ]
+            }
+        },
+        {
+            "id": "output",
+            "node_type": "Output",
+            "executor": null,
+            "config": {},
+            "metadata": {
+                "description": "Pipeline output node"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "input",
+            "target": "legacy_service_py39",
+            "field_mapping": {
+                "source_field": "raw_data",
+                "target_field": "input_data"
+            }
+        },
+        {
+            "source": "legacy_service_py39",
+            "target": "modern_service_py311",
+            "field_mapping": {
+                "source_field": "extracted_features",
+                "target_field": "features"
+            }
+        },
+        {
+            "source": "modern_service_py311",
+            "target": "tensorflow_service",
+            "field_mapping": {
+                "source_field": "processed_data",
+                "target_field": "input_tensor"
+            }
+        },
+        {
+            "source": "modern_service_py311",
+            "target": "pytorch_service",
+            "field_mapping": {
+                "source_field": "processed_data",
+                "target_field": "input_tensor"
+            }
+        },
+        {
+            "source": "tensorflow_service",
+            "target": "data_aggregator",
+            "field_mapping": {
+                "source_field": "predictions",
+                "target_field": "tf_results"
+            }
+        },
+        {
+            "source": "pytorch_service",
+            "target": "data_aggregator",
+            "field_mapping": {
+                "source_field": "predictions",
+                "target_field": "pytorch_results"
+            }
+        },
+        {
+            "source": "data_aggregator",
+            "target": "output",
+            "field_mapping": {
+                "source_field": "aggregated_output",
+                "target_field": "final_results"
+            }
+        }
+    ],
+    "config": {
+        "batch_size": 1,
+        "timeout_ms": 90000,
+        "retry_policy": {
+            "max_retries": 3,
+            "backoff_ms": 1000
+        },
+        "runtime_config": {
+            "enable_docker": true,
+            "docker_fallback_to_multiprocess": false,
+            "docker_image_cache_size": 15,
+            "docker_cleanup_on_exit": true,
+            "allow_parallel_builds": true
+        }
+    },
+    "metadata": {
+        "author": "RemoteMedia SDK",
+        "created": "2024-12-20",
+        "tags": ["docker", "microservices", "multi-version", "isolation", "ml"],
+        "description": "Service mesh pattern with isolated microservices running different Python versions and conflicting ML frameworks",
+        "architecture_patterns": [
+            "Microservices: Each service in isolated container",
+            "API Gateway: Input/output nodes route requests",
+            "Service Isolation: Prevent dependency conflicts",
+            "Polyglot Persistence: Different Python versions coexist",
+            "Zero-Copy IPC: iceoryx2 for inter-service communication"
+        ],
+        "use_cases": [
+            "Migrating legacy code while developing modern services",
+            "Running TensorFlow and PyTorch in same pipeline",
+            "Supporting multiple Python versions simultaneously",
+            "Isolating services with incompatible dependencies",
+            "Building polyglot data processing pipelines"
+        ],
+        "benefits": [
+            "Dependency isolation prevents version conflicts",
+            "Independent service scaling and resource allocation",
+            "Gradual migration from legacy to modern code",
+            "Framework flexibility (TensorFlow + PyTorch)",
+            "Zero-copy IPC maintains performance despite isolation"
+        ],
+        "best_practices": [
+            "Use specific Python versions per service requirements",
+            "Pin exact package versions to ensure reproducibility",
+            "Allocate separate GPUs to avoid CUDA context conflicts",
+            "Use Alpine images for lightweight services",
+            "Keep aggregator services minimal and fast",
+            "Document dependency conflicts and isolation rationale"
+        ],
+        "performance_characteristics": {
+            "latency_overhead": "5-10ms per container vs native multiprocess",
+            "memory_overhead": "~200MB per container for Python runtime",
+            "startup_time": "3-5s per container (cached images)",
+            "ipc_throughput": "Zero-copy via iceoryx2 shared memory",
+            "isolation_benefit": "No crashes from dependency conflicts"
+        },
+        "verification": {
+            "check_python_versions": "docker exec remotemedia_<node_id> python --version",
+            "check_packages": "docker exec remotemedia_<node_id> pip list",
+            "check_cuda": "docker exec remotemedia_<node_id> nvidia-smi",
+            "check_ipc": "ls -la /tmp/iceoryx2/services/"
+        }
+    }
+}

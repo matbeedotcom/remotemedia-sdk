@@ -1,0 +1,99 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "mixed-executor-pipeline",
+    "description": "Demonstrates Docker + Native Rust + Multiprocess Python nodes in single pipeline",
+    "note": "Shows how different executor types can coexist (FR-001)"
+  },
+  "nodes": [
+    {
+      "id": "native_vad",
+      "node_type": "SileroVADNode",
+      "is_streaming": true,
+      "params": {
+        "threshold": 0.5,
+        "samplingRate": 16000
+      },
+      "comment": "Native Rust node - fastest execution"
+    },
+    {
+      "id": "docker_transcribe_pytorch1",
+      "node_type": "LegacyTranscriberNode",
+      "is_streaming": true,
+      "params": {
+        "model": "legacy-model"
+      },
+      "docker": {
+        "python_version": "3.9",
+        "python_packages": [
+          "torch==1.13.1",
+          "transformers==4.25.0",
+          "iceoryx2"
+        ],
+        "resource_limits": {
+          "memory_mb": 3072,
+          "cpu_cores": 2.0
+        }
+      },
+      "comment": "Docker node with PyTorch 1.x - isolated environment"
+    },
+    {
+      "id": "docker_transcribe_pytorch2",
+      "node_type": "ModernTranscriberNode",
+      "is_streaming": true,
+      "params": {
+        "model": "modern-model"
+      },
+      "docker": {
+        "python_version": "3.11",
+        "python_packages": [
+          "torch==2.1.0",
+          "transformers>=4.35.0",
+          "iceoryx2"
+        ],
+        "resource_limits": {
+          "memory_mb": 4096,
+          "cpu_cores": 2.0
+        }
+      },
+      "comment": "Docker node with PyTorch 2.x - different Python version + packages"
+    },
+    {
+      "id": "multiprocess_postprocess",
+      "node_type": "TextCleanupNode",
+      "is_streaming": false,
+      "runtime_hint": "cpython",
+      "params": {
+        "rules": ["lowercase", "trim"]
+      },
+      "comment": "Multiprocess Python node - uses host Python environment"
+    }
+  ],
+  "connections": [
+    {
+      "from": "audio_input",
+      "to": "native_vad",
+      "comment": "Fast native VAD filtering"
+    },
+    {
+      "from": "native_vad",
+      "to": "docker_transcribe_pytorch1",
+      "comment": "iceoryx2 zero-copy to Docker container"
+    },
+    {
+      "from": "native_vad",
+      "to": "docker_transcribe_pytorch2",
+      "comment": "Same audio to both transcribers (parallel processing)"
+    },
+    {
+      "from": "docker_transcribe_pytorch1",
+      "to": "multiprocess_postprocess",
+      "comment": "Container → host process via iceoryx2"
+    },
+    {
+      "from": "docker_transcribe_pytorch2",
+      "to": "multiprocess_postprocess",
+      "comment": "Container → host process via iceoryx2"
+    }
+  ]
+}

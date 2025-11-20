@@ -15,7 +15,7 @@ import asyncio
 # Import the RuntimeData bindings from the Rust extension
 # (These will be available when the remotemedia Rust extension is built with PyO3)
 try:
-    from remotemedia.runtime_data import RuntimeData, numpy_to_audio, audio_to_numpy
+    from remotemedia.core.multiprocessing.data import RuntimeData, numpy_to_audio, audio_to_numpy
 except ImportError:
     print("Note: RuntimeData bindings not yet available. Build the Rust extension first.")
     print("This is a reference implementation showing the API usage.")

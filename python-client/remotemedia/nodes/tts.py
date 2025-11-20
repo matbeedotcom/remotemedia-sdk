@@ -19,19 +19,20 @@ import numpy as np
 from typing import AsyncGenerator, Optional, TYPE_CHECKING, Union, Dict, Any
 import asyncio
 
-# Import RuntimeData bindings
-if TYPE_CHECKING:
-    from remotemedia_runtime.runtime_data import RuntimeData
+# Import RuntimeData from core multiprocessing
+from remotemedia.core.multiprocessing.data import RuntimeData
+import numpy as np
 
-try:
-    from remotemedia_runtime.runtime_data import RuntimeData, numpy_to_audio, audio_to_numpy
-    RUNTIME_DATA_AVAILABLE = True
-except ImportError:
-    RUNTIME_DATA_AVAILABLE = False
-    RuntimeData = None  # type: ignore
-    numpy_to_audio = None  # type: ignore
-    audio_to_numpy = None  # type: ignore
-    logging.warning("RuntimeData bindings not available. Using fallback implementation.")
+# Helper functions for numpy/audio conversion
+def numpy_to_audio(samples: np.ndarray, sample_rate: int, channels: int = 1) -> RuntimeData:
+    """Convert numpy array to RuntimeData.Audio"""
+    return RuntimeData.audio(samples, sample_rate, channels)
+
+def audio_to_numpy(audio_data: RuntimeData) -> np.ndarray:
+    """Convert RuntimeData.Audio to numpy array"""
+    return audio_data.as_numpy()
+
+RUNTIME_DATA_AVAILABLE = True
 
 # Import MultiprocessNode base class from core
 from remotemedia.core import MultiprocessNode, NodeConfig
@@ -110,8 +111,16 @@ class KokoroTTSNode(MultiprocessNode):
             skip_tokens = params.get('skip_tokens', skip_tokens)
         else:
             # Standalone mode without multiprocess
-            self.node_id = node_id or "kokoro_tts"
-            self.node_type = "KokoroTTSNode"
+            # Still need to initialize base class to set up _status and other attributes
+            # Create a minimal config for base class initialization
+            from remotemedia.core.multiprocessing.node import NodeConfig
+            minimal_config = NodeConfig(
+                node_id=node_id or "kokoro_tts",
+                node_type="KokoroTTSNode",
+                params={}
+            )
+            super().__init__(minimal_config, **kwargs)
+            # Override logger if needed
             self.logger = logging.getLogger(__name__)
 
         # Kokoro-specific configuration
@@ -218,17 +227,20 @@ class KokoroTTSNode(MultiprocessNode):
             ValueError: If input is not RuntimeData.Text
             RuntimeError: If TTS synthesis fails
         """
+        logger.info("KokoroTTSNode process() called")
         if not self._initialized:
             await self.initialize()
 
         # Validate input type
         if not data.is_text():
+            logger.info(f"KokoroTTSNode: non-text data (type={data.type}), ignoring")
             # ignore
             yield data
+            return
 
         # Extract text from RuntimeData
         text = data.as_text()
-
+        logger.info(f"KokoroTTSNode: extracted text: '{text}'")
         if not text or not text.strip():
             logger.warning("Empty text input, skipping synthesis")
             return

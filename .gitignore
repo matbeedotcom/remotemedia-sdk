@@ -173,11 +173,32 @@ runtime/wasmtime-v*/
 # .claude/commands/openspec/
 
 # Rust specific
+target/
 *.rlib
 *.prof
 *.profraw
 debug/
 release/
 Cargo.lock  # For libraries; remove this line if building binaries
+*.rs.bk
+
+# Docker-related files
+docker-compose.override.yml
+.docker/
+docker-cache/
+*.dockerignore.local
+
+# Docker build context
+.dockerbuild/
+docker-context/
+
+# Container runtime files
+/tmp/iceoryx2/
+/tmp/roudi.lock
+/tmp/iox-*
+
+# Docker image build logs
+docker-build-*.log
+image-cache/
 
 nul

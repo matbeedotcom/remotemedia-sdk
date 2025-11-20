@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from remotemedia.nodes.ml import LFM2AudioNode
 
 try:
-    from remotemedia_runtime.runtime_data import RuntimeData, numpy_to_audio, audio_to_numpy
+    from remotemedia.core.multiprocessing.data import RuntimeData, numpy_to_audio, audio_to_numpy
     RUNTIME_DATA_AVAILABLE = True
 except ImportError:
     print("ERROR: RuntimeData bindings not available.")

@@ -71,18 +71,37 @@ impl ChannelRegistry {
     pub fn global() -> Arc<Self> {
         GLOBAL_REGISTRY
             .get_or_init(|| {
-                let mut registry = Self::new_internal();
-
                 #[cfg(feature = "multiprocess")]
                 {
-                    if let Err(e) = registry.initialize() {
-                        tracing::error!("Failed to initialize global iceoryx2 registry: {}", e);
-                    } else {
-                        tracing::info!("Global iceoryx2 registry initialized successfully");
+                    // Set log level first
+                    set_log_level(LogLevel::Info);
+
+                    // Create iceoryx2 node directly here, not via a mutable method
+                    match NodeBuilder::new().create::<ipc::Service>() {
+                        Ok(node) => {
+                            tracing::info!("Global iceoryx2 node created successfully");
+                            Arc::new(Self {
+                                node: Some(node),
+                                channels: Arc::new(RwLock::new(HashMap::new())),
+                                services: Arc::new(RwLock::new(HashMap::new())),
+                            })
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to create global iceoryx2 node: {:?}. IPC operations will fail.", e);
+                            // Return registry without node - operations will fail with clear error
+                            Arc::new(Self {
+                                node: None,
+                                channels: Arc::new(RwLock::new(HashMap::new())),
+                                services: Arc::new(RwLock::new(HashMap::new())),
+                            })
+                        }
                     }
                 }
 
-                Arc::new(registry)
+                #[cfg(not(feature = "multiprocess"))]
+                {
+                    Arc::new(Self::new_internal())
+                }
             })
             .clone()
     }
@@ -110,6 +129,12 @@ impl ChannelRegistry {
     /// Initialize iceoryx2 runtime
     #[cfg(feature = "multiprocess")]
     pub fn initialize(&mut self) -> Result<()> {
+        // Skip if already initialized
+        if self.node.is_some() {
+            tracing::debug!("iceoryx2 node already initialized");
+            return Ok(());
+        }
+
         // Set log level
         set_log_level(LogLevel::Info);
 
@@ -121,6 +146,17 @@ impl ChannelRegistry {
         self.node = Some(node);
 
         tracing::info!("iceoryx2 runtime initialized");
+        Ok(())
+    }
+
+    /// Ensure the registry is initialized (for use in spawned threads)
+    #[cfg(feature = "multiprocess")]
+    pub async fn ensure_initialized(&self) -> Result<()> {
+        if self.node.is_none() {
+            return Err(Error::IpcError(
+                "iceoryx2 node not initialized. Call ChannelRegistry::global() first on main thread.".to_string()
+            ));
+        }
         Ok(())
     }
 
@@ -300,7 +336,7 @@ impl<'a> Publisher<'a> {
         // Serialize RuntimeData to bytes
         let bytes = data.to_bytes();
 
-        tracing::info!(
+        tracing::debug!(
             "[IPC Publisher] Channel '{}' publishing {} bytes (type: {:?})",
             self.channel_name,
             bytes.len(),
@@ -327,7 +363,7 @@ impl<'a> Publisher<'a> {
             .send()
             .map_err(|e| Error::IpcError(format!("Failed to send sample: {:?}", e)))?;
 
-        tracing::info!(
+        tracing::debug!(
             "[IPC Publisher] Channel '{}' successfully sent {} bytes",
             self.channel_name,
             bytes.len()
@@ -351,7 +387,7 @@ impl<'a> Publisher<'a> {
 
     /// Send raw bytes directly (like READY signal) - bypasses RuntimeData serialization
     pub fn send(&self, bytes: &[u8]) -> Result<()> {
-        tracing::info!(
+        tracing::debug!(
             "[IPC Publisher] Channel '{}' sending raw {} bytes",
             self.channel_name,
             bytes.len()
@@ -377,7 +413,7 @@ impl<'a> Publisher<'a> {
             .send()
             .map_err(|e| Error::IpcError(format!("Failed to send sample: {:?}", e)))?;
 
-        tracing::info!(
+        tracing::debug!(
             "[IPC Publisher] Channel '{}' successfully sent raw {} bytes",
             self.channel_name,
             bytes.len()
@@ -410,7 +446,7 @@ impl Subscriber {
             Ok(Some(sample)) => {
                 let bytes = sample.payload();
 
-                tracing::info!(
+                tracing::debug!(
                     "[IPC Subscriber] Channel '{}' received {} bytes",
                     self.channel_name,
                     bytes.len()

@@ -1,0 +1,415 @@
+{
+    "name": "resource_constrained_pipeline",
+    "version": "1.0.0",
+    "description": "Demonstrates strict resource limits and isolation for memory-constrained and CPU-throttled environments",
+    "nodes": [
+        {
+            "id": "input",
+            "node_type": "Input",
+            "executor": null,
+            "config": {},
+            "metadata": {
+                "description": "Pipeline input node"
+            }
+        },
+        {
+            "id": "minimal_preprocessor",
+            "node_type": "preprocessing.MinimalPreprocessor",
+            "executor": "multiprocess",
+            "config": {
+                "mode": "lightweight",
+                "buffer_size": "small"
+            },
+            "metadata": {
+                "description": "Ultra-lightweight preprocessor with minimal memory footprint",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.11",
+                    "base_image": "python:3.11-alpine",
+                    "python_packages": [
+                        "iceoryx2"
+                    ],
+                    "system_packages": [],
+                    "memory_mb": 128,
+                    "cpu_cores": 0.25,
+                    "shm_size_mb": 256,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "MALLOC_TRIM_THRESHOLD_": "65536",
+                        "MALLOC_MMAP_THRESHOLD_": "65536"
+                    },
+                    "gpu_devices": [],
+                    "volumes": []
+                },
+                "resource_constraints": [
+                    "128MB memory limit - minimal Python runtime + small buffer",
+                    "0.25 CPU cores - 25% of one CPU core (250 millicores)",
+                    "256MB shared memory - sufficient for small IPC buffers",
+                    "Alpine base (~50MB) reduces image and memory overhead",
+                    "Malloc tuning reduces memory fragmentation"
+                ],
+                "monitoring": [
+                    "Container will be OOM killed if exceeding 128MB",
+                    "CPU throttling at 25% enforced by Docker",
+                    "Use docker stats to monitor resource usage"
+                ]
+            }
+        },
+        {
+            "id": "cpu_throttled_processor",
+            "node_type": "processing.ThrottledProcessor",
+            "executor": "multiprocess",
+            "config": {
+                "processing_intensity": "low",
+                "max_iterations": 100
+            },
+            "metadata": {
+                "description": "CPU-throttled processor demonstrating fractional core allocation",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.10",
+                    "base_image": "python:3.10-slim",
+                    "python_packages": [
+                        "numpy>=1.24.0,<2.0.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [],
+                    "memory_mb": 384,
+                    "cpu_cores": 0.5,
+                    "shm_size_mb": 512,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "OMP_NUM_THREADS": "1",
+                        "OPENBLAS_NUM_THREADS": "1",
+                        "MKL_NUM_THREADS": "1",
+                        "NUMEXPR_NUM_THREADS": "1"
+                    },
+                    "gpu_devices": [],
+                    "volumes": []
+                },
+                "resource_constraints": [
+                    "384MB memory - allows numpy but limits array sizes",
+                    "0.5 CPU cores - 50% of one core for moderate processing",
+                    "Single-threaded numpy to respect CPU limits",
+                    "Thread pool environment variables prevent oversubscription"
+                ],
+                "cpu_throttling_behavior": [
+                    "Docker uses CFS (Completely Fair Scheduler) quotas",
+                    "0.5 cores = 50ms CPU time per 100ms period",
+                    "CPU-intensive tasks will be throttled to maintain limit",
+                    "Prevents noisy neighbor problems in shared environments"
+                ]
+            }
+        },
+        {
+            "id": "memory_capped_analyzer",
+            "node_type": "analysis.MemoryCappedAnalyzer",
+            "executor": "multiprocess",
+            "config": {
+                "analysis_mode": "streaming",
+                "use_memory_mapped_io": true
+            },
+            "metadata": {
+                "description": "Memory-capped analyzer using streaming algorithms for large datasets",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.11",
+                    "base_image": "python:3.11-slim",
+                    "python_packages": [
+                        "numpy>=1.24.0",
+                        "dask[array]>=2023.5.0",
+                        "zarr>=2.16.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "gcc",
+                        "libc6-dev"
+                    ],
+                    "memory_mb": 768,
+                    "cpu_cores": 1.0,
+                    "shm_size_mb": 512,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "DASK_DISTRIBUTED__SCHEDULER__WORK_STEALING": "False",
+                        "DASK_DATAFRAME__QUERY_PLANNING": "False",
+                        "NUMBA_DISABLE_JIT": "1"
+                    },
+                    "gpu_devices": [],
+                    "volumes": [
+                        {
+                            "host_path": "/tmp/remotemedia_cache",
+                            "container_path": "/cache",
+                            "read_only": false,
+                            "mount_type": "bind"
+                        }
+                    ]
+                },
+                "resource_constraints": [
+                    "768MB memory - strict limit for streaming operations",
+                    "Dask configured for minimal memory footprint",
+                    "Zarr for chunked array storage when memory insufficient",
+                    "Memory-mapped I/O via host volume for large data",
+                    "Numba JIT disabled to save memory during compilation"
+                ],
+                "memory_management": [
+                    "Streaming algorithms process data in chunks",
+                    "Disk-backed arrays when data exceeds memory",
+                    "Explicit garbage collection after each chunk",
+                    "Container killed by OOM if limit exceeded"
+                ]
+            }
+        },
+        {
+            "id": "burst_limited_service",
+            "node_type": "service.BurstLimitedService",
+            "executor": "multiprocess",
+            "config": {
+                "burst_tolerance": "low",
+                "queue_size": 10
+            },
+            "metadata": {
+                "description": "Service with minimal CPU and memory demonstrating burst handling",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.10",
+                    "base_image": "python:3.10-alpine",
+                    "python_packages": [
+                        "iceoryx2"
+                    ],
+                    "system_packages": [],
+                    "memory_mb": 192,
+                    "cpu_cores": 0.3,
+                    "shm_size_mb": 256,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "PYTHONHASHSEED": "0"
+                    },
+                    "gpu_devices": [],
+                    "volumes": []
+                },
+                "resource_constraints": [
+                    "192MB memory - minimal viable Python runtime",
+                    "0.3 CPU cores - 30% of one core (300 millicores)",
+                    "Demonstrates lowest practical resource allocation",
+                    "Suitable for simple passthrough or routing logic"
+                ],
+                "burst_behavior": [
+                    "Low CPU allocation means slow processing during bursts",
+                    "Small queue prevents memory exhaustion",
+                    "Backpressure signals upstream when queue full",
+                    "Demonstrates graceful degradation under load"
+                ]
+            }
+        },
+        {
+            "id": "isolated_heavy_task",
+            "node_type": "tasks.IsolatedHeavyTask",
+            "executor": "multiprocess",
+            "config": {
+                "task_type": "batch_processing",
+                "max_batch_size": 32
+            },
+            "metadata": {
+                "description": "Resource-isolated heavy task preventing impact on other services",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.11",
+                    "base_image": "python:3.11-slim",
+                    "python_packages": [
+                        "numpy>=1.24.0",
+                        "scipy>=1.11.0",
+                        "iceoryx2"
+                    ],
+                    "system_packages": [
+                        "libopenblas0"
+                    ],
+                    "memory_mb": 2048,
+                    "cpu_cores": 2.0,
+                    "shm_size_mb": 1024,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1",
+                        "OMP_NUM_THREADS": "2",
+                        "OPENBLAS_NUM_THREADS": "2"
+                    },
+                    "gpu_devices": [],
+                    "volumes": []
+                },
+                "resource_constraints": [
+                    "2048MB memory - higher limit for batch processing",
+                    "2.0 CPU cores - allows parallel computation",
+                    "Isolated from lightweight services via Docker",
+                    "Resource limits prevent runaway memory consumption",
+                    "Thread limits prevent CPU oversubscription"
+                ],
+                "isolation_benefits": [
+                    "Heavy task cannot starve lightweight services",
+                    "OOM in this container doesn't affect others",
+                    "CPU throttling prevents system-wide slowdown",
+                    "Independent scaling and resource tuning"
+                ]
+            }
+        },
+        {
+            "id": "output",
+            "node_type": "Output",
+            "executor": null,
+            "config": {},
+            "metadata": {
+                "description": "Pipeline output node"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "input",
+            "target": "minimal_preprocessor",
+            "field_mapping": {
+                "source_field": "data",
+                "target_field": "input"
+            }
+        },
+        {
+            "source": "minimal_preprocessor",
+            "target": "cpu_throttled_processor",
+            "field_mapping": {
+                "source_field": "preprocessed",
+                "target_field": "data"
+            }
+        },
+        {
+            "source": "cpu_throttled_processor",
+            "target": "memory_capped_analyzer",
+            "field_mapping": {
+                "source_field": "processed",
+                "target_field": "input"
+            }
+        },
+        {
+            "source": "memory_capped_analyzer",
+            "target": "burst_limited_service",
+            "field_mapping": {
+                "source_field": "analysis",
+                "target_field": "data"
+            }
+        },
+        {
+            "source": "burst_limited_service",
+            "target": "isolated_heavy_task",
+            "field_mapping": {
+                "source_field": "routed_data",
+                "target_field": "batch_input"
+            }
+        },
+        {
+            "source": "isolated_heavy_task",
+            "target": "output",
+            "field_mapping": {
+                "source_field": "batch_output",
+                "target_field": "results"
+            }
+        }
+    ],
+    "config": {
+        "batch_size": 1,
+        "timeout_ms": 45000,
+        "retry_policy": {
+            "max_retries": 2,
+            "backoff_ms": 500
+        },
+        "runtime_config": {
+            "enable_docker": true,
+            "docker_fallback_to_multiprocess": false,
+            "docker_image_cache_size": 10,
+            "docker_cleanup_on_exit": true,
+            "enforce_resource_limits": true
+        }
+    },
+    "metadata": {
+        "author": "RemoteMedia SDK",
+        "created": "2024-12-20",
+        "tags": ["docker", "resource-limits", "memory-constrained", "cpu-throttling", "isolation"],
+        "description": "Demonstrates strict resource limits, CPU throttling, and memory constraints for multi-tenant and resource-constrained environments",
+        "use_cases": [
+            "Multi-tenant SaaS platforms with resource guarantees",
+            "Edge devices with limited CPU/memory",
+            "Cost optimization by right-sizing container resources",
+            "Preventing resource exhaustion and noisy neighbors",
+            "Testing application behavior under resource pressure"
+        ],
+        "resource_limit_patterns": [
+            "Minimal (128MB, 0.25 cores): Simple routing and passthrough",
+            "Light (256-512MB, 0.3-0.5 cores): Basic data processing",
+            "Medium (768-1024MB, 1.0 cores): Moderate computation",
+            "Heavy (2048MB+, 2.0+ cores): Batch processing and analysis"
+        ],
+        "docker_resource_enforcement": {
+            "memory": {
+                "mechanism": "Linux cgroups memory.limit_in_bytes",
+                "behavior": "OOM killer terminates container if exceeded",
+                "includes": "Process memory + page cache + swap",
+                "monitoring": "docker stats shows current usage vs limit"
+            },
+            "cpu": {
+                "mechanism": "Linux CFS (Completely Fair Scheduler) quotas",
+                "behavior": "Throttles process when quota exceeded in period",
+                "period": "100ms default period",
+                "quota": "cpu_cores * period (e.g., 0.5 cores = 50ms/100ms)",
+                "monitoring": "docker stats shows CPU percentage"
+            },
+            "shared_memory": {
+                "mechanism": "/dev/shm tmpfs mount with size limit",
+                "behavior": "ENOSPC error when limit exceeded",
+                "default": "64MB (often insufficient for ML/data processing)",
+                "recommendation": "Set to 25-50% of memory_mb for IPC workloads"
+            }
+        },
+        "best_practices": [
+            "Start with minimal resources and increase based on monitoring",
+            "Set memory limit to 2x typical usage to handle peaks",
+            "Use Alpine base images for minimal memory footprint",
+            "Disable thread pools (OMP, BLAS) in CPU-constrained containers",
+            "Configure shared memory explicitly for iceoryx2 IPC",
+            "Implement graceful degradation when resources exhausted",
+            "Monitor container stats during development: docker stats",
+            "Use memory-mapped I/O for large datasets",
+            "Implement backpressure to prevent memory buildup",
+            "Test OOM behavior: gradually reduce memory_mb until failure"
+        ],
+        "monitoring_commands": [
+            "docker stats --no-stream --format 'table {{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.MemPerc}}'",
+            "docker inspect --format='{{.HostConfig.Memory}}' <container_id>",
+            "docker inspect --format='{{.HostConfig.NanoCpus}}' <container_id>",
+            "docker exec <container_id> cat /sys/fs/cgroup/memory/memory.limit_in_bytes",
+            "docker exec <container_id> cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us"
+        ],
+        "troubleshooting": {
+            "oom_killed": [
+                "Check docker inspect <container_id> | grep OOMKilled",
+                "Increase memory_mb in docker_config",
+                "Reduce batch sizes or buffer sizes in node config",
+                "Implement streaming/chunked processing",
+                "Check for memory leaks in Python code"
+            ],
+            "cpu_throttling": [
+                "Monitor CPU percentage in docker stats",
+                "If consistently at limit, increase cpu_cores",
+                "Optimize hot paths in Python code",
+                "Reduce thread pool sizes (OMP_NUM_THREADS)",
+                "Consider offloading to native Rust nodes"
+            ],
+            "shared_memory_full": [
+                "Increase shm_size_mb in docker_config",
+                "Check /dev/shm usage: docker exec df -h /dev/shm",
+                "Reduce IPC buffer sizes",
+                "Implement buffer cleanup in node code"
+            ]
+        },
+        "performance_characteristics": {
+            "latency_impact": "10-50% higher latency when CPU throttled",
+            "throughput_impact": "Directly proportional to CPU allocation",
+            "memory_pressure": "GC overhead increases near memory limit",
+            "isolation_benefit": "Failures isolated to single container",
+            "cost_optimization": "Right-sizing reduces cloud costs by 30-60%"
+        }
+    }
+}

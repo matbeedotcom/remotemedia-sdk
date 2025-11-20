@@ -1,0 +1,51 @@
+{
+    "version": "v1",
+    "metadata": {
+        "name": "local-vad-remote-tts",
+        "description": "Local VAD feeding into remote TTS on GPU server"
+    },
+    "nodes": [
+        {
+            "id": "local_vad",
+            "node_type": "SileroVADNode",
+            "params": {
+                "threshold": 0.5,
+                "sample_rate": 16000,
+                "min_speech_duration_ms": 250
+            }
+        },
+        {
+            "id": "remote_tts",
+            "node_type": "RemotePipelineNode",
+            "params": {
+                "transport": "grpc",
+                "endpoint": "gpu-server.example.com:50051",
+                "auth_token": "${TTS_API_TOKEN}",
+                "manifest": {
+                    "version": "v1",
+                    "nodes": [
+                        {
+                            "id": "tts",
+                            "node_type": "KokoroTTSNode",
+                            "params": {
+                                "voice": "af_bella",
+                                "speed": 1.0
+                            }
+                        }
+                    ]
+                },
+                "timeout_ms": 10000,
+                "retry": {
+                    "max_retries": 3,
+                    "backoff_ms": 1000
+                }
+            }
+        }
+    ],
+    "connections": [
+        {
+            "from": "local_vad",
+            "to": "remote_tts"
+        }
+    ]
+}

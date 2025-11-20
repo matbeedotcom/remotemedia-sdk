@@ -114,14 +114,20 @@ from .core.exceptions import (
 
 # Convenience imports
 from .nodes import *  # noqa: F401, F403
-from .webrtc.manager import WebRTCManager
+
+# Optional import: WebRTCManager might require aiortc for some features
+try:
+    from .webrtc.manager import WebRTCManager
+    _has_webrtc = True
+except ImportError:
+    WebRTCManager = None
+    _has_webrtc = False
 
 __all__ = [
     # Core classes
     "Pipeline",
     "Node",
     "RemoteExecutorConfig",
-    "WebRTCManager",
     # Exceptions
     "RemoteMediaError",
     "PipelineError", 
@@ -136,4 +142,8 @@ __all__ = [
     "__version__",
     "__author__",
     "__email__",
-] 
+]
+
+# Add optional WebRTC support if available
+if _has_webrtc:
+    __all__.append("WebRTCManager") 

@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: remotemedia-tts
+  namespace: remotemedia
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: remotemedia-tts
+  template:
+    metadata:
+      labels:
+        app: remotemedia-tts
+    spec:
+      containers:
+      - name: grpc-server
+        image: YOUR_ECR_REPO/remotemedia-grpc:latest
+        command: ["cargo", "run", "--bin", "grpc-server", "--release"]
+        ports:
+        - containerPort: 50051
+          name: grpc
+          protocol: TCP
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "2000m"
+            nvidia.com/gpu: "1"  # Request 1 GPU
+          limits:
+            memory: "16Gi"
+            cpu: "4000m"
+            nvidia.com/gpu: "1"  # Limit to 1 GPU
+        env:
+        - name: RUST_LOG
+          value: "info"
+        - name: PIPELINE_MANIFEST
+          value: "/config/tts-pipeline.json"
+        volumeMounts:
+        - name: config
+          mountPath: /config
+      volumes:
+      - name: config
+        configMap:
+          name: tts-pipeline-manifest
+      nodeSelector:
+        node.kubernetes.io/instance-type: "g4dn.xlarge"  # GPU instance
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: remotemedia-tts
+  namespace: remotemedia
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+spec:
+  type: LoadBalancer
+  selector:
+    app: remotemedia-tts
+  ports:
+  - port: 50051
+    targetPort: 50051
+    protocol: TCP
+    name: grpc
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: remotemedia-tts-hpa
+  namespace: remotemedia
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: remotemedia-tts
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Pods
+    pods:
+      metric:
+        name: grpc_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "100"
+
