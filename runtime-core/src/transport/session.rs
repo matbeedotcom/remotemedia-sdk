@@ -5,6 +5,7 @@ use crate::{Error, Result};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
 
 /// Streaming session handle for stateful pipeline interactions
@@ -136,6 +137,10 @@ struct StreamSessionInner {
     active: AtomicBool,
 }
 
+/// Rate limiter for debug log: tracks last log time for recv_output channel closed message
+static LAST_RECV_OUTPUT_NONE_LOG: Mutex<Option<Instant>> = Mutex::const_new(None);
+const LOG_RATE_LIMIT: Duration = Duration::from_secs(10);
+
 #[async_trait]
 impl StreamSession for StreamSessionHandle {
     fn session_id(&self) -> &str {
@@ -179,7 +184,20 @@ impl StreamSession for StreamSessionHandle {
                 // Channel closed - this means the session task has ended
                 // Don't mark inactive here - let explicit shutdown handle that
                 // This allows the session to remain active between pipeline executions
-                tracing::debug!("Session {} recv_output got None (channel empty/closed)", self.session_id);
+                
+                // Rate-limited debug logging (max once per 10 seconds)
+                let mut last_log = LAST_RECV_OUTPUT_NONE_LOG.lock().await;
+                let now = Instant::now();
+                let should_log = match *last_log {
+                    Some(last) => now.duration_since(last) >= LOG_RATE_LIMIT,
+                    None => true,
+                };
+                
+                if should_log {
+                    tracing::debug!("Session {} recv_output got None (channel empty/closed)", self.session_id);
+                    *last_log = Some(now);
+                }
+                
                 Ok(None)
             }
         }

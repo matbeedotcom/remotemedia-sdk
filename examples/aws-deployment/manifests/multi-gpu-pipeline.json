@@ -1,0 +1,294 @@
+{
+  "version": "v1",
+  "metadata": {
+    "name": "multi-gpu-optimized-pipeline",
+    "description": "Smart routing to different GPU types based on model requirements",
+    "author": "RemoteMedia SDK"
+  },
+  "nodes": [
+    {
+      "id": "input",
+      "node_type": "AudioInput",
+      "params": {
+        "sample_rate": 16000,
+        "channels": 1
+      }
+    },
+    {
+      "id": "local_vad",
+      "node_type": "SileroVAD",
+      "params": {
+        "threshold": 0.5,
+        "comment": "Run VAD locally - no GPU needed"
+      }
+    },
+    {
+      "id": "whisper_small_t4",
+      "node_type": "RemotePipelineNode",
+      "params": {
+        "transport": "grpc",
+        "endpoints": [
+          "t4-cluster-1.us-east-1.aws.com:50051",
+          "t4-cluster-2.us-east-1.aws.com:50051",
+          "t4-cluster-3.us-east-1.aws.com:50051"
+        ],
+        "load_balance_strategy": "least_connections",
+        "manifest": {
+          "version": "v1",
+          "nodes": [{
+            "id": "whisper_small",
+            "node_type": "WhisperSTT",
+            "params": {
+              "model": "small.en",
+              "device": "cuda:0",
+              "compute_type": "float16",
+              "gpu_type": "t4",
+              "comment": "Small model on cheap T4 GPU - $0.526/hr"
+            }
+          }]
+        },
+        "timeout_ms": 5000,
+        "circuit_breaker": {
+          "failure_threshold": 3,
+          "reset_timeout_ms": 30000
+        },
+        "metadata": {
+          "gpu_type": "t4",
+          "instance_type": "g4dn.xlarge",
+          "cost_per_hour": "0.526"
+        }
+      }
+    },
+    {
+      "id": "whisper_large_a10g",
+      "node_type": "RemotePipelineNode",
+      "params": {
+        "transport": "grpc",
+        "endpoints": [
+          "a10g-cluster-1.us-east-1.aws.com:50051",
+          "a10g-cluster-2.us-east-1.aws.com:50051"
+        ],
+        "load_balance_strategy": "round_robin",
+        "manifest": {
+          "version": "v1",
+          "nodes": [{
+            "id": "whisper_large_v3",
+            "node_type": "WhisperSTT",
+            "params": {
+              "model": "large-v3",
+              "device": "cuda:0",
+              "compute_type": "float16",
+              "gpu_type": "a10g",
+              "beam_size": 5,
+              "best_of": 5,
+              "comment": "Large model on A10G GPU - $1.01/hr, 2x faster than T4"
+            }
+          }]
+        },
+        "timeout_ms": 10000,
+        "retry": {
+          "max_retries": 2,
+          "backoff_ms": 1000
+        },
+        "metadata": {
+          "gpu_type": "a10g",
+          "instance_type": "g5.xlarge",
+          "cost_per_hour": "1.006"
+        }
+      }
+    },
+    {
+      "id": "kokoro_tts_t4",
+      "node_type": "RemotePipelineNode",
+      "params": {
+        "transport": "grpc",
+        "endpoint": "t4-tts-cluster.us-east-1.aws.com:50051",
+        "manifest": {
+          "version": "v1",
+          "nodes": [{
+            "id": "kokoro",
+            "node_type": "KokoroTTS",
+            "params": {
+              "voice": "af_bella",
+              "device": "cuda:0",
+              "gpu_type": "t4",
+              "comment": "TTS on T4 - lightweight, real-time capable"
+            }
+          }]
+        },
+        "timeout_ms": 3000,
+        "metadata": {
+          "gpu_type": "t4",
+          "workload": "tts"
+        }
+      }
+    },
+    {
+      "id": "custom_model_v100",
+      "node_type": "RemotePipelineNode",
+      "params": {
+        "transport": "grpc",
+        "endpoint": "v100-training-cluster.us-east-1.aws.com:50051",
+        "manifest": {
+          "version": "v1",
+          "nodes": [{
+            "id": "custom_processor",
+            "node_type": "PythonNode",
+            "params": {
+              "module": "custom_models.large_transformer",
+              "class": "LargeTransformerProcessor",
+              "config": {
+                "device": "cuda:0",
+                "gpu_type": "v100",
+                "model_path": "s3://models/custom-large.pt",
+                "batch_size": 32,
+                "comment": "Heavy processing on V100 for training/fine-tuning"
+              }
+            }
+          }]
+        },
+        "timeout_ms": 60000,
+        "metadata": {
+          "gpu_type": "v100",
+          "instance_type": "p3.2xlarge",
+          "cost_per_hour": "3.06",
+          "use_case": "training"
+        }
+      }
+    },
+    {
+      "id": "multi_gpu_parallel",
+      "node_type": "RemotePipelineNode",
+      "params": {
+        "transport": "grpc",
+        "endpoint": "multi-gpu-cluster.us-east-1.aws.com:50051",
+        "manifest": {
+          "version": "v1",
+          "nodes": [
+            {
+              "id": "whisper_gpu0",
+              "node_type": "WhisperSTT",
+              "params": {
+                "model": "large-v3",
+                "device": "cuda:0",
+                "comment": "Assign to GPU 0"
+              }
+            },
+            {
+              "id": "tts_gpu1",
+              "node_type": "KokoroTTS",
+              "params": {
+                "voice": "af_bella",
+                "device": "cuda:1",
+                "comment": "Assign to GPU 1"
+              }
+            },
+            {
+              "id": "llm_gpu2",
+              "node_type": "PythonNode",
+              "params": {
+                "module": "llm.llama",
+                "class": "LlamaInference",
+                "config": {
+                  "device": "cuda:2",
+                  "comment": "Assign to GPU 2"
+                }
+              }
+            },
+            {
+              "id": "vision_gpu3",
+              "node_type": "PythonNode",
+              "params": {
+                "module": "vision.yolo",
+                "class": "YoloDetection",
+                "config": {
+                  "device": "cuda:3",
+                  "comment": "Assign to GPU 3"
+                }
+              }
+            }
+          ]
+        },
+        "timeout_ms": 30000,
+        "metadata": {
+          "gpu_type": "a10g",
+          "instance_type": "g5.12xlarge",
+          "gpu_count": 4,
+          "cost_per_hour": "5.672",
+          "comment": "4x A10G GPUs, each running different model in parallel"
+        }
+      }
+    },
+    {
+      "id": "spot_instance_fallback",
+      "node_type": "RemotePipelineNode",
+      "params": {
+        "transport": "grpc",
+        "endpoints": [
+          "spot-t4-1.us-east-1.aws.com:50051",
+          "spot-t4-2.us-east-1.aws.com:50051",
+          "ondemand-t4-backup.us-east-1.aws.com:50051"
+        ],
+        "load_balance_strategy": "least_connections",
+        "manifest": {
+          "version": "v1",
+          "nodes": [{
+            "id": "whisper",
+            "node_type": "WhisperSTT",
+            "params": {
+              "model": "medium.en",
+              "device": "cuda:0"
+            }
+          }]
+        },
+        "retry": {
+          "max_retries": 3,
+          "backoff_ms": 500
+        },
+        "circuit_breaker": {
+          "failure_threshold": 2,
+          "success_threshold": 1,
+          "reset_timeout_ms": 30000
+        },
+        "metadata": {
+          "comment": "Use spot instances (70% cheaper), fallback to on-demand",
+          "spot_savings": "70%"
+        }
+      }
+    },
+    {
+      "id": "output",
+      "node_type": "AudioOutput",
+      "params": {}
+    }
+  ],
+  "connections": [
+    {"from": "input", "to": "local_vad"},
+    {"from": "local_vad", "to": "whisper_small_t4", "params": {"condition": "low_quality_ok"}},
+    {"from": "local_vad", "to": "whisper_large_a10g", "params": {"condition": "high_quality_required"}},
+    {"from": "whisper_small_t4", "to": "kokoro_tts_t4"},
+    {"from": "whisper_large_a10g", "to": "kokoro_tts_t4"},
+    {"from": "kokoro_tts_t4", "to": "output"}
+  ],
+  "config": {
+    "execution_mode": "streaming",
+    "enable_metrics": true,
+    "metrics": {
+      "track_gpu_usage": true,
+      "track_costs": true,
+      "cost_tags": {
+        "project": "remotemedia",
+        "environment": "production"
+      }
+    },
+    "cost_optimization": {
+      "prefer_spot_instances": true,
+      "auto_scale_to_zero": true,
+      "idle_timeout_minutes": 5,
+      "scale_down_schedule": "0 22 * * *",
+      "scale_up_schedule": "0 6 * * *"
+    }
+  }
+}
+
+

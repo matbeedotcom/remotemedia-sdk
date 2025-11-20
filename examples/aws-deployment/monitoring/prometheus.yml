@@ -1,0 +1,40 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'remotemedia-dev'
+    environment: 'development'
+
+scrape_configs:
+  # Local orchestrator metrics
+  - job_name: 'local-orchestrator'
+    static_configs:
+      - targets: ['local-orchestrator:9090']
+        labels:
+          service: 'orchestrator'
+          location: 'local'
+
+  # Remote server metrics
+  - job_name: 'remote-server'
+    static_configs:
+      - targets: ['remote-server:9090']
+        labels:
+          service: 'grpc-server'
+          location: 'remote'
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+# Alerting rules
+rule_files:
+  - 'alerts.yml'
+
+# Alertmanager configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['alertmanager:9093']
+
+

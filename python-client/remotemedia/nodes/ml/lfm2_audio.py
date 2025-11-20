@@ -41,10 +41,10 @@ except (ImportError, AttributeError):
 
 # Import RuntimeData bindings
 if TYPE_CHECKING:
-    from remotemedia_runtime.runtime_data import RuntimeData
+    from remotemedia.core.multiprocessing.data import RuntimeData
 
 try:
-    from remotemedia_runtime.runtime_data import (
+    from remotemedia.core.multiprocessing.data import (
         RuntimeData,
         numpy_to_audio,
         audio_to_numpy,

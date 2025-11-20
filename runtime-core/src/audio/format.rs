@@ -5,7 +5,6 @@
 //! - I32 ↔ F32: High-precision integer to floating point
 //! - Zero-copy transmutes where possible using bytemuck
 
-use bytemuck::{Pod, Zeroable};
 
 /// Convert i16 samples to f32 (range: -32768..32767 → -1.0..1.0)
 ///

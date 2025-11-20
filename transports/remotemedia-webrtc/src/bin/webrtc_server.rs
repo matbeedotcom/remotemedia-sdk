@@ -23,11 +23,11 @@
 //! ```
 
 use clap::Parser;
-use remotemedia_webrtc::{TurnServerConfig, WebRtcTransport, WebRtcTransportConfig};
+use remotemedia_webrtc::{WebRtcTransport, WebRtcTransportConfig};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// RemoteMedia WebRTC Server

@@ -19,9 +19,12 @@ use super::data_transfer::RuntimeData as IPCRuntimeData;
 #[cfg(feature = "multiprocess")]
 use super::health_monitor::{HealthMonitor, ProcessEvent};
 #[cfg(feature = "multiprocess")]
-use super::ipc_channel::{ChannelHandle, ChannelRegistry, Publisher};
+use super::ipc_channel::{ChannelHandle, ChannelRegistry};
 #[cfg(feature = "multiprocess")]
-use super::process_manager::{ExitReason, ProcessHandle, ProcessManager, ProcessStatus};
+use super::process_manager::{ExitReason, ProcessHandle, ProcessManager};
+
+#[cfg(feature = "docker")]
+use super::docker_support::DockerSupport;
 
 // NOTE: Publisher caching attempts and why they failed:
 //
@@ -137,6 +140,21 @@ pub struct MultiprocessConfig {
     /// Enable backpressure on channels
     #[serde(default = "default_backpressure")]
     pub enable_backpressure: bool,
+
+    /// Docker fallback policy when Docker is unavailable
+    #[serde(default = "default_docker_fallback_policy")]
+    pub docker_fallback_policy: DockerFallbackPolicy,
+}
+
+/// Policy for handling Docker unavailability
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum DockerFallbackPolicy {
+    /// Allow fallback to native multiprocess with warning (default)
+    Allow,
+    /// Deny fallback and return error if Docker is unavailable
+    Deny,
+    /// Allow fallback with explicit warning log
+    AllowWithWarning,
 }
 
 // Default value functions for serde
@@ -145,7 +163,7 @@ fn default_max_processes() -> Option<usize> {
 }
 
 fn default_channel_capacity() -> usize {
-    100
+    1000  // Increased from 100 to handle audio flood during initialization (50 packets/sec * 5sec init = 250+)
 }
 
 fn default_init_timeout() -> u64 {
@@ -160,6 +178,10 @@ fn default_backpressure() -> bool {
     true
 }
 
+fn default_docker_fallback_policy() -> DockerFallbackPolicy {
+    DockerFallbackPolicy::AllowWithWarning
+}
+
 impl Default for MultiprocessConfig {
     fn default() -> Self {
         Self {
@@ -168,6 +190,7 @@ impl Default for MultiprocessConfig {
             init_timeout_secs: 300,  // 5 minutes for model loading
             python_executable: std::path::PathBuf::from("python"),
             enable_backpressure: true,
+            docker_fallback_policy: DockerFallbackPolicy::AllowWithWarning,
         }
     }
 }
@@ -348,6 +371,10 @@ pub struct MultiprocessExecutor {
 
     /// Current node context
     current_context: Option<ExecutorNodeContext>,
+
+    /// Docker support
+    #[cfg(feature = "docker")]
+    docker_support: Option<Arc<DockerSupport>>,
 }
 
 impl MultiprocessExecutor {
@@ -371,7 +398,7 @@ impl MultiprocessExecutor {
             .or_else(|| ctx.session_id.clone())
             .unwrap_or_else(|| format!("default_{}", ctx.node_id));
 
-        tracing::info!(
+        tracing::debug!(
             "MultiprocessExecutor::process_runtime_data_streaming for node {} (session: {})",
             ctx.node_id,
             session_id
@@ -380,7 +407,7 @@ impl MultiprocessExecutor {
         // Convert input to IPC format
         let ipc_data = Self::to_ipc_runtime_data(&input, &session_id);
 
-        tracing::info!(
+        tracing::debug!(
             "[Multiprocess] Converted input data for node '{}': {:?} with {} bytes payload",
             ctx.node_id,
             ipc_data.data_type,
@@ -414,7 +441,7 @@ impl MultiprocessExecutor {
         drop(sessions); // Release read lock
 
         // Send data to IPC thread (fast, no blocking!)
-        tracing::info!(
+        tracing::debug!(
             "[Multiprocess] Sending data to IPC thread for node '{}'",
             ctx.node_id
         );
@@ -444,7 +471,7 @@ impl MultiprocessExecutor {
         // The callback will control when to stop (e.g., based on end markers)
         let mut output_count = 0;
 
-        tracing::info!(
+        tracing::debug!(
             "[Multiprocess] Continuously collecting output from node '{}'",
             ctx.node_id
         );
@@ -473,7 +500,7 @@ impl MultiprocessExecutor {
                         }
                         Err(e) => {
                             // Callback returned error - stop collecting
-                            tracing::info!(
+                            tracing::debug!(
                                 "Callback stopped collection for node {} after {} outputs: {}",
                                 ctx.node_id,
                                 output_count,
@@ -494,7 +521,7 @@ impl MultiprocessExecutor {
                 }
                 None => {
                     // IPC thread disconnected
-                    tracing::info!(
+                    tracing::debug!(
                         "IPC thread disconnected for node {} after {} outputs",
                         ctx.node_id,
                         output_count
@@ -540,7 +567,7 @@ impl MultiprocessExecutor {
                 ))
             })?;
 
-        tracing::info!(
+        tracing::debug!(
             "Registered output callback for node '{}' in session '{}'",
             node_id,
             session_id
@@ -557,8 +584,8 @@ impl MultiprocessExecutor {
         session_id: &str,
         input: crate::data::RuntimeData,
     ) -> Result<()> {
-        tracing::debug!(
-            "send_data_to_node: Sending to node '{}' in session '{}'",
+        tracing::info!(
+            "[send_data_to_node] START: node_id='{}', session_id='{}'",
             node_id,
             session_id
         );
@@ -566,37 +593,59 @@ impl MultiprocessExecutor {
         // Convert input to IPC format
         let ipc_data = Self::to_ipc_runtime_data(&input, session_id);
 
+        tracing::info!(
+            "[send_data_to_node] Converted RuntimeData to IPC format: type={:?}, {} bytes",
+            ipc_data.data_type,
+            ipc_data.payload.len()
+        );
+
         // Get the IPC thread from global sessions storage
         let global_sessions = global_sessions();
         let sessions = global_sessions.read().await;
 
         let session = sessions
             .get(session_id)
-            .ok_or_else(|| Error::Execution(format!("Session {} not found", session_id)))?;
+            .ok_or_else(|| {
+                let available: Vec<_> = sessions.keys().collect();
+                Error::Execution(format!("Session {} not found. Available: {:?}", session_id, available))
+            })?;
 
         let ipc_thread_cmd_tx = session
             .get(node_id)
-            .ok_or_else(|| Error::Execution(format!("IPC thread not found for node {}", node_id)))?
+            .ok_or_else(|| {
+                let available: Vec<_> = session.keys().collect();
+                Error::Execution(format!("IPC thread not found for node {}. Available: {:?}", node_id, available))
+            })?
             .clone();
 
         drop(sessions);
 
         // Send data to IPC thread (no waiting for outputs)
         tracing::info!(
-            "[Multiprocess] Sending data to node '{}' via IPC thread (fire-and-forget)",
+            "[send_data_to_node] Queuing data to IPC thread for node '{}'",
             node_id
         );
-        ipc_thread_cmd_tx
-            .send(IpcCommand::SendData { data: ipc_data })
-            .await
-            .map_err(|e| {
-                Error::Execution(format!(
+
+        match ipc_thread_cmd_tx.send(IpcCommand::SendData { data: ipc_data }).await {
+            Ok(_) => {
+                tracing::info!(
+                    "[send_data_to_node] Successfully queued data to IPC thread for node '{}'",
+                    node_id
+                );
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!(
+                    "[send_data_to_node] Failed to send to IPC thread for node '{}': {}",
+                    node_id,
+                    e
+                );
+                Err(Error::Execution(format!(
                     "Failed to send to IPC thread for node {}: {}",
                     node_id, e
-                ))
-            })?;
-
-        Ok(())
+                )))
+            }
+        }
     }
 
     /// Send data to a node's IPC thread without waiting for response (fire-and-forget)
@@ -661,7 +710,7 @@ impl MultiprocessExecutor {
         data: &crate::data::RuntimeData,
         session_id: &str,
     ) -> IPCRuntimeData {
-        use super::data_transfer::DataType;
+        
         use crate::data::RuntimeData as MainRD;
 
         match data {
@@ -742,6 +791,12 @@ impl MultiprocessExecutor {
         // share the same iceoryx2 Node instance
         let channel_registry = ChannelRegistry::global();
 
+        // Initialize Docker support if feature is enabled
+        // Note: Docker initialization is deferred to avoid blocking in constructors
+        // Use docker_support() method which will lazily initialize if needed
+        #[cfg(feature = "docker")]
+        let docker_support = None;
+
         let executor = Self {
             process_manager: Arc::new(ProcessManager::new(config.clone())),
             channel_registry,
@@ -750,6 +805,8 @@ impl MultiprocessExecutor {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             config,
             current_context: None,
+            #[cfg(feature = "docker")]
+            docker_support,
         };
 
         // Setup pipeline termination on node failure
@@ -762,6 +819,35 @@ impl MultiprocessExecutor {
     /// Get the channel registry for IPC communication
     pub fn channel_registry(&self) -> &Arc<ChannelRegistry> {
         &self.channel_registry
+    }
+
+    /// Get the Docker support instance if available
+    #[cfg(feature = "docker")]
+    pub fn docker_support(&self) -> Option<&Arc<DockerSupport>> {
+        self.docker_support.as_ref()
+    }
+
+    /// Initialize Docker support asynchronously
+    /// This should be called once during executor initialization to enable Docker functionality
+    #[cfg(feature = "docker")]
+    pub async fn initialize_docker_support(&mut self) -> Result<()> {
+        if self.docker_support.is_some() {
+            // Already initialized
+            return Ok(());
+        }
+
+        match DockerSupport::new().await {
+            Ok(ds) => {
+                tracing::debug!("Docker support initialized successfully");
+                self.docker_support = Some(Arc::new(ds));
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!("Docker support unavailable: {}. Falling back to regular multiprocess.", e);
+                // Don't fail - just continue without Docker support
+                Ok(())
+            }
+        }
     }
 
     /// Setup failure handling for pipeline termination
@@ -838,7 +924,7 @@ impl MultiprocessExecutor {
                                     }
                                 }
                                 ExitReason::Normal => {
-                                    tracing::info!(
+                                    tracing::debug!(
                                         "Node {} (PID {}) exited normally",
                                         node_id,
                                         pid
@@ -1035,7 +1121,7 @@ impl MultiprocessExecutor {
             .insert(node_id.to_string(), init_progress.clone());
 
         // Log progress
-        tracing::info!(
+        tracing::debug!(
             "Session {}, Node {}: {} ({}%)",
             session_id,
             node_id,
@@ -1056,6 +1142,68 @@ impl MultiprocessExecutor {
         Ok(session.init_progress.values().cloned().collect())
     }
 
+    /// Check if Docker is available and handle fallback according to policy
+    ///
+    /// Returns `Ok(true)` if Docker should be used, `Ok(false)` if fallback to multiprocess,
+    /// or `Err` if Docker is unavailable and fallback is denied by policy.
+    #[cfg(feature = "docker")]
+    async fn should_use_docker(&self, node_id: &str) -> Result<bool> {
+        if let Some(docker_support) = &self.docker_support {
+            // Docker support exists, check if daemon is responsive
+            if docker_support.check_availability().await {
+                tracing::debug!("Docker is available for node '{}'", node_id);
+                Ok(true)
+            } else {
+                tracing::warn!(
+                    "Docker daemon is not responsive for node '{}'. Applying fallback policy: {:?}",
+                    node_id,
+                    self.config.docker_fallback_policy
+                );
+                self.handle_docker_unavailable_fallback(node_id)
+            }
+        } else {
+            tracing::warn!(
+                "Docker support not initialized for node '{}'. Applying fallback policy: {:?}",
+                node_id,
+                self.config.docker_fallback_policy
+            );
+            self.handle_docker_unavailable_fallback(node_id)
+        }
+    }
+
+    /// Handle Docker unavailable scenario according to fallback policy
+    #[cfg(feature = "docker")]
+    fn handle_docker_unavailable_fallback(&self, node_id: &str) -> Result<bool> {
+        match self.config.docker_fallback_policy {
+            DockerFallbackPolicy::Deny => {
+                Err(Error::Execution(format!(
+                    "Docker is unavailable for node '{}' and fallback is denied by policy. \
+                     Possible causes:\n\
+                     - Docker daemon is not running (start: 'systemctl start docker' or open Docker Desktop)\n\
+                     - Docker is not installed (install: https://docs.docker.com/get-docker/)\n\
+                     - Permission denied (fix: 'sudo usermod -aG docker $USER', then log out/in)\n\
+                     \nTo allow fallback to native multiprocess, set docker_fallback_policy to 'Allow' or 'AllowWithWarning'.",
+                    node_id
+                )))
+            }
+            DockerFallbackPolicy::Allow => {
+                tracing::debug!(
+                    "Docker unavailable for node '{}', falling back to native multiprocess execution",
+                    node_id
+                );
+                Ok(false)
+            }
+            DockerFallbackPolicy::AllowWithWarning => {
+                tracing::warn!(
+                    "Docker unavailable for node '{}', falling back to native multiprocess execution. \
+                     This may result in different behavior than Docker-isolated execution.",
+                    node_id
+                );
+                Ok(false)
+            }
+        }
+    }
+
     /// Wait for a Python process to signal it's ready via iceoryx2 control channel
     async fn wait_for_ready_signal_ipc(
         &self,
@@ -1066,7 +1214,7 @@ impl MultiprocessExecutor {
         let start = std::time::Instant::now();
         let control_channel_name = format!("control/{}_{}", session_id, node_id);
 
-        tracing::info!("Subscribing to control channel: {}", control_channel_name);
+        tracing::debug!("Subscribing to control channel: {}", control_channel_name);
 
         // Create subscriber for the control channel in a blocking task
         let registry = self.channel_registry.clone();
@@ -1089,7 +1237,7 @@ impl MultiprocessExecutor {
             // Create raw subscriber for control channel (bypasses RuntimeData deserialization)
             let subscriber = handle.block_on(registry.create_raw_subscriber(&channel_name))?;
 
-            tracing::info!("Control channel subscriber created, polling for READY signal...");
+            tracing::debug!("Control channel subscriber created, polling for READY signal...");
             let mut poll_count = 0;
 
             loop {
@@ -1120,7 +1268,7 @@ impl MultiprocessExecutor {
                         let bytes = sample.payload();
 
                         // Debug: log what we received
-                        tracing::info!(
+                        tracing::debug!(
                             "Received control message #{} - {} bytes: {:?}, as_str: {:?}",
                             poll_count,
                             bytes.len(),
@@ -1130,7 +1278,7 @@ impl MultiprocessExecutor {
 
                         // Check if it's the READY signal
                         if bytes == b"READY" {
-                            tracing::info!("Node {} signaled READY via iceoryx2", node_id_clone);
+                            tracing::debug!("Node {} signaled READY via iceoryx2", node_id_clone);
                             return Ok(true);
                         } else {
                             tracing::warn!(
@@ -1173,7 +1321,7 @@ impl MultiprocessExecutor {
 
         // Spawn dedicated OS thread
         let handle = std::thread::spawn(move || {
-            tracing::info!("IPC thread starting for node: {}", node_id_clone);
+            tracing::debug!("IPC thread starting for node: {}", node_id_clone);
 
             // Create tokio runtime for this thread (needed for async create_publisher/subscriber)
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -1206,7 +1354,7 @@ impl MultiprocessExecutor {
 
             // CRITICAL: One-time delay for iceoryx2 routing to stabilize
             // std::thread::sleep(std::time::Duration::from_millis(50));
-            tracing::info!(
+            tracing::debug!(
                 "IPC thread ready for node: {} (publishers created)",
                 node_id_clone
             );
@@ -1221,18 +1369,32 @@ impl MultiprocessExecutor {
                 match cmd_rx.try_recv() {
                     Ok(IpcCommand::SendData { data }) => {
                         // Send using persistent publisher (no delay needed!)
-                        tracing::debug!(
-                            "IPC thread sending {} bytes for node: {}",
+                        tracing::info!(
+                            "[IPC Thread] Node '{}': Received SendData command, {} bytes of type {:?}",
+                            node_id_clone,
                             data.payload.len(),
-                            node_id_clone
+                            data.data_type
                         );
 
-                        if let Err(e) = publisher.publish(data) {
-                            let _ = resp_tx.blocking_send(IpcResponse::Error(format!(
-                                "Publish failed: {}",
-                                e
-                            )));
-                            continue;
+                        match publisher.publish(data) {
+                            Ok(_) => {
+                                tracing::info!(
+                                    "[IPC Thread] Node '{}': Successfully published data to iceoryx2",
+                                    node_id_clone
+                                );
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "[IPC Thread] Node '{}': Publish failed: {}",
+                                    node_id_clone,
+                                    e
+                                );
+                                let _ = resp_tx.blocking_send(IpcResponse::Error(format!(
+                                    "Publish failed: {}",
+                                    e
+                                )));
+                                continue;
+                            }
                         }
 
                         // Acknowledge send
@@ -1243,14 +1405,14 @@ impl MultiprocessExecutor {
                         // to ensure we capture all output from streaming nodes
                     }
                     Ok(IpcCommand::RegisterOutputCallback { callback_tx }) => {
-                        tracing::info!(
+                        tracing::debug!(
                             "IPC thread registered output callback for node: {}",
                             node_id_clone
                         );
                         output_callback = Some(callback_tx);
                     }
                     Ok(IpcCommand::Shutdown) => {
-                        tracing::info!("IPC thread shutting down for node: {}", node_id_clone);
+                        tracing::debug!("IPC thread shutting down for node: {}", node_id_clone);
                         break;
                     }
                     Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
@@ -1282,13 +1444,13 @@ impl MultiprocessExecutor {
                         }
                     }
                     Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                        tracing::info!("Command channel closed for node: {}", node_id_clone);
+                        tracing::debug!("Command channel closed for node: {}", node_id_clone);
                         break;
                     }
                 }
             }
 
-            tracing::info!("IPC thread exited for node: {}", node_id_clone);
+            tracing::debug!("IPC thread exited for node: {}", node_id_clone);
         });
 
         Ok(NodeIpcThread {
@@ -1299,7 +1461,38 @@ impl MultiprocessExecutor {
         })
     }
 
-    /// Terminate a session and cleanup resources
+    /// Terminate a session and cleanup all associated resources
+    ///
+    /// This method performs comprehensive cleanup in the following order:
+    /// 1. Shuts down IPC threads and removes from global sessions storage
+    /// 2. Cleans up Docker containers (if Docker support is enabled)
+    /// 3. Terminates all Python node processes
+    /// 4. Cleans up iceoryx2 IPC channels
+    ///
+    /// # Arguments
+    /// * `session_id` - The unique session identifier to terminate
+    ///
+    /// # Returns
+    /// * `Ok(())` - Session successfully terminated and resources cleaned up
+    /// * `Err(Error)` - If session not found or process termination fails
+    ///
+    /// # Docker Cleanup (T019)
+    /// When Docker support is enabled, this method automatically:
+    /// - Lists all containers labeled with `remotemedia.session_id=<session_id>`
+    /// - Gracefully stops running containers with 5-second timeout
+    /// - Forcefully removes containers and associated volumes
+    /// - Logs warnings for any containers that fail to clean up (doesn't fail the overall cleanup)
+    ///
+    /// # IPC Cleanup
+    /// The method ensures:
+    /// - All IPC threads receive shutdown commands
+    /// - Channels are properly destroyed
+    /// - Global session storage is updated
+    ///
+    /// # Error Handling
+    /// - Docker cleanup errors are logged as warnings but do not fail the entire session termination
+    /// - Process termination errors are propagated as failures
+    /// - This ensures robust cleanup even if some resources are unavailable
     pub async fn terminate_session(&self, session_id: &str) -> Result<()> {
         let mut sessions = self.sessions.write().await;
 
@@ -1310,7 +1503,7 @@ impl MultiprocessExecutor {
             #[cfg(feature = "multiprocess")]
             {
                 for (node_id, mut ipc_thread) in session.ipc_threads.drain() {
-                    tracing::info!("Shutting down IPC thread for node: {}", node_id);
+                    tracing::debug!("Shutting down IPC thread for node: {}", node_id);
 
                     // Send shutdown command
                     let _ = ipc_thread.command_tx.send(IpcCommand::Shutdown).await;
@@ -1327,11 +1520,58 @@ impl MultiprocessExecutor {
                 let global_sessions = global_sessions();
                 let mut global_sessions_guard = global_sessions.write().await;
                 global_sessions_guard.remove(session_id);
-                tracing::info!(
+                tracing::debug!(
                     "Removed session {} from global sessions storage",
                     session_id
                 );
                 drop(global_sessions_guard);
+            }
+
+            // Cleanup Docker containers before terminating processes
+            #[cfg(feature = "docker")]
+            {
+                if let Some(docker_support) = &self.docker_support {
+                    tracing::debug!(
+                        "Cleaning up Docker containers for session: {}",
+                        session_id
+                    );
+
+                    // Use the built-in cleanup_session_containers which is more efficient
+                    // It uses Docker labels to find and clean up all containers for this session
+                    match docker_support.cleanup_session_containers(session_id).await {
+                        Ok(removed_containers) => {
+                            if !removed_containers.is_empty() {
+                                tracing::debug!(
+                                    "Cleaned up {} Docker containers for session {}",
+                                    removed_containers.len(),
+                                    session_id
+                                );
+                                for container_id in removed_containers {
+                                    tracing::debug!(
+                                        "Removed Docker container: {} from session {}",
+                                        container_id,
+                                        session_id
+                                    );
+                                }
+                            } else {
+                                tracing::debug!(
+                                    "No Docker containers found for session {} to clean up",
+                                    session_id
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            // Log warning but don't fail the entire cleanup process
+                            // Docker cleanup is important but should not block session termination
+                            tracing::warn!(
+                                "Failed to clean up Docker containers for session {}: {}. \
+                                 This may leave orphaned containers that require manual cleanup.",
+                                session_id,
+                                e
+                            );
+                        }
+                    }
+                }
             }
 
             // Then terminate processes
@@ -1405,7 +1645,7 @@ impl MultiprocessExecutor {
         // Store channel in session
         session.channels.insert(channel_name.clone(), channel);
 
-        tracing::info!(
+        tracing::debug!(
             "Connected nodes {} -> {} via channel {}",
             from_node,
             to_node,
@@ -1441,7 +1681,7 @@ impl MultiprocessExecutor {
 #[async_trait]
 impl ExecutorNodeExecutor for MultiprocessExecutor {
     async fn initialize(&mut self, ctx: &ExecutorNodeContext) -> Result<()> {
-        tracing::info!(
+        tracing::debug!(
             "Initializing multiprocess node: {} ({})",
             ctx.node_id,
             ctx.node_type
@@ -1459,6 +1699,51 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
         // Ensure session exists
         if !self.sessions.read().await.contains_key(&session_id) {
             self.create_session(session_id.clone()).await?;
+        }
+
+        // Determine execution mode from context metadata
+        #[cfg(feature = "docker")]
+        let use_docker = ctx
+            .metadata
+            .get("use_docker")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        #[cfg(feature = "docker")]
+        let docker_config = if use_docker {
+            // Parse Docker configuration from metadata
+            ctx.metadata
+                .get("docker_config")
+                .and_then(|v| serde_json::from_value::<super::docker_support::DockerNodeConfig>(v.clone()).ok())
+        } else {
+            None
+        };
+
+        // Initialize Docker support if needed and not already initialized
+        #[cfg(feature = "docker")]
+        if use_docker && self.docker_support.is_none() {
+            tracing::debug!("Docker mode requested, initializing Docker support...");
+            match DockerSupport::new().await {
+                Ok(ds) => {
+                    // Additional availability check to ensure Docker daemon is responsive
+                    if ds.check_availability().await {
+                        tracing::debug!("Docker support initialized and daemon is responsive");
+                        self.docker_support = Some(Arc::new(ds));
+                    } else {
+                        tracing::warn!(
+                            "Docker daemon is not responsive. Docker support will not be available."
+                        );
+                        // Don't set docker_support - will trigger fallback below
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to initialize Docker support: {}. Docker will not be available.",
+                        e
+                    );
+                    // Don't fail immediately - we'll handle this below when checking docker_support
+                }
+            }
         }
 
         // Create IPC channels BEFORE spawning process (must exist when Python connects)
@@ -1486,7 +1771,7 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
                 )
                 .await?;
 
-            tracing::info!(
+            tracing::debug!(
                 "Pre-created IPC channels for node {}: {}, {}",
                 ctx.node_id,
                 input_channel_name,
@@ -1501,13 +1786,72 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
             )
         };
 
-        // NOW spawn process (channels already exist)
+        // NOW spawn process or container (channels already exist)
         #[cfg(feature = "multiprocess")]
         {
-            let process = self
-                .process_manager
-                .spawn_node(&ctx.node_type, &ctx.node_id, &ctx.params, &session_id)
-                .await?;
+            let process = {
+                #[cfg(feature = "docker")]
+                {
+                    if use_docker {
+                        // Check Docker availability and apply fallback policy
+                        let should_use_docker = self.should_use_docker(&ctx.node_id).await?;
+
+                        if should_use_docker {
+                            // Docker is available, proceed with container spawn
+                            let docker_support = self.docker_support.as_ref()
+                                .expect("Docker support should be Some when should_use_docker returns true");
+
+                            if let Some(docker_config) = docker_config {
+                                // Validate Docker configuration
+                                docker_config.validate()?;
+
+                                tracing::debug!(
+                                    "Spawning Docker container for node '{}' with config: {:?}",
+                                    ctx.node_id,
+                                    docker_config
+                                );
+
+                                // Spawn Docker container
+                                self.process_manager
+                                    .spawn_docker_container(
+                                        &ctx.node_type,
+                                        &ctx.node_id,
+                                        &ctx.params,
+                                        &session_id,
+                                        docker_support,
+                                        &docker_config,
+                                    )
+                                    .await?
+                            } else {
+                                return Err(Error::Execution(
+                                    "Docker mode enabled but no docker_config provided".to_string(),
+                                ));
+                            }
+                        } else {
+                            // Fallback to regular multiprocess execution
+                            tracing::debug!(
+                                "Using native multiprocess execution for node '{}' (Docker fallback applied)",
+                                ctx.node_id
+                            );
+                            self.process_manager
+                                .spawn_node(&ctx.node_type, &ctx.node_id, &ctx.params, &session_id)
+                                .await?
+                        }
+                    } else {
+                        // Regular multiprocess execution (Docker not requested)
+                        self.process_manager
+                            .spawn_node(&ctx.node_type, &ctx.node_id, &ctx.params, &session_id)
+                            .await?
+                    }
+                }
+                #[cfg(not(feature = "docker"))]
+                {
+                    // Regular multiprocess execution (Docker feature not enabled)
+                    self.process_manager
+                        .spawn_node(&ctx.node_type, &ctx.node_id, &ctx.params, &session_id)
+                        .await?
+                }
+            };
 
             // Spawn dedicated IPC thread for this node
             let ipc_thread = self
@@ -1540,7 +1884,7 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
                     .insert(output_channel_name.clone(), output_channel);
                 session.ipc_threads.insert(ctx.node_id.clone(), ipc_thread);
 
-                tracing::info!(
+                tracing::debug!(
                     "Created IPC thread and channels for node {}: {}, {}",
                     ctx.node_id,
                     input_channel_name,
@@ -1552,7 +1896,7 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
         // Wait for Python process to signal READY
         #[cfg(feature = "multiprocess")]
         {
-            tracing::info!("Waiting for Python process to signal READY via iceoryx2...");
+            tracing::debug!("Waiting for Python process to signal READY via iceoryx2...");
 
             // Wait for Python to signal it's ready via iceoryx2 control channel
             // Python creates its input subscriber BEFORE sending READY, so when we receive
@@ -1572,14 +1916,14 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
                 )));
             }
 
-            tracing::info!("✅ Received READY signal - Python subscriber is ready to receive data");
+            tracing::debug!("✅ Received READY signal - Python subscriber is ready to receive data");
 
             // Small delay to ensure Python subscriber is fully registered with iceoryx2's routing tables
             // The subscriber creation and READY signal are very close in time, but iceoryx2 needs a moment
             // to complete the internal pub/sub connection registration
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-            tracing::info!(
+            tracing::debug!(
                 "✅ Node initialization complete, IPC thread ready with persistent publishers"
             );
         }
@@ -1729,5 +2073,51 @@ mod tests {
 
         // Cleanup
         ExecutorNodeExecutor::cleanup(&mut executor).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_session_termination_with_cleanup() {
+        let config = MultiprocessConfig::default();
+        let executor = MultiprocessExecutor::new(config);
+
+        // Create a test session
+        let session_id = "test_cleanup_session";
+        executor
+            .create_session(session_id.to_string())
+            .await
+            .expect("Failed to create session");
+
+        // Verify session exists
+        {
+            let sessions = executor.sessions.read().await;
+            assert!(sessions.contains_key(session_id), "Session should exist after creation");
+        }
+
+        // Terminate the session - this should trigger cleanup including Docker containers
+        // if Docker support is enabled (graceful handling if not available)
+        let result = executor.terminate_session(session_id).await;
+        assert!(result.is_ok(), "Session termination should succeed: {:?}", result);
+
+        // Verify session is removed
+        {
+            let sessions = executor.sessions.read().await;
+            assert!(!sessions.contains_key(session_id), "Session should be removed after termination");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_terminate_nonexistent_session() {
+        let config = MultiprocessConfig::default();
+        let executor = MultiprocessExecutor::new(config);
+
+        // Try to terminate a non-existent session
+        let result = executor.terminate_session("nonexistent_session").await;
+
+        // Should return an error indicating session not found
+        assert!(result.is_err(), "Terminating non-existent session should return an error");
+        assert!(
+            result.unwrap_err().to_string().contains("not found"),
+            "Error should indicate session not found"
+        );
     }
 }

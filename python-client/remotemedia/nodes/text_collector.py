@@ -18,10 +18,10 @@ from typing import AsyncGenerator, Optional, TYPE_CHECKING
 
 # Import RuntimeData bindings
 if TYPE_CHECKING:
-    from remotemedia_runtime.runtime_data import RuntimeData
+    from remotemedia.core.multiprocessing.data import RuntimeData
 
 try:
-    from remotemedia_runtime.runtime_data import RuntimeData
+    from remotemedia.core.multiprocessing.data import RuntimeData
     RUNTIME_DATA_AVAILABLE = True
 except ImportError:
     RUNTIME_DATA_AVAILABLE = False

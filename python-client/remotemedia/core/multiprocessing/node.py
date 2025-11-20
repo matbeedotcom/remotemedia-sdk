@@ -20,12 +20,9 @@ from dataclasses import dataclass
 # Import base Node class from core
 from remotemedia.core.node import Node as BaseNode
 
-try:
-    from remotemedia_runtime.runtime_data import RuntimeData
-    HAS_RUNTIME_DATA = True
-except ImportError:
-    RuntimeData = None  # type: ignore
-    HAS_RUNTIME_DATA = False
+# Import RuntimeData from core multiprocessing data module
+from remotemedia.core.multiprocessing.data import RuntimeData
+HAS_RUNTIME_DATA = True
 
 
 class NodeStatus(Enum):
@@ -305,20 +302,29 @@ class MultiprocessNode(BaseNode):
 
             # Start a background task to queue incoming messages during initialization
             async def queue_messages_during_init():
+                self.logger.info(f"🔵 Queuing task started for {self.node_id}, will poll for messages during initialization")
+                poll_count = 0
                 while self.status == NodeStatus.INITIALIZING:
+                    poll_count += 1
                     data = await self._receive_input()
                     if data is not None:
-                        self.logger.info(f"Queuing message during initialization: {data.data_type()}")
+                        self.logger.info(f"✅ Queuing message during initialization: {data.data_type()}")
                         init_queue.append(data)
                     else:
+                        # Log first 5 polls to confirm we're actively polling
+                        if poll_count <= 5:
+                            self.logger.info(f"🔵 Queue poll #{poll_count}: No data yet")
                         await asyncio.sleep(0)
+                self.logger.info(f"🔵 Queuing task finished for {self.node_id}, queued {len(init_queue)} messages")
 
             # Start queuing task
             queue_task = asyncio.create_task(queue_messages_during_init())
 
             # CRITICAL: Yield control to let the queuing task start before we block on model init
             # This ensures the subscriber is actively polling BEFORE Rust sends data
+            self.logger.info(f"Yielding to allow queuing task to start...")
             await asyncio.sleep(0.1)  # 100ms to ensure queuing task is running
+            self.logger.info(f"Queuing task should be active now, proceeding with model initialization...")
 
             # Initialize (load models, etc.) - can take a long time
             await self.initialize()
@@ -536,7 +542,7 @@ class MultiprocessNode(BaseNode):
         try:
             # Log first 5 attempts and then every 100 attempts to diagnose receive issues
             if self._receive_call_count <= 5:
-                self.logger.info(f"📡 [IPC Receive] Polling attempt #{self._receive_call_count} for node '{self.node_id}'")
+                self.logger.debug(f"📡 [IPC Receive] Polling attempt #{self._receive_call_count} for node '{self.node_id}'")
             elif self._receive_call_count % 100 == 0:
                 self.logger.debug(f"[IPC Receive] Polling for input (attempt {self._receive_call_count})")
             
@@ -544,14 +550,14 @@ class MultiprocessNode(BaseNode):
             if sample is None:
                 # Log first 5 "no data" responses
                 if self._receive_call_count <= 5:
-                    self.logger.info(f"📡 [IPC Receive] Attempt #{self._receive_call_count}: No data available yet")
+                    self.logger.debug(f"📡 [IPC Receive] Attempt #{self._receive_call_count}: No data available yet")
                 # No data available
                 return None
 
             # Get payload as bytes
             payload_bytes = bytes(sample.payload())
-            self.logger.info(f"🔵 [IPC Receive] Node '{self.node_id}' received {len(payload_bytes)} bytes from input channel")
-            self.logger.info(f"🔵 First 20 bytes (hex): {payload_bytes[:20].hex() if len(payload_bytes) >= 20 else payload_bytes.hex()}")
+            self.logger.debug(f"🔵 [IPC Receive] Node '{self.node_id}' received {len(payload_bytes)} bytes from input channel")
+            self.logger.debug(f"🔵 First 20 bytes (hex): {payload_bytes[:20].hex() if len(payload_bytes) >= 20 else payload_bytes.hex()}")
 
             # Deserialize using IPC RuntimeData format matching data_transfer.rs
             # Format: type (1 byte) | session_len (2 bytes) | session | timestamp (8 bytes) | payload_len (4 bytes) | payload
@@ -589,28 +595,22 @@ class MultiprocessNode(BaseNode):
             # Convert to RuntimeData based on type
             if HAS_RUNTIME_DATA:
                 import numpy as np
-                from remotemedia_runtime.runtime_data import RuntimeData as RustRD, numpy_to_audio
 
                 if data_type == 1:  # Audio
                     # Payload is f32 audio samples
                     audio_samples = np.frombuffer(payload, dtype=np.float32)
                     self.logger.info(f"Received audio via IPC: {len(audio_samples)} samples")
                     # Convert to RuntimeData.Audio (assume 24kHz mono for now)
-                    rd = numpy_to_audio(audio_samples, 24000, channels=1)
-                    rd.session_id = session_id  # Preserve session_id
+                    rd = RuntimeData.audio(audio_samples, 24000, channels=1)
                     return rd
                 elif data_type == 3:  # Text
                     text = payload.decode('utf-8')
                     # Check for ping test message
                     if text == "PING_TEST":
                         self.logger.info(f"✅ 🎯 RECEIVED PING TEST MESSAGE! IPC communication is working! ✅")
-                        rd = RustRD.text(text)
-                        rd.session_id = session_id  # Preserve session_id
-                        return rd
+                        return RuntimeData.text(text)
                     self.logger.info(f"Received text via IPC: '{text[:50]}...'")
-                    rd = RustRD.text(text)
-                    rd.session_id = session_id  # Preserve session_id
-                    return rd
+                    return RuntimeData.text(text)
                 else:
                     self.logger.warning(f"Unsupported IPC data type: {data_type}")
                     return None
@@ -645,10 +645,11 @@ class MultiprocessNode(BaseNode):
                 payload = data.as_text().encode('utf-8')
             elif data.is_audio():
                 data_type = 1  # Audio
-                samples_bytes, sample_rate, channels, format_str, num_samples = data.as_audio()
-                payload = samples_bytes
+                # Get audio data as numpy array, then convert to bytes
+                audio_array = data.as_numpy()
+                payload = audio_array.astype(np.float32).tobytes()
             else:
-                self.logger.warning(f"Unsupported data type for IPC send: {data.data_type()}")
+                self.logger.warning(f"Unsupported data type for IPC send: {data.type}")
                 return
 
             # Build IPC message

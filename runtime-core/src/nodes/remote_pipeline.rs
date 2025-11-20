@@ -782,7 +782,7 @@ impl RemotePipelineNode {
         let max_retries = retry_config.map(|r| r.max_retries).unwrap_or(0);
         let backoff_ms = retry_config.map(|r| r.backoff_ms).unwrap_or(1000);
 
-        let mut last_error = None;
+        let last_error = None;
         let mut ctx = ExecutionContext::new(
             self.get_primary_endpoint(),
             self.config.auth_token.clone(),
@@ -813,10 +813,11 @@ impl RemotePipelineNode {
                 }
             };
 
-            #[cfg(not(feature = "grpc-client"))]
-            return Err(crate::Error::ConfigError(
-                "gRPC client not enabled - compile with 'grpc-client' feature".into(),
-            ));
+            #[cfg(not(feature = "grpc-client"))] {
+                return Err(crate::Error::ConfigError(
+                    "gRPC client not enabled - compile with 'grpc-client' feature".into(),
+                ));
+            }
 
             // Execute with timeout
             let timeout_ms = self.config.timeout_ms;

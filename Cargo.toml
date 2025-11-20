@@ -24,6 +24,7 @@ repository = "https://github.com/matbeeDOTcom/remotemedia-sdk"
 tokio = { version = "1.35", features = ["sync", "macros", "io-util", "rt", "rt-multi-thread", "time", "fs", "process"] }
 tokio-stream = "0.1"
 futures = "0.3"
+bollard = { version = "0.19.4", features = ["chrono"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -81,7 +82,7 @@ nix = { version = "0.30.1", features = ["signal", "process"] }
 windows = { version = "0.52", features = ["Win32_System_ProcessStatus", "Win32_Foundation"] }
 
 # Error handling
-anyhow = "1.0"
+anyhow = "1.0.100"
 thiserror = "1.0"
 
 # Utilities
@@ -97,6 +98,13 @@ regex = "1.10"
 # Low-latency streaming optimizations
 crossbeam = "0.8"
 hdrhistogram = "7.5"
+
+# Docker/build utilities
+tar = "0.4"
+glob = "0.3"
+bytes = "1.0"
+http-body-util = "0.1"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Whisper
 rwhisper = "0.4"
@@ -139,3 +147,34 @@ version = "0.14"
 
 [workspace.lints.rust]
 missing_docs = "allow"
+
+# Optimize dependencies in dev mode, but keep your code unoptimized for fast compilation
+[profile.dev.package."*"]
+opt-level = 1
+
+[profile.dev]
+opt-level = 0
+debug = 1  # Reduce debug info
+incremental = true
+split-debuginfo = "unpacked"  # Faster on Linux
+
+# Create a "fast" profile for everyday development
+[profile.fast]
+inherits = "dev"
+opt-level = 1
+
+# Optimize heavy crates even in dev mode
+[profile.dev.package.webrtc]
+opt-level = 2
+
+[profile.dev.package.webrtc-ice]
+opt-level = 2
+
+[profile.dev.package.openssl]
+opt-level = 2
+
+[profile.dev.package.bollard-stubs]
+opt-level = 2
+
+[profile.dev.package.pyo3-macros]
+opt-level = 2

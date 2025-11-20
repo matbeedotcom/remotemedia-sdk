@@ -1,0 +1,303 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: remotemedia-grpc
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Required for OIDC
+      contents: read
+    
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix={{branch}}-
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ../../  # Root of workspace
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+  
+  deploy-staging:
+    name: Deploy to Staging
+    needs: build-and-push
+    if: github.ref == 'refs/heads/staging' || github.event.inputs.environment == 'staging'
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+      
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+      
+      - name: Terraform Plan
+        working-directory: ./terraform
+        run: |
+          terraform plan \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="environment=staging" \
+            -out=tfplan
+      
+      - name: Terraform Apply
+        working-directory: ./terraform
+        run: terraform apply -auto-approve tfplan
+      
+      - name: Update ECS Service
+        run: |
+          aws ecs update-service \
+            --cluster remotemedia-cluster-staging \
+            --service remotemedia-grpc-server \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+      
+      - name: Wait for deployment
+        run: |
+          aws ecs wait services-stable \
+            --cluster remotemedia-cluster-staging \
+            --services remotemedia-grpc-server \
+            --region ${{ env.AWS_REGION }}
+      
+      - name: Run smoke tests
+        run: |
+          ENDPOINT=$(aws elbv2 describe-load-balancers \
+            --names remotemedia-grpc-nlb-staging \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          # Test gRPC health endpoint
+          grpcurl -plaintext ${ENDPOINT}:50051 health.v1.Health/Check
+  
+  deploy-production:
+    name: Deploy to Production
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'production'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+      
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+      
+      - name: Terraform Plan
+        working-directory: ./terraform
+        run: |
+          terraform plan \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="environment=production" \
+            -var="desired_count=5" \
+            -var="min_capacity=3" \
+            -var="max_capacity=20" \
+            -out=tfplan
+      
+      - name: Terraform Apply
+        working-directory: ./terraform
+        run: terraform apply -auto-approve tfplan
+      
+      - name: Blue-Green Deployment
+        run: |
+          # Get current task definition
+          TASK_DEF=$(aws ecs describe-services \
+            --cluster remotemedia-cluster-production \
+            --services remotemedia-grpc-server \
+            --query 'services[0].taskDefinition' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          # Create new task definition with new image
+          NEW_TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition $TASK_DEF \
+            --query 'taskDefinition' \
+            --region ${{ env.AWS_REGION }})
+          
+          # Update service with new task definition
+          aws ecs update-service \
+            --cluster remotemedia-cluster-production \
+            --service remotemedia-grpc-server \
+            --task-definition $NEW_TASK_DEF \
+            --force-new-deployment \
+            --deployment-configuration "minimumHealthyPercent=100,maximumPercent=200" \
+            --region ${{ env.AWS_REGION }}
+      
+      - name: Wait for deployment
+        run: |
+          aws ecs wait services-stable \
+            --cluster remotemedia-cluster-production \
+            --services remotemedia-grpc-server \
+            --region ${{ env.AWS_REGION }}
+      
+      - name: Run integration tests
+        run: |
+          ENDPOINT=$(aws elbv2 describe-load-balancers \
+            --names remotemedia-grpc-nlb-production \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          # Run comprehensive tests
+          cargo test --package remotemedia-grpc --test integration -- \
+            --endpoint ${ENDPOINT}:50051
+      
+      - name: Notify deployment
+        if: success()
+        uses: slackapi/slack-github-action@v1
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK }}
+          payload: |
+            {
+              "text": "✅ RemoteMedia deployed to production",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "🚀 *Production Deployment Successful*\n\n*Commit*: ${{ github.sha }}\n*Author*: ${{ github.actor }}\n*Environment*: Production"
+                  }
+                }
+              ]
+            }
+  
+  rollback:
+    name: Rollback on Failure
+    needs: [deploy-staging, deploy-production]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Rollback ECS service
+        run: |
+          # Get previous task definition
+          PREV_TASK_DEF=$(aws ecs describe-services \
+            --cluster remotemedia-cluster-production \
+            --services remotemedia-grpc-server \
+            --query 'services[0].deployments[1].taskDefinition' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          # Rollback to previous version
+          aws ecs update-service \
+            --cluster remotemedia-cluster-production \
+            --service remotemedia-grpc-server \
+            --task-definition $PREV_TASK_DEF \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+      
+      - name: Notify rollback
+        uses: slackapi/slack-github-action@v1
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK }}
+          payload: |
+            {
+              "text": "⚠️ RemoteMedia deployment failed - rolled back",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "🔄 *Rollback Initiated*\n\n*Commit*: ${{ github.sha }}\n*Reason*: Deployment failed\n*Action*: Reverted to previous version"
+                  }
+                }
+              ]
+            }
+
+

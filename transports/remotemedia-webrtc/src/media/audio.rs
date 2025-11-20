@@ -4,6 +4,19 @@
 
 use crate::{Error, Result};
 
+/// Audio frame duration in milliseconds (Opus standard)
+pub const FRAME_DURATION_MS: u32 = 20;
+
+/// Number of audio frames per second (1000ms / 20ms per frame)
+pub const FRAMES_PER_SECOND: usize = 50;
+
+/// Default ring buffer duration in seconds
+pub const DEFAULT_BUFFER_SECONDS: usize = 60;
+
+/// Default ring buffer capacity (frames)
+/// = 50 frames/sec × 30 seconds = 1500 frames
+pub const DEFAULT_RING_BUFFER_CAPACITY: usize = FRAMES_PER_SECOND * DEFAULT_BUFFER_SECONDS;
+
 /// Audio encoder configuration
 #[derive(Debug, Clone)]
 pub struct AudioEncoderConfig {
@@ -15,6 +28,12 @@ pub struct AudioEncoderConfig {
     pub bitrate: u32,
     /// Complexity (0-10, higher = better quality but slower)
     pub complexity: u32,
+    /// Ring buffer capacity in frames (default: 1500 = 30 seconds @ 20ms)
+    /// - 1 frame = 20ms
+    /// - 50 frames = 1 second
+    /// - 1500 frames = 30 seconds (recommended for TTS burst generation)
+    /// - 3000 frames = 60 seconds (for very long TTS outputs)
+    pub ring_buffer_capacity: usize,
 }
 
 impl Default for AudioEncoderConfig {
@@ -24,6 +43,7 @@ impl Default for AudioEncoderConfig {
             channels: 1,
             bitrate: 64000,
             complexity: 10,
+            ring_buffer_capacity: DEFAULT_RING_BUFFER_CAPACITY,
         }
     }
 }

@@ -225,8 +225,8 @@ impl PipelineRunnerInner {
         let session_id = format!("session_{}", session_num);
 
         // Create channels for communication
-        let (input_tx, mut input_rx) = mpsc::unbounded_channel();
-        let (output_tx, output_rx) = mpsc::unbounded_channel();
+        let (input_tx, mut input_rx) = mpsc::unbounded_channel::<crate::data::RuntimeData>();
+        let (output_tx, output_rx) = mpsc::unbounded_channel::<crate::data::RuntimeData>();
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
 
         // Create streaming session router task
@@ -255,25 +255,50 @@ impl PipelineRunnerInner {
             let cached_nodes: Arc<HashMap<String, Box<dyn crate::nodes::StreamingNode>>> = {
                 let mut n = HashMap::new();
                 for node_spec in &manifest_clone.nodes {
-                    // Inject session_id into params for multiprocess execution
-                    let mut params_with_session = node_spec.params.clone();
-                    params_with_session["__session_id__"] = serde_json::Value::String(session_id_clone.clone());
+                    // Docker support is now integrated into the multiprocess system
+                    // Use executor: multiprocess with use_docker: true in node config
+                    #[cfg(feature = "docker")]
+                    let node: Box<dyn crate::nodes::StreamingNode> = {
+                        // Always use streaming registry - Docker is handled by multiprocess executor
+                        let mut params_with_session = node_spec.params.clone();
+                        params_with_session["__session_id__"] = serde_json::Value::String(session_id_clone.clone());
 
-                    match streaming_registry.create_node(
-                        &node_spec.node_type,
-                        node_spec.id.clone(),
-                        &params_with_session,
-                        Some(session_id_clone.clone()),
-                    ) {
-                        Ok(node) => {
-                            tracing::info!("Session {} cached node {} (type: {})", session_id_clone, node_spec.id, node_spec.node_type);
-                            n.insert(node_spec.id.clone(), node);
+                        match streaming_registry.create_node(
+                            &node_spec.node_type,
+                            node_spec.id.clone(),
+                            &params_with_session,
+                            Some(session_id_clone.clone()),
+                        ) {
+                            Ok(node) => node,
+                            Err(e) => {
+                                tracing::error!("Session {}: Failed to create node {}: {}", session_id_clone, node_spec.id, e);
+                                return;
+                            }
                         }
-                        Err(e) => {
-                            tracing::error!("Session {}: Failed to create node {}: {}", session_id_clone, node_spec.id, e);
-                            return;
+                    };
+
+                    #[cfg(not(feature = "docker"))]
+                    let node: Box<dyn crate::nodes::StreamingNode> = {
+                        // Inject session_id into params for multiprocess execution
+                        let mut params_with_session = node_spec.params.clone();
+                        params_with_session["__session_id__"] = serde_json::Value::String(session_id_clone.clone());
+
+                        match streaming_registry.create_node(
+                            &node_spec.node_type,
+                            node_spec.id.clone(),
+                            &params_with_session,
+                            Some(session_id_clone.clone()),
+                        ) {
+                            Ok(node) => node,
+                            Err(e) => {
+                                tracing::error!("Session {}: Failed to create node {}: {}", session_id_clone, node_spec.id, e);
+                                return;
+                            }
                         }
-                    }
+                    };
+
+                    tracing::debug!("Session {} cached node {} (type: {})", session_id_clone, node_spec.id, node_spec.node_type);
+                    n.insert(node_spec.id.clone(), node);
                 }
                 Arc::new(n)
             };
@@ -285,7 +310,7 @@ impl PipelineRunnerInner {
             loop {
                 tokio::select! {
                     Some(input_data) = input_rx.recv() => {
-                        tracing::debug!("Session {} processing input", session_id_clone);
+                        tracing::info!("[SessionRunner] Session {} received input: type={}", session_id_clone, input_data.data_type());
 
                         // Spawn execution as a background task so the select loop can continue
                         // processing new inputs while this one executes
@@ -295,16 +320,16 @@ impl PipelineRunnerInner {
                         let session_id_for_log = session_id_clone.clone();
                         let cached_nodes_clone = Arc::clone(&cached_nodes);
 
-                        tracing::info!("Session {} spawning background task to process input", session_id_clone);
+                        tracing::info!("[SessionRunner] Session {} spawning background task to process input on node '{}'", session_id_clone, first_node_clone);
                         tokio::spawn(async move {
-                            tracing::info!("Session {} background task started", session_id_for_exec);
+                            tracing::info!("[SessionRunner] Session {} background task started for node '{}'", session_id_for_exec, first_node_clone);
                             let session_id_for_callback = session_id_for_exec.clone();
 
                             // Get reference to the cached node
                             tracing::debug!("Session {} looking up cached node '{}'", session_id_for_exec, first_node_clone);
                             let node = match cached_nodes_clone.get(&first_node_clone) {
                                 Some(n) => {
-                                    tracing::info!("Session {} found cached node '{}', type: {}", session_id_for_exec, first_node_clone, n.node_type());
+                                    tracing::debug!("Session {} found cached node '{}', type: {}", session_id_for_exec, first_node_clone, n.node_type());
                                     n
                                 },
                                 None => {
@@ -323,16 +348,17 @@ impl PipelineRunnerInner {
                                 Ok(())
                             });
 
-                            tracing::info!("Session {} calling process_streaming_async on node '{}'", session_id_for_exec, first_node_clone);
+                            let input_data_type = input_data.data_type();
+                            tracing::info!("[SessionRunner] Session {} calling process_streaming_async on node '{}' with data type {}", session_id_for_exec, first_node_clone, input_data_type);
                             match node.process_streaming_async(input_data, Some(session_id_for_exec.clone()), callback).await {
                                 Ok(_) => {
-                                    tracing::info!("Session {} execution completed successfully", session_id_for_log);
+                                    tracing::info!("[SessionRunner] Session {} execution completed successfully for node '{}'", session_id_for_log, first_node_clone);
                                 }
                                 Err(e) => {
-                                    tracing::error!("Session {}: Pipeline execution error: {}", session_id_for_log, e);
+                                    tracing::error!("[SessionRunner] Session {}: Pipeline execution error on node '{}': {}", session_id_for_log, first_node_clone, e);
                                 }
                             }
-                            tracing::info!("Session {} background task finished", session_id_for_log);
+                            tracing::info!("[SessionRunner] Session {} background task finished for node '{}'", session_id_for_log, first_node_clone);
                         });
                     }
                     _ = shutdown_rx.recv() => {

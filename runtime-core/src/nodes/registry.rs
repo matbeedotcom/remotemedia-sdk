@@ -4,7 +4,7 @@
 //! to select between Rust-native and Python-fallback implementations.
 
 use crate::error::{Error, Result};
-use crate::executor::node_executor::{NodeContext, NodeExecutor};
+use crate::executor::node_executor::NodeExecutor;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -276,7 +276,7 @@ mod tests {
 
     #[async_trait]
     impl NodeExecutor for MockExecutor {
-        async fn initialize(&mut self, _ctx: &NodeContext) -> Result<()> {
+        async fn initialize(&mut self, _ctx: &crate::executor_compat::node_executor::NodeContext) -> Result<()> {
             Ok(())
         }
 
@@ -357,7 +357,7 @@ mod tests {
             .unwrap();
 
         // Node should be created successfully
-        let ctx = NodeContext {
+        let ctx = crate::executor_compat::node_executor::NodeContext {
             node_id: "test".to_string(),
             node_type: "test_node".to_string(),
             params: Value::Null,
@@ -389,7 +389,7 @@ mod tests {
             .create_node("test_node", RuntimeHint::Auto, Value::Null)
             .unwrap();
 
-        let ctx = NodeContext {
+        let ctx = crate::executor_compat::node_executor::NodeContext {
             node_id: "test".to_string(),
             node_type: "test_node".to_string(),
             params: Value::Null,

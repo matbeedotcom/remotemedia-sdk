@@ -72,10 +72,10 @@ pub struct NodeManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<ExecutionMetadata>,
 
-    /// Docker executor configuration (Spec 009 - Docker-based node execution)
-    #[cfg(feature = "docker-executor")]
+    /// Docker configuration (integrated into multiprocess system)
+    #[cfg(feature = "docker")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub docker: Option<crate::python::docker::DockerExecutorConfig>,
+    pub docker: Option<crate::python::multiprocess::docker_support::DockerNodeConfig>,
 }
 
 /// Runtime hint for Python node execution (Phase 1.10.5)

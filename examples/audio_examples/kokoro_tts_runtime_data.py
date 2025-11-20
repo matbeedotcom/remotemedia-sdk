@@ -18,7 +18,7 @@ import asyncio
 
 # Import RuntimeData bindings
 try:
-    from remotemedia.runtime_data import RuntimeData, numpy_to_audio, audio_to_numpy
+    from remotemedia.core.multiprocessing.data import RuntimeData, numpy_to_audio, audio_to_numpy
     RUNTIME_DATA_AVAILABLE = True
 except ImportError:
     RUNTIME_DATA_AVAILABLE = False

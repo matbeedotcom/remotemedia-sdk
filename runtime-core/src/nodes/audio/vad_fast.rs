@@ -1,4 +1,4 @@
-use crate::audio::buffer::{AudioBuffer, AudioData, AudioFormat};
+use crate::audio::buffer::AudioData;
 use crate::error::{Error, Result};
 use crate::nodes::audio::fast::FastAudioNode;
 
@@ -130,7 +130,7 @@ mod tests {
             .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 16000.0).sin() * 0.5)
             .collect();
 
-        let input = AudioData::new(AudioBuffer::new_f32(samples), 16000, 1);
+        let input = AudioData::new(crate::audio::buffer::AudioBuffer::new_f32(samples), 16000, 1);
 
         let result = node.process_audio(input);
         assert!(result.is_ok());
@@ -148,7 +148,7 @@ mod tests {
             })
             .collect();
 
-        let input = AudioData::new(AudioBuffer::new_f32(samples), 16000, 2);
+        let input = AudioData::new(crate::audio::buffer::AudioBuffer::new_f32(samples), 16000, 2);
 
         let result = node.process_audio(input);
         assert!(result.is_ok());

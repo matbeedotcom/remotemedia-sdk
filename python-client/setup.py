@@ -84,6 +84,7 @@ setup(
     include_package_data=True,
     package_data={
         "remotemedia": ["*.yaml", "*.json"],
+        "remotemedia.protos": ["*.py", "*.proto"],
     },
     zip_safe=False,
 ) 

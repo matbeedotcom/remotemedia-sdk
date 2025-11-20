@@ -44,6 +44,26 @@ iceoryx2-bb-elementary = { workspace = true, optional = true }
 # Logging and tracing
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+bollard = { workspace = true }
+hex.workspace = true
+num_cpus.workspace = true
+rand.workspace = true
+glob.workspace = true
+rusqlite.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+bytes.workspace = true
+tar.workspace = true
+reqwest.workspace = true
+chrono.workspace = true
+regex.workspace = true
+histogram = "0.11.3"
+crossbeam.workspace = true
+sha2.workspace = true
+hdrhistogram.workspace = true
+hyper = { workspace = true, features = ["full"] }
+http-body-util = { version = "0.1", optional = true }
 
 # Platform-specific
 [target.'cfg(unix)'.dependencies]
@@ -76,8 +96,15 @@ crossbeam = { workspace = true }
 hdrhistogram = { workspace = true }
 
 # Docker executor (spec 009)
-bollard = { version = "0.19", optional = true }
-rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+bollard = { workspace = true, optional = true }
+rusqlite = { workspace = true, optional = true }
+tar = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+# hyper and http-body-util are transitive deps from bollard, add them directly
+hyper = { workspace = true, optional = true }
+http-body-util = { version = "0.1", optional = true }
+glob = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }
@@ -92,11 +119,12 @@ axum = { workspace = true }
 tokio-stream = { workspace = true }
 
 [features]
-default = ["multiprocess", "silero-vad"]
+default = ["multiprocess", "silero-vad", "docker"]
 multiprocess = ["iceoryx2", "iceoryx2-bb-log", "iceoryx2-bb-container", "iceoryx2-bb-elementary"]
 silero-vad = ["ort"]
 grpc-client = ["tonic", "prost", "prost-types"]
-docker-executor = ["bollard", "rusqlite", "multiprocess"]
+# Docker support integrated into multiprocess system
+docker = ["dep:bollard", "dep:tar", "dep:chrono", "dep:bytes", "dep:hyper", "dep:http-body-util", "dep:glob", "dep:rusqlite"]
 
 # NOTE: grpc-client is for RemotePipelineNode client functionality only
 # Full transport implementations belong in separate transport crates
@@ -109,6 +137,28 @@ path = "tests/integration/test_speculative_vad.rs"
 [[test]]
 name = "test_control_messages"
 path = "tests/integration/test_control_messages.rs"
+
+# Old Docker executor tests removed - use test_docker_multiprocess instead
+
+# Integration test for basic Docker multiprocess execution (T021)
+[[test]]
+name = "test_docker_multiprocess"
+path = "tests/integration/test_docker_multiprocess.rs"
+
+# Comprehensive E2E test for Docker multiprocess integration
+[[test]]
+name = "test_docker_multiprocess_e2e"
+path = "tests/integration/test_docker_multiprocess_e2e.rs"
+
+# Test for Docker image building and caching (T031)
+[[test]]
+name = "test_docker_image_builder"
+path = "tests/integration/test_docker_image_builder.rs"
+
+# Test for Docker resource limit enforcement (T041)
+[[test]]
+name = "test_docker_resource_limits"
+path = "tests/integration/test_docker_resource_limits.rs"
 
 # Benchmarks for latency measurement
 [[bench]]
@@ -129,4 +179,34 @@ harness = false
 [[bench]]
 name = "bench_real_pipeline"
 path = "benches/bench_real_pipeline.rs"
+harness = false
+
+[[bench]]
+name = "bench_docker_latency"
+path = "benches/bench_docker_latency.rs"
+harness = false
+
+[[bench]]
+name = "docker_vs_multiprocess"
+path = "benches/docker_vs_multiprocess.rs"
+harness = false
+
+[[bench]]
+name = "docker_e2e_pipeline"
+path = "benches/docker_e2e_pipeline.rs"
+harness = false
+
+[[bench]]
+name = "docker_e2e_pipeline_simple"
+path = "benches/docker_e2e_pipeline_simple.rs"
+harness = false
+
+[[bench]]
+name = "docker_ipc_benchmark"
+path = "benches/docker_ipc_benchmark.rs"
+harness = false
+
+[[bench]]
+name = "bench_vad_docker_pipeline"
+path = "benches/bench_vad_docker_pipeline.rs"
 harness = false

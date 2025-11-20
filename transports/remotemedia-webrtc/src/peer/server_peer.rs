@@ -107,6 +107,7 @@ impl ServerPeer {
             channels: 1,
             bitrate: 64000,
             complexity: 10,
+            ..Default::default() // Use default ring_buffer_capacity (1500 frames = 30s)
         };
 
         self.peer_connection.add_audio_track(audio_config).await

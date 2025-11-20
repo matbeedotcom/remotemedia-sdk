@@ -1,0 +1,81 @@
+{
+    "name": "simple_docker_test",
+    "version": "1.0.0",
+    "description": "Simple test pipeline for Docker multiprocess execution",
+    "nodes": [
+        {
+            "id": "input",
+            "node_type": "Input",
+            "executor": null,
+            "config": {},
+            "metadata": {}
+        },
+        {
+            "id": "echo_container",
+            "node_type": "test_echo.EchoNode",
+            "executor": "multiprocess",
+            "config": {
+                "echo_delay_ms": 5,
+                "echo_multiplier": 1.0
+            },
+            "metadata": {
+                "description": "Simple echo node in Docker container",
+                "use_docker": true,
+                "docker_config": {
+                    "python_version": "3.10",
+                    "python_packages": [
+                        "iceoryx2"
+                    ],
+                    "system_packages": [],
+                    "memory_mb": 128,
+                    "cpu_cores": 0.5,
+                    "shm_size_mb": 512,
+                    "env_vars": {
+                        "PYTHONUNBUFFERED": "1"
+                    },
+                    "gpu_devices": [],
+                    "volumes": []
+                }
+            }
+        },
+        {
+            "id": "output",
+            "node_type": "Output",
+            "executor": null,
+            "config": {},
+            "metadata": {}
+        }
+    ],
+    "edges": [
+        {
+            "source": "input",
+            "target": "echo_container",
+            "field_mapping": {
+                "source_field": "data",
+                "target_field": "input"
+            }
+        },
+        {
+            "source": "echo_container",
+            "target": "output",
+            "field_mapping": {
+                "source_field": "output",
+                "target_field": "data"
+            }
+        }
+    ],
+    "config": {
+        "batch_size": 1,
+        "timeout_ms": 10000,
+        "retry_policy": {
+            "max_retries": 2,
+            "backoff_ms": 500
+        }
+    },
+    "metadata": {
+        "author": "RemoteMedia SDK",
+        "created": "2024-12-20",
+        "tags": ["docker", "test", "simple"],
+        "description": "Minimal pipeline for testing Docker execution"
+    }
+}

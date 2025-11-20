@@ -1597,6 +1597,7 @@ mod tests {
                     runtime_hint: None,
                     is_streaming: false,
                     execution: None,
+                    ..Default::default()
                 },
                 crate::manifest::NodeManifest {
                     id: "B".to_string(),
@@ -1607,6 +1608,7 @@ mod tests {
                     runtime_hint: None,
                     is_streaming: false,
                     execution: None,
+                    ..Default::default()
                 },
                 crate::manifest::NodeManifest {
                     id: "C".to_string(),
@@ -1617,6 +1619,7 @@ mod tests {
                     runtime_hint: None,
                     is_streaming: false,
                     execution: None,
+                    ..Default::default()
                 },
             ],
             connections: vec![
@@ -1684,6 +1687,7 @@ mod tests {
                     runtime_hint: None,
                     is_streaming: false,
                     execution: None,
+                    ..Default::default()
                 },
                 crate::manifest::NodeManifest {
                     id: "B".to_string(),
@@ -1694,6 +1698,7 @@ mod tests {
                     runtime_hint: None,
                     is_streaming: false,
                     execution: None,
+                    ..Default::default()
                 },
                 crate::manifest::NodeManifest {
                     id: "C".to_string(),
@@ -1704,6 +1709,7 @@ mod tests {
                     runtime_hint: None,
                     is_streaming: false,
                     execution: None,
+                    ..Default::default()
                 },
                 crate::manifest::NodeManifest {
                     id: "D".to_string(),
@@ -1714,6 +1720,7 @@ mod tests {
                     runtime_hint: None,
                     is_streaming: false,
                     execution: None,
+                    ..Default::default()
                 },
             ],
             connections: vec![
@@ -1778,6 +1785,7 @@ mod tests {
                     runtime_hint: None,
                     is_streaming: false,
                     execution: None,
+                    ..Default::default()
                 },
                 crate::manifest::NodeManifest {
                     id: "B".to_string(),
@@ -1788,6 +1796,7 @@ mod tests {
                     runtime_hint: None,
                     is_streaming: false,
                     execution: None,
+                    ..Default::default()
                 },
                 crate::manifest::NodeManifest {
                     id: "C".to_string(),
@@ -1798,6 +1807,7 @@ mod tests {
                     runtime_hint: None,
                     is_streaming: false,
                     execution: None,
+                    ..Default::default()
                 },
             ],
             connections: vec![
@@ -1840,6 +1850,7 @@ mod tests {
                     runtime_hint: None,
                     is_streaming: false,
                     execution: None,
+                    ..Default::default()
                 },
                 crate::manifest::NodeManifest {
                     id: "process_1".to_string(),
@@ -1850,6 +1861,7 @@ mod tests {
                     runtime_hint: None,
                     is_streaming: false,
                     execution: None,
+                    ..Default::default()
                 },
             ],
             connections: vec![Connection {
@@ -1891,6 +1903,7 @@ mod tests {
                     runtime_hint: None,
                     is_streaming: false,
                     execution: None,
+                    ..Default::default()
                 },
                 crate::manifest::NodeManifest {
                     id: "echo_1".to_string(),
@@ -1901,6 +1914,7 @@ mod tests {
                     runtime_hint: None,
                     is_streaming: false,
                     execution: None,
+                    ..Default::default()
                 },
             ],
             connections: vec![Connection {

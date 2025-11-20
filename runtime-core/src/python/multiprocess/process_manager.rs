@@ -10,6 +10,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 
+#[cfg(feature = "docker")]
+use bollard::Docker;
+
 use super::multiprocess_executor::MultiprocessConfig;
 
 /// Process lifecycle states
@@ -33,6 +36,72 @@ pub enum ExitReason {
     Timeout,    // Initialization timeout
 }
 
+/// Unified handle for processes and containers
+#[derive(Debug)]
+pub enum ExecutionTarget {
+    /// Standard process (existing)
+    Process(Child),
+
+    /// Docker container (NEW)
+    #[cfg(feature = "docker")]
+    Container {
+        /// Docker container ID
+        container_id: String,
+        /// Docker client reference
+        docker_client: Arc<Docker>,
+    },
+}
+
+impl ExecutionTarget {
+    /// Check if the execution target is still running
+    pub async fn is_alive(&self) -> bool {
+        match self {
+            ExecutionTarget::Process(child) => {
+                // Check process status
+                // Note: This would need the child to be mutable in real implementation
+                // For now, return true as placeholder
+                true
+            }
+            #[cfg(feature = "docker")]
+            ExecutionTarget::Container { container_id, docker_client } => {
+                // Check container status
+                use bollard::query_parameters::InspectContainerOptions;
+                match docker_client.inspect_container(container_id, None::<InspectContainerOptions>).await {
+                    Ok(info) => {
+                        info.state
+                            .and_then(|s| s.running)
+                            .unwrap_or(false)
+                    }
+                    Err(_) => false,
+                }
+            }
+        }
+    }
+
+    /// Terminate the execution target
+    pub async fn terminate(&self, timeout: std::time::Duration) -> Result<()> {
+        match self {
+            ExecutionTarget::Process(_child) => {
+                // Terminate process
+                // Implementation would send SIGTERM, wait, then SIGKILL
+                Ok(())
+            }
+            #[cfg(feature = "docker")]
+            ExecutionTarget::Container { container_id, docker_client } => {
+                // Stop container with timeout
+                use bollard::container::StopContainerOptions;
+                let options = StopContainerOptions {
+                    t: timeout.as_secs() as i64,
+                };
+                docker_client
+                    .stop_container(container_id, Some(options))
+                    .await
+                    .map_err(|e| Error::Execution(format!("Failed to stop container: {}", e)))
+            }
+        }
+    }
+}
+
 /// Handle to a running process
 #[derive(Debug, Clone)]
 pub struct ProcessHandle {
@@ -45,6 +114,9 @@ pub struct ProcessHandle {
     /// Node type identifier
     pub node_type: String,
 
+    /// Session ID
+    pub session_id: String,
+
     /// Current process status
     pub status: Arc<RwLock<ProcessStatus>>,
 
@@ -53,6 +125,9 @@ pub struct ProcessHandle {
 
     /// Internal process handle
     pub inner: Arc<Mutex<Option<Child>>>,
+
+    /// Execution target (process or container)
+    pub execution_target: Arc<Mutex<Option<ExecutionTarget>>>,
 }
 
 impl ProcessHandle {
@@ -247,9 +322,11 @@ impl ProcessManager {
             id: pid,
             node_id: node_id.to_string(),
             node_type: node_type.to_string(),
+            session_id: session_id.to_string(),
             status: Arc::new(RwLock::new(ProcessStatus::Initializing)),
             started_at: Instant::now(),
             inner: Arc::new(Mutex::new(Some(child))),
+            execution_target: Arc::new(Mutex::new(None)),
         };
 
         // Register process
@@ -421,6 +498,58 @@ impl ProcessManager {
 
         Ok(())
     }
+
+    /// Spawn a node as a Docker container
+    #[cfg(feature = "docker")]
+    pub async fn spawn_docker_container(
+        &self,
+        node_type: &str,
+        node_id: &str,
+        params: &Value,
+        session_id: &str,
+        docker_support: &super::docker_support::DockerSupport,
+        docker_config: &super::docker_support::DockerNodeConfig,
+    ) -> Result<ProcessHandle> {
+        tracing::info!("Spawning Docker container for node {} ({})", node_id, node_type);
+
+        // Create container with IPC volume mounts
+        let container_id = docker_support.create_container(
+            node_id,
+            session_id,
+            docker_config,
+        ).await?;
+
+        // Start the container
+        docker_support.start_container(&container_id).await?;
+
+        // Create process handle with container execution target
+        let handle = ProcessHandle {
+            id: 0, // Container doesn't have a traditional PID
+            node_id: node_id.to_string(),
+            node_type: node_type.to_string(),
+            session_id: session_id.to_string(),
+            status: Arc::new(RwLock::new(ProcessStatus::Initializing)),
+            started_at: Instant::now(),
+            inner: Arc::new(Mutex::new(None)),
+            execution_target: Arc::new(Mutex::new(Some(ExecutionTarget::Container {
+                container_id: container_id.clone(),
+                docker_client: docker_support.docker_client().clone(),
+            }))),
+        };
+
+        // Register process (using node_id hash as key since we don't have a PID)
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        format!("{}_{}", session_id, node_id).hash(&mut hasher);
+        let pseudo_pid = (hasher.finish() & 0xFFFFFFFF) as u32;
+
+        self.processes.write().await.insert(pseudo_pid, handle.clone());
+
+        tracing::info!("Docker container {} started for node {}", container_id, node_id);
+
+        Ok(handle)
+    }
 }
 
 // Platform-specific imports
@@ -437,13 +566,16 @@ mod tests {
             id: 1234,
             node_id: "test_node".to_string(),
             node_type: "test_type".to_string(),
+            session_id: "test_session".to_string(),
             status: Arc::new(RwLock::new(ProcessStatus::Idle)),
             started_at: Instant::now(),
             inner: Arc::new(Mutex::new(None)),
+            execution_target: Arc::new(Mutex::new(None)),
         };
 
         assert_eq!(handle.id, 1234);
         assert_eq!(handle.node_id, "test_node");
+        assert_eq!(handle.session_id, "test_session");
         assert_eq!(*handle.status.read().await, ProcessStatus::Idle);
     }
 

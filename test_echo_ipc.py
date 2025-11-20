@@ -36,7 +36,7 @@ async def test_echo_node():
 
     # Test process method directly (not via IPC yet)
     try:
-        from remotemedia_runtime.runtime_data import RuntimeData
+        from remotemedia.core.multiprocessing.data import RuntimeData
         test_input = RuntimeData.text("Hello from test!")
         output = await node.process(test_input)
         print(f"[OK] Direct process call returned output")

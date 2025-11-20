@@ -3,7 +3,6 @@
 //! Defines the DAG representation of a pipeline with topological sorting
 //! and cycle detection.
 
-use crate::executor::error::ExecutionErrorExt;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};

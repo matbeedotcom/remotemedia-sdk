@@ -9,20 +9,22 @@
 //! 6. Verify VideoFlip node processes frames correctly
 
 use remotemedia_grpc::generated::{
-    stream_request::Request as StreamRequestType, stream_response::Response as StreamResponseType,
-    streaming_pipeline_service_client::StreamingPipelineServiceClient, AudioBuffer, AudioChunk,
-    StreamControl, StreamInit, StreamRequest, StreamResponse,
+    data_buffer::DataType, stream_request::Request as StreamRequestType,
+    stream_response::Response as StreamResponseType,
+    streaming_pipeline_service_client::StreamingPipelineServiceClient, DataBuffer, DataChunk,
+    PipelineManifest, StreamControl, StreamInit, StreamRequest,
 };
+use remotemedia_grpc::metrics::ServiceMetrics;
 use remotemedia_grpc::{ServiceConfig, StreamingServiceImpl};
 use remotemedia_runtime_core::transport::PipelineRunner;
 use std::sync::Arc;
 use tokio::time::{sleep, timeout, Duration};
 use tonic::transport::Server;
-use tonic::{Request, Streaming};
+use tonic::Request;
 
 /// Start gRPC server in background
 async fn start_test_server() -> (String, tokio::task::JoinHandle<()>) {
-    let addr = "127.0.0.1:0".parse().unwrap();
+    let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     let local_addr = listener.local_addr().unwrap();
     let server_url = format!("http://{}", local_addr);
@@ -35,7 +37,7 @@ async fn start_test_server() -> (String, tokio::task::JoinHandle<()>) {
     let service = StreamingServiceImpl::new(
         config.auth,
         config.limits,
-        config.metrics.clone(),
+        Arc::new(ServiceMetrics::with_default_registry().unwrap()),
         runner,
     );
 
@@ -59,30 +61,34 @@ async fn start_test_server() -> (String, tokio::task::JoinHandle<()>) {
 }
 
 /// Create a test manifest with VideoFlip node
-fn create_test_manifest() -> remotemedia_grpc::generated::Manifest {
-    use remotemedia_grpc::generated::{manifest::Node, manifest::Params, Manifest};
+fn create_test_manifest() -> PipelineManifest {
+    use remotemedia_grpc::generated::{ManifestMetadata, NodeManifest};
 
-    let manifest_json = r#"{
-        "direction": "vertical"
-    }"#;
-
-    Manifest {
+    PipelineManifest {
         version: "v1".to_string(),
-        name: "video-flip-test".to_string(),
-        description: Some("Test pipeline with VideoFlip node".to_string()),
-        nodes: vec![Node {
+        metadata: Some(ManifestMetadata {
+            name: "video-flip-test".to_string(),
+            description: "Test pipeline with VideoFlip node".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        }),
+        nodes: vec![NodeManifest {
             id: "flip".to_string(),
             node_type: "VideoFlip".to_string(),
-            params: Some(Params {
-                json: manifest_json.to_string(),
-            }),
+            params: "{}".to_string(),
+            is_streaming: false,
+            capabilities: None,
+            host: String::new(),
+            runtime_hint: 0, // Auto
+            input_types: vec![],  // Accept any type
+            output_types: vec![], // Output any type
         }],
         connections: vec![],
     }
 }
-
-/// Create test video frame (2x2 RGB24)
-fn create_test_video_frame(frame_number: u64) -> AudioBuffer {
+/// Create test video frame as DataBuffer (2x2 RGB24)
+fn create_test_video_buffer(frame_number: u64) -> DataBuffer {
+    use remotemedia_grpc::generated::{PixelFormat, VideoFrame};
+    
     // Create 2x2 RGB24 image
     // Top row: red, green
     // Bottom row: blue, white
@@ -92,14 +98,19 @@ fn create_test_video_frame(frame_number: u64) -> AudioBuffer {
         0, 0, 255, // blue
         255, 255, 255, // white
     ];
-
-    AudioBuffer {
-        data: pixels,
-        sample_rate: 0,           // Not used for video
-        channels: 0,              // Not used for video
-        num_samples: frame_number, // Abuse this field to pass frame number
-        format: 1,                // RGB24
+    
+    let video_frame = VideoFrame {
+        pixel_data: pixels,
+        width: 2,
+        height: 2,
+        format: PixelFormat::Rgb24 as i32,
+        frame_number,
         timestamp_us: frame_number * 33333, // ~30 FPS
+    };
+    
+    DataBuffer {
+        data_type: Some(DataType::Video(video_frame)),
+        metadata: std::collections::HashMap::new(),
     }
 }
 
@@ -125,15 +136,17 @@ async fn test_grpc_streaming_video_pipeline() {
 
     // Step 3: Create streaming session
     println!("\n📝 Step 3: Creating streaming session with manifest...");
-    let (mut request_tx, response_rx) = tokio::sync::mpsc::channel(32);
+    let (request_tx, response_rx) = tokio::sync::mpsc::channel(32);
 
     // Send StreamInit
     let manifest = create_test_manifest();
     let init_request = StreamRequest {
         request: Some(StreamRequestType::Init(StreamInit {
-            client_version: "test-v1.0".to_string(),
             manifest: Some(manifest),
-            preview_features: vec![],
+            data_inputs: std::collections::HashMap::new(),
+            resource_limits: None,
+            client_version: "test-v1.0".to_string(),
+            expected_chunk_size: 0, // Use server default
         })),
     };
 
@@ -160,7 +173,7 @@ async fn test_grpc_streaming_video_pipeline() {
     match ready_response.response {
         Some(StreamResponseType::Ready(ready)) => {
             println!("  ✓ Session created: {}", ready.session_id);
-            println!("  ✓ Server version: {}", ready.server_version);
+            println!("  ✓ Recommended chunk size: {}", ready.recommended_chunk_size);
         }
         _ => panic!("Expected StreamReady response"),
     }
@@ -170,12 +183,15 @@ async fn test_grpc_streaming_video_pipeline() {
     const NUM_FRAMES: usize = 3;
 
     for i in 0..NUM_FRAMES {
-        let video_buffer = create_test_video_frame(i as u64);
+        let video_buffer = create_test_video_buffer(i as u64);
 
         let chunk_request = StreamRequest {
-            request: Some(StreamRequestType::Chunk(AudioChunk {
-                sequence: i as u64,
+            request: Some(StreamRequestType::DataChunk(DataChunk {
+                node_id: "flip".to_string(),
                 buffer: Some(video_buffer),
+                named_buffers: std::collections::HashMap::new(),
+                sequence: i as u64,
+                timestamp_ms: i as u64 * 33, // ~30 FPS
             })),
         };
 
@@ -199,16 +215,25 @@ async fn test_grpc_streaming_video_pipeline() {
             Some(StreamResponseType::Result(result)) => {
                 println!("  ← Received frame {} result", i);
 
-                // Verify we got video data back
+                // Verify we got video data back in data_outputs
                 assert!(
-                    result.buffer.is_some(),
-                    "Frame {} missing buffer",
+                    !result.data_outputs.is_empty(),
+                    "Frame {} missing data_outputs",
                     i
                 );
 
-                let buffer = result.buffer.unwrap();
-                assert_eq!(buffer.format, 1, "Frame {} wrong format", i);
-                assert_eq!(buffer.data.len(), 12, "Frame {} wrong data size", i);
+                // Extract the video frame from the "flip" node output
+                let output_buffer = result.data_outputs.get("flip")
+                    .expect(&format!("Frame {} missing 'flip' output", i));
+                
+                let video_frame = match &output_buffer.data_type {
+                    Some(DataType::Video(frame)) => frame,
+                    _ => panic!("Frame {} output is not video", i),
+                };
+
+                assert_eq!(video_frame.width, 2, "Frame {} wrong width", i);
+                assert_eq!(video_frame.height, 2, "Frame {} wrong height", i);
+                assert_eq!(video_frame.pixel_data.len(), 12, "Frame {} wrong data size", i);
 
                 // Step 6: Verify VideoFlip processed the frame correctly
                 println!("\n✅ Step 6: Verifying VideoFlip processing for frame {}...", i);
@@ -219,7 +244,7 @@ async fn test_grpc_streaming_video_pipeline() {
                 // Flipped top row: blue, white
                 // Flipped bottom row: red, green
 
-                let pixels = &buffer.data;
+                let pixels = &video_frame.pixel_data;
                 assert_eq!(pixels[0..3], [0, 0, 255], "Frame {} pixel 0 (blue)", i);
                 assert_eq!(
                     pixels[3..6],
@@ -238,22 +263,16 @@ async fn test_grpc_streaming_video_pipeline() {
                 assert_eq!(result.sequence, i as u64, "Frame {} wrong sequence", i);
                 println!("  ✓ Sequence number correct: {}", result.sequence);
 
-                // Verify execution metrics exist
-                assert!(
-                    result.execution_metrics.is_some(),
-                    "Frame {} missing metrics",
-                    i
-                );
-                let metrics = result.execution_metrics.unwrap();
+                // Verify processing time exists
                 println!(
-                    "  ✓ Execution time: {:.2}ms",
-                    metrics.total_time_ms
+                    "  ✓ Processing time: {:.2}ms",
+                    result.processing_time_ms
                 );
             }
             Some(StreamResponseType::Metrics(metrics)) => {
                 println!("  📊 Received metrics update");
                 println!("    - Chunks processed: {}", metrics.chunks_processed);
-                println!("    - Avg latency: {:.2}ms", metrics.avg_latency_ms);
+                println!("    - Avg latency: {:.2}ms", metrics.average_latency_ms);
             }
             _ => panic!("Unexpected response type for frame {}", i),
         }
@@ -285,8 +304,8 @@ async fn test_grpc_streaming_video_pipeline() {
                 println!("  ✓ Reason: {}", closed.reason);
                 if let Some(final_metrics) = closed.final_metrics {
                     println!(
-                        "  ✓ Final metrics: {} chunks, {:.2}ms avg latency",
-                        final_metrics.chunks_processed, final_metrics.avg_latency_ms
+                        "  ✓ Final metrics: {:.2}ms wall time",
+                        final_metrics.wall_time_ms
                     );
                 }
             }
@@ -321,15 +340,17 @@ async fn test_grpc_streaming_multiple_sessions() {
                 .await
                 .unwrap();
 
-            let (mut tx, rx) = tokio::sync::mpsc::channel(32);
+            let (tx, rx) = tokio::sync::mpsc::channel(32);
             let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
 
             // Init session 1
             tx.send(StreamRequest {
                 request: Some(StreamRequestType::Init(StreamInit {
-                    client_version: "session1".to_string(),
                     manifest: Some(create_test_manifest()),
-                    preview_features: vec![],
+                    data_inputs: std::collections::HashMap::new(),
+                    resource_limits: None,
+                    client_version: "session1".to_string(),
+                    expected_chunk_size: 0,
                 })),
             })
             .await
@@ -346,9 +367,12 @@ async fn test_grpc_streaming_multiple_sessions() {
 
             // Send one frame
             tx.send(StreamRequest {
-                request: Some(StreamRequestType::Chunk(AudioChunk {
+                request: Some(StreamRequestType::DataChunk(DataChunk {
+                    node_id: "flip".to_string(),
+                    buffer: Some(create_test_video_buffer(0)),
+                    named_buffers: std::collections::HashMap::new(),
                     sequence: 0,
-                    buffer: Some(create_test_video_frame(0)),
+                    timestamp_ms: 0,
                 })),
             })
             .await
@@ -372,15 +396,17 @@ async fn test_grpc_streaming_multiple_sessions() {
                 .await
                 .unwrap();
 
-            let (mut tx, rx) = tokio::sync::mpsc::channel(32);
+            let (tx, rx) = tokio::sync::mpsc::channel(32);
             let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
 
             // Init session 2
             tx.send(StreamRequest {
                 request: Some(StreamRequestType::Init(StreamInit {
-                    client_version: "session2".to_string(),
                     manifest: Some(create_test_manifest()),
-                    preview_features: vec![],
+                    data_inputs: std::collections::HashMap::new(),
+                    resource_limits: None,
+                    client_version: "session2".to_string(),
+                    expected_chunk_size: 0,
                 })),
             })
             .await
@@ -397,9 +423,12 @@ async fn test_grpc_streaming_multiple_sessions() {
 
             // Send one frame
             tx.send(StreamRequest {
-                request: Some(StreamRequestType::Chunk(AudioChunk {
+                request: Some(StreamRequestType::DataChunk(DataChunk {
+                    node_id: "flip".to_string(),
+                    buffer: Some(create_test_video_buffer(0)),
+                    named_buffers: std::collections::HashMap::new(),
                     sequence: 0,
-                    buffer: Some(create_test_video_frame(0)),
+                    timestamp_ms: 0,
                 })),
             })
             .await
