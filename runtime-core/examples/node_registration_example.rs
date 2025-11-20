@@ -95,5 +95,3 @@ fn main() {
     println!("After:  18 lines for 18 nodes");
     println!("Saved:  702 lines (97.5% reduction!)");
 }
-
-
