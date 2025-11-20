@@ -1,0 +1,3 @@
+# Symlinked runtime from remotemedia-ffi (for editable installs)
+runtime.abi3.so
+runtime.*.so
