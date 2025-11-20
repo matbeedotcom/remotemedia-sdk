@@ -20,10 +20,10 @@
 
 #[cfg(all(feature = "docker", feature = "multiprocess"))]
 mod tests {
+    use bollard::Docker;
     use remotemedia_runtime_core::python::multiprocess::docker_support::{
         DockerNodeConfig, DockerSupport,
     };
-    use bollard::Docker;
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
@@ -86,14 +86,12 @@ mod tests {
             return;
         }
 
-        let docker_support = DockerSupport::new().await.expect("Failed to create DockerSupport");
+        let docker_support = DockerSupport::new()
+            .await
+            .expect("Failed to create DockerSupport");
 
         // Test different memory limits
-        let test_cases = vec![
-            ("512MB", 512u64),
-            ("1GB", 1024u64),
-            ("2GB", 2048u64),
-        ];
+        let test_cases = vec![("512MB", 512u64), ("1GB", 1024u64), ("2GB", 2048u64)];
 
         for (name, memory_mb) in test_cases {
             println!("\nTest case: {} memory limit", name);
@@ -119,7 +117,10 @@ mod tests {
 
             // Inspect container to verify memory limit
             match docker
-                .inspect_container(&container_id, None::<bollard::query_parameters::InspectContainerOptions>)
+                .inspect_container(
+                    &container_id,
+                    None::<bollard::query_parameters::InspectContainerOptions>,
+                )
                 .await
             {
                 Ok(info) => {
@@ -182,7 +183,9 @@ mod tests {
             return;
         }
 
-        let docker_support = DockerSupport::new().await.expect("Failed to create DockerSupport");
+        let docker_support = DockerSupport::new()
+            .await
+            .expect("Failed to create DockerSupport");
 
         // Test different CPU limits
         let test_cases = vec![
@@ -216,21 +219,28 @@ mod tests {
 
             // Inspect container to verify CPU limit
             match docker
-                .inspect_container(&container_id, None::<bollard::query_parameters::InspectContainerOptions>)
+                .inspect_container(
+                    &container_id,
+                    None::<bollard::query_parameters::InspectContainerOptions>,
+                )
                 .await
             {
                 Ok(info) => {
                     if let Some(host_config) = info.host_config {
                         if let Some(nano_cpus) = host_config.nano_cpus {
                             let cpu_cores_actual = nano_cpus as f32 / 1_000_000_000.0;
-                            println!("  ✓ CPU limit set: {} cores (nano_cpus: {})", cpu_cores_actual, nano_cpus);
+                            println!(
+                                "  ✓ CPU limit set: {} cores (nano_cpus: {})",
+                                cpu_cores_actual, nano_cpus
+                            );
 
                             // Verify the limit matches configuration (with small tolerance for floating point)
                             let diff = (cpu_cores_actual - cpu_cores).abs();
                             assert!(
                                 diff < 0.001,
                                 "CPU limit mismatch: expected {} cores, got {} cores",
-                                cpu_cores, cpu_cores_actual
+                                cpu_cores,
+                                cpu_cores_actual
                             );
                             println!("  ✓ CPU limit verified: {} cores", cpu_cores);
                         } else {
@@ -281,13 +291,25 @@ mod tests {
             return;
         }
 
-        let docker_support = DockerSupport::new().await.expect("Failed to create DockerSupport");
+        let docker_support = DockerSupport::new()
+            .await
+            .expect("Failed to create DockerSupport");
 
         // Test cases for GPU configuration
         let test_cases = vec![
             ("All GPUs", vec!["all".to_string()], true, None),
-            ("Specific GPU 0", vec!["0".to_string()], false, Some(vec!["0".to_string()])),
-            ("Multiple GPUs", vec!["0".to_string(), "1".to_string()], false, Some(vec!["0".to_string(), "1".to_string()])),
+            (
+                "Specific GPU 0",
+                vec!["0".to_string()],
+                false,
+                Some(vec!["0".to_string()]),
+            ),
+            (
+                "Multiple GPUs",
+                vec!["0".to_string(), "1".to_string()],
+                false,
+                Some(vec!["0".to_string(), "1".to_string()]),
+            ),
         ];
 
         for (name, gpu_devices, expect_all, expected_device_ids) in test_cases {
@@ -316,7 +338,10 @@ mod tests {
 
             // Inspect container to verify GPU configuration
             match docker
-                .inspect_container(&container_id, None::<bollard::query_parameters::InspectContainerOptions>)
+                .inspect_container(
+                    &container_id,
+                    None::<bollard::query_parameters::InspectContainerOptions>,
+                )
                 .await
             {
                 Ok(info) => {
@@ -334,7 +359,10 @@ mod tests {
                                 // Verify count for "all" devices
                                 if expect_all {
                                     if let Some(count) = device_request.count {
-                                        assert_eq!(count, -1, "GPU count should be -1 for all devices");
+                                        assert_eq!(
+                                            count, -1,
+                                            "GPU count should be -1 for all devices"
+                                        );
                                         println!("  ✓ GPU count configured: all devices (-1)");
                                     }
                                 }
@@ -342,14 +370,20 @@ mod tests {
                                 // Verify specific device IDs
                                 if let Some(expected_ids) = expected_device_ids {
                                     if let Some(device_ids) = &device_request.device_ids {
-                                        assert_eq!(device_ids, &expected_ids, "GPU device IDs mismatch");
+                                        assert_eq!(
+                                            device_ids, &expected_ids,
+                                            "GPU device IDs mismatch"
+                                        );
                                         println!("  ✓ GPU device IDs configured: {:?}", device_ids);
                                     }
                                 }
 
                                 // Verify capabilities
                                 if let Some(capabilities) = &device_request.capabilities {
-                                    assert!(!capabilities.is_empty(), "GPU capabilities should be set");
+                                    assert!(
+                                        !capabilities.is_empty(),
+                                        "GPU capabilities should be set"
+                                    );
                                     println!("  ✓ GPU capabilities configured: {:?}", capabilities);
                                 }
 
@@ -406,7 +440,9 @@ mod tests {
             return;
         }
 
-        let docker_support = DockerSupport::new().await.expect("Failed to create DockerSupport");
+        let docker_support = DockerSupport::new()
+            .await
+            .expect("Failed to create DockerSupport");
 
         let config = create_test_config(512, 1.0);
         let session_id = format!("monitor_test_{}", Uuid::new_v4());
@@ -439,17 +475,24 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Check if container is still running
-        let is_running = docker_support.is_container_running(&container_id).await
+        let is_running = docker_support
+            .is_container_running(&container_id)
+            .await
             .unwrap_or(false);
 
         if !is_running {
             println!("⚠ Container exited immediately (no command specified)");
-            println!("⚠ Skipping resource monitoring test (container needs a long-running process)");
+            println!(
+                "⚠ Skipping resource monitoring test (container needs a long-running process)"
+            );
             println!("⚠ This is expected behavior for containers without a command");
 
             // Verify we can still inspect the container config
             match docker
-                .inspect_container(&container_id, None::<bollard::query_parameters::InspectContainerOptions>)
+                .inspect_container(
+                    &container_id,
+                    None::<bollard::query_parameters::InspectContainerOptions>,
+                )
                 .await
             {
                 Ok(info) => {
@@ -490,7 +533,10 @@ mod tests {
                     }
 
                     // Verify CPU stat is non-negative
-                    assert!(stats.cpu_percent >= 0.0, "CPU percent should be non-negative");
+                    assert!(
+                        stats.cpu_percent >= 0.0,
+                        "CPU percent should be non-negative"
+                    );
 
                     println!("✓ Resource stats validated");
                 }
@@ -502,7 +548,9 @@ mod tests {
         }
 
         // Cleanup
-        let _ = docker_support.stop_container(&container_id, Duration::from_secs(5)).await;
+        let _ = docker_support
+            .stop_container(&container_id, Duration::from_secs(5))
+            .await;
         let _ = docker_support.remove_container(&container_id, true).await;
         println!("✓ Container cleaned up");
 
@@ -538,14 +586,19 @@ mod tests {
             return;
         }
 
-        let docker_support = DockerSupport::new().await.expect("Failed to create DockerSupport");
+        let docker_support = DockerSupport::new()
+            .await
+            .expect("Failed to create DockerSupport");
 
         // Create container with minimal memory (512MB is minimum)
         let config = create_test_config(512, 0.5);
         let session_id = "oom_test";
         let node_id = "test_node";
 
-        println!("Creating container with {} MB memory limit", config.memory_mb);
+        println!(
+            "Creating container with {} MB memory limit",
+            config.memory_mb
+        );
 
         let container_id = match docker_support
             .create_container(node_id, session_id, &config)
@@ -563,7 +616,10 @@ mod tests {
 
         // Verify memory limit is set
         match docker
-            .inspect_container(&container_id, None::<bollard::query_parameters::InspectContainerOptions>)
+            .inspect_container(
+                &container_id,
+                None::<bollard::query_parameters::InspectContainerOptions>,
+            )
             .await
         {
             Ok(info) => {
@@ -615,7 +671,10 @@ mod tests {
 
                 // Check container exit code if stopped
                 match docker
-                    .inspect_container(&container_id, None::<bollard::query_parameters::InspectContainerOptions>)
+                    .inspect_container(
+                        &container_id,
+                        None::<bollard::query_parameters::InspectContainerOptions>,
+                    )
                     .await
                 {
                     Ok(info) => {
@@ -646,10 +705,15 @@ mod tests {
                 }
 
                 // Stop container
-                let _ = docker_support.stop_container(&container_id, Duration::from_secs(5)).await;
+                let _ = docker_support
+                    .stop_container(&container_id, Duration::from_secs(5))
+                    .await;
             }
             Err(e) => {
-                eprintln!("⚠ Failed to start container (may be expected with very low memory): {}", e);
+                eprintln!(
+                    "⚠ Failed to start container (may be expected with very low memory): {}",
+                    e
+                );
             }
         }
 
@@ -677,6 +741,7 @@ mod tests {
             shm_size_mb: 512,
             env_vars: HashMap::new(),
             volumes: vec![],
+            security: Default::default(),
         };
 
         match low_memory_config.validate() {
@@ -701,6 +766,7 @@ mod tests {
             shm_size_mb: 512,
             env_vars: HashMap::new(),
             volumes: vec![],
+            security: Default::default(),
         };
 
         match low_cpu_config.validate() {

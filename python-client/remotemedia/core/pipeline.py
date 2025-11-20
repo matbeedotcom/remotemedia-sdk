@@ -450,9 +450,9 @@ class Pipeline:
             Pipeline execution results
 
         Raises:
-            ImportError: If remotemedia_runtime module is not available
+            ImportError: If remotemedia.runtime module is not available
         """
-        import remotemedia_runtime
+        import remotemedia.runtime
 
         # Serialize pipeline to manifest
         manifest_json = self.serialize()
@@ -464,11 +464,11 @@ class Pipeline:
             # Convert input_data to list if it isn't already
             if not isinstance(input_data, list):
                 input_data = [input_data]
-            result = await remotemedia_runtime.execute_pipeline_with_input(
+            result = await remotemedia.runtime.execute_pipeline_with_input(
                 manifest_json, input_data, self.enable_metrics
             )
         else:
-            result = await remotemedia_runtime.execute_pipeline(
+            result = await remotemedia.runtime.execute_pipeline(
                 manifest_json, self.enable_metrics
             )
 

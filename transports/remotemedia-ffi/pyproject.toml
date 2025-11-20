@@ -1,0 +1,26 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "remotemedia-ffi"
+version = "0.4.0"
+description = "Python FFI transport for RemoteMedia pipelines - provides direct Python imports with zero-copy IPC"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[tool.maturin]
+# Build extension module with proper linking
+features = ["extension-module"]
+# Use abi3 for broad compatibility (Python 3.10+)
+# Install as remotemedia.runtime - the Rust execution runtime
+module-name = "remotemedia.runtime"
+# Include Python namespace package
+python-source = "python"
