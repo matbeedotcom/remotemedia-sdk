@@ -71,6 +71,11 @@ pub struct NodeManifest {
     /// Execution placement (Phase 1.3.6 - capability-aware execution)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<ExecutionMetadata>,
+
+    /// Docker executor configuration (Spec 009 - Docker-based node execution)
+    #[cfg(feature = "docker-executor")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker: Option<crate::python::docker::DockerExecutorConfig>,
 }
 
 /// Runtime hint for Python node execution (Phase 1.10.5)

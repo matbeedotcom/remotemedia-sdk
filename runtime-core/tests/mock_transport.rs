@@ -84,7 +84,7 @@ mod tests {
             "nodes": [],
             "connections": []
         }"#;
-        let manifest = Arc::new(Manifest::from_json(manifest_json).unwrap());
+        let manifest = Arc::new(serde_json::from_str::<Manifest>(manifest_json).unwrap());
 
         let input = TransportData::new(RuntimeData::Text("test input".into()));
 
