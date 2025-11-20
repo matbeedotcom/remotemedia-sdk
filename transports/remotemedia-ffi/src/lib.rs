@@ -32,10 +32,12 @@ mod numpy_bridge;
 
 use pyo3::prelude::*;
 
-/// Python module for RemoteMedia FFI transport
+/// Python module for RemoteMedia Rust Runtime
 ///
 /// Provides async pipeline execution with Rust acceleration
+/// Installed as remotemedia.runtime
 #[pymodule]
+#[pyo3(name = "runtime")]
 fn remotemedia_ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Initialize tracing on module load
     let _ = tracing_subscriber::fmt()
