@@ -51,10 +51,7 @@ mod docker_test_support {
     }
 
     impl DockerizedNodeConfiguration {
-        pub fn new_without_type(
-            node_id: String,
-            config: DockerExecutorConfig,
-        ) -> Self {
+        pub fn new_without_type(node_id: String, config: DockerExecutorConfig) -> Self {
             Self { node_id, config }
         }
     }
@@ -125,9 +122,7 @@ fn is_docker_available() -> bool {
 fn create_test_audio(duration_ms: u32, sample_rate: u32) -> RuntimeData {
     let num_samples = (sample_rate * duration_ms / 1000) as usize;
     let samples: Vec<f32> = (0..num_samples)
-        .map(|i| {
-            (i as f32 * 440.0 * 2.0 * std::f32::consts::PI / sample_rate as f32).sin() * 0.5
-        })
+        .map(|i| (i as f32 * 440.0 * 2.0 * std::f32::consts::PI / sample_rate as f32).sin() * 0.5)
         .collect();
 
     RuntimeData::Audio {
@@ -182,7 +177,7 @@ async fn test_docker_container_initialization() {
 
     println!("\n=== Test 2: Docker Container Initialization ===");
 
-    #[cfg(all(feature = "docker-executor", feature = "multiprocess"))]
+    #[cfg(all(feature = "docker", feature = "multiprocess"))]
     {
         clear_registry_for_testing().await;
 
@@ -202,8 +197,8 @@ async fn test_docker_container_initialization() {
             },
         );
 
-        let mut executor = DockerExecutor::new(config, None)
-            .expect("Failed to create Docker executor");
+        let mut executor =
+            DockerExecutor::new(config, None).expect("Failed to create Docker executor");
 
         let session_id = format!("init_test_{}", uuid::Uuid::new_v4());
         println!("Session ID: {}", session_id);
@@ -236,7 +231,9 @@ async fn test_docker_container_initialization() {
                     if !container_id.trim().is_empty() {
                         println!("✓ Container verified running: {}", container_id.trim());
                     } else {
-                        println!("⚠ Container not found in docker ps (may be in initialization phase)");
+                        println!(
+                            "⚠ Container not found in docker ps (may be in initialization phase)"
+                        );
                     }
                 }
 
@@ -246,14 +243,14 @@ async fn test_docker_container_initialization() {
                 let cleanup_result = executor.cleanup().await;
                 let cleanup_duration = cleanup_start.elapsed();
 
-                assert!(
-                    cleanup_result.is_ok(),
-                    "Cleanup should succeed"
-                );
+                assert!(cleanup_result.is_ok(), "Cleanup should succeed");
                 println!("✓ Container cleaned up in {:?}", cleanup_duration);
             }
             Err(e) => {
-                println!("⚠ Initialization failed (expected if container setup not complete): {}", e);
+                println!(
+                    "⚠ Initialization failed (expected if container setup not complete): {}",
+                    e
+                );
                 let _ = executor.cleanup().await;
             }
         }
@@ -275,7 +272,7 @@ async fn test_docker_ipc_data_transfer() {
 
     println!("\n=== Test 3: IPC Data Transfer ===");
 
-    #[cfg(all(feature = "docker-executor", feature = "multiprocess"))]
+    #[cfg(all(feature = "docker", feature = "multiprocess"))]
     {
         clear_registry_for_testing().await;
 
@@ -295,8 +292,8 @@ async fn test_docker_ipc_data_transfer() {
             },
         );
 
-        let mut executor = DockerExecutor::new(config, None)
-            .expect("Failed to create Docker executor");
+        let mut executor =
+            DockerExecutor::new(config, None).expect("Failed to create Docker executor");
 
         let session_id = format!("data_transfer_test_{}", uuid::Uuid::new_v4());
         println!("Session ID: {}", session_id);
@@ -405,7 +402,7 @@ async fn test_docker_container_configuration() {
 
     println!("\n=== Test 4: Container Configuration Verification ===");
 
-    #[cfg(all(feature = "docker-executor", feature = "multiprocess"))]
+    #[cfg(all(feature = "docker", feature = "multiprocess"))]
     {
         clear_registry_for_testing().await;
 
@@ -427,12 +424,15 @@ async fn test_docker_container_configuration() {
 
         println!("Configuration:");
         println!("  Python Version: {}", config.config.python_version);
-        println!("  Memory Limit: {}MB", config.config.resource_limits.memory_mb);
+        println!(
+            "  Memory Limit: {}MB",
+            config.config.resource_limits.memory_mb
+        );
         println!("  CPU Cores: {}", config.config.resource_limits.cpu_cores);
         println!("  Packages: {:?}", config.config.python_packages);
 
-        let mut executor = DockerExecutor::new(config, None)
-            .expect("Failed to create Docker executor");
+        let mut executor =
+            DockerExecutor::new(config, None).expect("Failed to create Docker executor");
 
         let session_id = format!("config_test_{}", uuid::Uuid::new_v4());
 
@@ -507,7 +507,7 @@ async fn test_docker_container_cleanup() {
 
     println!("\n=== Test 5: Container Cleanup Verification ===");
 
-    #[cfg(all(feature = "docker-executor", feature = "multiprocess"))]
+    #[cfg(all(feature = "docker", feature = "multiprocess"))]
     {
         clear_registry_for_testing().await;
 
@@ -527,8 +527,8 @@ async fn test_docker_container_cleanup() {
             },
         );
 
-        let mut executor = DockerExecutor::new(config, None)
-            .expect("Failed to create Docker executor");
+        let mut executor =
+            DockerExecutor::new(config, None).expect("Failed to create Docker executor");
 
         let session_id = format!("cleanup_test_{}", uuid::Uuid::new_v4());
         let container_name = format!("remotemedia_{}_cleanup_test_node", session_id);
@@ -569,10 +569,7 @@ async fn test_docker_container_cleanup() {
                 let cleanup_result = executor.cleanup().await;
                 let cleanup_duration = cleanup_start.elapsed();
 
-                assert!(
-                    cleanup_result.is_ok(),
-                    "Cleanup should succeed"
-                );
+                assert!(cleanup_result.is_ok(), "Cleanup should succeed");
                 println!("✓ Cleanup completed in {:?}", cleanup_duration);
 
                 // Verify container is removed
@@ -625,7 +622,7 @@ async fn test_docker_multiprocess_session_lifecycle() {
 
     println!("\n=== Test 6: Multi-Session Lifecycle ===");
 
-    #[cfg(all(feature = "docker-executor", feature = "multiprocess"))]
+    #[cfg(all(feature = "docker", feature = "multiprocess"))]
     {
         clear_registry_for_testing().await;
 
@@ -861,7 +858,10 @@ async fn test_docker_concurrent_containers() {
             }
         }
 
-        println!("✓ {}/{} concurrent containers completed successfully", success_count, num_concurrent);
+        println!(
+            "✓ {}/{} concurrent containers completed successfully",
+            success_count, num_concurrent
+        );
         println!("✅ Concurrent Container Operations Test PASSED");
     }
 
@@ -892,7 +892,10 @@ async fn test_docker_resource_limits_enforcement() {
         ];
 
         for (test_name, memory_mb, cpu_cores) in test_cases {
-            println!("\nTest case: {} ({}MB, {} cores)", test_name, memory_mb, cpu_cores);
+            println!(
+                "\nTest case: {} ({}MB, {} cores)",
+                test_name, memory_mb, cpu_cores
+            );
 
             let config = DockerizedNodeConfiguration::new_without_type(
                 format!("resource_test_{}", test_name),
@@ -926,14 +929,15 @@ async fn test_docker_resource_limits_enforcement() {
 
                     // Verify using docker inspect
                     use std::process::Command;
-                    let container_name = format!("remotemedia_{}_resource_test_{}", session_id, test_name);
+                    let container_name =
+                        format!("remotemedia_{}_resource_test_{}", session_id, test_name);
 
                     let inspect_cmd = Command::new("docker")
                         .args(&[
                             "inspect",
                             &container_name,
                             "--format",
-                            "Memory: {{.HostConfig.Memory}}, NanoCPUs: {{.HostConfig.NanoCpus}}"
+                            "Memory: {{.HostConfig.Memory}}, NanoCPUs: {{.HostConfig.NanoCpus}}",
                         ])
                         .output();
 
@@ -992,8 +996,8 @@ async fn test_docker_container_state_transitions() {
             },
         );
 
-        let mut executor = DockerExecutor::new(config, None)
-            .expect("Failed to create Docker executor");
+        let mut executor =
+            DockerExecutor::new(config, None).expect("Failed to create Docker executor");
 
         let session_id = "state_transition_test".to_string();
 
@@ -1018,7 +1022,8 @@ async fn test_docker_container_state_transitions() {
                         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
                         use std::process::Command;
-                        let container_name = format!("remotemedia_{}_state_transition_node", session_id);
+                        let container_name =
+                            format!("remotemedia_{}_state_transition_node", session_id);
                         let check_cmd = Command::new("docker")
                             .args(&[
                                 "ps",
@@ -1026,7 +1031,7 @@ async fn test_docker_container_state_transitions() {
                                 "--filter",
                                 &format!("name={}", container_name),
                                 "--format",
-                                "{{.State}}"
+                                "{{.State}}",
                             ])
                             .output();
 
@@ -1089,8 +1094,8 @@ async fn test_docker_ipc_channel_lifecycle() {
             },
         );
 
-        let mut executor = DockerExecutor::new(config, None)
-            .expect("Failed to create Docker executor");
+        let mut executor =
+            DockerExecutor::new(config, None).expect("Failed to create Docker executor");
 
         let session_id = "ipc_lifecycle_test".to_string();
 
@@ -1136,8 +1141,12 @@ async fn test_docker_ipc_channel_lifecycle() {
                                     if let Ok(Some(_)) = tokio::time::timeout(
                                         tokio::time::Duration::from_millis(500),
                                         output_rx.recv(),
-                                    ).await {
-                                        println!("✓ Output received through IPC (subscriber active)");
+                                    )
+                                    .await
+                                    {
+                                        println!(
+                                            "✓ Output received through IPC (subscriber active)"
+                                        );
                                     } else {
                                         println!("⚠ No output received (expected if node not processing)");
                                     }

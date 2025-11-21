@@ -2,9 +2,9 @@
 
 #[cfg(all(feature = "docker", feature = "multiprocess"))]
 mod tests {
+    use bollard::Docker;
     use remotemedia_runtime_core::python::multiprocess::container_builder::ContainerBuilder;
     use remotemedia_runtime_core::python::multiprocess::docker_support::DockerNodeConfig;
-    use bollard::Docker;
     use std::sync::Arc;
 
     /// T031: Test image building and caching functionality
@@ -21,7 +21,7 @@ mod tests {
 
         // Verify Docker daemon is running
         match docker.ping().await {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(_) => {
                 eprintln!("Docker daemon not running, skipping test");
                 return;
@@ -36,16 +36,17 @@ mod tests {
             python_version: "3.10".to_string(),
             python_packages: vec![
                 "numpy==1.24.0".to_string(),
-                "requests==2.31.0".to_string(),  // Use a package that definitely exists
+                "requests==2.31.0".to_string(), // Use a package that definitely exists
             ],
             system_packages: vec![],
-            memory_mb: 512,  // Minimum required
+            memory_mb: 512, // Minimum required
             cpu_cores: 0.5,
             base_image: None,
             shm_size_mb: 512,
             env_vars: std::collections::HashMap::new(),
             gpu_devices: vec![],
             volumes: vec![],
+            security: Default::default(),
         };
 
         // First build - should build from scratch
@@ -53,7 +54,11 @@ mod tests {
         if let Err(ref e) = image1 {
             eprintln!("Image build failed: {:?}", e);
         }
-        assert!(image1.is_ok(), "First image build should succeed: {:?}", image1.err());
+        assert!(
+            image1.is_ok(),
+            "First image build should succeed: {:?}",
+            image1.err()
+        );
         let image1 = image1.unwrap();
 
         // Verify image properties
@@ -81,7 +86,7 @@ mod tests {
         // Test with different config - should build new image
         let config2 = DockerNodeConfig {
             python_packages: vec![
-                "scipy==1.10.0".to_string(),  // Different packages
+                "scipy==1.10.0".to_string(), // Different packages
                 "pandas==2.0.0".to_string(),
             ],
             ..config.clone()
@@ -120,10 +125,7 @@ mod tests {
                 "torch>=2.0.0".to_string(),
                 "iceoryx2".to_string(),
             ],
-            system_packages: vec![
-                "ffmpeg".to_string(),
-                "libsndfile1".to_string(),
-            ],
+            system_packages: vec!["ffmpeg".to_string(), "libsndfile1".to_string()],
             memory_mb: 1024,
             cpu_cores: 1.5,
             base_image: Some("python:3.10-slim".to_string()),
@@ -136,6 +138,7 @@ mod tests {
             },
             gpu_devices: vec![],
             volumes: vec![],
+            security: Default::default(),
         };
 
         // Generate Dockerfile
@@ -174,6 +177,7 @@ mod tests {
             env_vars: std::collections::HashMap::new(),
             gpu_devices: vec![],
             volumes: vec![],
+            security: Default::default(),
         };
 
         let config2 = config1.clone();
@@ -189,10 +193,16 @@ mod tests {
 
         // Different config should produce different hash
         let hash3 = ContainerBuilder::compute_config_hash(&config3);
-        assert_ne!(hash1, hash3, "Different config should produce different hash");
+        assert_ne!(
+            hash1, hash3,
+            "Different config should produce different hash"
+        );
 
         // Hash should be hex string of consistent length (SHA256 = 64 chars)
         assert_eq!(hash1.len(), 64, "Hash should be 64 characters (SHA256)");
-        assert!(hash1.chars().all(|c| c.is_ascii_hexdigit()), "Hash should be hex string");
+        assert!(
+            hash1.chars().all(|c| c.is_ascii_hexdigit()),
+            "Hash should be hex string"
+        );
     }
 }

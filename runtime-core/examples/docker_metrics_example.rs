@@ -8,7 +8,7 @@
 //! ```
 
 use remotemedia_runtime_core::python::multiprocess::docker_support::{
-    DockerSupport, DockerNodeConfig, AggregatedMetrics,
+    AggregatedMetrics, DockerNodeConfig, DockerSupport,
 };
 use std::time::Duration;
 use tokio::time::sleep;
@@ -23,11 +23,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create Docker support with metrics collection enabled
     // Collect metrics every 2 seconds, store up to 500 data points per container
-    let docker_support = DockerSupport::new_with_metrics(
-        Some(Duration::from_secs(2)),
-        Some(500),
-    )
-    .await?;
+    let docker_support =
+        DockerSupport::new_with_metrics(Some(Duration::from_secs(2)), Some(500)).await?;
 
     println!("✓ Docker support initialized with metrics collection");
     println!("  Collection interval: 2 seconds");
@@ -45,6 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         shm_size_mb: 256,
         env_vars: std::collections::HashMap::new(),
         volumes: vec![],
+        security: Default::default(),
     };
 
     // Create and start a container
@@ -110,7 +108,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Cleanup
     println!("\n--- Cleanup ---\n");
-    docker_support.stop_metrics_collection(&container_id).await?;
+    docker_support
+        .stop_metrics_collection(&container_id)
+        .await?;
     println!("✓ Metrics collection stopped");
 
     docker_support

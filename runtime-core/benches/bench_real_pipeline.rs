@@ -46,7 +46,11 @@ impl PipelineMetrics {
             return 0.0;
         }
 
-        let mean_us: f64 = self.chunk_times.iter().map(|d| d.as_micros() as f64).sum::<f64>()
+        let mean_us: f64 = self
+            .chunk_times
+            .iter()
+            .map(|d| d.as_micros() as f64)
+            .sum::<f64>()
             / self.chunk_times.len() as f64;
 
         let variance: f64 = self
@@ -143,7 +147,11 @@ fn bench_traditional_pipeline(c: &mut Criterion) {
             let smoothness = metrics.smoothness_variance();
 
             // Traditional: High latency (~19ms per chunk), high variance (choppy)
-            black_box((metrics.total_latency, metrics.time_to_first_output, smoothness))
+            black_box((
+                metrics.total_latency,
+                metrics.time_to_first_output,
+                smoothness,
+            ))
         });
     });
 
@@ -172,7 +180,13 @@ fn bench_speculative_pipeline(c: &mut Criterion) {
     group.bench_function("parallel_vad_smooth", |b| {
         b.to_async(&runtime).iter(|| async {
             let speculative = SpeculativeVADGate::new();
-            let vad = std::sync::Arc::new(SileroVADNode::new(Some(0.5), Some(16000), Some(100), Some(200), None));
+            let vad = std::sync::Arc::new(SileroVADNode::new(
+                Some(0.5),
+                Some(16000),
+                Some(100),
+                Some(200),
+                None,
+            ));
 
             // Same 10 browser audio chunks
             let input_chunks: Vec<RuntimeData> = (0..10).map(create_browser_audio_chunk).collect();
@@ -200,7 +214,11 @@ fn bench_speculative_pipeline(c: &mut Criterion) {
                 // Step 2: SpeculativeVADGate forwards immediately (~5μs)
                 let spec_callback = |_: RuntimeData| Ok(());
                 let _ = speculative
-                    .process_streaming(resampled.clone(), Some(format!("session_{}", idx)), spec_callback)
+                    .process_streaming(
+                        resampled.clone(),
+                        Some(format!("session_{}", idx)),
+                        spec_callback,
+                    )
                     .await;
 
                 // Step 3: VAD runs in parallel (doesn't block output)
@@ -208,11 +226,13 @@ fn bench_speculative_pipeline(c: &mut Criterion) {
                 let resampled_clone = resampled.clone();
                 tokio::spawn(async move {
                     let callback = |_: RuntimeData| Ok(());
-                    let _ = vad_clone.process_streaming(
-                        resampled_clone,
-                        Some("vad_session".to_string()),
-                        callback,
-                    ).await;
+                    let _ = vad_clone
+                        .process_streaming(
+                            resampled_clone,
+                            Some("vad_session".to_string()),
+                            callback,
+                        )
+                        .await;
                 });
 
                 // Output available immediately (smooth!)
@@ -229,7 +249,11 @@ fn bench_speculative_pipeline(c: &mut Criterion) {
             let smoothness = metrics.smoothness_variance();
 
             // Speculative: Low latency (~50μs per chunk), low variance (smooth)
-            black_box((metrics.total_latency, metrics.time_to_first_output, smoothness))
+            black_box((
+                metrics.total_latency,
+                metrics.time_to_first_output,
+                smoothness,
+            ))
         });
     });
 

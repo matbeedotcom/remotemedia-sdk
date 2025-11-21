@@ -240,7 +240,9 @@ impl ControlMessage {
         if pos + 4 > bytes.len() {
             return Err("Invalid payload length offset".to_string());
         }
-        let payload_len = u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]) as usize;
+        let payload_len =
+            u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]])
+                as usize;
         pos += 4;
 
         // Payload (JSON)
@@ -319,12 +321,8 @@ mod tests {
 
     #[test]
     fn test_cancel_speculation_validation_success() {
-        let msg = ControlMessage::cancel_speculation(
-            "session_123".to_string(),
-            1000000,
-            1020000,
-            None,
-        );
+        let msg =
+            ControlMessage::cancel_speculation("session_123".to_string(), 1000000, 1020000, None);
 
         assert!(msg.validate().is_ok());
     }
@@ -384,12 +382,8 @@ mod tests {
 
     #[test]
     fn test_to_bytes_cancel_speculation() {
-        let msg = ControlMessage::cancel_speculation(
-            "sess_123".to_string(),
-            1000000,
-            1020000,
-            None,
-        );
+        let msg =
+            ControlMessage::cancel_speculation("sess_123".to_string(), 1000000, 1020000, None);
 
         let bytes = msg.to_bytes().expect("Failed to serialize");
 
@@ -406,12 +400,8 @@ mod tests {
 
     #[test]
     fn test_from_bytes_cancel_speculation() {
-        let original = ControlMessage::cancel_speculation(
-            "sess_456".to_string(),
-            2000000,
-            2050000,
-            None,
-        );
+        let original =
+            ControlMessage::cancel_speculation("sess_456".to_string(), 2000000, 2050000, None);
 
         // Serialize
         let bytes = original.to_bytes().expect("Failed to serialize");

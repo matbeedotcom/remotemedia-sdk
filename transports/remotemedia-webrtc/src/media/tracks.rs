@@ -2,17 +2,17 @@
 //!
 //! Handles RTP track management, encoding, and decoding.
 
-use crate::{Error, Result};
 use super::audio::{AudioEncoder, AudioEncoderConfig};
 use super::audio_sender::AudioSender;
-use super::video::{VideoEncoder, VideoDecoder, VideoEncoderConfig, VideoFrame, VideoFormat};
+use super::video::{VideoDecoder, VideoEncoder, VideoEncoderConfig, VideoFormat, VideoFrame};
+use crate::{Error, Result};
+use remotemedia_runtime_core::data::RuntimeData;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use webrtc::media::Sample;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use webrtc::track::track_local::TrackLocalWriter;
-use webrtc::media::Sample;
-use remotemedia_runtime_core::data::RuntimeData;
 
 /// Audio track for WebRTC
 ///
@@ -44,7 +44,9 @@ impl AudioTrack {
     pub fn new(track: Arc<TrackLocalStaticSample>, config: AudioEncoderConfig) -> Result<Self> {
         println!("[AUDIOTRACK] Creating new AudioTrack with ring buffer support!");
         let encoder = Arc::new(RwLock::new(AudioEncoder::new(config.clone())?));
-        let decoder = Arc::new(RwLock::new(super::audio::AudioDecoder::new(config.clone())?));
+        let decoder = Arc::new(RwLock::new(super::audio::AudioDecoder::new(
+            config.clone(),
+        )?));
 
         // Create audio sender with ring buffer
         // Large buffer allows TTS to generate audio in bursts without blocking
@@ -89,7 +91,10 @@ impl AudioTrack {
             if encoder.config.sample_rate != sample_rate {
                 drop(encoder);
                 let old_rate = self.encoder.read().await.config.sample_rate;
-                info!("Sample rate changed from {} to {} Hz, recreating encoder", old_rate, sample_rate);
+                info!(
+                    "Sample rate changed from {} to {} Hz, recreating encoder",
+                    old_rate, sample_rate
+                );
 
                 let mut encoder_write = self.encoder.write().await;
                 let new_config = crate::media::audio::AudioEncoderConfig {
@@ -107,11 +112,17 @@ impl AudioTrack {
         let frame_size = (sample_rate as usize * 20) / 1000; // 20ms frame
         let frame_duration = Duration::from_millis(20);
 
-        info!("AudioTrack: Enqueuing {} samples as {}sample frames @ {}Hz (duration: {:.2}s)",
-               samples.len(), frame_size, sample_rate, samples.len() as f64 / sample_rate as f64);
+        info!(
+            "AudioTrack: Enqueuing {} samples as {}sample frames @ {}Hz (duration: {:.2}s)",
+            samples.len(),
+            frame_size,
+            sample_rate,
+            samples.len() as f64 / sample_rate as f64
+        );
 
         let sender_guard = self.sender.read().await;
-        let sender = sender_guard.as_ref()
+        let sender = sender_guard
+            .as_ref()
             .ok_or_else(|| Error::MediaTrackError("AudioSender not initialized".to_string()))?;
 
         let mut frames_enqueued = 0;
@@ -131,12 +142,17 @@ impl AudioTrack {
             let encoded = self.encoder.write().await.encode(&samples_to_encode)?;
 
             // Enqueue frame into ring buffer (non-blocking)
-            sender.enqueue_frame(encoded, chunk.len() as u32, frame_duration).await?;
+            sender
+                .enqueue_frame(encoded, chunk.len() as u32, frame_duration)
+                .await?;
             frames_enqueued += 1;
         }
 
-        info!("AudioTrack: Enqueued {} frames into ring buffer (buffer size: {})",
-               frames_enqueued, sender.buffer_len());
+        info!(
+            "AudioTrack: Enqueued {} frames into ring buffer (buffer size: {})",
+            frames_enqueued,
+            sender.buffer_len()
+        );
 
         Ok(())
     }
@@ -372,23 +388,34 @@ pub async fn runtime_data_to_rtp(
     video_track: Option<&VideoTrack>,
 ) -> Result<Vec<u8>> {
     match data {
-        RuntimeData::Audio { samples, sample_rate, .. } => {
+        RuntimeData::Audio {
+            samples,
+            sample_rate,
+            ..
+        } => {
             let audio_track = audio_track.ok_or_else(|| {
                 Error::MediaTrackError("No audio track available for encoding".to_string())
             })?;
 
             // Verify sample rate matches encoder config (48kHz expected)
             if *sample_rate != 48000 {
-                return Err(Error::InvalidConfig(
-                    format!("Audio sample rate must be 48000 Hz, got {}", sample_rate)
-                ));
+                return Err(Error::InvalidConfig(format!(
+                    "Audio sample rate must be 48000 Hz, got {}",
+                    sample_rate
+                )));
             }
 
             // Encode the audio samples
             audio_track.encoder.write().await.encode(samples)
         }
 
-        RuntimeData::Video { width, height, pixel_data, format, .. } => {
+        RuntimeData::Video {
+            width,
+            height,
+            pixel_data,
+            format,
+            ..
+        } => {
             let video_track = video_track.ok_or_else(|| {
                 Error::MediaTrackError("No video track available for encoding".to_string())
             })?;
@@ -398,9 +425,12 @@ pub async fn runtime_data_to_rtp(
             let video_format = match format {
                 1 => VideoFormat::RGB24,
                 3 => VideoFormat::I420,
-                _ => return Err(Error::EncodingError(
-                    format!("Unsupported video format code: {}", format)
-                )),
+                _ => {
+                    return Err(Error::EncodingError(format!(
+                        "Unsupported video format code: {}",
+                        format
+                    )))
+                }
             };
 
             // Create VideoFrame
@@ -420,9 +450,9 @@ pub async fn runtime_data_to_rtp(
             video_track.encoder.write().await.encode(&frame)
         }
 
-        _ => Err(Error::MediaTrackError(
-            format!("Unsupported RuntimeData type for RTP encoding")
-        )),
+        _ => Err(Error::MediaTrackError(format!(
+            "Unsupported RuntimeData type for RTP encoding"
+        ))),
     }
 }
 

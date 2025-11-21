@@ -343,10 +343,7 @@ mod tests {
             self.name
         }
 
-        async fn create_client(
-            &self,
-            _config: &ClientConfig,
-        ) -> Result<Box<dyn PipelineClient>> {
+        async fn create_client(&self, _config: &ClientConfig) -> Result<Box<dyn PipelineClient>> {
             unimplemented!("Mock plugin - not used in registry tests")
         }
 
@@ -508,7 +505,9 @@ mod tests {
     fn test_init_global_registry() {
         // Initialize with a plugin
         let result = init_global_registry(|registry| {
-            let plugin = Arc::new(MockTransportPlugin { name: "test_global" });
+            let plugin = Arc::new(MockTransportPlugin {
+                name: "test_global",
+            });
             registry.register(plugin)
         });
 

@@ -140,7 +140,9 @@ impl PipelineRunner {
     /// # Returns
     ///
     /// Arc-wrapped StreamingNodeRegistry with default nodes
-    pub fn create_streaming_registry(&self) -> Arc<crate::nodes::streaming_node::StreamingNodeRegistry> {
+    pub fn create_streaming_registry(
+        &self,
+    ) -> Arc<crate::nodes::streaming_node::StreamingNodeRegistry> {
         Arc::new(crate::nodes::streaming_registry::create_default_streaming_registry())
     }
 }
@@ -261,7 +263,8 @@ impl PipelineRunnerInner {
                     let node: Box<dyn crate::nodes::StreamingNode> = {
                         // Always use streaming registry - Docker is handled by multiprocess executor
                         let mut params_with_session = node_spec.params.clone();
-                        params_with_session["__session_id__"] = serde_json::Value::String(session_id_clone.clone());
+                        params_with_session["__session_id__"] =
+                            serde_json::Value::String(session_id_clone.clone());
 
                         match streaming_registry.create_node(
                             &node_spec.node_type,
@@ -271,7 +274,12 @@ impl PipelineRunnerInner {
                         ) {
                             Ok(node) => node,
                             Err(e) => {
-                                tracing::error!("Session {}: Failed to create node {}: {}", session_id_clone, node_spec.id, e);
+                                tracing::error!(
+                                    "Session {}: Failed to create node {}: {}",
+                                    session_id_clone,
+                                    node_spec.id,
+                                    e
+                                );
                                 return;
                             }
                         }
@@ -281,7 +289,8 @@ impl PipelineRunnerInner {
                     let node: Box<dyn crate::nodes::StreamingNode> = {
                         // Inject session_id into params for multiprocess execution
                         let mut params_with_session = node_spec.params.clone();
-                        params_with_session["__session_id__"] = serde_json::Value::String(session_id_clone.clone());
+                        params_with_session["__session_id__"] =
+                            serde_json::Value::String(session_id_clone.clone());
 
                         match streaming_registry.create_node(
                             &node_spec.node_type,
@@ -291,13 +300,23 @@ impl PipelineRunnerInner {
                         ) {
                             Ok(node) => node,
                             Err(e) => {
-                                tracing::error!("Session {}: Failed to create node {}: {}", session_id_clone, node_spec.id, e);
+                                tracing::error!(
+                                    "Session {}: Failed to create node {}: {}",
+                                    session_id_clone,
+                                    node_spec.id,
+                                    e
+                                );
                                 return;
                             }
                         }
                     };
 
-                    tracing::debug!("Session {} cached node {} (type: {})", session_id_clone, node_spec.id, node_spec.node_type);
+                    tracing::debug!(
+                        "Session {} cached node {} (type: {})",
+                        session_id_clone,
+                        node_spec.id,
+                        node_spec.node_type
+                    );
                     n.insert(node_spec.id.clone(), node);
                 }
                 Arc::new(n)

@@ -41,7 +41,11 @@ impl PipelineMetrics {
             return 0.0;
         }
 
-        let mean_us: f64 = self.chunk_times.iter().map(|d| d.as_micros() as f64).sum::<f64>()
+        let mean_us: f64 = self
+            .chunk_times
+            .iter()
+            .map(|d| d.as_micros() as f64)
+            .sum::<f64>()
             / self.chunk_times.len() as f64;
 
         let variance: f64 = self
@@ -135,7 +139,11 @@ fn bench_traditional_vad_pipeline(c: &mut Criterion) {
             metrics.total_latency = start.elapsed();
             let smoothness = metrics.smoothness_variance();
 
-            black_box((metrics.total_latency, metrics.time_to_first_output, smoothness))
+            black_box((
+                metrics.total_latency,
+                metrics.time_to_first_output,
+                smoothness,
+            ))
         });
     });
 
@@ -195,7 +203,11 @@ fn bench_speculative_vad_pipeline(c: &mut Criterion) {
                 tokio::spawn(async move {
                     let callback = |_: RuntimeData| Ok(());
                     let _ = vad_clone
-                        .process_streaming(resampled_clone, Some("vad_session".to_string()), callback)
+                        .process_streaming(
+                            resampled_clone,
+                            Some("vad_session".to_string()),
+                            callback,
+                        )
                         .await;
                 });
 
@@ -210,7 +222,11 @@ fn bench_speculative_vad_pipeline(c: &mut Criterion) {
             metrics.total_latency = start.elapsed();
             let smoothness = metrics.smoothness_variance();
 
-            black_box((metrics.total_latency, metrics.time_to_first_output, smoothness))
+            black_box((
+                metrics.total_latency,
+                metrics.time_to_first_output,
+                smoothness,
+            ))
         });
     });
 
@@ -241,7 +257,11 @@ fn bench_vad_single_chunk(c: &mut Criterion) {
 
             let start = Instant::now();
             let _ = vad
-                .process_streaming(resampled.clone(), Some("bench_session".to_string()), vad_callback)
+                .process_streaming(
+                    resampled.clone(),
+                    Some("bench_session".to_string()),
+                    vad_callback,
+                )
                 .await;
             start.elapsed()
         });
@@ -273,7 +293,11 @@ fn bench_speculative_gate_overhead(c: &mut Criterion) {
 
             let start = Instant::now();
             let _ = speculative
-                .process_streaming(resampled.clone(), Some("bench_session".to_string()), spec_callback)
+                .process_streaming(
+                    resampled.clone(),
+                    Some("bench_session".to_string()),
+                    spec_callback,
+                )
                 .await;
             start.elapsed()
         });

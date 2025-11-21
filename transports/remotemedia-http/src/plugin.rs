@@ -16,8 +16,7 @@
 
 use async_trait::async_trait;
 use remotemedia_runtime_core::transport::{
-    ClientConfig, PipelineClient, PipelineRunner, PipelineTransport, ServerConfig,
-    TransportPlugin,
+    ClientConfig, PipelineClient, PipelineRunner, PipelineTransport, ServerConfig, TransportPlugin,
 };
 use remotemedia_runtime_core::Result;
 use std::sync::Arc;

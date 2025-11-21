@@ -67,9 +67,8 @@ impl StreamingNodeFactory for VideoFlipNodeFactory {
         let config = if params.is_null() {
             crate::nodes::video_flip::VideoFlipConfig::default()
         } else {
-            serde_json::from_value(params.clone()).map_err(|e| {
-                Error::Execution(format!("Failed to parse VideoFlip config: {}", e))
-            })?
+            serde_json::from_value(params.clone())
+                .map_err(|e| Error::Execution(format!("Failed to parse VideoFlip config: {}", e)))?
         };
         let node = VideoFlipNode::new(config);
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))

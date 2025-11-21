@@ -19,6 +19,7 @@ pub mod calculator;
 pub mod passthrough;
 pub mod python_nodes;
 pub mod python_streaming;
+pub mod registration_macros;
 pub mod registry;
 pub mod remote_pipeline;
 pub mod streaming_node;

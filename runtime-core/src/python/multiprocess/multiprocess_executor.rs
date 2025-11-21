@@ -163,11 +163,11 @@ fn default_max_processes() -> Option<usize> {
 }
 
 fn default_channel_capacity() -> usize {
-    1000  // Increased from 100 to handle audio flood during initialization (50 packets/sec * 5sec init = 250+)
+    1000 // Increased from 100 to handle audio flood during initialization (50 packets/sec * 5sec init = 250+)
 }
 
 fn default_init_timeout() -> u64 {
-    300  // 5 minutes for model loading (e.g., Kokoro TTS)
+    300 // 5 minutes for model loading (e.g., Kokoro TTS)
 }
 
 fn default_python_executable() -> std::path::PathBuf {
@@ -187,7 +187,7 @@ impl Default for MultiprocessConfig {
         Self {
             max_processes_per_session: Some(10),
             channel_capacity: 100,
-            init_timeout_secs: 300,  // 5 minutes for model loading
+            init_timeout_secs: 300, // 5 minutes for model loading
             python_executable: std::path::PathBuf::from("python"),
             enable_backpressure: true,
             docker_fallback_policy: DockerFallbackPolicy::AllowWithWarning,
@@ -477,7 +477,10 @@ impl MultiprocessExecutor {
         );
 
         loop {
-            tracing::debug!("[Multiprocess] Waiting for response from IPC thread for node '{}'", ctx.node_id);
+            tracing::debug!(
+                "[Multiprocess] Waiting for response from IPC thread for node '{}'",
+                ctx.node_id
+            );
 
             match resp_rx.recv().await {
                 Some(IpcResponse::OutputData(ipc_output)) => {
@@ -490,7 +493,10 @@ impl MultiprocessExecutor {
 
                     let output_data = Self::from_ipc_runtime_data(ipc_output)?;
 
-                    tracing::debug!("[Multiprocess] Converted to RuntimeData, invoking callback for node '{}'", ctx.node_id);
+                    tracing::debug!(
+                        "[Multiprocess] Converted to RuntimeData, invoking callback for node '{}'",
+                        ctx.node_id
+                    );
 
                     // Forward all outputs - the callback decides when to stop
                     match callback(output_data) {
@@ -516,7 +522,11 @@ impl MultiprocessExecutor {
                     continue;
                 }
                 Some(IpcResponse::Error(e)) => {
-                    tracing::error!("[Multiprocess] IPC error from node '{}': {}", ctx.node_id, e);
+                    tracing::error!(
+                        "[Multiprocess] IPC error from node '{}': {}",
+                        ctx.node_id,
+                        e
+                    );
                     return Err(Error::Execution(format!("IPC error: {}", e)));
                 }
                 None => {
@@ -603,18 +613,22 @@ impl MultiprocessExecutor {
         let global_sessions = global_sessions();
         let sessions = global_sessions.read().await;
 
-        let session = sessions
-            .get(session_id)
-            .ok_or_else(|| {
-                let available: Vec<_> = sessions.keys().collect();
-                Error::Execution(format!("Session {} not found. Available: {:?}", session_id, available))
-            })?;
+        let session = sessions.get(session_id).ok_or_else(|| {
+            let available: Vec<_> = sessions.keys().collect();
+            Error::Execution(format!(
+                "Session {} not found. Available: {:?}",
+                session_id, available
+            ))
+        })?;
 
         let ipc_thread_cmd_tx = session
             .get(node_id)
             .ok_or_else(|| {
                 let available: Vec<_> = session.keys().collect();
-                Error::Execution(format!("IPC thread not found for node {}. Available: {:?}", node_id, available))
+                Error::Execution(format!(
+                    "IPC thread not found for node {}. Available: {:?}",
+                    node_id, available
+                ))
             })?
             .clone();
 
@@ -626,7 +640,10 @@ impl MultiprocessExecutor {
             node_id
         );
 
-        match ipc_thread_cmd_tx.send(IpcCommand::SendData { data: ipc_data }).await {
+        match ipc_thread_cmd_tx
+            .send(IpcCommand::SendData { data: ipc_data })
+            .await
+        {
             Ok(_) => {
                 tracing::info!(
                     "[send_data_to_node] Successfully queued data to IPC thread for node '{}'",
@@ -710,7 +727,6 @@ impl MultiprocessExecutor {
         data: &crate::data::RuntimeData,
         session_id: &str,
     ) -> IPCRuntimeData {
-        
         use crate::data::RuntimeData as MainRD;
 
         match data {
@@ -843,7 +859,10 @@ impl MultiprocessExecutor {
                 Ok(())
             }
             Err(e) => {
-                tracing::warn!("Docker support unavailable: {}. Falling back to regular multiprocess.", e);
+                tracing::warn!(
+                    "Docker support unavailable: {}. Falling back to regular multiprocess.",
+                    e
+                );
                 // Don't fail - just continue without Docker support
                 Ok(())
             }
@@ -1531,10 +1550,7 @@ impl MultiprocessExecutor {
             #[cfg(feature = "docker")]
             {
                 if let Some(docker_support) = &self.docker_support {
-                    tracing::debug!(
-                        "Cleaning up Docker containers for session: {}",
-                        session_id
-                    );
+                    tracing::debug!("Cleaning up Docker containers for session: {}", session_id);
 
                     // Use the built-in cleanup_session_containers which is more efficient
                     // It uses Docker labels to find and clean up all containers for this session
@@ -1712,9 +1728,9 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
         #[cfg(feature = "docker")]
         let docker_config = if use_docker {
             // Parse Docker configuration from metadata
-            ctx.metadata
-                .get("docker_config")
-                .and_then(|v| serde_json::from_value::<super::docker_support::DockerNodeConfig>(v.clone()).ok())
+            ctx.metadata.get("docker_config").and_then(|v| {
+                serde_json::from_value::<super::docker_support::DockerNodeConfig>(v.clone()).ok()
+            })
         } else {
             None
         };
@@ -1798,8 +1814,9 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
 
                         if should_use_docker {
                             // Docker is available, proceed with container spawn
-                            let docker_support = self.docker_support.as_ref()
-                                .expect("Docker support should be Some when should_use_docker returns true");
+                            let docker_support = self.docker_support.as_ref().expect(
+                                "Docker support should be Some when should_use_docker returns true",
+                            );
 
                             if let Some(docker_config) = docker_config {
                                 // Validate Docker configuration
@@ -1916,7 +1933,9 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
                 )));
             }
 
-            tracing::debug!("✅ Received READY signal - Python subscriber is ready to receive data");
+            tracing::debug!(
+                "✅ Received READY signal - Python subscriber is ready to receive data"
+            );
 
             // Small delay to ensure Python subscriber is fully registered with iceoryx2's routing tables
             // The subscriber creation and READY signal are very close in time, but iceoryx2 needs a moment
@@ -2090,18 +2109,28 @@ mod tests {
         // Verify session exists
         {
             let sessions = executor.sessions.read().await;
-            assert!(sessions.contains_key(session_id), "Session should exist after creation");
+            assert!(
+                sessions.contains_key(session_id),
+                "Session should exist after creation"
+            );
         }
 
         // Terminate the session - this should trigger cleanup including Docker containers
         // if Docker support is enabled (graceful handling if not available)
         let result = executor.terminate_session(session_id).await;
-        assert!(result.is_ok(), "Session termination should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Session termination should succeed: {:?}",
+            result
+        );
 
         // Verify session is removed
         {
             let sessions = executor.sessions.read().await;
-            assert!(!sessions.contains_key(session_id), "Session should be removed after termination");
+            assert!(
+                !sessions.contains_key(session_id),
+                "Session should be removed after termination"
+            );
         }
     }
 
@@ -2114,7 +2143,10 @@ mod tests {
         let result = executor.terminate_session("nonexistent_session").await;
 
         // Should return an error indicating session not found
-        assert!(result.is_err(), "Terminating non-existent session should return an error");
+        assert!(
+            result.is_err(),
+            "Terminating non-existent session should return an error"
+        );
         assert!(
             result.unwrap_err().to_string().contains("not found"),
             "Error should indicate session not found"

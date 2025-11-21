@@ -59,7 +59,7 @@ impl BufferingPolicy {
     /// Create default policy for audio processing
     pub fn audio_default() -> Self {
         Self {
-            min_batch_size: 1, // No batching
+            min_batch_size: 1,   // No batching
             max_wait_us: 10_000, // 10ms
             max_buffer_size: 10,
             merge_strategy: MergeStrategy::KeepSeparate,

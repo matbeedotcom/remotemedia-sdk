@@ -3,7 +3,7 @@
 use crate::media::audio::AudioEncoderConfig;
 use crate::media::tracks::AudioTrack;
 use crate::media::tracks::VideoTrack;
-use crate::media::video::{VideoEncoderConfig};
+use crate::media::video::VideoEncoderConfig;
 use crate::{Error, Result};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -18,8 +18,8 @@ use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection as WebRTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
-use webrtc::rtp_transceiver::rtp_sender::RTCRtpSender;
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use webrtc::rtp_transceiver::rtp_sender::RTCRtpSender;
 use webrtc::rtp_transceiver::RTCRtpTransceiver;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use webrtc::track::track_local::TrackLocal;
@@ -85,7 +85,10 @@ impl PeerConnection {
     ///
     /// * `peer_id` - Unique identifier for the remote peer
     /// * `config` - Configuration for STUN/TURN servers and codec preferences
-    pub async fn new(peer_id: String, config: &crate::config::WebRtcTransportConfig) -> Result<Self> {
+    pub async fn new(
+        peer_id: String,
+        config: &crate::config::WebRtcTransportConfig,
+    ) -> Result<Self> {
         let connection_id = uuid::Uuid::new_v4().to_string();
 
         info!(
@@ -102,8 +105,10 @@ impl PeerConnection {
             .map_err(|e| Error::WebRtcError(format!("Failed to register codecs: {}", e)))?;
 
         // Create InterceptorRegistry with default interceptors
-        let interceptor_registry = register_default_interceptors(Default::default(), &mut media_engine)
-            .map_err(|e| Error::WebRtcError(format!("Failed to register interceptors: {}", e)))?;
+        let interceptor_registry =
+            register_default_interceptors(Default::default(), &mut media_engine).map_err(|e| {
+                Error::WebRtcError(format!("Failed to register interceptors: {}", e))
+            })?;
 
         // Build WebRTC API
         let api = APIBuilder::new()
@@ -133,11 +138,10 @@ impl PeerConnection {
         };
 
         // Create peer connection
-        let peer_connection = Arc::new(
-            api.new_peer_connection(rtc_config)
-                .await
-                .map_err(|e| Error::WebRtcError(format!("Failed to create peer connection: {}", e)))?,
-        );
+        let peer_connection =
+            Arc::new(api.new_peer_connection(rtc_config).await.map_err(|e| {
+                Error::WebRtcError(format!("Failed to create peer connection: {}", e))
+            })?);
 
         let state = Arc::new(RwLock::new(ConnectionState::New));
         let connected_at = Arc::new(RwLock::new(None));
@@ -147,8 +151,8 @@ impl PeerConnection {
         let connected_at_clone = Arc::clone(&connected_at);
         let peer_id_clone = peer_id.clone();
 
-        peer_connection
-            .on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
+        peer_connection.on_peer_connection_state_change(Box::new(
+            move |s: RTCPeerConnectionState| {
                 let state_clone = Arc::clone(&state_clone);
                 let connected_at_clone = Arc::clone(&connected_at_clone);
                 let peer_id = peer_id_clone.clone();
@@ -179,7 +183,8 @@ impl PeerConnection {
                         *state_guard = new_state;
                     }
                 })
-            }));
+            },
+        ));
 
         Ok(Self {
             peer_id,
@@ -253,7 +258,9 @@ impl PeerConnection {
             .peer_connection
             .local_description()
             .await
-            .ok_or_else(|| Error::SdpError("No local description after setting offer".to_string()))?;
+            .ok_or_else(|| {
+                Error::SdpError("No local description after setting offer".to_string())
+            })?;
 
         let sdp = local_desc.sdp.clone();
 
@@ -297,7 +304,9 @@ impl PeerConnection {
             .peer_connection
             .local_description()
             .await
-            .ok_or_else(|| Error::SdpError("No local description after setting answer".to_string()))?;
+            .ok_or_else(|| {
+                Error::SdpError("No local description after setting answer".to_string())
+            })?;
 
         let sdp = local_desc.sdp.clone();
 
@@ -341,8 +350,9 @@ impl PeerConnection {
 
         // Parse the ICE candidate from JSON
         let ice_candidate: webrtc::ice_transport::ice_candidate::RTCIceCandidateInit =
-            serde_json::from_str(&candidate)
-                .map_err(|e| Error::IceCandidateError(format!("Failed to parse ICE candidate: {}", e)))?;
+            serde_json::from_str(&candidate).map_err(|e| {
+                Error::IceCandidateError(format!("Failed to parse ICE candidate: {}", e))
+            })?;
 
         self.peer_connection
             .add_ice_candidate(ice_candidate)
@@ -359,10 +369,9 @@ impl PeerConnection {
         self.set_state(ConnectionState::Closed).await;
 
         // Close the underlying RTCPeerConnection
-        self.peer_connection
-            .close()
-            .await
-            .map_err(|e| Error::PeerConnectionError(format!("Failed to close connection: {}", e)))?;
+        self.peer_connection.close().await.map_err(|e| {
+            Error::PeerConnectionError(format!("Failed to close connection: {}", e))
+        })?;
 
         Ok(())
     }
@@ -512,10 +521,16 @@ impl PeerConnection {
     /// ```
     pub async fn on_track<F>(&self, handler: F)
     where
-        F: Fn(Arc<TrackRemote>, Arc<RTCRtpReceiver>, Arc<RTCRtpTransceiver>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync + 'static,
+        F: Fn(
+                Arc<TrackRemote>,
+                Arc<RTCRtpReceiver>,
+                Arc<RTCRtpTransceiver>,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+            + Send
+            + Sync
+            + 'static,
     {
-        self.peer_connection
-            .on_track(Box::new(handler));
+        self.peer_connection.on_track(Box::new(handler));
     }
 }
 
@@ -527,7 +542,9 @@ mod tests {
     #[tokio::test]
     async fn test_peer_connection_creation() {
         let config = WebRtcTransportConfig::default();
-        let pc = PeerConnection::new("peer-test".to_string(), &config).await.unwrap();
+        let pc = PeerConnection::new("peer-test".to_string(), &config)
+            .await
+            .unwrap();
 
         assert_eq!(pc.peer_id(), "peer-test");
         assert_eq!(pc.state().await, ConnectionState::New);
@@ -538,7 +555,9 @@ mod tests {
     #[tokio::test]
     async fn test_create_offer() {
         let config = WebRtcTransportConfig::default();
-        let pc = PeerConnection::new("peer-test".to_string(), &config).await.unwrap();
+        let pc = PeerConnection::new("peer-test".to_string(), &config)
+            .await
+            .unwrap();
 
         let sdp = pc.create_offer().await.unwrap();
         assert!(!sdp.is_empty());
@@ -548,7 +567,9 @@ mod tests {
     #[tokio::test]
     async fn test_add_audio_track() {
         let config = WebRtcTransportConfig::default();
-        let pc = PeerConnection::new("peer-test".to_string(), &config).await.unwrap();
+        let pc = PeerConnection::new("peer-test".to_string(), &config)
+            .await
+            .unwrap();
 
         let audio_config = AudioEncoderConfig::default();
         let track = pc.add_audio_track(audio_config).await.unwrap();
@@ -560,7 +581,9 @@ mod tests {
     #[tokio::test]
     async fn test_add_video_track() {
         let config = WebRtcTransportConfig::default();
-        let pc = PeerConnection::new("peer-test".to_string(), &config).await.unwrap();
+        let pc = PeerConnection::new("peer-test".to_string(), &config)
+            .await
+            .unwrap();
 
         let video_config = VideoEncoderConfig::default();
         let track = pc.add_video_track(video_config).await.unwrap();
@@ -572,7 +595,9 @@ mod tests {
     #[tokio::test]
     async fn test_add_both_tracks() {
         let config = WebRtcTransportConfig::default();
-        let pc = PeerConnection::new("peer-test".to_string(), &config).await.unwrap();
+        let pc = PeerConnection::new("peer-test".to_string(), &config)
+            .await
+            .unwrap();
 
         // Add audio track
         let audio_config = AudioEncoderConfig::default();
@@ -590,7 +615,9 @@ mod tests {
     #[tokio::test]
     async fn test_create_offer_with_tracks() {
         let config = WebRtcTransportConfig::default();
-        let pc = PeerConnection::new("peer-test".to_string(), &config).await.unwrap();
+        let pc = PeerConnection::new("peer-test".to_string(), &config)
+            .await
+            .unwrap();
 
         // Add audio track before creating offer
         let audio_config = AudioEncoderConfig::default();
@@ -605,7 +632,9 @@ mod tests {
     #[tokio::test]
     async fn test_close() {
         let config = WebRtcTransportConfig::default();
-        let pc = PeerConnection::new("peer-test".to_string(), &config).await.unwrap();
+        let pc = PeerConnection::new("peer-test".to_string(), &config)
+            .await
+            .unwrap();
 
         pc.close().await.unwrap();
         // State will eventually become Closed via callback

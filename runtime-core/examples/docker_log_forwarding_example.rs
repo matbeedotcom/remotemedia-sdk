@@ -9,7 +9,7 @@
 //! ```
 
 use remotemedia_runtime_core::python::multiprocess::docker_support::{
-    DockerSupport, DockerNodeConfig, LogForwardingConfig, LogLevel,
+    DockerNodeConfig, DockerSupport, LogForwardingConfig, LogLevel,
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -107,9 +107,9 @@ print("INFO: Test script completed", flush=True)
     // Configure log forwarding with custom settings
     let log_config = LogForwardingConfig {
         enabled: true,
-        buffer_size: 8192,  // 8KB buffer
-        min_level: LogLevel::Debug,  // Forward Debug and above
-        parse_json: true,  // Parse JSON logs
+        buffer_size: 8192,          // 8KB buffer
+        min_level: LogLevel::Debug, // Forward Debug and above
+        parse_json: true,           // Parse JSON logs
         include_timestamps: true,
     };
 
@@ -120,7 +120,10 @@ print("INFO: Test script completed", flush=True)
         .await?;
 
     // Now execute the log-generating script
-    let exec = docker_support.docker_client().create_exec(&container_id, exec_config).await?;
+    let exec = docker_support
+        .docker_client()
+        .create_exec(&container_id, exec_config)
+        .await?;
 
     // Start the exec and collect output
     if let Some(exec_id) = exec.id {
@@ -130,7 +133,9 @@ print("INFO: Test script completed", flush=True)
         };
 
         use futures::StreamExt;
-        let mut stream = docker_support.docker_client().start_exec(&exec_id, Some(start_config));
+        let mut stream = docker_support
+            .docker_client()
+            .start_exec(&exec_id, Some(start_config));
 
         println!("=== Container Output (will be forwarded to tracing) ===\n");
 

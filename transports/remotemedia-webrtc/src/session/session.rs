@@ -104,10 +104,7 @@ impl Session {
         let mut peers = self.peers.write().await;
 
         if let Some(pos) = peers.iter().position(|p| p == peer_id) {
-            debug!(
-                "Removing peer {} from session {}",
-                peer_id, self.session_id
-            );
+            debug!("Removing peer {} from session {}", peer_id, self.session_id);
             peers.remove(pos);
         }
 
@@ -316,8 +313,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(session.get_metadata("key1").await, Some("value1".to_string()));
-        assert_eq!(session.get_metadata("key2").await, Some("value2".to_string()));
+        assert_eq!(
+            session.get_metadata("key1").await,
+            Some("value1".to_string())
+        );
+        assert_eq!(
+            session.get_metadata("key2").await,
+            Some("value2".to_string())
+        );
         assert_eq!(session.get_metadata("key3").await, None);
     }
 

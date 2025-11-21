@@ -57,7 +57,7 @@ fn bench_initialization(c: &mut Criterion) {
                         "python:3.10-slim",
                         "python",
                         "-c",
-                        "import sys; sys.exit(0)"
+                        "import sys; sys.exit(0)",
                     ])
                     .status()
                     .expect("Failed to run Docker");
@@ -127,10 +127,7 @@ fn bench_e2e_pipeline(c: &mut Criterion) {
             // 2. Transfer data
             // 3. Cleanup
             std::process::Command::new("python3")
-                .args(&[
-                    "-c",
-                    "import time; time.sleep(0.01); print('processed')"
-                ])
+                .args(&["-c", "import time; time.sleep(0.01); print('processed')"])
                 .output()
                 .expect("Failed to run native pipeline");
 
@@ -148,12 +145,14 @@ fn bench_e2e_pipeline(c: &mut Criterion) {
                 .args(&[
                     "run",
                     "--rm",
-                    "-m", "512m",
-                    "--cpus", "1.0",
+                    "-m",
+                    "512m",
+                    "--cpus",
+                    "1.0",
                     "python:3.10-slim",
                     "python",
                     "-c",
-                    "import time; time.sleep(0.01); print('processed')"
+                    "import time; time.sleep(0.01); print('processed')",
                 ])
                 .output()
                 .expect("Failed to run Docker pipeline");

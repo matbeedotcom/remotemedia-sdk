@@ -7,14 +7,13 @@
 //! - Throughput via iceoryx2
 //! - Cleanup overhead
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use remotemedia_runtime_core::{
-    python::multiprocess::{
-        multiprocess_executor::MultiprocessExecutor,
-        docker_support::DockerSupport,
-        data_transfer::RuntimeData,
-    },
     executor::execution_context::ExecutionContext,
+    python::multiprocess::{
+        data_transfer::RuntimeData, docker_support::DockerSupport,
+        multiprocess_executor::MultiprocessExecutor,
+    },
 };
 use std::{
     collections::HashMap,
@@ -29,9 +28,7 @@ async fn is_docker_available() -> bool {
     }
 
     match DockerSupport::new().await {
-        Ok(docker) => {
-            docker.validate_docker_availability().await.is_ok()
-        }
+        Ok(docker) => docker.validate_docker_availability().await.is_ok(),
         Err(_) => false,
     }
 }
@@ -39,16 +36,9 @@ async fn is_docker_available() -> bool {
 /// Generate test audio data
 fn generate_audio_data(duration_ms: u32, sample_rate: u32) -> RuntimeData {
     let num_samples = (sample_rate as f32 * duration_ms as f32 / 1000.0) as usize;
-    let samples: Vec<f32> = (0..num_samples)
-        .map(|i| (i as f32 * 0.001).sin())
-        .collect();
+    let samples: Vec<f32> = (0..num_samples).map(|i| (i as f32 * 0.001).sin()).collect();
 
-    RuntimeData::audio(
-        &samples,
-        sample_rate,
-        1,
-        "bench_session",
-    )
+    RuntimeData::audio(&samples, sample_rate, 1, "bench_session")
 }
 
 /// Benchmark complete pipeline initialization
@@ -91,12 +81,15 @@ fn bench_pipeline_init(c: &mut Criterion) {
 
                 let mut metadata = HashMap::new();
                 metadata.insert("use_docker".to_string(), serde_json::Value::Bool(true));
-                metadata.insert("docker_config".to_string(), serde_json::json!({
-                    "python_version": "3.10",
-                    "memory_mb": 512,
-                    "cpu_cores": 1.0,
-                    "python_packages": ["iceoryx2"],
-                }));
+                metadata.insert(
+                    "docker_config".to_string(),
+                    serde_json::json!({
+                        "python_version": "3.10",
+                        "memory_mb": 512,
+                        "cpu_cores": 1.0,
+                        "python_packages": ["iceoryx2"],
+                    }),
+                );
 
                 let ctx = ExecutionContext {
                     node_id: "docker_node".to_string(),
@@ -154,12 +147,15 @@ fn bench_ipc_latency(c: &mut Criterion) {
                     |(executor, session_id, node_id)| async {
                         // Measure single send/receive cycle
                         let start = Instant::now();
-                        executor.send_data_to_node(node_id, session_id, test_data.clone()).await.unwrap();
+                        executor
+                            .send_data_to_node(node_id, session_id, test_data.clone())
+                            .await
+                            .unwrap();
                         start.elapsed()
                     },
                     criterion::BatchSize::SmallInput,
                 );
-            }
+            },
         );
 
         // Docker IPC latency (if available)
@@ -176,13 +172,17 @@ fn bench_ipc_latency(c: &mut Criterion) {
                             let node_id = "docker_node";
 
                             let mut metadata = HashMap::new();
-                            metadata.insert("use_docker".to_string(), serde_json::Value::Bool(true));
-                            metadata.insert("docker_config".to_string(), serde_json::json!({
-                                "python_version": "3.10",
-                                "memory_mb": 512,
-                                "cpu_cores": 1.0,
-                                "python_packages": ["iceoryx2"],
-                            }));
+                            metadata
+                                .insert("use_docker".to_string(), serde_json::Value::Bool(true));
+                            metadata.insert(
+                                "docker_config".to_string(),
+                                serde_json::json!({
+                                    "python_version": "3.10",
+                                    "memory_mb": 512,
+                                    "cpu_cores": 1.0,
+                                    "python_packages": ["iceoryx2"],
+                                }),
+                            );
 
                             let ctx = ExecutionContext {
                                 node_id: node_id.to_string(),
@@ -197,12 +197,15 @@ fn bench_ipc_latency(c: &mut Criterion) {
                         |(executor, session_id, node_id)| async {
                             // Measure single send/receive cycle
                             let start = Instant::now();
-                            executor.send_data_to_node(node_id, session_id, test_data.clone()).await.unwrap();
+                            executor
+                                .send_data_to_node(node_id, session_id, test_data.clone())
+                                .await
+                                .unwrap();
                             start.elapsed()
                         },
                         criterion::BatchSize::SmallInput,
                     );
-                }
+                },
             );
         }
     }
@@ -248,7 +251,10 @@ fn bench_streaming_throughput(c: &mut Criterion) {
                 let start = Instant::now();
 
                 for chunk in chunks.iter() {
-                    executor.send_data_to_node(node_id, session_id, chunk.clone()).await.unwrap();
+                    executor
+                        .send_data_to_node(node_id, session_id, chunk.clone())
+                        .await
+                        .unwrap();
                 }
 
                 let elapsed = start.elapsed();
@@ -271,12 +277,15 @@ fn bench_streaming_throughput(c: &mut Criterion) {
 
                     let mut metadata = HashMap::new();
                     metadata.insert("use_docker".to_string(), serde_json::Value::Bool(true));
-                    metadata.insert("docker_config".to_string(), serde_json::json!({
-                        "python_version": "3.10",
-                        "memory_mb": 512,
-                        "cpu_cores": 1.0,
-                        "python_packages": ["iceoryx2"],
-                    }));
+                    metadata.insert(
+                        "docker_config".to_string(),
+                        serde_json::json!({
+                            "python_version": "3.10",
+                            "memory_mb": 512,
+                            "cpu_cores": 1.0,
+                            "python_packages": ["iceoryx2"],
+                        }),
+                    );
 
                     let ctx = ExecutionContext {
                         node_id: node_id.to_string(),
@@ -297,7 +306,10 @@ fn bench_streaming_throughput(c: &mut Criterion) {
                     let start = Instant::now();
 
                     for chunk in chunks.iter() {
-                        executor.send_data_to_node(node_id, session_id, chunk.clone()).await.unwrap();
+                        executor
+                            .send_data_to_node(node_id, session_id, chunk.clone())
+                            .await
+                            .unwrap();
                     }
 
                     let elapsed = start.elapsed();
@@ -342,7 +354,10 @@ fn bench_e2e_pipeline(c: &mut Criterion) {
 
             // Send 100ms of audio
             let test_data = generate_audio_data(100, 16000);
-            executor.send_data_to_node(node_id, &session_id, test_data).await.unwrap();
+            executor
+                .send_data_to_node(node_id, &session_id, test_data)
+                .await
+                .unwrap();
 
             // Cleanup
             executor.terminate_session(&session_id).await.unwrap();
@@ -365,12 +380,15 @@ fn bench_e2e_pipeline(c: &mut Criterion) {
                 // Initialize with Docker
                 let mut metadata = HashMap::new();
                 metadata.insert("use_docker".to_string(), serde_json::Value::Bool(true));
-                metadata.insert("docker_config".to_string(), serde_json::json!({
-                    "python_version": "3.10",
-                    "memory_mb": 512,
-                    "cpu_cores": 1.0,
-                    "python_packages": ["iceoryx2"],
-                }));
+                metadata.insert(
+                    "docker_config".to_string(),
+                    serde_json::json!({
+                        "python_version": "3.10",
+                        "memory_mb": 512,
+                        "cpu_cores": 1.0,
+                        "python_packages": ["iceoryx2"],
+                    }),
+                );
 
                 let ctx = ExecutionContext {
                     node_id: node_id.to_string(),
@@ -382,7 +400,10 @@ fn bench_e2e_pipeline(c: &mut Criterion) {
 
                 // Send 100ms of audio
                 let test_data = generate_audio_data(100, 16000);
-                executor.send_data_to_node(node_id, &session_id, test_data).await.unwrap();
+                executor
+                    .send_data_to_node(node_id, &session_id, test_data)
+                    .await
+                    .unwrap();
 
                 // Cleanup
                 executor.terminate_session(&session_id).await.unwrap();
@@ -430,7 +451,10 @@ fn bench_concurrent_pipelines(c: &mut Criterion) {
                             executor.initialize(&ctx, &session_id).await.unwrap();
 
                             let test_data = generate_audio_data(50, 16000);
-                            executor.send_data_to_node(&node_id, &session_id, test_data).await.unwrap();
+                            executor
+                                .send_data_to_node(&node_id, &session_id, test_data)
+                                .await
+                                .unwrap();
 
                             executor.terminate_session(&session_id).await.unwrap();
                         });
@@ -443,7 +467,7 @@ fn bench_concurrent_pipelines(c: &mut Criterion) {
 
                     start.elapsed()
                 });
-            }
+            },
         );
 
         // Docker concurrent pipelines (if available)
@@ -463,13 +487,19 @@ fn bench_concurrent_pipelines(c: &mut Criterion) {
                                 let node_id = format!("docker_node_{}", i);
 
                                 let mut metadata = HashMap::new();
-                                metadata.insert("use_docker".to_string(), serde_json::Value::Bool(true));
-                                metadata.insert("docker_config".to_string(), serde_json::json!({
-                                    "python_version": "3.10",
-                                    "memory_mb": 256,
-                                    "cpu_cores": 0.5,
-                                    "python_packages": ["iceoryx2"],
-                                }));
+                                metadata.insert(
+                                    "use_docker".to_string(),
+                                    serde_json::Value::Bool(true),
+                                );
+                                metadata.insert(
+                                    "docker_config".to_string(),
+                                    serde_json::json!({
+                                        "python_version": "3.10",
+                                        "memory_mb": 256,
+                                        "cpu_cores": 0.5,
+                                        "python_packages": ["iceoryx2"],
+                                    }),
+                                );
 
                                 let ctx = ExecutionContext {
                                     node_id: node_id.clone(),
@@ -481,7 +511,10 @@ fn bench_concurrent_pipelines(c: &mut Criterion) {
                                 executor.initialize(&ctx, &session_id).await.unwrap();
 
                                 let test_data = generate_audio_data(50, 16000);
-                                executor.send_data_to_node(&node_id, &session_id, test_data).await.unwrap();
+                                executor
+                                    .send_data_to_node(&node_id, &session_id, test_data)
+                                    .await
+                                    .unwrap();
 
                                 executor.terminate_session(&session_id).await.unwrap();
                             });
@@ -494,7 +527,7 @@ fn bench_concurrent_pipelines(c: &mut Criterion) {
 
                         start.elapsed()
                     });
-                }
+                },
             );
         }
     }

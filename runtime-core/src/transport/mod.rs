@@ -91,9 +91,11 @@ impl ClientConfig {
             .get("endpoint")
             .or_else(|| params.get("address"))
             .and_then(|v| v.as_str())
-            .ok_or_else(|| crate::Error::ConfigError(
-                "Missing 'endpoint' or 'address' in transport config".to_string()
-            ))?
+            .ok_or_else(|| {
+                crate::Error::ConfigError(
+                    "Missing 'endpoint' or 'address' in transport config".to_string(),
+                )
+            })?
             .to_string();
 
         let auth_token = params
@@ -101,9 +103,7 @@ impl ClientConfig {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let timeout_ms = params
-            .get("timeout_ms")
-            .and_then(|v| v.as_u64());
+        let timeout_ms = params.get("timeout_ms").and_then(|v| v.as_u64());
 
         let extra_config = params.get("extra_config").cloned();
 

@@ -21,7 +21,7 @@ COPY protos ./protos
 
 # Build with GPU-related features
 RUN cargo build --bin grpc-server --release \
-    --features grpc-signaling,docker-executor,multiprocess,silero-vad
+    --features grpc-signaling,docker,multiprocess,silero-vad
 
 # Stage 2: Runtime with NVIDIA GPU support
 FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04

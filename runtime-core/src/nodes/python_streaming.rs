@@ -12,7 +12,6 @@ use crate::Error;
 use serde_json::Value;
 use tokio::sync::Mutex;
 
-
 /// Wrapper that adapts a Python node to the AsyncStreamingNode trait
 pub struct PythonStreamingNode {
     node_id: String,
@@ -184,7 +183,11 @@ impl AsyncStreamingNode for PythonStreamingNode {
 
         // Get session_id (from parameter or from node)
         let session_id_opt = session_id.or_else(|| self.session_id.clone());
-        tracing::info!("[PythonStreamingNode] Node {}: resolved session_id to {:?}", self.node_id, session_id_opt);
+        tracing::info!(
+            "[PythonStreamingNode] Node {}: resolved session_id to {:?}",
+            self.node_id,
+            session_id_opt
+        );
 
         // CRITICAL: MultiprocessExecutor methods don't need &mut self anymore (as of the multiprocess redesign)
         // They use Arc/RwLock internally, so we can safely get a shared reference and release the lock
@@ -213,7 +216,10 @@ impl AsyncStreamingNode for PythonStreamingNode {
         // This allows other requests to proceed concurrently
 
         // Use process_runtime_data_streaming which waits for outputs and invokes callback
-        tracing::info!("[PythonStreamingNode] Node {}: calling mp_executor.process_runtime_data_streaming", self.node_id);
+        tracing::info!(
+            "[PythonStreamingNode] Node {}: calling mp_executor.process_runtime_data_streaming",
+            self.node_id
+        );
         let result = unsafe {
             // SAFETY: The executor pointer is valid for the lifetime of self because:
             // 1. PythonStreamingNode owns the Box<dyn PythonExecutor> in self.executor
@@ -226,7 +232,11 @@ impl AsyncStreamingNode for PythonStreamingNode {
 
         tracing::info!("[PythonStreamingNode] Node {}: mp_executor.process_runtime_data_streaming returned {:?}", self.node_id, result);
 
-        tracing::debug!("Node {}: process_runtime_data_streaming returned {:?}", self.node_id, result.as_ref().map(|_| "Ok").unwrap_or("Err"));
+        tracing::debug!(
+            "Node {}: process_runtime_data_streaming returned {:?}",
+            self.node_id,
+            result.as_ref().map(|_| "Ok").unwrap_or("Err")
+        );
         result
     }
 }

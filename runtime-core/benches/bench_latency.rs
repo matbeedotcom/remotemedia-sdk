@@ -221,10 +221,11 @@ fn bench_control_message_propagation(c: &mut Criterion) {
             let pipeline = LatencyMockPipeline::new(10); // 10us propagation delay
 
             let control_message = RuntimeData::ControlMessage {
-                message_type: remotemedia_runtime_core::data::ControlMessageType::CancelSpeculation {
-                    from_timestamp: 0,
-                    to_timestamp: 100,
-                },
+                message_type:
+                    remotemedia_runtime_core::data::ControlMessageType::CancelSpeculation {
+                        from_timestamp: 0,
+                        to_timestamp: 100,
+                    },
                 segment_id: Some("bench_segment".to_string()),
                 timestamp_ms: 0,
                 metadata: serde_json::json!({}),
@@ -275,7 +276,8 @@ fn bench_ring_buffer_overhead(c: &mut Criterion) {
             // Verify latencies were measured
             // Note: In test mode, async overhead dominates (~15ms for tokio scheduling)
             // Real benchmark mode (without --test) gives accurate sub-100us measurements
-            let _avg_latency: Duration = latencies.iter().sum::<Duration>() / latencies.len() as u32;
+            let _avg_latency: Duration =
+                latencies.iter().sum::<Duration>() / latencies.len() as u32;
 
             // Just verify we have measurements - strict timing validation in benchmark mode only
             assert!(
@@ -382,12 +384,22 @@ fn bench_success_criteria_validation(c: &mut Criterion) {
 
             // Calculate improvement ratio (data-driven, not hardcoded)
             const MEASURED_VAD_TIME_US: u64 = 19_460;
-            let theoretical_improvement = MEASURED_VAD_TIME_US as f64 / MEASURED_SPECULATION_OVERHEAD_US as f64;
+            let theoretical_improvement =
+                MEASURED_VAD_TIME_US as f64 / MEASURED_SPECULATION_OVERHEAD_US as f64;
 
             println!("\n=== IMPROVEMENT ANALYSIS ===");
-            println!("Traditional VAD time: {}ms", MEASURED_VAD_TIME_US as f64 / 1000.0);
-            println!("Speculative overhead: {}us", MEASURED_SPECULATION_OVERHEAD_US);
-            println!("Theoretical improvement: {:.0}x faster", theoretical_improvement);
+            println!(
+                "Traditional VAD time: {}ms",
+                MEASURED_VAD_TIME_US as f64 / 1000.0
+            );
+            println!(
+                "Speculative overhead: {}us",
+                MEASURED_SPECULATION_OVERHEAD_US
+            );
+            println!(
+                "Theoretical improvement: {:.0}x faster",
+                theoretical_improvement
+            );
             println!("\n✅ Core value: Speculative eliminates VAD from critical path");
             println!("   ASR receives audio immediately instead of waiting for inference");
 

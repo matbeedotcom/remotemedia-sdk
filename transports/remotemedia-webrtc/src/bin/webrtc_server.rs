@@ -46,15 +46,27 @@ struct Args {
     grpc_address: String,
 
     /// Pipeline manifest path (gRPC mode only)
-    #[arg(long, default_value = "./examples/loopback.yaml", env = "WEBRTC_PIPELINE_MANIFEST")]
+    #[arg(
+        long,
+        default_value = "./examples/loopback.yaml",
+        env = "WEBRTC_PIPELINE_MANIFEST"
+    )]
     manifest: PathBuf,
 
     /// WebSocket signaling URL (WebSocket mode only)
-    #[arg(long, default_value = "ws://localhost:8080", env = "WEBRTC_SIGNALING_URL")]
+    #[arg(
+        long,
+        default_value = "ws://localhost:8080",
+        env = "WEBRTC_SIGNALING_URL"
+    )]
     signaling_url: String,
 
     /// STUN servers (comma-separated)
-    #[arg(long, value_delimiter = ',', default_value = "stun:stun.l.google.com:19302")]
+    #[arg(
+        long,
+        value_delimiter = ',',
+        default_value = "stun:stun.l.google.com:19302"
+    )]
     stun_servers: Vec<String>,
 
     /// Maximum concurrent peer connections
@@ -91,7 +103,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        eprintln!("\n🛑 [{}] Ctrl+C received! Initiating shutdown...", timestamp);
+        eprintln!(
+            "\n🛑 [{}] Ctrl+C received! Initiating shutdown...",
+            timestamp
+        );
 
         let was_already_set = shutdown_flag_handler.swap(true, Ordering::SeqCst);
         if was_already_set {
@@ -120,7 +135,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     runtime.block_on(async_main(args, shutdown_flag))
 }
 
-async fn async_main(args: Args, shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
+async fn async_main(
+    args: Args,
+    shutdown_flag: Arc<AtomicBool>,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing (logging)
     init_tracing();
 
@@ -152,12 +170,15 @@ async fn async_main(args: Args, shutdown_flag: Arc<AtomicBool>) -> Result<(), Bo
 }
 
 #[cfg(feature = "grpc-signaling")]
-async fn run_grpc_signaling_server(args: Args, shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
-    use remotemedia_webrtc::signaling::grpc::WebRtcSignalingService;
-    use remotemedia_runtime_core::transport::PipelineRunner;
+async fn run_grpc_signaling_server(
+    args: Args,
+    shutdown_flag: Arc<AtomicBool>,
+) -> Result<(), Box<dyn std::error::Error>> {
     use remotemedia_runtime_core::manifest::Manifest;
-    use tonic::transport::Server;
+    use remotemedia_runtime_core::transport::PipelineRunner;
+    use remotemedia_webrtc::signaling::grpc::WebRtcSignalingService;
     use std::sync::Arc;
+    use tonic::transport::Server;
 
     info!(
         grpc_address = %args.grpc_address,
@@ -224,7 +245,10 @@ async fn run_grpc_signaling_server(args: Args, shutdown_flag: Arc<AtomicBool>) -
     Ok(())
 }
 
-async fn run_websocket_client_mode(args: Args, shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_websocket_client_mode(
+    args: Args,
+    shutdown_flag: Arc<AtomicBool>,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Build configuration from arguments
     let config = WebRtcTransportConfig {
         signaling_url: args.signaling_url.clone(),

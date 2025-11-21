@@ -367,7 +367,10 @@ pub async fn load_manifest_from_source(source: &ManifestSource) -> Result<Manife
             })
         }
 
-        ManifestSource::Url { manifest_url, auth_header } => {
+        ManifestSource::Url {
+            manifest_url,
+            auth_header,
+        } => {
             // Build request with optional auth header
             let client = reqwest::Client::new();
             let mut request = client.get(manifest_url);
@@ -390,14 +393,21 @@ pub async fn load_manifest_from_source(source: &ManifestSource) -> Result<Manife
             if !response.status().is_success() {
                 return Err(Error::ManifestFetchFailed {
                     url: manifest_url.clone(),
-                    reason: format!("HTTP {} {}", response.status().as_u16(), response.status().canonical_reason().unwrap_or("Unknown")),
+                    reason: format!(
+                        "HTTP {} {}",
+                        response.status().as_u16(),
+                        response.status().canonical_reason().unwrap_or("Unknown")
+                    ),
                 });
             }
 
-            let json_str = response.text().await.map_err(|e| Error::ManifestFetchFailed {
-                url: manifest_url.clone(),
-                reason: format!("Failed to read response body: {}", e),
-            })?;
+            let json_str = response
+                .text()
+                .await
+                .map_err(|e| Error::ManifestFetchFailed {
+                    url: manifest_url.clone(),
+                    reason: format!("Failed to read response body: {}", e),
+                })?;
 
             serde_json::from_str(&json_str).map_err(|e| Error::ManifestFetchFailed {
                 url: manifest_url.clone(),
@@ -405,10 +415,18 @@ pub async fn load_manifest_from_source(source: &ManifestSource) -> Result<Manife
             })
         }
 
-        ManifestSource::Name { pipeline_name, manifest_endpoint, auth_header } => {
+        ManifestSource::Name {
+            pipeline_name,
+            manifest_endpoint,
+            auth_header,
+        } => {
             // If manifest_endpoint is specified, fetch from /manifests/{name}
             if let Some(endpoint) = manifest_endpoint {
-                let url = format!("{}/manifests/{}", endpoint.trim_end_matches('/'), pipeline_name);
+                let url = format!(
+                    "{}/manifests/{}",
+                    endpoint.trim_end_matches('/'),
+                    pipeline_name
+                );
 
                 // Build request with optional auth header
                 let client = reqwest::Client::new();
@@ -432,14 +450,21 @@ pub async fn load_manifest_from_source(source: &ManifestSource) -> Result<Manife
                 if !response.status().is_success() {
                     return Err(Error::ManifestFetchFailed {
                         url: url.clone(),
-                        reason: format!("HTTP {} {}", response.status().as_u16(), response.status().canonical_reason().unwrap_or("Unknown")),
+                        reason: format!(
+                            "HTTP {} {}",
+                            response.status().as_u16(),
+                            response.status().canonical_reason().unwrap_or("Unknown")
+                        ),
                     });
                 }
 
-                let json_str = response.text().await.map_err(|e| Error::ManifestFetchFailed {
-                    url: url.clone(),
-                    reason: format!("Failed to read response body: {}", e),
-                })?;
+                let json_str = response
+                    .text()
+                    .await
+                    .map_err(|e| Error::ManifestFetchFailed {
+                        url: url.clone(),
+                        reason: format!("Failed to read response body: {}", e),
+                    })?;
 
                 serde_json::from_str(&json_str).map_err(|e| Error::ManifestFetchFailed {
                     url: url.clone(),
@@ -626,7 +651,9 @@ pub struct RemotePipelineNode {
 
     /// gRPC client (created lazily on first use)
     #[cfg(feature = "grpc-client")]
-    client: std::sync::Arc<tokio::sync::Mutex<Option<Box<dyn crate::transport::client::PipelineClient>>>>,
+    client: std::sync::Arc<
+        tokio::sync::Mutex<Option<Box<dyn crate::transport::client::PipelineClient>>>,
+    >,
 }
 
 impl RemotePipelineNode {
@@ -654,14 +681,13 @@ impl RemotePipelineNode {
     /// ```
     pub fn new(node_id: String, params: serde_json::Value) -> crate::Result<Self> {
         // Parse configuration
-        let config: RemotePipelineConfig = serde_json::from_value(params)
-            .map_err(|e| crate::Error::ConfigError(format!(
-                "Failed to parse RemotePipelineConfig: {}",
-                e
-            )))?;
+        let config: RemotePipelineConfig = serde_json::from_value(params).map_err(|e| {
+            crate::Error::ConfigError(format!("Failed to parse RemotePipelineConfig: {}", e))
+        })?;
 
         // Validate transport type
-        if config.transport != "grpc" && config.transport != "http" && config.transport != "webrtc" {
+        if config.transport != "grpc" && config.transport != "http" && config.transport != "webrtc"
+        {
             return Err(crate::Error::ConfigError(format!(
                 "Unsupported transport type: '{}' (supported: grpc, http, webrtc)",
                 config.transport
@@ -671,7 +697,7 @@ impl RemotePipelineNode {
         // Ensure at least one endpoint is specified
         if config.endpoint.is_none() && config.endpoints.is_none() {
             return Err(crate::Error::ConfigError(
-                "At least one endpoint must be specified (via 'endpoint' or 'endpoints')".into()
+                "At least one endpoint must be specified (via 'endpoint' or 'endpoints')".into(),
             ));
         }
 
@@ -731,17 +757,15 @@ impl RemotePipelineNode {
 
         // Look up transport plugin by name
         let transport_name = &self.config.transport;
-        let plugin = global_registry()
-            .get(transport_name)
-            .ok_or_else(|| {
-                let available = global_registry().list();
-                crate::Error::ConfigError(format!(
-                    "Transport '{}' not found. Available transports: {}. \
+        let plugin = global_registry().get(transport_name).ok_or_else(|| {
+            let available = global_registry().list();
+            crate::Error::ConfigError(format!(
+                "Transport '{}' not found. Available transports: {}. \
                      Make sure to register the transport plugin at application startup.",
-                    transport_name,
-                    available.join(", ")
-                ))
-            })?;
+                transport_name,
+                available.join(", ")
+            ))
+        })?;
 
         // Build ClientConfig from manifest params
         // We need to reconstruct params as a JSON object with endpoint and optional fields
@@ -752,7 +776,10 @@ impl RemotePipelineNode {
         );
 
         if let Some(ref token) = self.config.auth_token {
-            params.insert("auth_token".to_string(), serde_json::Value::String(token.clone()));
+            params.insert(
+                "auth_token".to_string(),
+                serde_json::Value::String(token.clone()),
+            );
         }
 
         params.insert(
@@ -783,10 +810,8 @@ impl RemotePipelineNode {
         let backoff_ms = retry_config.map(|r| r.backoff_ms).unwrap_or(1000);
 
         let last_error = None;
-        let mut ctx = ExecutionContext::new(
-            self.get_primary_endpoint(),
-            self.config.auth_token.clone(),
-        );
+        let mut ctx =
+            ExecutionContext::new(self.get_primary_endpoint(), self.config.auth_token.clone());
 
         for attempt in 0..=max_retries {
             ctx.increment_attempt();
@@ -813,7 +838,8 @@ impl RemotePipelineNode {
                 }
             };
 
-            #[cfg(not(feature = "grpc-client"))] {
+            #[cfg(not(feature = "grpc-client"))]
+            {
                 return Err(crate::Error::ConfigError(
                     "gRPC client not enabled - compile with 'grpc-client' feature".into(),
                 ));
@@ -875,8 +901,7 @@ impl RemotePipelineNode {
         Err(last_error.unwrap_or_else(|| {
             crate::Error::RemoteExecutionFailed(format!(
                 "Node '{}' failed after {} attempts",
-                self.node_id,
-                ctx.attempt_count
+                self.node_id, ctx.attempt_count
             ))
         }))
     }
@@ -900,20 +925,18 @@ impl crate::nodes::StreamingNodeFactory for RemotePipelineNodeFactory {
         // For now, we load the manifest synchronously using blocking
         if let ManifestSource::Inline { manifest } = &node.config.manifest_source {
             // For inline manifests, we can load synchronously
-            let manifest_obj: Manifest = serde_json::from_value(manifest.clone())
-                .map_err(|e| crate::Error::InvalidManifest(format!(
-                    "Failed to parse inline manifest: {}",
-                    e
-                )))?;
+            let manifest_obj: Manifest = serde_json::from_value(manifest.clone()).map_err(|e| {
+                crate::Error::InvalidManifest(format!("Failed to parse inline manifest: {}", e))
+            })?;
             validate_manifest(&manifest_obj)?;
             node.manifest = Some(manifest_obj);
         }
         // For URL and Name sources, manifest will be loaded on first process() call
         // or during async initialize()
 
-        Ok(Box::new(crate::nodes::AsyncNodeWrapper(std::sync::Arc::new(
-            node,
-        ))))
+        Ok(Box::new(crate::nodes::AsyncNodeWrapper(
+            std::sync::Arc::new(node),
+        )))
     }
 
     fn node_type(&self) -> &str {
@@ -1210,7 +1233,11 @@ pub async fn load_manifest_from_source_cached(source: &ManifestSource) -> Result
             return load_manifest_from_source(source).await;
         }
         ManifestSource::Url { manifest_url, .. } => manifest_url.clone(),
-        ManifestSource::Name { pipeline_name, manifest_endpoint, .. } => {
+        ManifestSource::Name {
+            pipeline_name,
+            manifest_endpoint,
+            ..
+        } => {
             if let Some(endpoint) = manifest_endpoint {
                 format!("{}/manifests/{}", endpoint, pipeline_name)
             } else {
@@ -1314,12 +1341,17 @@ pub fn detect_circular_dependencies(
     for node in &manifest.nodes {
         if node.node_type == "RemotePipelineNode" {
             // Try to parse the params as RemotePipelineConfig
-            if let Ok(config) = serde_json::from_value::<RemotePipelineConfig>(node.params.clone()) {
+            if let Ok(config) = serde_json::from_value::<RemotePipelineConfig>(node.params.clone())
+            {
                 // Check the manifest source
                 match &config.manifest_source {
-                    ManifestSource::Inline { manifest: nested_manifest } => {
+                    ManifestSource::Inline {
+                        manifest: nested_manifest,
+                    } => {
                         // Recursively check nested manifest
-                        if let Ok(nested) = serde_json::from_value::<Manifest>(nested_manifest.clone()) {
+                        if let Ok(nested) =
+                            serde_json::from_value::<Manifest>(nested_manifest.clone())
+                        {
                             detect_circular_dependencies(&nested, visited, path, depth + 1)?;
                         }
                     }

@@ -276,7 +276,10 @@ mod tests {
 
     #[async_trait]
     impl NodeExecutor for MockExecutor {
-        async fn initialize(&mut self, _ctx: &crate::executor_compat::node_executor::NodeContext) -> Result<()> {
+        async fn initialize(
+            &mut self,
+            _ctx: &crate::executor_compat::node_executor::NodeContext,
+        ) -> Result<()> {
             Ok(())
         }
 

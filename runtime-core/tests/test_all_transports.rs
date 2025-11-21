@@ -5,8 +5,10 @@ mod fixtures;
 use fixtures::mock_transport_plugin::MockTransportPlugin;
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::manifest::{Manifest, ManifestMetadata, NodeManifest};
-use remotemedia_runtime_core::transport::{TransportPluginRegistry, ClientConfig, ServerConfig, TransportData};
 use remotemedia_runtime_core::transport::runner::PipelineRunner;
+use remotemedia_runtime_core::transport::{
+    ClientConfig, ServerConfig, TransportData, TransportPluginRegistry,
+};
 use std::sync::Arc;
 
 #[tokio::test]
@@ -14,27 +16,35 @@ async fn test_all_transports_via_registry() {
     let registry = TransportPluginRegistry::new();
 
     // Register mock transport (always available)
-    registry.register(Arc::new(MockTransportPlugin)).expect("Failed to register mock plugin");
+    registry
+        .register(Arc::new(MockTransportPlugin))
+        .expect("Failed to register mock plugin");
 
     // Register gRPC transport if available
     #[cfg(feature = "grpc-transport")]
     {
         use remotemedia_runtime_grpc_transport::GrpcTransportPlugin;
-        registry.register(Arc::new(GrpcTransportPlugin::new())).expect("Failed to register gRPC plugin");
+        registry
+            .register(Arc::new(GrpcTransportPlugin::new()))
+            .expect("Failed to register gRPC plugin");
     }
 
     // Register WebRTC transport if available
     #[cfg(feature = "webrtc-transport")]
     {
         use remotemedia_runtime_webrtc_transport::WebRtcTransportPlugin;
-        registry.register(Arc::new(WebRtcTransportPlugin::new())).expect("Failed to register WebRTC plugin");
+        registry
+            .register(Arc::new(WebRtcTransportPlugin::new()))
+            .expect("Failed to register WebRTC plugin");
     }
 
     // Register HTTP transport if available
     #[cfg(feature = "http-transport")]
     {
         use remotemedia_runtime_http_transport::HttpTransportPlugin;
-        registry.register(Arc::new(HttpTransportPlugin::new())).expect("Failed to register HTTP plugin");
+        registry
+            .register(Arc::new(HttpTransportPlugin::new()))
+            .expect("Failed to register HTTP plugin");
     }
 
     // Test mock transport
@@ -113,24 +123,32 @@ async fn test_transport(registry: &TransportPluginRegistry, transport_name: &str
 #[tokio::test]
 async fn test_server_creation_for_all_transports() {
     let registry = TransportPluginRegistry::new();
-    registry.register(Arc::new(MockTransportPlugin)).expect("Failed to register mock plugin");
+    registry
+        .register(Arc::new(MockTransportPlugin))
+        .expect("Failed to register mock plugin");
 
     #[cfg(feature = "grpc-transport")]
     {
         use remotemedia_runtime_grpc_transport::GrpcTransportPlugin;
-        registry.register(Arc::new(GrpcTransportPlugin::new())).expect("Failed to register gRPC plugin");
+        registry
+            .register(Arc::new(GrpcTransportPlugin::new()))
+            .expect("Failed to register gRPC plugin");
     }
 
     #[cfg(feature = "webrtc-transport")]
     {
         use remotemedia_runtime_webrtc_transport::WebRtcTransportPlugin;
-        registry.register(Arc::new(WebRtcTransportPlugin::new())).expect("Failed to register WebRTC plugin");
+        registry
+            .register(Arc::new(WebRtcTransportPlugin::new()))
+            .expect("Failed to register WebRTC plugin");
     }
 
     #[cfg(feature = "http-transport")]
     {
         use remotemedia_runtime_http_transport::HttpTransportPlugin;
-        registry.register(Arc::new(HttpTransportPlugin::new())).expect("Failed to register HTTP plugin");
+        registry
+            .register(Arc::new(HttpTransportPlugin::new()))
+            .expect("Failed to register HTTP plugin");
     }
 
     // Create a dummy pipeline runner
@@ -183,12 +201,16 @@ async fn test_server_creation(
 #[tokio::test]
 async fn test_registry_list_plugins() {
     let registry = TransportPluginRegistry::new();
-    registry.register(Arc::new(MockTransportPlugin)).expect("Failed to register mock plugin");
+    registry
+        .register(Arc::new(MockTransportPlugin))
+        .expect("Failed to register mock plugin");
 
     #[cfg(feature = "grpc-transport")]
     {
         use remotemedia_runtime_grpc_transport::GrpcTransportPlugin;
-        registry.register(Arc::new(GrpcTransportPlugin::new())).expect("Failed to register gRPC plugin");
+        registry
+            .register(Arc::new(GrpcTransportPlugin::new()))
+            .expect("Failed to register gRPC plugin");
     }
 
     let plugins = registry.list();
@@ -205,7 +227,9 @@ async fn test_registry_list_plugins() {
 #[tokio::test]
 async fn test_registry_error_cases() {
     let registry = TransportPluginRegistry::new();
-    registry.register(Arc::new(MockTransportPlugin)).expect("Failed to register mock plugin");
+    registry
+        .register(Arc::new(MockTransportPlugin))
+        .expect("Failed to register mock plugin");
 
     // Test missing plugin
     let result = registry.get("nonexistent");
@@ -236,7 +260,9 @@ async fn test_registry_error_cases() {
 #[tokio::test]
 async fn test_multiple_clients_same_transport() {
     let registry = TransportPluginRegistry::new();
-    registry.register(Arc::new(MockTransportPlugin)).expect("Failed to register mock plugin");
+    registry
+        .register(Arc::new(MockTransportPlugin))
+        .expect("Failed to register mock plugin");
 
     // Create multiple clients with same transport
     let config1 = ClientConfig {
@@ -273,7 +299,9 @@ async fn test_multiple_clients_same_transport() {
 #[tokio::test]
 async fn test_transport_plugin_reregistration() {
     let registry = TransportPluginRegistry::new();
-    registry.register(Arc::new(MockTransportPlugin)).expect("Failed to register mock plugin");
+    registry
+        .register(Arc::new(MockTransportPlugin))
+        .expect("Failed to register mock plugin");
 
     // Try to register again - should fail (not replace)
     let result = registry.register(Arc::new(MockTransportPlugin));

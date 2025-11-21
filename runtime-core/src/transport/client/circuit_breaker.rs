@@ -260,9 +260,7 @@ mod tests {
 
         // Fail once to open circuit
         let _ = cb
-            .execute(|| async {
-                Err::<(), _>(crate::Error::Transport("Test failure".to_string()))
-            })
+            .execute(|| async { Err::<(), _>(crate::Error::Transport("Test failure".to_string())) })
             .await;
 
         assert_eq!(cb.get_state().await, CircuitState::Open);
@@ -271,7 +269,10 @@ mod tests {
         let result = cb.execute(|| async { Ok::<(), crate::Error>(()) }).await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::CircuitBreakerOpen { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::CircuitBreakerOpen { .. }
+        ));
     }
 
     #[tokio::test]
@@ -286,9 +287,7 @@ mod tests {
 
         // Open circuit
         let _ = cb
-            .execute(|| async {
-                Err::<(), _>(crate::Error::Transport("Test failure".to_string()))
-            })
+            .execute(|| async { Err::<(), _>(crate::Error::Transport("Test failure".to_string())) })
             .await;
         assert_eq!(cb.get_state().await, CircuitState::Open);
 
