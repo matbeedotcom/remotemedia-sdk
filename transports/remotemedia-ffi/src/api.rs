@@ -226,6 +226,97 @@ pub fn execute_pipeline_with_input<'py>(
     })
 }
 
+/// Execute pipeline directly with Python Node instances (Feature 011)
+///
+/// This function bypasses the node registry and executes Node instances
+/// directly using InstanceExecutor. This enables custom Python nodes to
+/// run without registration.
+///
+/// # Arguments
+/// * `node_instances` - List of Python Node instances to execute in sequence
+/// * `input_data` - Optional input data for the first node
+///
+/// # Returns
+/// Python coroutine that resolves to execution results
+#[pyfunction]
+pub fn execute_pipeline_with_instances<'py>(
+    py: Python<'py>,
+    node_instances: Vec<Bound<'py, PyAny>>,
+    input_data: Option<Bound<'py, PyAny>>,
+    enable_metrics: Option<bool>,
+) -> PyResult<Bound<'py, PyAny>> {
+    use super::instance_handler::InstanceExecutor;
+    use super::marshal::{python_to_runtime_data, runtime_data_to_python};
+
+    // Convert to Py<PyAny> before async block (Bound is not Send)
+    let node_refs: Vec<Py<PyAny>> = node_instances
+        .into_iter()
+        .map(|node| node.unbind())
+        .collect();
+
+    let input_ref: Option<RuntimeData> = if let Some(input) = input_data {
+        Some(python_to_runtime_data(py, &input)?)
+    } else {
+        None
+    };
+
+    future_into_py(py, async move {
+        // Convert node instances to InstanceExecutor wrappers
+        let executors: Vec<InstanceExecutor> = node_refs
+            .into_iter()
+            .enumerate()
+            .map(|(i, node)| {
+                let node_id = format!("instance_{}", i);
+                InstanceExecutor::new(node, node_id)
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+
+        if executors.is_empty() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Cannot execute empty pipeline"
+            ));
+        }
+
+        // Initialize all nodes
+        for executor in &executors {
+            executor.initialize()?;
+        }
+
+        // Get initial input data
+        let mut current_data = input_ref.unwrap_or(RuntimeData::Text(String::new()));
+
+        // Execute nodes in sequence
+        for executor in &executors {
+            let outputs = executor.process(current_data)?;
+
+            // Take first output as input for next node
+            current_data = outputs.into_iter().next()
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                    format!("Node '{}' produced no output", executor.node_id())
+                ))?;
+        }
+
+        // Cleanup all nodes
+        for executor in &executors {
+            executor.cleanup()?;
+        }
+
+        // Convert final output to Python
+        Python::attach(|py| {
+            let py_output = runtime_data_to_python(py, &current_data)?;
+
+            if enable_metrics.unwrap_or(false) {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("outputs", py_output)?;
+                dict.set_item("metrics", "{}")?;
+                Ok(dict.into())
+            } else {
+                Ok(py_output)
+            }
+        })
+    })
+}
+
 /// Get runtime version information
 #[pyfunction]
 pub fn get_runtime_version() -> String {
