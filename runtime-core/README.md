@@ -103,6 +103,68 @@ impl PipelineTransport for MyTransport {
 
 See `examples/custom-transport/` for a complete working example (~80 lines).
 
+### Ergonomic Node Registration
+
+The SDK provides simplified macros that reduce node registration from 40 lines to 1 line:
+
+```rust
+use remotemedia_runtime_core::nodes::registry::NodeRegistry;
+use remotemedia_runtime_core::{register_python_node, register_python_nodes};
+
+let mut registry = NodeRegistry::new();
+
+// Register single Python node (1 line vs 40!)
+register_python_node!(registry, "OmniASRNode");
+
+// Register multiple Python nodes in batch
+register_python_nodes!(registry, [
+    "KokoroTTSNode",
+    "SimplePyTorchNode",
+    "AudioEnhancerNode",
+]);
+
+// Register Rust node with Default trait
+use remotemedia_runtime_core::register_rust_node_default;
+register_rust_node_default!(registry, PassThroughNode);
+
+// Register Rust node with custom initialization
+use remotemedia_runtime_core::register_rust_node;
+register_rust_node!(registry, AudioChunkerNode, |params: Value| {
+    let chunk_size = params.get("chunk_size")?.as_u64()? as usize;
+    Ok(AudioChunkerNode::new(chunk_size))
+});
+```
+
+**Benefits**:
+- **97.5% less boilerplate** (40 lines → 1 line per node)
+- **Type-safe** registration using `stringify!` for Rust nodes
+- **Zero runtime overhead** (macros expand at compile time)
+- **100% backward compatible** with existing factory-based registration
+
+See `examples/node_registration_example.rs` for complete examples.
+
+#### Migration Guide
+
+**Old API** (still supported):
+```rust
+struct MyNodeFactory;
+impl NodeFactory for MyNodeFactory {
+    fn create(&self, params: Value) -> Result<Box<dyn NodeExecutor>> {
+        let handler = MyNode::new(params)?;
+        Ok(Box::new(RustNodeExecutor::new("MyNode", Box::new(handler))))
+    }
+    fn node_type(&self) -> &str { "MyNode" }
+}
+registry.register_rust(Arc::new(MyNodeFactory));
+```
+
+**New API** (recommended):
+```rust
+register_rust_node_default!(registry, MyNode);
+```
+
+Both APIs work together - you can mix old and new styles in the same registry.
+
 ## Architecture
 
 ```
