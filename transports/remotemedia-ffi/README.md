@@ -30,19 +30,42 @@ This crate provides Python bindings to the `remotemedia-runtime-core`, enabling:
 
 ## Installation
 
-### From Source
+### Development (Editable Install)
+
+For local development with editable python-client:
+
+```bash
+# 1. Install python-client as editable
+cd python-client
+pip install -e . --no-deps
+
+# 2. Build and link Rust runtime
+cd ../transports/remotemedia-ffi
+./dev-install.sh
+```
+
+The `dev-install.sh` script:
+- Builds the Rust extension with maturin
+- Creates a symlink in python-client/remotemedia/
+- Auto-updates when you rebuild
+
+### Production Install
+
+```bash
+# Install python-client normally
+pip install python-client/
+
+# Install Rust runtime from wheel
+pip install remotemedia_ffi-0.4.0-cp310-abi3-macosx_11_0_arm64.whl
+```
+
+Or build the wheel yourself:
 
 ```bash
 cd transports/remotemedia-ffi
 pip install maturin
-maturin develop --release
-```
-
-### For Python Package
-
-```bash
-# In python-client/
-pip install -e .
+maturin build --release --features extension-module
+# Wheel will be in: ../../target/wheels/
 ```
 
 ## Usage
@@ -51,7 +74,12 @@ pip install -e .
 
 ```python
 import asyncio
-from remotemedia_ffi import execute_pipeline
+import json
+from remotemedia.runtime import execute_pipeline, is_available
+
+# Check if Rust runtime is available
+if is_available():
+    print("Using Rust-accelerated runtime")
 
 async def main():
     manifest = {
@@ -77,6 +105,8 @@ asyncio.run(main())
 ### With Input Data
 
 ```python
+from remotemedia.runtime import execute_pipeline_with_input
+
 result = await execute_pipeline_with_input(
     manifest_json,
     input_data=["Hello, world!"],
@@ -88,7 +118,7 @@ result = await execute_pipeline_with_input(
 
 ```python
 import numpy as np
-from remotemedia_ffi import numpy_to_audio
+from remotemedia.runtime import numpy_to_audio
 
 # Convert numpy array to audio data (zero-copy)
 audio_samples = np.random.randn(16000).astype(np.float32)
@@ -178,7 +208,7 @@ Compared to pure Python execution:
 from remotemedia_runtime import execute_pipeline
 
 # NEW (v0.4.x):
-from remotemedia_ffi import execute_pipeline  # Same API
+from remotemedia.runtime import execute_pipeline  # Same API
 ```
 
 The API remains the same, but execution now goes through the decoupled `PipelineRunner`.

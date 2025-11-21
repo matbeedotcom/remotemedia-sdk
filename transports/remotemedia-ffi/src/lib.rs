@@ -14,7 +14,7 @@
 //!
 //! ```python
 //! import asyncio
-//! from remotemedia_ffi import execute_pipeline
+//! from remotemedia.runtime import execute_pipeline
 //!
 //! async def main():
 //!     manifest = '{"version": "v1", ...}'
