@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Example 4: All Supported Input Types
+Example 4: All Supported Input Types with Node Instances
 
-Demonstrates all input types supported by execute_pipeline().
-Feature 011 - Complete API Surface
+Demonstrates different ways to execute pipelines with Node instances.
+Feature 011 - Direct Instance Execution
 """
 
 import sys
@@ -15,57 +15,64 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "python-client"))
 
 
 async def main():
-    """Demonstrate all input types."""
+    """Demonstrate all input types for instance execution."""
     print("=" * 60)
     print("Example 4: All Supported Input Types")
     print("=" * 60)
     print()
 
-    from remotemedia import execute_pipeline
-    from remotemedia.core.pipeline import Pipeline
+    from remotemedia import execute_pipeline, execute_pipeline_with_input
     from remotemedia.core.node import Node
-    from remotemedia.nodes import PassThroughNode
 
     # Custom node for demo
     class EchoNode(Node):
+        def __init__(self, count=1, **kwargs):
+            super().__init__(**kwargs)
+            self.count = count
+            self.executions = 0
+
         def process(self, data):
-            return f"Echo: {data}"
+            self.executions += 1
+            return f"Echo #{self.executions}: {data}"
 
-    print("Testing all input types to execute_pipeline():")
+    print("Testing input types for instance execution:")
     print()
 
-    # Type 1: Pipeline instance
-    print("1. Pipeline Instance")
-    pipeline = Pipeline(name="demo")
-    pipeline.add_node(EchoNode(name="echo"))
-    result1 = await execute_pipeline(pipeline)
-    print(f"   ✓ Pipeline instance: {result1}")
+    # Type 1: Single Node instance (as list)
+    print("1. Single Node Instance (List)")
+    single_node = [EchoNode(name="echo")]
+    result1 = await execute_pipeline(single_node)
+    print(f"   ✓ Single instance: {result1}")
     print()
 
-    # Type 2: List of Node instances
-    print("2. List of Node Instances")
-    nodes = [EchoNode(name="echo1"), EchoNode(name="echo2")]
-    result2 = await execute_pipeline(nodes)
-    print(f"   ✓ List[Node]: {result2}")
-    print()
-
-    # Type 3: Mixed list (Node + dict)
-    print("3. Mixed List (Node + dict)")
-    mixed = [
-        EchoNode(name="echo"),
-        {"node_type": "PassThrough", "params": {}}
+    # Type 2: Multiple Node instances in sequence
+    print("2. Multiple Node Instances (Chained)")
+    nodes = [
+        EchoNode(name="echo1", count=1),
+        EchoNode(name="echo2", count=2)
     ]
-    result3 = await execute_pipeline(mixed)
-    print(f"   ✓ Mixed list: {result3}")
+    result2 = await execute_pipeline(nodes)
+    print(f"   ✓ Chained instances: {result2}")
     print()
 
-    # Type 4: Dict manifest
-    print("4. Dict Manifest")
+    # Type 3: Instance execution with streaming input
+    print("3. Instance with Streaming Input")
+    processor = EchoNode(name="processor")
+    results3 = await execute_pipeline_with_input(
+        [processor],
+        ["input1", "input2", "input3"]
+    )
+    print(f"   ✓ Streaming results: {results3}")
+    print(f"   ✓ State preserved: processed {processor.executions} items")
+    print()
+
+    # Type 4: For registered nodes, manifest still works
+    print("4. Dict Manifest (Registered Nodes Only)")
     manifest_dict = {
         "version": "v1",
         "metadata": {"name": "dict-demo"},
         "nodes": [
-            {"id": "echo_0", "node_type": "PassThrough", "params": {}}
+            {"id": "pass_0", "node_type": "PassThrough", "params": {}}
         ],
         "connections": []
     }
@@ -81,8 +88,12 @@ async def main():
     print()
 
     print("=" * 60)
-    print("✅ All 5 input types work correctly!")
-    print("Feature 011 provides complete flexibility in API usage")
+    print("✅ All input types work correctly!")
+    print()
+    print("Key Features:")
+    print("  ✓ Custom Node instances execute without registration")
+    print("  ✓ State preserved across streaming inputs")
+    print("  ✓ Backward compatible with manifest-based execution")
     print("=" * 60)
 
 

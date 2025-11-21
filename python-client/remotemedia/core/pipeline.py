@@ -162,11 +162,11 @@ class Pipeline:
         try:
             for node in self.nodes:
                 self.logger.info(f"Initializing node: {node.name}")
-                await node.initialize()
-            
+                node.initialize()
+
             self._is_initialized = True
             self.logger.info(f"Pipeline '{self.name}' initialized successfully")
-            
+
         except Exception as e:
             self.logger.error(f"Failed to initialize pipeline '{self.name}': {e}")
             # Clean up any partially initialized nodes
@@ -380,17 +380,17 @@ class Pipeline:
     async def cleanup(self) -> None:
         """
         Clean up the pipeline and all its nodes.
-        
+
         This method should be called when the pipeline is no longer needed.
         """
         self.logger.info(f"Cleaning up pipeline '{self.name}'")
-        
+
         for node in self.nodes:
             try:
-                await node.cleanup()
+                node.cleanup()
             except Exception as e:
                 self.logger.warning(f"Error cleaning up node '{node.name}': {e}")
-        
+
         self._is_initialized = False
         self.logger.info(f"Pipeline '{self.name}' cleanup completed")
     

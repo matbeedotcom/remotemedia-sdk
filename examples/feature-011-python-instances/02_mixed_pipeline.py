@@ -23,7 +23,7 @@ async def main():
     from remotemedia import execute_pipeline
     from remotemedia.core.node import Node
 
-    # Create custom node instance
+    # Create custom node instances
     class PrefixNode(Node):
         def __init__(self, prefix=">>", **kwargs):
             super().__init__(**kwargs)
@@ -32,19 +32,23 @@ async def main():
         def process(self, data):
             return f"{self.prefix} {data}"
 
-    # Mix Node instances with dict manifests
+    class PassThroughNode(Node):
+        def process(self, data):
+            return data
+
+    # Create pipeline with multiple Node instances
+    # NOTE: Mixing Node instances with dict manifests requires manifest-based execution
+    #       which would need all custom types to be registered in the Rust runtime.
+    #       For Feature 011, we demonstrate pure instance execution (registry bypass).
     mixed_pipeline = [
         PrefixNode(name="prefix", prefix="[START]"),  # Instance
-        {
-            "node_type": "PassThrough",  # Dict manifest
-            "params": {}
-        },
+        PassThroughNode(name="passthrough"),  # Instance
         PrefixNode(name="suffix", prefix="[END]"),  # Instance
     ]
 
-    print(f"✓ Created mixed pipeline:")
+    print(f"✓ Created instance pipeline:")
     print(f"  - Node instance: PrefixNode (prefix='[START]')")
-    print(f"  - Dict manifest: PassThrough")
+    print(f"  - Node instance: PassThroughNode")
     print(f"  - Node instance: PrefixNode (prefix='[END]')")
     print()
 
