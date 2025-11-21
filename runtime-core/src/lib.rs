@@ -218,10 +218,16 @@ pub mod data {
                 }
                 RuntimeData::Text(s) => s.len(),
                 RuntimeData::Binary(b) => b.len(),
-                RuntimeData::ControlMessage { segment_id, metadata, .. } => {
+                RuntimeData::ControlMessage {
+                    segment_id,
+                    metadata,
+                    ..
+                } => {
                     // Approximate size: type + timestamp + segment_id + metadata
                     let segment_id_size = segment_id.as_ref().map(|s| s.len()).unwrap_or(0);
-                    let metadata_size = serde_json::to_string(metadata).map(|s| s.len()).unwrap_or(0);
+                    let metadata_size = serde_json::to_string(metadata)
+                        .map(|s| s.len())
+                        .unwrap_or(0);
                     std::mem::size_of::<ControlMessageType>() + 8 + segment_id_size + metadata_size
                 }
             }

@@ -18,8 +18,8 @@
 //! Skip if Docker unavailable: `SKIP_DOCKER_TESTS=1 cargo bench`
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::time::{Duration, Instant};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 /// Check if Docker is available for benchmarking
@@ -78,7 +78,6 @@ fn bench_docker_init_latency(c: &mut Criterion) {
                             resource_limits: ResourceLimits {
                                 memory_mb,
                                 cpu_cores: 1.0,
-                                gpu_devices: vec![],
                             },
                             base_image: None,
                             env: Default::default(),
@@ -132,7 +131,6 @@ fn bench_docker_lifecycle(c: &mut Criterion) {
                     resource_limits: ResourceLimits {
                         memory_mb: 512,
                         cpu_cores: 0.5,
-                        gpu_devices: vec![],
                     },
                     base_image: None,
                     env: Default::default(),
@@ -164,7 +162,6 @@ fn bench_docker_lifecycle(c: &mut Criterion) {
                 resource_limits: ResourceLimits {
                     memory_mb: 512,
                     cpu_cores: 0.5,
-                    gpu_devices: vec![],
                 },
                 base_image: None,
                 env: Default::default(),
@@ -226,7 +223,6 @@ fn bench_docker_ipc_latency(c: &mut Criterion) {
                         resource_limits: ResourceLimits {
                             memory_mb: 512,
                             cpu_cores: 1.0,
-                            gpu_devices: vec![],
                         },
                         base_image: None,
                         env: Default::default(),
@@ -255,14 +251,15 @@ fn bench_docker_ipc_latency(c: &mut Criterion) {
 
                             // Measure data send latency
                             let start = Instant::now();
-                            let _ = black_box(executor.lock().await.execute_streaming(audio_data).await);
+                            let _ = black_box(
+                                executor.lock().await.execute_streaming(audio_data).await,
+                            );
                             let duration = start.elapsed();
 
                             duration
                         }
                     }
                 });
-
 
                 // Cleanup after benchmark
                 let _ = runtime.block_on(async {
@@ -323,7 +320,6 @@ fn bench_docker_vs_multiprocess(c: &mut Criterion) {
                     resource_limits: ResourceLimits {
                         memory_mb: 512,
                         cpu_cores: 1.0,
-                        gpu_devices: vec![],
                     },
                     base_image: None,
                     env: Default::default(),
@@ -379,7 +375,6 @@ fn bench_docker_image_cache(c: &mut Criterion) {
                     resource_limits: ResourceLimits {
                         memory_mb: 512,
                         cpu_cores: 0.5,
-                        gpu_devices: vec![],
                     },
                     base_image: None,
                     env: Default::default(),
@@ -411,7 +406,6 @@ fn bench_docker_image_cache(c: &mut Criterion) {
                 resource_limits: ResourceLimits {
                     memory_mb: 512,
                     cpu_cores: 0.5,
-                    gpu_devices: vec![],
                 },
                 base_image: None,
                 env: Default::default(),
@@ -461,7 +455,6 @@ fn print_latency_summary(name: &str, latencies: &[Duration]) {
     let p50 = sorted.get(p50_idx).unwrap_or(&zero);
     let p95 = sorted.get(p95_idx).unwrap_or(&zero);
     let p99 = sorted.get(p99_idx).unwrap_or(&zero);
-
 
     println!("=== {} Latency Summary ===", name);
     println!("P50: {:?}", p50);

@@ -63,7 +63,8 @@ impl AudioEncoder {
     /// Create a new audio encoder
     pub fn new(config: AudioEncoderConfig) -> Result<Self> {
         // Validate configuration
-        if config.sample_rate != 48000 && config.sample_rate != 24000 && config.sample_rate != 16000 {
+        if config.sample_rate != 48000 && config.sample_rate != 24000 && config.sample_rate != 16000
+        {
             return Err(Error::InvalidConfig(
                 "Opus sample rate must be 48000, 24000, or 16000 Hz".to_string(),
             ));
@@ -88,14 +89,12 @@ impl AudioEncoder {
             _ => unreachable!(),
         };
 
-        let mut encoder = opus::Encoder::new(
-            config.sample_rate,
-            channels,
-            opus::Application::Voip,
-        ).map_err(|e| Error::EncodingError(format!("Failed to create Opus encoder: {:?}", e)))?;
+        let mut encoder = opus::Encoder::new(config.sample_rate, channels, opus::Application::Voip)
+            .map_err(|e| Error::EncodingError(format!("Failed to create Opus encoder: {:?}", e)))?;
 
         // Configure encoder
-        encoder.set_bitrate(opus::Bitrate::Bits(config.bitrate as i32))
+        encoder
+            .set_bitrate(opus::Bitrate::Bits(config.bitrate as i32))
             .map_err(|e| Error::EncodingError(format!("Failed to set bitrate: {:?}", e)))?;
 
         Ok(Self { config, encoder })
@@ -117,7 +116,9 @@ impl AudioEncoder {
         let mut output = vec![0u8; MAX_PACKET_SIZE];
 
         // Encode the samples
-        let len = self.encoder.encode_float(samples, &mut output)
+        let len = self
+            .encoder
+            .encode_float(samples, &mut output)
             .map_err(|e| Error::EncodingError(format!("Opus encoding failed: {}", e)))?;
 
         // Truncate to actual encoded size
@@ -141,7 +142,8 @@ impl AudioDecoder {
     /// Create a new audio decoder
     pub fn new(config: AudioEncoderConfig) -> Result<Self> {
         // Validate configuration
-        if config.sample_rate != 48000 && config.sample_rate != 24000 && config.sample_rate != 16000 {
+        if config.sample_rate != 48000 && config.sample_rate != 24000 && config.sample_rate != 16000
+        {
             return Err(Error::InvalidConfig(
                 "Opus sample rate must be 48000, 24000, or 16000 Hz".to_string(),
             ));
@@ -183,7 +185,9 @@ impl AudioDecoder {
         let mut output = vec![0f32; MAX_FRAME_SIZE * self.config.channels as usize];
 
         // Decode the packet
-        let len = self.decoder.decode_float(payload, &mut output, false)
+        let len = self
+            .decoder
+            .decode_float(payload, &mut output, false)
             .map_err(|e| Error::EncodingError(format!("Opus decoding failed: {:?}", e)))?;
 
         // Truncate to actual decoded size

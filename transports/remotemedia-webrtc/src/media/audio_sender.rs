@@ -179,7 +179,10 @@ impl AudioSender {
         });
 
         use tracing::info;
-        info!("AudioSender created with buffer capacity: {} frames", buffer_capacity);
+        info!(
+            "AudioSender created with buffer capacity: {} frames",
+            buffer_capacity
+        );
         sender
     }
 
@@ -214,7 +217,10 @@ impl AudioSender {
         let mut loop_iterations = 0u64;
         let start_time = Instant::now();
 
-        info!("Audio transmission thread: entering main loop, shutdown={}", shutdown.load(Ordering::Acquire));
+        info!(
+            "Audio transmission thread: entering main loop, shutdown={}",
+            shutdown.load(Ordering::Acquire)
+        );
 
         while !shutdown.load(Ordering::Acquire) {
             loop_iterations += 1;
@@ -245,9 +251,7 @@ impl AudioSender {
 
                 // Send the sample using the dedicated runtime
                 let track_clone = Arc::clone(&track);
-                let send_result = rt.block_on(async {
-                    track_clone.write_sample(&sample).await
-                });
+                let send_result = rt.block_on(async { track_clone.write_sample(&sample).await });
 
                 if let Err(e) = send_result {
                     warn!("Failed to send audio frame: {}", e);

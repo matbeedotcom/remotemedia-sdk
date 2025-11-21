@@ -136,7 +136,8 @@ impl PipelineTransport for HttpServer {
     async fn stream(
         &self,
         manifest: Arc<Manifest>,
-    ) -> remotemedia_runtime_core::Result<Box<dyn remotemedia_runtime_core::transport::StreamSession>> {
+    ) -> remotemedia_runtime_core::Result<Box<dyn remotemedia_runtime_core::transport::StreamSession>>
+    {
         let session = self.state.runner.create_stream_session(manifest).await?;
         Ok(Box::new(session))
     }
@@ -232,7 +233,11 @@ async fn create_stream_handler(
         output_tx,
     };
 
-    state.sessions.write().await.insert(session_id.clone(), handle);
+    state
+        .sessions
+        .write()
+        .await
+        .insert(session_id.clone(), handle);
 
     tracing::info!("Created streaming session: {}", session_id);
 
@@ -253,21 +258,20 @@ async fn stream_input_handler(
 ) -> std::result::Result<StatusCode, (StatusCode, String)> {
     let mut sessions = state.sessions.write().await;
 
-    let handle = sessions
-        .get_mut(&session_id)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Session not found: {}", session_id)))?;
+    let handle = sessions.get_mut(&session_id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Session not found: {}", session_id),
+        )
+    })?;
 
     // Send input to session
-    handle
-        .session
-        .send_input(request.data)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to send input: {}", e),
-            )
-        })?;
+    handle.session.send_input(request.data).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to send input: {}", e),
+        )
+    })?;
 
     // Poll for outputs and broadcast to all SSE subscribers
     while let Ok(Some(output)) = handle.session.recv_output().await {
@@ -282,13 +286,19 @@ async fn stream_input_handler(
 async fn stream_output_handler(
     State(state): State<ServerState>,
     Path(session_id): Path<String>,
-) -> std::result::Result<Sse<impl Stream<Item = std::result::Result<Event, Infallible>>>, (StatusCode, String)> {
+) -> std::result::Result<
+    Sse<impl Stream<Item = std::result::Result<Event, Infallible>>>,
+    (StatusCode, String),
+> {
     // Get session and subscribe to broadcast channel
     let rx = {
         let sessions = state.sessions.read().await;
-        let handle = sessions
-            .get(&session_id)
-            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Session not found: {}", session_id)))?;
+        let handle = sessions.get(&session_id).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Session not found: {}", session_id),
+            )
+        })?;
 
         // Subscribe to broadcast channel (supports multiple SSE connections)
         handle.output_tx.subscribe()
@@ -296,20 +306,23 @@ async fn stream_output_handler(
 
     // Convert broadcast receiver to SSE stream
     let session_id_clone = session_id.clone();
-    let stream = BroadcastStream::new(rx)
-        .filter_map(move |result| {
-            // Filter out lagged messages (when buffer is full)
-            match result {
-                Ok(data) => {
-                    let json = serde_json::to_string(&data).unwrap_or_default();
-                    Some(Ok(Event::default().data(json)))
-                }
-                Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
-                    tracing::warn!("SSE stream lagged by {} messages for session {}", n, session_id_clone);
-                    None
-                }
+    let stream = BroadcastStream::new(rx).filter_map(move |result| {
+        // Filter out lagged messages (when buffer is full)
+        match result {
+            Ok(data) => {
+                let json = serde_json::to_string(&data).unwrap_or_default();
+                Some(Ok(Event::default().data(json)))
             }
-        });
+            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
+                tracing::warn!(
+                    "SSE stream lagged by {} messages for session {}",
+                    n,
+                    session_id_clone
+                );
+                None
+            }
+        }
+    });
 
     tracing::debug!("SSE connection established for session {}", session_id);
 
@@ -323,9 +336,12 @@ async fn close_stream_handler(
 ) -> std::result::Result<StatusCode, (StatusCode, String)> {
     let mut sessions = state.sessions.write().await;
 
-    let mut handle = sessions
-        .remove(&session_id)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Session not found: {}", session_id)))?;
+    let mut handle = sessions.remove(&session_id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Session not found: {}", session_id),
+        )
+    })?;
 
     // Close session
     handle.session.close().await.map_err(|e| {

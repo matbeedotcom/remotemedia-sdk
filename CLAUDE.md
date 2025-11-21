@@ -1,4 +1,4 @@
-﻿# CLAUDE.md
+# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -93,15 +93,22 @@ cargo bench -- --list
 ```bash
 cd python-client
 
-# Install in development mode
-pip install -e .
+# Install in development mode (without deps for faster iteration)
+pip install -e . --no-deps
+
+# Build and link Rust runtime (for remotemedia.runtime)
+cd ../transports/remotemedia-ffi
+./dev-install.sh
 
 # Run tests
+cd ../../python-client
 pytest
 
 # Lint
 ruff check .
 ```
+
+**Note**: For editable installs, use `dev-install.sh` to create a symlink to the Rust runtime. For production, just `pip install` both packages normally.
 
 ## Architecture Overview
 

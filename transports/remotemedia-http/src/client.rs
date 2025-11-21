@@ -158,7 +158,10 @@ impl PipelineClient for HttpPipelineClient {
 
         // Serialize manifest to JSON
         let manifest_json = serde_json::to_value(manifest.as_ref()).map_err(|e| {
-            remotemedia_runtime_core::Error::Transport(format!("Failed to serialize manifest: {}", e))
+            remotemedia_runtime_core::Error::Transport(format!(
+                "Failed to serialize manifest: {}",
+                e
+            ))
         })?;
 
         let request_body = ExecuteRequest {
@@ -176,24 +179,35 @@ impl PipelineClient for HttpPipelineClient {
 
         // Send request
         let response = request.send().await.map_err(|e| {
-            remotemedia_runtime_core::Error::RemoteExecutionFailed(format!("HTTP request failed: {}", e))
+            remotemedia_runtime_core::Error::RemoteExecutionFailed(format!(
+                "HTTP request failed: {}",
+                e
+            ))
         })?;
 
         // Check status
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(remotemedia_runtime_core::Error::RemoteExecutionFailed(format!(
-                "HTTP {} {}: {}",
-                status.as_u16(),
-                status.canonical_reason().unwrap_or("Unknown"),
-                error_text
-            )));
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(remotemedia_runtime_core::Error::RemoteExecutionFailed(
+                format!(
+                    "HTTP {} {}: {}",
+                    status.as_u16(),
+                    status.canonical_reason().unwrap_or("Unknown"),
+                    error_text
+                ),
+            ));
         }
 
         // Parse response
         let execute_response: ExecuteResponse = response.json().await.map_err(|e| {
-            remotemedia_runtime_core::Error::RemoteExecutionFailed(format!("Failed to parse response: {}", e))
+            remotemedia_runtime_core::Error::RemoteExecutionFailed(format!(
+                "Failed to parse response: {}",
+                e
+            ))
         })?;
 
         Ok(execute_response.output)
@@ -211,7 +225,10 @@ impl PipelineClient for HttpPipelineClient {
 
         // Serialize manifest
         let manifest_json = serde_json::to_value(manifest.as_ref()).map_err(|e| {
-            remotemedia_runtime_core::Error::Transport(format!("Failed to serialize manifest: {}", e))
+            remotemedia_runtime_core::Error::Transport(format!(
+                "Failed to serialize manifest: {}",
+                e
+            ))
         })?;
 
         let request_body = CreateStreamRequest {
@@ -226,23 +243,34 @@ impl PipelineClient for HttpPipelineClient {
 
         // Send request
         let response = request.send().await.map_err(|e| {
-            remotemedia_runtime_core::Error::RemoteExecutionFailed(format!("Failed to create session: {}", e))
+            remotemedia_runtime_core::Error::RemoteExecutionFailed(format!(
+                "Failed to create session: {}",
+                e
+            ))
         })?;
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(remotemedia_runtime_core::Error::RemoteExecutionFailed(format!(
-                "HTTP {} {}: {}",
-                status.as_u16(),
-                status.canonical_reason().unwrap_or("Unknown"),
-                error_text
-            )));
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(remotemedia_runtime_core::Error::RemoteExecutionFailed(
+                format!(
+                    "HTTP {} {}: {}",
+                    status.as_u16(),
+                    status.canonical_reason().unwrap_or("Unknown"),
+                    error_text
+                ),
+            ));
         }
 
         // Parse response
         let create_response: CreateStreamResponse = response.json().await.map_err(|e| {
-            remotemedia_runtime_core::Error::RemoteExecutionFailed(format!("Failed to parse response: {}", e))
+            remotemedia_runtime_core::Error::RemoteExecutionFailed(format!(
+                "Failed to parse response: {}",
+                e
+            ))
         })?;
 
         // Create stream session
@@ -357,10 +385,14 @@ impl HttpStreamSession {
                                         // Parse "data: {json}" format
                                         if let Some(data_line) = event.strip_prefix("data: ") {
                                             if let Ok(transport_data) =
-                                                serde_json::from_str::<TransportData>(data_line.trim())
+                                                serde_json::from_str::<TransportData>(
+                                                    data_line.trim(),
+                                                )
                                             {
                                                 if output_tx.send(transport_data).is_err() {
-                                                    tracing::debug!("SSE receiver dropped, stopping stream");
+                                                    tracing::debug!(
+                                                        "SSE receiver dropped, stopping stream"
+                                                    );
                                                     return;
                                                 }
                                             }
@@ -498,11 +530,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_client_with_auth() {
-        let client = HttpPipelineClient::new(
-            "https://api.example.com",
-            Some("test-token".to_string()),
-        )
-        .await;
+        let client =
+            HttpPipelineClient::new("https://api.example.com", Some("test-token".to_string()))
+                .await;
         assert!(client.is_ok());
     }
 

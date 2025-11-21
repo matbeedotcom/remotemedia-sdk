@@ -608,4 +608,67 @@ class Node(ABC):
 
     def __repr__(self) -> str:
         """String representation of the node."""
-        return f"{self.__class__.__name__}(name='{self.name}')" 
+        return f"{self.__class__.__name__}(name='{self.name}')"
+
+    def __getstate__(self):
+        """
+        Prepare node for pickling (Feature 011 - US3).
+
+        Removes non-serializable attributes:
+        - StateManager (has threading.Lock)
+        - Logger instances
+        - Any attributes starting with '_' that are runtime-only
+
+        Returns:
+            dict: Serializable state dictionary
+        """
+        state = self.__dict__.copy()
+
+        # Remove non-serializable state manager
+        if 'state' in state:
+            # Save state manager configuration, not the instance
+            if state['state'] is not None:
+                state['_state_config'] = {
+                    'enable_state': self.enable_state,
+                    'default_ttl': self.state.default_ttl if hasattr(self.state, 'default_ttl') else None,
+                    'max_sessions': self.state.max_sessions if hasattr(self.state, 'max_sessions') else None,
+                }
+            state.pop('state', None)
+
+        # Remove logger (can be recreated)
+        state.pop('logger', None)
+
+        # Mark as not initialized (will be re-initialized after unpickle)
+        state['_is_initialized'] = False
+
+        return state
+
+    def __setstate__(self, state):
+        """
+        Restore node after unpickling (Feature 011 - US3).
+
+        Recreates non-serializable attributes:
+        - StateManager (from saved config)
+        - Logger instance
+
+        Args:
+            state: State dictionary from __getstate__
+        """
+        # Restore state
+        self.__dict__.update(state)
+
+        # Recreate logger
+        self.logger = logging.getLogger(self.__class__.__name__)
+
+        # Recreate state manager if it was enabled
+        if state.get('_state_config'):
+            config = state.pop('_state_config')
+            self.state = StateManager(
+                default_ttl=config.get('default_ttl'),
+                max_sessions=config.get('max_sessions')
+            )
+        elif state.get('enable_state', False):
+            # Fallback: recreate with defaults
+            self.state = StateManager()
+        else:
+            self.state = None 

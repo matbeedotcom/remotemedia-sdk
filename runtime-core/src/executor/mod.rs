@@ -636,17 +636,30 @@ impl Executor {
                 let collected_outputs_clone = collected_outputs.clone();
                 let node_id_clone = node_id.clone();
                 let callback = Box::new(move |output: crate::data::RuntimeData| -> Result<()> {
-                    tracing::debug!("[Executor] Callback invoked for node '{}', received output type: {:?}", node_id_clone,
+                    tracing::debug!(
+                        "[Executor] Callback invoked for node '{}', received output type: {:?}",
+                        node_id_clone,
                         match &output {
-                            crate::data::RuntimeData::Audio { samples, sample_rate, channels } =>
-                                format!("Audio({} samples, {}Hz, {} ch)", samples.len(), sample_rate, channels),
+                            crate::data::RuntimeData::Audio {
+                                samples,
+                                sample_rate,
+                                channels,
+                            } => format!(
+                                "Audio({} samples, {}Hz, {} ch)",
+                                samples.len(),
+                                sample_rate,
+                                channels
+                            ),
                             crate::data::RuntimeData::Text(text) =>
                                 format!("Text({} chars)", text.len()),
                             _ => format!("{:?}", output),
                         }
                     );
                     collected_outputs_clone.lock().unwrap().push(output);
-                    tracing::debug!("[Executor] Output added to collected_outputs for node '{}'", node_id_clone);
+                    tracing::debug!(
+                        "[Executor] Output added to collected_outputs for node '{}'",
+                        node_id_clone
+                    );
                     Ok(())
                 });
 
@@ -764,7 +777,8 @@ impl Executor {
             // Use the provided callback directly for immediate forwarding
             let callback = Box::new(output_callback);
 
-            node.process_streaming_async(input_data, session_id, callback).await?;
+            node.process_streaming_async(input_data, session_id, callback)
+                .await?;
 
             return Ok(());
         }
@@ -772,7 +786,8 @@ impl Executor {
         // For multi-node pipelines, we'd need to implement proper graph execution
         // with intermediate buffering. For now, return an error.
         Err(Error::Execution(
-            "Multi-node streaming pipelines not yet supported with callback-based execution".to_string()
+            "Multi-node streaming pipelines not yet supported with callback-based execution"
+                .to_string(),
         ))
     }
 

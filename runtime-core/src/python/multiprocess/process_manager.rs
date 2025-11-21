@@ -63,15 +63,17 @@ impl ExecutionTarget {
                 true
             }
             #[cfg(feature = "docker")]
-            ExecutionTarget::Container { container_id, docker_client } => {
+            ExecutionTarget::Container {
+                container_id,
+                docker_client,
+            } => {
                 // Check container status
                 use bollard::query_parameters::InspectContainerOptions;
-                match docker_client.inspect_container(container_id, None::<InspectContainerOptions>).await {
-                    Ok(info) => {
-                        info.state
-                            .and_then(|s| s.running)
-                            .unwrap_or(false)
-                    }
+                match docker_client
+                    .inspect_container(container_id, None::<InspectContainerOptions>)
+                    .await
+                {
+                    Ok(info) => info.state.and_then(|s| s.running).unwrap_or(false),
                     Err(_) => false,
                 }
             }
@@ -87,7 +89,10 @@ impl ExecutionTarget {
                 Ok(())
             }
             #[cfg(feature = "docker")]
-            ExecutionTarget::Container { container_id, docker_client } => {
+            ExecutionTarget::Container {
+                container_id,
+                docker_client,
+            } => {
                 // Stop container with timeout
                 use bollard::container::StopContainerOptions;
                 let options = StopContainerOptions {
@@ -510,14 +515,16 @@ impl ProcessManager {
         docker_support: &super::docker_support::DockerSupport,
         docker_config: &super::docker_support::DockerNodeConfig,
     ) -> Result<ProcessHandle> {
-        tracing::info!("Spawning Docker container for node {} ({})", node_id, node_type);
+        tracing::info!(
+            "Spawning Docker container for node {} ({})",
+            node_id,
+            node_type
+        );
 
         // Create container with IPC volume mounts
-        let container_id = docker_support.create_container(
-            node_id,
-            session_id,
-            docker_config,
-        ).await?;
+        let container_id = docker_support
+            .create_container(node_id, session_id, docker_config)
+            .await?;
 
         // Start the container
         docker_support.start_container(&container_id).await?;
@@ -544,9 +551,16 @@ impl ProcessManager {
         format!("{}_{}", session_id, node_id).hash(&mut hasher);
         let pseudo_pid = (hasher.finish() & 0xFFFFFFFF) as u32;
 
-        self.processes.write().await.insert(pseudo_pid, handle.clone());
+        self.processes
+            .write()
+            .await
+            .insert(pseudo_pid, handle.clone());
 
-        tracing::info!("Docker container {} started for node {}", container_id, node_id);
+        tracing::info!(
+            "Docker container {} started for node {}",
+            container_id,
+            node_id
+        );
 
         Ok(handle)
     }

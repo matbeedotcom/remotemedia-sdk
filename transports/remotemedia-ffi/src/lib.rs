@@ -9,12 +9,13 @@
 //! - **api.rs**: Main FFI functions (execute_pipeline, etc.)
 //! - **marshal.rs**: Python ↔ JSON conversion
 //! - **numpy_bridge.rs**: Zero-copy numpy array integration
+//! - **instance_handler.rs**: Python Node instance execution support
 //!
 //! # Usage (Python)
 //!
 //! ```python
 //! import asyncio
-//! from remotemedia_ffi import execute_pipeline
+//! from remotemedia.runtime import execute_pipeline
 //!
 //! async def main():
 //!     manifest = '{"version": "v1", ...}'
@@ -27,15 +28,18 @@
 #![warn(clippy::all)]
 
 mod api;
+mod instance_handler;
 mod marshal;
 mod numpy_bridge;
 
 use pyo3::prelude::*;
 
-/// Python module for RemoteMedia FFI transport
+/// Python module for RemoteMedia Rust Runtime
 ///
 /// Provides async pipeline execution with Rust acceleration
+/// Installed as remotemedia.runtime
 #[pymodule]
+#[pyo3(name = "runtime")]
 fn remotemedia_ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Initialize tracing on module load
     let _ = tracing_subscriber::fmt()
@@ -48,6 +52,7 @@ fn remotemedia_ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add FFI functions from api module
     m.add_function(wrap_pyfunction!(api::execute_pipeline, m)?)?;
     m.add_function(wrap_pyfunction!(api::execute_pipeline_with_input, m)?)?;
+    m.add_function(wrap_pyfunction!(api::execute_pipeline_with_instances, m)?)?; // Feature 011
     m.add_function(wrap_pyfunction!(api::get_runtime_version, m)?)?;
     m.add_function(wrap_pyfunction!(api::is_available, m)?)?;
 

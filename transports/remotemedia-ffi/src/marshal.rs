@@ -3,10 +3,12 @@
 //! This module provides conversion functions for:
 //! - Python objects → Rust serde_json::Value
 //! - Rust serde_json::Value → Python objects
+//! - RuntimeData ↔ Python objects (Feature 011)
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 use pyo3::IntoPyObjectExt;
+use remotemedia_runtime_core::data::RuntimeData;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -352,6 +354,179 @@ pub fn json_to_python_with_cache<'py>(
             Ok(py_dict.into_any())
         }
     }
+}
+
+/// Convert Rust RuntimeData to Python object for passing to Node instances
+///
+/// # Arguments
+///
+/// * `py` - Python GIL token
+/// * `data` - RuntimeData to convert
+///
+/// # Returns
+///
+/// `PyResult<PyObject>` - Python representation of the data
+///
+/// # Example
+///
+/// ```rust
+/// Python::with_gil(|py| {
+///     let audio_data = RuntimeData::Audio {
+///         samples: vec![0.1, 0.2, 0.3],
+///         sample_rate: 16000,
+///         channels: 1,
+///     };
+///     let py_obj = runtime_data_to_python(py, &audio_data)?;
+///     Ok(())
+/// })
+/// ```
+pub fn runtime_data_to_python(py: Python<'_>, data: &RuntimeData) -> PyResult<PyObject> {
+    // T007: Convert RuntimeData to Python objects
+    match data {
+        RuntimeData::Audio {
+            samples,
+            sample_rate,
+            channels,
+        } => {
+            let dict = PyDict::new(py);
+            dict.set_item("type", "audio")?;
+            dict.set_item("samples", samples.as_slice())?;
+            dict.set_item("sample_rate", sample_rate)?;
+            dict.set_item("channels", channels)?;
+            Ok(dict.into())
+        }
+        RuntimeData::Text(s) => Ok(s.into_py_any(py)?),
+        RuntimeData::Json(v) => json_to_python(py, v).map(|obj| obj.unbind()),
+        RuntimeData::Binary(b) => Ok(pyo3::types::PyBytes::new(py, b).into()),
+        RuntimeData::Video { .. } => {
+            // Video not fully supported yet
+            let dict = PyDict::new(py);
+            dict.set_item("type", "video")?;
+            dict.set_item("note", "Video data not fully supported in FFI yet")?;
+            Ok(dict.into())
+        }
+        RuntimeData::Tensor { .. } => {
+            // Tensor not fully supported yet
+            let dict = PyDict::new(py);
+            dict.set_item("type", "tensor")?;
+            dict.set_item("note", "Tensor data not fully supported in FFI yet")?;
+            Ok(dict.into())
+        }
+        RuntimeData::ControlMessage { .. } => {
+            // Control message not fully supported yet
+            let dict = PyDict::new(py);
+            dict.set_item("type", "control_message")?;
+            dict.set_item(
+                "note",
+                "Control message data not fully supported in FFI yet",
+            )?;
+            Ok(dict.into())
+        }
+    }
+}
+
+/// Convert Python object to Rust RuntimeData for pipeline processing
+///
+/// # Arguments
+///
+/// * `py` - Python GIL token
+/// * `obj` - Python object to convert
+///
+/// # Returns
+///
+/// `PyResult<RuntimeData>` - RuntimeData variant
+///
+/// # Example
+///
+/// ```rust
+/// Python::with_gil(|py| {
+///     let py_str = "hello".into_bound_py_any(py)?;
+///     let runtime_data = python_to_runtime_data(py, &py_str)?;
+///     assert!(matches!(runtime_data, RuntimeData::Text(_)));
+///     Ok(())
+/// })
+/// ```
+pub fn python_to_runtime_data(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<RuntimeData> {
+    // T008: Convert Python objects to RuntimeData
+
+    // Check if it's a dict with "type" field (structured data)
+    if let Ok(dict) = obj.downcast::<PyDict>() {
+        if let Ok(Some(type_val)) = dict.get_item("type") {
+            let type_str: String = type_val.extract()?;
+            match type_str.as_str() {
+                "audio" => {
+                    let samples: Vec<f32> = dict
+                        .get_item("samples")?
+                        .ok_or_else(|| {
+                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                "Audio data missing 'samples' field",
+                            )
+                        })?
+                        .extract()?;
+                    let sample_rate: u32 = dict
+                        .get_item("sample_rate")?
+                        .ok_or_else(|| {
+                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                "Audio data missing 'sample_rate' field",
+                            )
+                        })?
+                        .extract()?;
+                    let channels: u32 = dict
+                        .get_item("channels")?
+                        .ok_or_else(|| {
+                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                "Audio data missing 'channels' field",
+                            )
+                        })?
+                        .extract()?;
+                    return Ok(RuntimeData::Audio {
+                        samples,
+                        sample_rate,
+                        channels,
+                    });
+                }
+                "text" => {
+                    let data: String = dict
+                        .get_item("data")?
+                        .ok_or_else(|| {
+                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                "Text data missing 'data' field",
+                            )
+                        })?
+                        .extract()?;
+                    return Ok(RuntimeData::Text(data));
+                }
+                "binary" => {
+                    let data: Vec<u8> = dict
+                        .get_item("data")?
+                        .ok_or_else(|| {
+                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                "Binary data missing 'data' field",
+                            )
+                        })?
+                        .extract()?;
+                    return Ok(RuntimeData::Binary(data));
+                }
+                _ => {
+                    // Unknown type - fall through to JSON conversion
+                }
+            }
+        }
+    }
+
+    // Try as string
+    if let Ok(s) = obj.extract::<String>() {
+        return Ok(RuntimeData::Text(s));
+    }
+
+    // Try as bytes
+    if let Ok(b) = obj.extract::<Vec<u8>>() {
+        return Ok(RuntimeData::Binary(b));
+    }
+
+    // Default: Convert to JSON
+    let json_val = python_to_json(py, obj)?;
+    Ok(RuntimeData::Json(json_val))
 }
 
 #[cfg(test)]

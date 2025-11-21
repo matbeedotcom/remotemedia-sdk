@@ -106,7 +106,7 @@ mod tests {
             "connections": []
         }"#;
         let manifest = Arc::new(serde_json::from_str::<Manifest>(manifest_json).unwrap());
-        
+
         let result = transport.stream(manifest).await;
         assert!(result.is_ok());
 

@@ -2,11 +2,11 @@
 //
 // Provides gRPC bidirectional streaming for WebRTC peer signaling
 
+use crate::config::WebRtcTransportConfig;
 use crate::generated::webrtc::{
     web_rtc_signaling_server::{WebRtcSignaling, WebRtcSignalingServer},
     *,
 };
-use crate::config::WebRtcTransportConfig;
 use crate::peer::ServerPeer;
 use remotemedia_runtime_core::{manifest::Manifest, transport::PipelineRunner};
 use std::collections::HashMap;
@@ -176,7 +176,6 @@ impl WebRtcSignalingService {
     }
 }
 
-
 #[tonic::async_trait]
 impl WebRtcSignaling for WebRtcSignalingService {
     type SignalStream = Pin<Box<dyn Stream<Item = Result<SignalingResponse, Status>> + Send>>;
@@ -204,9 +203,18 @@ impl WebRtcSignaling for WebRtcSignalingService {
             while let Some(result) = in_stream.next().await {
                 match result {
                     Ok(req) => {
-                        if let Err(e) =
-                            Self::handle_request(req, &peers, &pending_offers, &server_peers, &config, &runner, &manifest, &tx, &mut peer_id)
-                                .await
+                        if let Err(e) = Self::handle_request(
+                            req,
+                            &peers,
+                            &pending_offers,
+                            &server_peers,
+                            &config,
+                            &runner,
+                            &manifest,
+                            &tx,
+                            &mut peer_id,
+                        )
+                        .await
                         {
                             warn!("Error handling request: {}", e);
                             let _ = tx.send(Err(e)).await;
@@ -278,11 +286,7 @@ impl WebRtcSignaling for WebRtcSignalingService {
         &self,
         _request: Request<HealthCheckRequest>,
     ) -> Result<Response<HealthCheckResponse>, Status> {
-        let uptime = self
-            .start_time
-            .elapsed()
-            .unwrap_or_default()
-            .as_secs();
+        let uptime = self.start_time.elapsed().unwrap_or_default().as_secs();
 
         let peers_count = self.peers.read().await.len();
 
@@ -318,7 +322,19 @@ impl WebRtcSignalingService {
                 Self::handle_announce(announce, peers, tx, peer_id, &request_id).await
             }
             Some(signaling_request::Request::Offer(offer)) => {
-                Self::handle_offer(offer, peers, pending_offers, server_peers, config, runner, manifest, tx, peer_id, &request_id).await
+                Self::handle_offer(
+                    offer,
+                    peers,
+                    pending_offers,
+                    server_peers,
+                    config,
+                    runner,
+                    manifest,
+                    tx,
+                    peer_id,
+                    &request_id,
+                )
+                .await
             }
             Some(signaling_request::Request::Answer(answer)) => {
                 Self::handle_answer(answer, peers, tx, peer_id, &request_id).await
@@ -472,11 +488,16 @@ impl WebRtcSignalingService {
                 &**config,
                 Arc::clone(runner),
                 Arc::clone(manifest),
-            ).await {
+            )
+            .await
+            {
                 Ok(peer) => Arc::new(peer),
                 Err(e) => {
                     error!("Failed to create ServerPeer: {}", e);
-                    return Err(Status::internal(format!("Failed to create ServerPeer: {}", e)));
+                    return Err(Status::internal(format!(
+                        "Failed to create ServerPeer: {}",
+                        e
+                    )));
                 }
             };
 
@@ -492,7 +513,10 @@ impl WebRtcSignalingService {
             info!("ServerPeer generated answer, sending to {}", from_peer_id);
 
             // Store server peer
-            server_peers.write().await.insert(from_peer_id.clone(), Arc::clone(&server_peer));
+            server_peers
+                .write()
+                .await
+                .insert(from_peer_id.clone(), Arc::clone(&server_peer));
 
             // Send answer notification back to client
             let answer_notification = SignalingResponse {
@@ -532,19 +556,15 @@ impl WebRtcSignalingService {
             tx.send(Ok(response))
                 .await
                 .map_err(|_| Status::internal("Failed to send response"))?;
-
         } else {
             // P2P forwarding mode (original logic)
-            debug!(
-                "Forwarding offer: {} -> {}",
-                from_peer_id, offer.to_peer_id
-            );
+            debug!("Forwarding offer: {} -> {}", from_peer_id, offer.to_peer_id);
 
             // Get target peer
             let peers_read = peers.read().await;
-            let target_peer = peers_read
-                .get(&offer.to_peer_id)
-                .ok_or_else(|| Status::not_found(format!("Peer not found: {}", offer.to_peer_id)))?;
+            let target_peer = peers_read.get(&offer.to_peer_id).ok_or_else(|| {
+                Status::not_found(format!("Peer not found: {}", offer.to_peer_id))
+            })?;
 
             // Forward offer to target peer
             let notification = SignalingResponse {
@@ -679,17 +699,27 @@ impl WebRtcSignalingService {
                 let server_peer = Arc::clone(server_peer);
                 drop(server_peers_read); // Release lock before async operation
 
-                match server_peer.handle_ice_candidate(
-                    ice.candidate.clone(),
-                    if ice.sdp_mid.is_empty() { None } else { Some(ice.sdp_mid) },
-                    Some(ice.sdp_mline_index as u16),
-                ).await {
+                match server_peer
+                    .handle_ice_candidate(
+                        ice.candidate.clone(),
+                        if ice.sdp_mid.is_empty() {
+                            None
+                        } else {
+                            Some(ice.sdp_mid)
+                        },
+                        Some(ice.sdp_mline_index as u16),
+                    )
+                    .await
+                {
                     Ok(_) => {
                         info!("ICE candidate added to ServerPeer for {}", from_peer_id);
                     }
                     Err(e) => {
                         error!("Failed to add ICE candidate to ServerPeer: {}", e);
-                        return Err(Status::internal(format!("Failed to add ICE candidate: {}", e)));
+                        return Err(Status::internal(format!(
+                            "Failed to add ICE candidate: {}",
+                            e
+                        )));
                     }
                 }
 
@@ -710,7 +740,10 @@ impl WebRtcSignalingService {
             } else {
                 // ServerPeer doesn't exist yet - silently ignore
                 // This can happen when ICE candidates arrive before the offer is processed
-                warn!("ICE candidate from {} arrived before ServerPeer was created - ignoring", from_peer_id);
+                warn!(
+                    "ICE candidate from {} arrived before ServerPeer was created - ignoring",
+                    from_peer_id
+                );
 
                 // Send success acknowledgment anyway to avoid crashing the stream
                 let ack_data = serde_json::json!({"to_peer_id": ice.to_peer_id, "buffered": false});
@@ -727,7 +760,6 @@ impl WebRtcSignalingService {
                     .await
                     .map_err(|_| Status::internal("Failed to send response"))?;
             }
-
         } else {
             // P2P forwarding mode
             debug!(
@@ -797,13 +829,11 @@ impl WebRtcSignalingService {
                 request_id: String::new(),
                 response: Some(signaling_response::Response::Notification(
                     SignalingNotification {
-                        notification: Some(
-                            signaling_notification::Notification::PeerDisconnected(
-                                PeerDisconnectedNotification {
-                                    peer_id: disconnect.peer_id.clone(),
-                                },
-                            ),
-                        ),
+                        notification: Some(signaling_notification::Notification::PeerDisconnected(
+                            PeerDisconnectedNotification {
+                                peer_id: disconnect.peer_id.clone(),
+                            },
+                        )),
                     },
                 )),
             };

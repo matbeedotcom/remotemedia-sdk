@@ -6,7 +6,12 @@
       "Bash(cargo check:*)",
       "Bash(cargo build:*)",
       "Bash(cargo test:*)",
-      "Bash(powershell.exe -ExecutionPolicy Bypass -File .specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks)"
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File .specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks)",
+      "Bash(python:*)",
+      "Bash(for:*)",
+      "Bash(do echo \"========== Testing $f ==========\")",
+      "Bash(echo:*)",
+      "Bash(done)"
     ],
     "deny": [],
     "ask": []

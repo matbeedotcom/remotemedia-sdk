@@ -232,8 +232,8 @@ fn default_cap_drop() -> Vec<String> {
 
 fn default_cap_add() -> Vec<String> {
     vec![
-        "IPC_LOCK".to_string(),  // Required for iceoryx2 shared memory
-        "SYS_NICE".to_string(),  // Required for process priority management
+        "IPC_LOCK".to_string(), // Required for iceoryx2 shared memory
+        "SYS_NICE".to_string(), // Required for process priority management
     ]
 }
 
@@ -537,18 +537,11 @@ impl ContainerMetrics {
 
     /// Get the most recent N data points
     pub fn get_recent_points(&self, count: usize) -> Vec<MetricDataPoint> {
-        self.data_points
-            .iter()
-            .take(count)
-            .cloned()
-            .collect()
+        self.data_points.iter().take(count).cloned().collect()
     }
 
     /// Get all data points within a time window
-    pub fn get_points_in_window(
-        &self,
-        duration: std::time::Duration,
-    ) -> Vec<MetricDataPoint> {
+    pub fn get_points_in_window(&self, duration: std::time::Duration) -> Vec<MetricDataPoint> {
         let cutoff = std::time::SystemTime::now()
             .checked_sub(duration)
             .unwrap_or(self.start_time);
@@ -561,10 +554,7 @@ impl ContainerMetrics {
     }
 
     /// Calculate aggregated metrics for a time window
-    pub fn calculate_aggregates(
-        &self,
-        duration: std::time::Duration,
-    ) -> Option<AggregatedMetrics> {
+    pub fn calculate_aggregates(&self, duration: std::time::Duration) -> Option<AggregatedMetrics> {
         let points = self.get_points_in_window(duration);
 
         if points.is_empty() {
@@ -608,8 +598,14 @@ impl ContainerMetrics {
         }
 
         let sample_count = points.len();
-        let period_start = points.last().map(|p| p.timestamp).unwrap_or(self.start_time);
-        let period_end = points.first().map(|p| p.timestamp).unwrap_or_else(std::time::SystemTime::now);
+        let period_start = points
+            .last()
+            .map(|p| p.timestamp)
+            .unwrap_or(self.start_time);
+        let period_end = points
+            .first()
+            .map(|p| p.timestamp)
+            .unwrap_or_else(std::time::SystemTime::now);
 
         Some(AggregatedMetrics {
             period_start,
@@ -620,10 +616,22 @@ impl ContainerMetrics {
             min_cpu_percent: if min_cpu == f32::MAX { 0.0 } else { min_cpu },
             avg_memory_mb: memory_sum / sample_count as u64,
             peak_memory_mb: peak_memory,
-            min_memory_mb: if min_memory == u64::MAX { 0 } else { min_memory },
+            min_memory_mb: if min_memory == u64::MAX {
+                0
+            } else {
+                min_memory
+            },
             memory_limit_mb: memory_limit,
-            total_network_rx_bytes: if has_network_stats { Some(total_rx_bytes) } else { None },
-            total_network_tx_bytes: if has_network_stats { Some(total_tx_bytes) } else { None },
+            total_network_rx_bytes: if has_network_stats {
+                Some(total_rx_bytes)
+            } else {
+                None
+            },
+            total_network_tx_bytes: if has_network_stats {
+                Some(total_tx_bytes)
+            } else {
+                None
+            },
             restart_count: self.restart_count,
         })
     }
@@ -667,7 +675,7 @@ impl SecurityConfig {
         // Validate user format (should be numeric or name)
         if self.user.is_empty() {
             return Err(Error::Execution(
-                "Security config user cannot be empty".to_string()
+                "Security config user cannot be empty".to_string(),
             ));
         }
 
@@ -728,7 +736,7 @@ impl SecurityConfig {
             cap_add: vec!["IPC_LOCK".to_string()], // Only IPC_LOCK, no SYS_NICE
             read_only_rootfs: true,
             security_opt: vec!["no-new-privileges:true".to_string()],
-            user: "65534".to_string(), // nobody user
+            user: "65534".to_string(),  // nobody user
             group: "65534".to_string(), // nogroup
             enable_apparmor: true,
             apparmor_profile: "docker-default".to_string(),
@@ -988,10 +996,7 @@ impl MetricsCollector {
     }
 
     /// Collect stats from a container (internal helper)
-    async fn collect_stats(
-        container_id: &str,
-        docker: &Arc<Docker>,
-    ) -> Result<MetricDataPoint> {
+    async fn collect_stats(container_id: &str, docker: &Arc<Docker>) -> Result<MetricDataPoint> {
         use futures::StreamExt;
 
         // Use stats API with one-shot mode
@@ -1005,18 +1010,18 @@ impl MetricsCollector {
         let mut stats_stream = docker.stats(container_id, options);
 
         if let Some(stats_result) = stats_stream.next().await {
-            let stats = stats_result.map_err(|e| {
-                Error::Execution(format!("Failed to get container stats: {}", e))
-            })?;
+            let stats = stats_result
+                .map_err(|e| Error::Execution(format!("Failed to get container stats: {}", e)))?;
 
             // Extract memory usage and limit
-            let (memory_usage, memory_limit) = if let Some(memory_stats) = stats.memory_stats.as_ref() {
-                let usage = memory_stats.usage.unwrap_or(0);
-                let limit = memory_stats.limit;
-                (usage, limit)
-            } else {
-                (0, None)
-            };
+            let (memory_usage, memory_limit) =
+                if let Some(memory_stats) = stats.memory_stats.as_ref() {
+                    let usage = memory_stats.usage.unwrap_or(0);
+                    let limit = memory_stats.limit;
+                    (usage, limit)
+                } else {
+                    (0, None)
+                };
 
             // Calculate CPU usage percentage
             let cpu_percent = if let (Some(cpu_stats), Some(precpu_stats)) =
@@ -1050,19 +1055,20 @@ impl MetricsCollector {
             };
 
             // Extract network I/O statistics
-            let (network_rx_bytes, network_tx_bytes) = if let Some(networks) = stats.networks.as_ref() {
-                let mut total_rx = 0u64;
-                let mut total_tx = 0u64;
+            let (network_rx_bytes, network_tx_bytes) =
+                if let Some(networks) = stats.networks.as_ref() {
+                    let mut total_rx = 0u64;
+                    let mut total_tx = 0u64;
 
-                for (_interface_name, network_stats) in networks {
-                    total_rx += network_stats.rx_bytes.unwrap_or(0);
-                    total_tx += network_stats.tx_bytes.unwrap_or(0);
-                }
+                    for (_interface_name, network_stats) in networks {
+                        total_rx += network_stats.rx_bytes.unwrap_or(0);
+                        total_tx += network_stats.tx_bytes.unwrap_or(0);
+                    }
 
-                (Some(total_rx), Some(total_tx))
-            } else {
-                (None, None)
-            };
+                    (Some(total_rx), Some(total_tx))
+                } else {
+                    (None, None)
+                };
 
             // Get container uptime from read timestamp
             // The read field is a DateTime from chrono, convert to Unix timestamp
@@ -1144,12 +1150,7 @@ impl MetricsCollector {
 
     /// Get all monitored container IDs
     pub async fn get_monitored_containers(&self) -> Vec<String> {
-        self.metrics
-            .read()
-            .await
-            .keys()
-            .cloned()
-            .collect()
+        self.metrics.read().await.keys().cloned().collect()
     }
 
     /// Export metrics as JSON for a container
@@ -1177,9 +1178,12 @@ impl MetricsCollector {
             .collect();
 
         // Get aggregates for last 5, 15, and 60 minutes
-        let aggregates_5m = container_metrics.calculate_aggregates(std::time::Duration::from_secs(5 * 60));
-        let aggregates_15m = container_metrics.calculate_aggregates(std::time::Duration::from_secs(15 * 60));
-        let aggregates_60m = container_metrics.calculate_aggregates(std::time::Duration::from_secs(60 * 60));
+        let aggregates_5m =
+            container_metrics.calculate_aggregates(std::time::Duration::from_secs(5 * 60));
+        let aggregates_15m =
+            container_metrics.calculate_aggregates(std::time::Duration::from_secs(15 * 60));
+        let aggregates_60m =
+            container_metrics.calculate_aggregates(std::time::Duration::from_secs(60 * 60));
 
         Some(serde_json::json!({
             "container_id": container_metrics.container_id(),
@@ -1228,7 +1232,10 @@ impl DockerSupport {
             }
             Err(e) => {
                 error!("Failed to connect to Docker daemon: {}", e);
-                return Err(Error::Execution(format!("Failed to connect to Docker: {}", e)));
+                return Err(Error::Execution(format!(
+                    "Failed to connect to Docker: {}",
+                    e
+                )));
             }
         };
 
@@ -1272,7 +1279,10 @@ impl DockerSupport {
             }
             Err(e) => {
                 error!("Failed to connect to Docker daemon: {}", e);
-                return Err(Error::Execution(format!("Failed to connect to Docker: {}", e)));
+                return Err(Error::Execution(format!(
+                    "Failed to connect to Docker: {}",
+                    e
+                )));
             }
         };
 
@@ -1365,7 +1375,11 @@ impl DockerSupport {
         duration: std::time::Duration,
     ) -> Option<AggregatedMetrics> {
         if let Some(collector) = &self.metrics_collector {
-            collector.read().await.get_aggregates(container_id, duration).await
+            collector
+                .read()
+                .await
+                .get_aggregates(container_id, duration)
+                .await
         } else {
             None
         }
@@ -1405,7 +1419,11 @@ impl DockerSupport {
         count: usize,
     ) -> Vec<MetricDataPoint> {
         if let Some(collector) = &self.metrics_collector {
-            collector.read().await.get_recent_points(container_id, count).await
+            collector
+                .read()
+                .await
+                .get_recent_points(container_id, count)
+                .await
         } else {
             Vec::new()
         }
@@ -1419,7 +1437,11 @@ impl DockerSupport {
         container_id: &str,
     ) -> Option<serde_json::Value> {
         if let Some(collector) = &self.metrics_collector {
-            collector.read().await.export_metrics_json(container_id).await
+            collector
+                .read()
+                .await
+                .export_metrics_json(container_id)
+                .await
         } else {
             None
         }
@@ -1428,7 +1450,11 @@ impl DockerSupport {
     /// Increment restart count for a container (call after restarting)
     pub async fn increment_container_restart_count(&self, container_id: &str) {
         if let Some(collector) = &self.metrics_collector {
-            collector.read().await.increment_restart_count(container_id).await;
+            collector
+                .read()
+                .await
+                .increment_restart_count(container_id)
+                .await;
         }
     }
 
@@ -1511,13 +1537,16 @@ impl DockerSupport {
                     "Docker daemon permission denied. Ensure your user is in the docker group: \
                      'sudo usermod -aG docker $USER' (Linux), or try with 'sudo' (macOS)."
                         .to_string()
-                } else if error_msg.contains("Cannot connect") || error_msg.contains("connection refused") {
+                } else if error_msg.contains("Cannot connect")
+                    || error_msg.contains("connection refused")
+                {
                     "Docker daemon is not running. Start Docker:\n  \
                      - macOS/Windows: Open Docker Desktop\n  \
                      - Linux: Run 'sudo systemctl start docker'"
                         .to_string()
                 } else if error_msg.contains("not found") {
-                    "Docker is not installed on this system. Please install Docker first.".to_string()
+                    "Docker is not installed on this system. Please install Docker first."
+                        .to_string()
                 } else {
                     format!(
                         "Docker daemon is unreachable. Verify Docker is installed and running. \
@@ -1528,7 +1557,8 @@ impl DockerSupport {
 
                 warn!("Docker daemon check failed: {}", suggestion);
                 Err(Error::Execution(format!(
-                    "Docker daemon is not ready: {}", suggestion
+                    "Docker daemon is not ready: {}",
+                    suggestion
                 )))
             }
         }
@@ -1562,7 +1592,9 @@ impl DockerSupport {
                     "Permission denied when accessing Docker daemon. \
                      Fix: Add your user to the docker group with 'sudo usermod -aG docker $USER' \
                      or run with 'sudo', then restart Docker."
-                } else if error_msg.contains("Cannot connect") || error_msg.contains("connection refused") {
+                } else if error_msg.contains("Cannot connect")
+                    || error_msg.contains("connection refused")
+                {
                     "Cannot connect to Docker daemon - it may not be running. \
                      Fix: Start Docker (macOS/Windows: Open Docker Desktop, Linux: sudo systemctl start docker)"
                 } else if error_msg.contains("not found") {
@@ -1583,10 +1615,8 @@ impl DockerSupport {
         let mut version_valid = true;
         match self.docker.version().await {
             Ok(version) => {
-                let docker_version = version.version
-                    .unwrap_or_else(|| "unknown".to_string());
-                let api_version = version.api_version
-                    .unwrap_or_else(|| "unknown".to_string());
+                let docker_version = version.version.unwrap_or_else(|| "unknown".to_string());
+                let api_version = version.api_version.unwrap_or_else(|| "unknown".to_string());
 
                 info!(
                     docker_version = %docker_version,
@@ -1619,10 +1649,7 @@ impl DockerSupport {
                             );
                             // Continue with fallback - older versions may still work
                         } else {
-                            debug!(
-                                "Docker API version {} is compatible",
-                                api_version
-                            );
+                            debug!("Docker API version {} is compatible", api_version);
                         }
                     }
                     Err(parse_err) => {
@@ -1670,16 +1697,15 @@ impl DockerSupport {
 
                 // Check if Docker has proper storage driver
                 if driver == "unknown" {
-                    warn!("Docker storage driver could not be determined. \
+                    warn!(
+                        "Docker storage driver could not be determined. \
                            Docker may not be fully initialized. \
-                           Check: docker info to verify storage configuration");
+                           Check: docker info to verify storage configuration"
+                    );
                     info_valid = false;
                     // Fallback: Continue with warning
                 } else {
-                    debug!(
-                        "Docker is using {} storage driver",
-                        driver
-                    );
+                    debug!("Docker is using {} storage driver", driver);
                 }
 
                 debug!(
@@ -1730,7 +1756,10 @@ impl DockerSupport {
             }
             Err(e) => {
                 error!("Failed to get Docker info: {}", e);
-                Err(Error::Execution(format!("Failed to get Docker info: {}", e)))
+                Err(Error::Execution(format!(
+                    "Failed to get Docker info: {}",
+                    e
+                )))
             }
         }
     }
@@ -1751,7 +1780,7 @@ impl DockerSupport {
                 "Docker daemon is not responding. \
                  Cannot perform container operations. \
                  Ensure Docker daemon is running."
-                    .to_string()
+                    .to_string(),
             ));
         }
 
@@ -1809,10 +1838,8 @@ impl DockerSupport {
         // Get version info
         match self.docker.version().await {
             Ok(version) => {
-                let docker_ver = version.version
-                    .unwrap_or_else(|| "unknown".to_string());
-                let api_ver = version.api_version
-                    .unwrap_or_else(|| "unknown".to_string());
+                let docker_ver = version.version.unwrap_or_else(|| "unknown".to_string());
+                let api_ver = version.api_version.unwrap_or_else(|| "unknown".to_string());
                 info!(
                     docker_version = %docker_ver,
                     api_version = %api_ver,
@@ -1862,7 +1889,7 @@ impl DockerSupport {
         config: &DockerNodeConfig,
     ) -> Result<String> {
         use bollard::container::{Config, CreateContainerOptions};
-        use bollard::models::{HostConfig, DeviceRequest};
+        use bollard::models::{DeviceRequest, HostConfig};
 
         info!(
             node_id = %node_id,
@@ -1887,7 +1914,7 @@ impl DockerSupport {
         let mut host_config = HostConfig {
             memory: Some(config.memory_mb as i64 * 1_048_576), // Convert MB to bytes
             nano_cpus: Some((config.cpu_cores * 1_000_000_000.0) as i64), // Convert cores to nano CPUs
-            shm_size: Some(config.shm_size_mb as i64 * 1_048_576), // Shared memory size
+            shm_size: Some(config.shm_size_mb as i64 * 1_048_576),        // Shared memory size
 
             // T057: Drop all capabilities and add only required ones
             cap_drop: if !config.security.cap_drop.is_empty() {
@@ -1944,9 +1971,17 @@ impl DockerSupport {
         // Add custom volume mounts from config
         for volume in &config.volumes {
             let mount_str = if volume.read_only {
-                format!("{}:{}:ro", volume.host_path.display(), volume.container_path.display())
+                format!(
+                    "{}:{}:ro",
+                    volume.host_path.display(),
+                    volume.container_path.display()
+                )
             } else {
-                format!("{}:{}", volume.host_path.display(), volume.container_path.display())
+                format!(
+                    "{}:{}",
+                    volume.host_path.display(),
+                    volume.container_path.display()
+                )
             };
             binds.push(mount_str.clone());
             debug!(
@@ -1971,10 +2006,7 @@ impl DockerSupport {
                 // - noexec: cannot execute binaries from tmpfs
                 // - nosuid: ignore set-user-ID and set-group-ID bits
                 // - size=64m: limit size to prevent DoS via tmpfs filling
-                tmpfs.insert(
-                    mount_point.clone(),
-                    "rw,noexec,nosuid,size=64m".to_string(),
-                );
+                tmpfs.insert(mount_point.clone(), "rw,noexec,nosuid,size=64m".to_string());
             }
 
             host_config.tmpfs = Some(tmpfs);
@@ -2012,7 +2044,11 @@ impl DockerSupport {
             host_config.device_requests = Some(vec![device_request]);
 
             info!(
-                gpu_count = if is_all_devices { "all".to_string() } else { config.gpu_devices.len().to_string() },
+                gpu_count = if is_all_devices {
+                    "all".to_string()
+                } else {
+                    config.gpu_devices.len().to_string()
+                },
                 "Configured NVIDIA GPU device passthrough"
             );
         } else {
@@ -2021,8 +2057,7 @@ impl DockerSupport {
 
         // Prepare container configuration
         let default_image = format!("python:{}", config.python_version);
-        let image = config.base_image.as_ref()
-            .unwrap_or(&default_image);
+        let image = config.base_image.as_ref().unwrap_or(&default_image);
 
         let mut env = Vec::new();
         env.push(format!("NODE_ID={}", node_id));
@@ -2069,14 +2104,19 @@ impl DockerSupport {
         };
 
         // Create the container
-        match self.docker.create_container(Some(options), container_config).await {
+        match self
+            .docker
+            .create_container(Some(options), container_config)
+            .await
+        {
             Ok(response) => {
                 info!(
                     container_id = %response.id,
                     container_name = %container_name,
                     "Container created successfully"
                 );
-                self.log_container_event(&response.id, "created", &format!("Node: {}", node_id)).await;
+                self.log_container_event(&response.id, "created", &format!("Node: {}", node_id))
+                    .await;
                 Ok(response.id)
             }
             Err(e) => {
@@ -2085,7 +2125,10 @@ impl DockerSupport {
                     error = %e,
                     "Failed to create container"
                 );
-                Err(Error::Execution(format!("Failed to create container: {}", e)))
+                Err(Error::Execution(format!(
+                    "Failed to create container: {}",
+                    e
+                )))
             }
         }
     }
@@ -2096,7 +2139,10 @@ impl DockerSupport {
         info!(container_id = %container_id, "Starting container");
 
         self.docker
-            .start_container(container_id, None::<bollard::query_parameters::StartContainerOptions>)
+            .start_container(
+                container_id,
+                None::<bollard::query_parameters::StartContainerOptions>,
+            )
             .await
             .map_err(|e| {
                 error!(
@@ -2108,13 +2154,18 @@ impl DockerSupport {
             })?;
 
         info!(container_id = %container_id, "Container started successfully");
-        self.log_container_event(container_id, "started", "Container is now running").await;
+        self.log_container_event(container_id, "started", "Container is now running")
+            .await;
         Ok(())
     }
 
     /// Stop a Docker container
     #[instrument(skip(self))]
-    pub async fn stop_container(&self, container_id: &str, timeout: std::time::Duration) -> Result<()> {
+    pub async fn stop_container(
+        &self,
+        container_id: &str,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
         info!(
             container_id = %container_id,
             timeout = ?timeout,
@@ -2126,10 +2177,15 @@ impl DockerSupport {
             signal: None,
         };
 
-        match self.docker.stop_container(container_id, Some(options)).await {
+        match self
+            .docker
+            .stop_container(container_id, Some(options))
+            .await
+        {
             Ok(_) => {
                 info!(container_id = %container_id, "Container stopped successfully");
-                self.log_container_event(container_id, "stopped", "Container stopped successfully").await;
+                self.log_container_event(container_id, "stopped", "Container stopped successfully")
+                    .await;
                 Ok(())
             }
             Err(e) => {
@@ -2158,10 +2214,15 @@ impl DockerSupport {
             link: false,
         };
 
-        match self.docker.remove_container(container_id, Some(options)).await {
+        match self
+            .docker
+            .remove_container(container_id, Some(options))
+            .await
+        {
             Ok(_) => {
                 info!(container_id = %container_id, "Container removed successfully");
-                self.log_container_event(container_id, "removed", "Container removed from system").await;
+                self.log_container_event(container_id, "removed", "Container removed from system")
+                    .await;
                 Ok(())
             }
             Err(e) => {
@@ -2170,14 +2231,21 @@ impl DockerSupport {
                     error = %e,
                     "Failed to remove container"
                 );
-                Err(Error::Execution(format!("Failed to remove container: {}", e)))
+                Err(Error::Execution(format!(
+                    "Failed to remove container: {}",
+                    e
+                )))
             }
         }
     }
 
     /// Restart a Docker container
     #[instrument(skip(self))]
-    pub async fn restart_container(&self, container_id: &str, timeout: std::time::Duration) -> Result<()> {
+    pub async fn restart_container(
+        &self,
+        container_id: &str,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
         info!(
             container_id = %container_id,
             timeout = ?timeout,
@@ -2189,10 +2257,19 @@ impl DockerSupport {
             signal: None,
         };
 
-        match self.docker.restart_container(container_id, Some(options)).await {
+        match self
+            .docker
+            .restart_container(container_id, Some(options))
+            .await
+        {
             Ok(_) => {
                 info!(container_id = %container_id, "Container restarted successfully");
-                self.log_container_event(container_id, "restarted", "Container restarted successfully").await;
+                self.log_container_event(
+                    container_id,
+                    "restarted",
+                    "Container restarted successfully",
+                )
+                .await;
                 Ok(())
             }
             Err(e) => {
@@ -2201,7 +2278,10 @@ impl DockerSupport {
                     error = %e,
                     "Failed to restart container"
                 );
-                Err(Error::Execution(format!("Failed to restart container: {}", e)))
+                Err(Error::Execution(format!(
+                    "Failed to restart container: {}",
+                    e
+                )))
             }
         }
     }
@@ -2211,11 +2291,16 @@ impl DockerSupport {
     pub async fn is_container_running(&self, container_id: &str) -> Result<bool> {
         debug!(container_id = %container_id, "Checking if container is running");
 
-        match self.docker.inspect_container(container_id, None::<bollard::query_parameters::InspectContainerOptions>).await {
+        match self
+            .docker
+            .inspect_container(
+                container_id,
+                None::<bollard::query_parameters::InspectContainerOptions>,
+            )
+            .await
+        {
             Ok(info) => {
-                let running = info.state
-                    .and_then(|s| s.running)
-                    .unwrap_or(false);
+                let running = info.state.and_then(|s| s.running).unwrap_or(false);
 
                 debug!(
                     container_id = %container_id,
@@ -2237,7 +2322,11 @@ impl DockerSupport {
 
     /// Get container logs
     #[instrument(skip(self))]
-    pub async fn get_container_logs(&self, container_id: &str, tail: Option<usize>) -> Result<String> {
+    pub async fn get_container_logs(
+        &self,
+        container_id: &str,
+        tail: Option<usize>,
+    ) -> Result<String> {
         use bollard::container::LogsOptions;
         use futures::StreamExt;
 
@@ -2250,7 +2339,9 @@ impl DockerSupport {
         let options = LogsOptions::<String> {
             stdout: true,
             stderr: true,
-            tail: tail.map(|n| n.to_string()).unwrap_or_else(|| "all".to_string()),
+            tail: tail
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "all".to_string()),
             follow: false,
             ..Default::default()
         };
@@ -2348,17 +2439,18 @@ impl DockerSupport {
             })?;
 
             // Extract memory usage and limit from MemoryStats
-            let (memory_usage, memory_limit) = if let Some(memory_stats) = stats.memory_stats.as_ref() {
-                let usage = memory_stats.usage.unwrap_or(0);
-                let limit = memory_stats.limit;
-                (usage, limit)
-            } else {
-                warn!(
-                    container_id = %container_id,
-                    "Memory stats not available"
-                );
-                (0, None)
-            };
+            let (memory_usage, memory_limit) =
+                if let Some(memory_stats) = stats.memory_stats.as_ref() {
+                    let usage = memory_stats.usage.unwrap_or(0);
+                    let limit = memory_stats.limit;
+                    (usage, limit)
+                } else {
+                    warn!(
+                        container_id = %container_id,
+                        "Memory stats not available"
+                    );
+                    (0, None)
+                };
 
             // Calculate CPU usage percentage
             let cpu_percent = if let (Some(cpu_stats), Some(precpu_stats)) =
@@ -2437,9 +2529,10 @@ impl DockerSupport {
     pub async fn cleanup_session_containers(&self, session_id: &str) -> Result<Vec<String>> {
         info!(session_id = %session_id, "Cleaning up containers for session");
 
-        let filters = HashMap::from([
-            ("label".to_string(), vec![format!("remotemedia.session_id={}", session_id)]),
-        ]);
+        let filters = HashMap::from([(
+            "label".to_string(),
+            vec![format!("remotemedia.session_id={}", session_id)],
+        )]);
 
         let options = bollard::container::ListContainersOptions::<String> {
             all: true,
@@ -2447,7 +2540,10 @@ impl DockerSupport {
             ..Default::default()
         };
 
-        let containers = self.docker.list_containers(Some(options)).await
+        let containers = self
+            .docker
+            .list_containers(Some(options))
+            .await
             .map_err(|e| {
                 error!(
                     session_id = %session_id,
@@ -2467,7 +2563,8 @@ impl DockerSupport {
                         container_id = %id,
                         "Stopping running container before removal"
                     );
-                    self.stop_container(&id, std::time::Duration::from_secs(5)).await?;
+                    self.stop_container(&id, std::time::Duration::from_secs(5))
+                        .await?;
                 }
 
                 // Remove container
@@ -2550,8 +2647,8 @@ impl DockerSupport {
         let options = LogsOptions::<String> {
             stdout: true,
             stderr: true,
-            follow: true,  // Stream logs in real-time
-            tail: "0".to_string(),  // Start from now (don't retrieve historical logs)
+            follow: true,          // Stream logs in real-time
+            tail: "0".to_string(), // Start from now (don't retrieve historical logs)
             timestamps: config.include_timestamps,
             ..Default::default()
         };
@@ -2794,7 +2891,8 @@ impl DockerSupport {
         let json: serde_json::Value = serde_json::from_str(log_line).ok()?;
 
         // Extract common JSON log fields
-        let message = json.get("message")
+        let message = json
+            .get("message")
             .or_else(|| json.get("msg"))
             .or_else(|| json.get("text"))
             .and_then(|v| v.as_str())
@@ -2802,14 +2900,20 @@ impl DockerSupport {
             .to_string();
 
         // Extract log level from JSON
-        let level = json.get("level")
+        let level = json
+            .get("level")
             .or_else(|| json.get("severity"))
             .and_then(|v| v.as_str())
             .and_then(|s| Self::parse_log_level_string(s))
-            .unwrap_or(if is_stderr { LogLevel::Error } else { LogLevel::Info });
+            .unwrap_or(if is_stderr {
+                LogLevel::Error
+            } else {
+                LogLevel::Info
+            });
 
         // Extract timestamp
-        let timestamp = json.get("timestamp")
+        let timestamp = json
+            .get("timestamp")
             .or_else(|| json.get("time"))
             .or_else(|| json.get("@timestamp"))
             .and_then(|v| v.as_str())
@@ -2819,7 +2923,18 @@ impl DockerSupport {
         let mut fields = HashMap::new();
         if let Some(obj) = json.as_object() {
             for (key, value) in obj {
-                if !["message", "msg", "text", "level", "severity", "timestamp", "time", "@timestamp"].contains(&key.as_str()) {
+                if ![
+                    "message",
+                    "msg",
+                    "text",
+                    "level",
+                    "severity",
+                    "timestamp",
+                    "time",
+                    "@timestamp",
+                ]
+                .contains(&key.as_str())
+                {
                     fields.insert(key.clone(), value.clone());
                 }
             }
@@ -2873,7 +2988,10 @@ impl DockerSupport {
     fn detect_log_level_from_text(text: &str, is_stderr: bool) -> LogLevel {
         let text_upper = text.to_uppercase();
 
-        if text_upper.contains("ERROR") || text_upper.contains("FATAL") || text_upper.contains("CRITICAL") {
+        if text_upper.contains("ERROR")
+            || text_upper.contains("FATAL")
+            || text_upper.contains("CRITICAL")
+        {
             LogLevel::Error
         } else if text_upper.contains("WARN") || text_upper.contains("WARNING") {
             LogLevel::Warn
@@ -2899,22 +3017,25 @@ fn parse_api_version(version_str: &str) -> Result<(u32, u32)> {
     let parts: Vec<&str> = version_str.split('.').collect();
 
     if parts.len() < 2 {
-        return Err(Error::Execution(
-            format!("Invalid Docker API version format: {}", version_str)
-        ));
+        return Err(Error::Execution(format!(
+            "Invalid Docker API version format: {}",
+            version_str
+        )));
     }
 
-    let major = parts[0]
-        .parse::<u32>()
-        .map_err(|_| Error::Execution(
-            format!("Could not parse major version from: {}", version_str)
-        ))?;
+    let major = parts[0].parse::<u32>().map_err(|_| {
+        Error::Execution(format!(
+            "Could not parse major version from: {}",
+            version_str
+        ))
+    })?;
 
-    let minor = parts[1]
-        .parse::<u32>()
-        .map_err(|_| Error::Execution(
-            format!("Could not parse minor version from: {}", version_str)
-        ))?;
+    let minor = parts[1].parse::<u32>().map_err(|_| {
+        Error::Execution(format!(
+            "Could not parse minor version from: {}",
+            version_str
+        ))
+    })?;
 
     Ok((major, minor))
 }
@@ -2935,7 +3056,8 @@ impl DockerLogger {
             step = step,
             total = total,
             progress = format!("{}/{}", step, total),
-            "{}", message
+            "{}",
+            message
         );
     }
 
@@ -2958,9 +3080,15 @@ mod tests {
     fn test_security_config_default() {
         let config = SecurityConfig::default();
         assert_eq!(config.cap_drop, vec!["ALL".to_string()]);
-        assert_eq!(config.cap_add, vec!["IPC_LOCK".to_string(), "SYS_NICE".to_string()]);
+        assert_eq!(
+            config.cap_add,
+            vec!["IPC_LOCK".to_string(), "SYS_NICE".to_string()]
+        );
         assert!(config.read_only_rootfs);
-        assert_eq!(config.security_opt, vec!["no-new-privileges:true".to_string()]);
+        assert_eq!(
+            config.security_opt,
+            vec!["no-new-privileges:true".to_string()]
+        );
         assert_eq!(config.user, "1000");
         assert_eq!(config.group, "1000");
         assert!(config.enable_apparmor);
@@ -3161,10 +3289,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_metrics_collector_creation() {
-        let collector = MetricsCollector::new(
-            Some(std::time::Duration::from_secs(1)),
-            Some(100),
-        );
+        let collector = MetricsCollector::new(Some(std::time::Duration::from_secs(1)), Some(100));
 
         let containers = collector.get_monitored_containers().await;
         assert_eq!(containers.len(), 0);
@@ -3255,18 +3380,48 @@ mod tests {
 
     #[test]
     fn test_parse_log_level_string() {
-        assert_eq!(DockerSupport::parse_log_level_string("TRACE"), Some(LogLevel::Trace));
-        assert_eq!(DockerSupport::parse_log_level_string("DEBUG"), Some(LogLevel::Debug));
-        assert_eq!(DockerSupport::parse_log_level_string("INFO"), Some(LogLevel::Info));
-        assert_eq!(DockerSupport::parse_log_level_string("WARN"), Some(LogLevel::Warn));
-        assert_eq!(DockerSupport::parse_log_level_string("WARNING"), Some(LogLevel::Warn));
-        assert_eq!(DockerSupport::parse_log_level_string("ERROR"), Some(LogLevel::Error));
-        assert_eq!(DockerSupport::parse_log_level_string("FATAL"), Some(LogLevel::Error));
-        assert_eq!(DockerSupport::parse_log_level_string("CRITICAL"), Some(LogLevel::Error));
+        assert_eq!(
+            DockerSupport::parse_log_level_string("TRACE"),
+            Some(LogLevel::Trace)
+        );
+        assert_eq!(
+            DockerSupport::parse_log_level_string("DEBUG"),
+            Some(LogLevel::Debug)
+        );
+        assert_eq!(
+            DockerSupport::parse_log_level_string("INFO"),
+            Some(LogLevel::Info)
+        );
+        assert_eq!(
+            DockerSupport::parse_log_level_string("WARN"),
+            Some(LogLevel::Warn)
+        );
+        assert_eq!(
+            DockerSupport::parse_log_level_string("WARNING"),
+            Some(LogLevel::Warn)
+        );
+        assert_eq!(
+            DockerSupport::parse_log_level_string("ERROR"),
+            Some(LogLevel::Error)
+        );
+        assert_eq!(
+            DockerSupport::parse_log_level_string("FATAL"),
+            Some(LogLevel::Error)
+        );
+        assert_eq!(
+            DockerSupport::parse_log_level_string("CRITICAL"),
+            Some(LogLevel::Error)
+        );
 
         // Case insensitive
-        assert_eq!(DockerSupport::parse_log_level_string("debug"), Some(LogLevel::Debug));
-        assert_eq!(DockerSupport::parse_log_level_string("Debug"), Some(LogLevel::Debug));
+        assert_eq!(
+            DockerSupport::parse_log_level_string("debug"),
+            Some(LogLevel::Debug)
+        );
+        assert_eq!(
+            DockerSupport::parse_log_level_string("Debug"),
+            Some(LogLevel::Debug)
+        );
 
         // Unknown level
         assert_eq!(DockerSupport::parse_log_level_string("UNKNOWN"), None);
@@ -3330,8 +3485,10 @@ mod tests {
     #[test]
     fn test_try_parse_json_log() {
         // Valid JSON with standard fields
-        let json_log = r#"{"level":"info","message":"Test message","timestamp":"2024-01-01T00:00:00Z"}"#;
-        let entry = DockerSupport::try_parse_json_log(json_log, "container123", Some("node1"), false);
+        let json_log =
+            r#"{"level":"info","message":"Test message","timestamp":"2024-01-01T00:00:00Z"}"#;
+        let entry =
+            DockerSupport::try_parse_json_log(json_log, "container123", Some("node1"), false);
 
         assert!(entry.is_some());
         let entry = entry.unwrap();
@@ -3343,7 +3500,8 @@ mod tests {
         assert!(!entry.is_stderr);
 
         // JSON with alternative field names
-        let json_log2 = r#"{"severity":"error","msg":"Error occurred","time":"2024-01-01T01:00:00Z"}"#;
+        let json_log2 =
+            r#"{"severity":"error","msg":"Error occurred","time":"2024-01-01T01:00:00Z"}"#;
         let entry2 = DockerSupport::try_parse_json_log(json_log2, "container456", None, true);
 
         assert!(entry2.is_some());

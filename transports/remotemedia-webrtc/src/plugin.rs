@@ -22,8 +22,12 @@ impl TransportPlugin for WebRtcTransportPlugin {
         // Extract ice_servers from extra_config if present
         let ice_servers = if let Some(extra) = &config.extra_config {
             if let Some(servers) = extra.get("ice_servers") {
-                serde_json::from_value(servers.clone())
-                    .map_err(|e| remotemedia_runtime_core::Error::ConfigError(format!("Invalid ice_servers format: {}", e)))?
+                serde_json::from_value(servers.clone()).map_err(|e| {
+                    remotemedia_runtime_core::Error::ConfigError(format!(
+                        "Invalid ice_servers format: {}",
+                        e
+                    ))
+                })?
             } else {
                 vec![]
             }
@@ -47,8 +51,8 @@ impl TransportPlugin for WebRtcTransportPlugin {
         config: &ServerConfig,
         runner: Arc<PipelineRunner>,
     ) -> Result<Box<dyn remotemedia_runtime_core::transport::PipelineTransport>> {
-        use crate::transport::WebRtcTransport;
         use crate::config::WebRtcTransportConfig;
+        use crate::transport::WebRtcTransport;
 
         // Note: runner is provided but WebRtcTransport creates its own PipelineRunner
         // in execute()/stream() methods per the trait implementation

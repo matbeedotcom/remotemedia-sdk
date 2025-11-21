@@ -33,8 +33,8 @@ def try_load_rust_runtime():
         ...     print(f"Rust runtime unavailable: {error}")
     """
     try:
-        import remotemedia_runtime
-        return (True, remotemedia_runtime, None)
+        import remotemedia.runtime
+        return (True, remotemedia.runtime, None)
     except ImportError as e:
         return (False, None, f"Module not found: {e}")
     except Exception as e:
@@ -81,7 +81,7 @@ def get_rust_runtime():
     Get the Rust runtime module if available.
     
     Returns:
-        Module or None: The remotemedia_runtime module if available
+        Module or None: The remotemedia.runtime module if available
     
     Example:
         >>> runtime = get_rust_runtime()
@@ -130,7 +130,7 @@ __all__ = [
     "RemoteExecutorConfig",
     # Exceptions
     "RemoteMediaError",
-    "PipelineError", 
+    "PipelineError",
     "NodeError",
     "RemoteExecutionError",
     "WebRTCError",
@@ -138,11 +138,17 @@ __all__ = [
     "is_rust_runtime_available",
     "get_rust_runtime",
     "try_load_rust_runtime",
+    # Runtime execution wrappers (Feature 011 - Python instance support)
+    "execute_pipeline",
+    "execute_pipeline_with_input",
     # Version info
     "__version__",
     "__author__",
     "__email__",
 ]
+
+# Import runtime wrappers (Feature 011)
+from .runtime_wrapper import execute_pipeline, execute_pipeline_with_input
 
 # Add optional WebRTC support if available
 if _has_webrtc:

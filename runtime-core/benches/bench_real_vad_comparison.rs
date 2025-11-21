@@ -40,13 +40,7 @@ fn bench_traditional_vad(c: &mut Criterion) {
     c.bench_function("traditional_pipeline_time_to_asr", |b| {
         b.to_async(&runtime).iter(|| async {
             // Traditional pipeline: Audio → VAD → Wait for decision → Forward to ASR
-            let vad = SileroVADNode::new(
-                Some(0.5),
-                Some(16000),
-                None,
-                None,
-                None,
-            );
+            let vad = SileroVADNode::new(Some(0.5), Some(16000), None, None, None);
 
             let audio = create_test_audio();
 
@@ -113,7 +107,9 @@ fn bench_speculative_vad(c: &mut Criterion) {
                 .await;
 
             // Time when ASR receives audio (should be <1ms)
-            let time_to_asr = asr_received_at.map(|t| t.duration_since(start)).unwrap_or(start.elapsed());
+            let time_to_asr = asr_received_at
+                .map(|t| t.duration_since(start))
+                .unwrap_or(start.elapsed());
 
             // Speculative: ASR receives audio after ~5us (immediate forwarding)
             // VAD runs separately and sends control messages if needed

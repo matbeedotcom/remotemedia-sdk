@@ -4,15 +4,17 @@ mod fixtures;
 
 use fixtures::mock_transport_plugin::MockTransportPlugin;
 use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::manifest::{Manifest, ManifestMetadata, NodeManifest, Connection};
-use remotemedia_runtime_core::transport::{TransportPluginRegistry, ClientConfig, TransportData};
+use remotemedia_runtime_core::manifest::{Connection, Manifest, ManifestMetadata, NodeManifest};
+use remotemedia_runtime_core::transport::{ClientConfig, TransportData, TransportPluginRegistry};
 use std::sync::Arc;
 
 #[tokio::test]
 async fn test_remote_pipeline_node_with_mock_transport() {
     // Register mock transport plugin
     let registry = TransportPluginRegistry::new();
-    registry.register(Arc::new(MockTransportPlugin)).expect("Failed to register plugin");
+    registry
+        .register(Arc::new(MockTransportPlugin))
+        .expect("Failed to register plugin");
 
     // Create a simple remote pipeline manifest
     let remote_manifest = Manifest {
@@ -70,7 +72,9 @@ async fn test_remote_pipeline_node_with_mock_transport() {
 async fn test_remote_pipeline_node_streaming_with_mock_transport() {
     // Register mock transport plugin
     let registry = TransportPluginRegistry::new();
-    registry.register(Arc::new(MockTransportPlugin)).expect("Failed to register plugin");
+    registry
+        .register(Arc::new(MockTransportPlugin))
+        .expect("Failed to register plugin");
 
     // Create a simple remote pipeline manifest
     let remote_manifest = Manifest {
@@ -152,7 +156,9 @@ async fn test_remote_pipeline_node_streaming_with_mock_transport() {
 #[tokio::test]
 async fn test_mock_transport_validation() {
     let registry = TransportPluginRegistry::new();
-    registry.register(Arc::new(MockTransportPlugin)).expect("Failed to register plugin");
+    registry
+        .register(Arc::new(MockTransportPlugin))
+        .expect("Failed to register plugin");
 
     // Test that mock transport validates any config
     let client_config = ClientConfig {

@@ -142,10 +142,10 @@ impl VideoEncoder {
         }
 
         if frame.width != self.config.width || frame.height != self.config.height {
-            return Err(Error::EncodingError(
-                format!("Frame dimensions ({}x{}) don't match encoder config ({}x{})",
-                    frame.width, frame.height, self.config.width, self.config.height)
-            ));
+            return Err(Error::EncodingError(format!(
+                "Frame dimensions ({}x{}) don't match encoder config ({}x{})",
+                frame.width, frame.height, self.config.width, self.config.height
+            )));
         }
 
         self.frame_count += 1;
@@ -160,7 +160,8 @@ impl VideoEncoder {
         // 6. Return packet data as Vec<u8>
 
         Err(Error::EncodingError(
-            "VP9 native encoding not yet implemented - requires vpx-sys FFI integration".to_string(),
+            "VP9 native encoding not yet implemented - requires vpx-sys FFI integration"
+                .to_string(),
         ))
     }
 
@@ -246,7 +247,9 @@ impl VideoDecoder {
     #[cfg(feature = "codecs")]
     pub fn decode(&mut self, payload: &[u8]) -> Result<VideoFrame> {
         if payload.is_empty() {
-            return Err(Error::EncodingError("Empty payload for VP9 decoding".to_string()));
+            return Err(Error::EncodingError(
+                "Empty payload for VP9 decoding".to_string(),
+            ));
         }
 
         self.frame_count += 1;
@@ -261,7 +264,8 @@ impl VideoDecoder {
         // 6. Handle keyframes and inter-frames appropriately
 
         Err(Error::EncodingError(
-            "VP9 native decoding not yet implemented - requires vpx-sys FFI integration".to_string(),
+            "VP9 native decoding not yet implemented - requires vpx-sys FFI integration"
+                .to_string(),
         ))
     }
 

@@ -162,11 +162,11 @@ class Pipeline:
         try:
             for node in self.nodes:
                 self.logger.info(f"Initializing node: {node.name}")
-                await node.initialize()
-            
+                node.initialize()
+
             self._is_initialized = True
             self.logger.info(f"Pipeline '{self.name}' initialized successfully")
-            
+
         except Exception as e:
             self.logger.error(f"Failed to initialize pipeline '{self.name}': {e}")
             # Clean up any partially initialized nodes
@@ -380,17 +380,17 @@ class Pipeline:
     async def cleanup(self) -> None:
         """
         Clean up the pipeline and all its nodes.
-        
+
         This method should be called when the pipeline is no longer needed.
         """
         self.logger.info(f"Cleaning up pipeline '{self.name}'")
-        
+
         for node in self.nodes:
             try:
-                await node.cleanup()
+                node.cleanup()
             except Exception as e:
                 self.logger.warning(f"Error cleaning up node '{node.name}': {e}")
-        
+
         self._is_initialized = False
         self.logger.info(f"Pipeline '{self.name}' cleanup completed")
     
@@ -450,26 +450,27 @@ class Pipeline:
             Pipeline execution results
 
         Raises:
-            ImportError: If remotemedia_runtime module is not available
+            ImportError: If remotemedia.runtime module is not available
         """
-        import remotemedia_runtime
-
-        # Serialize pipeline to manifest
-        manifest_json = self.serialize()
+        # T019: Use runtime wrappers that support Pipeline instances
+        # Import the wrappers that handle type detection
+        from .. import execute_pipeline, execute_pipeline_with_input
 
         self.logger.info(f"Executing pipeline '{self.name}' with Rust runtime")
 
         # Execute with or without input data
+        # The wrappers automatically detect that self is a Pipeline instance
+        # and call .serialize() internally, preserving Node instance state
         if input_data is not None:
             # Convert input_data to list if it isn't already
             if not isinstance(input_data, list):
                 input_data = [input_data]
-            result = await remotemedia_runtime.execute_pipeline_with_input(
-                manifest_json, input_data, self.enable_metrics
+            result = await execute_pipeline_with_input(
+                self, input_data, self.enable_metrics  # Pass self instead of manifest_json
             )
         else:
-            result = await remotemedia_runtime.execute_pipeline(
-                manifest_json, self.enable_metrics
+            result = await execute_pipeline(
+                self, self.enable_metrics  # Pass self instead of manifest_json
             )
 
         # If metrics are enabled, result will be a dict with 'outputs' and 'metrics'

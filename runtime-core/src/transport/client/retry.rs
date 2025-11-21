@@ -88,10 +88,7 @@ impl RetryExecutor {
                     tokio::time::sleep(Duration::from_millis(backoff_with_jitter)).await;
                 }
                 Err(e) => {
-                    warn!(
-                        "Operation failed after {} attempts: {}",
-                        attempts, e
-                    );
+                    warn!("Operation failed after {} attempts: {}", attempts, e);
                     return Err(e);
                 }
             }

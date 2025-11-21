@@ -16,8 +16,7 @@
 
 use async_trait::async_trait;
 use remotemedia_runtime_core::transport::{
-    ClientConfig, PipelineClient, PipelineRunner, PipelineTransport, ServerConfig,
-    TransportPlugin,
+    ClientConfig, PipelineClient, PipelineRunner, PipelineTransport, ServerConfig, TransportPlugin,
 };
 use remotemedia_runtime_core::Result;
 use std::sync::Arc;
@@ -65,11 +64,8 @@ impl TransportPlugin for GrpcTransportPlugin {
     async fn create_client(&self, config: &ClientConfig) -> Result<Box<dyn PipelineClient>> {
         use crate::client::GrpcPipelineClient;
 
-        let client = GrpcPipelineClient::new(
-            config.address.clone(),
-            config.auth_token.clone(),
-        )
-        .await?;
+        let client =
+            GrpcPipelineClient::new(config.address.clone(), config.auth_token.clone()).await?;
 
         Ok(Box::new(client))
     }

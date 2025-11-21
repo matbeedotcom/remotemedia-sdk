@@ -148,10 +148,17 @@ impl StreamSession for StreamSessionHandle {
     }
 
     async fn send_input(&mut self, data: TransportData) -> Result<()> {
-        tracing::debug!("Session {} send_input called, is_active={}", self.session_id, self.is_active());
+        tracing::debug!(
+            "Session {} send_input called, is_active={}",
+            self.session_id,
+            self.is_active()
+        );
 
         if !self.is_active() {
-            tracing::error!("Session {} send_input rejected: session is not active", self.session_id);
+            tracing::error!(
+                "Session {} send_input rejected: session is not active",
+                self.session_id
+            );
             return Err(Error::Execution(format!(
                 "Session {} is closed",
                 self.session_id
@@ -161,19 +168,28 @@ impl StreamSession for StreamSessionHandle {
         // Send the core RuntimeData to the router
         tracing::debug!("Session {} sending data to input channel", self.session_id);
         self.inner.input_tx.send(data.data).map_err(|_| {
-            tracing::error!("Session {} input channel closed, marking session inactive", self.session_id);
+            tracing::error!(
+                "Session {} input channel closed, marking session inactive",
+                self.session_id
+            );
             self.inner.active.store(false, Ordering::Release);
             Error::Execution(format!("Session {} channel closed", self.session_id))
         })?;
 
-        tracing::debug!("Session {} data sent successfully to input channel", self.session_id);
+        tracing::debug!(
+            "Session {} data sent successfully to input channel",
+            self.session_id
+        );
         Ok(())
     }
 
     async fn recv_output(&mut self) -> Result<Option<TransportData>> {
         let mut output_rx = self.inner.output_rx.lock().await;
 
-        tracing::trace!("Session {} recv_output awaiting data from output channel", self.session_id);
+        tracing::trace!(
+            "Session {} recv_output awaiting data from output channel",
+            self.session_id
+        );
         match output_rx.recv().await {
             Some(runtime_data) => {
                 tracing::debug!("Session {} recv_output received data", self.session_id);
@@ -184,7 +200,7 @@ impl StreamSession for StreamSessionHandle {
                 // Channel closed - this means the session task has ended
                 // Don't mark inactive here - let explicit shutdown handle that
                 // This allows the session to remain active between pipeline executions
-                
+
                 // Rate-limited debug logging (max once per 10 seconds)
                 let mut last_log = LAST_RECV_OUTPUT_NONE_LOG.lock().await;
                 let now = Instant::now();
@@ -192,12 +208,15 @@ impl StreamSession for StreamSessionHandle {
                     Some(last) => now.duration_since(last) >= LOG_RATE_LIMIT,
                     None => true,
                 };
-                
+
                 if should_log {
-                    tracing::debug!("Session {} recv_output got None (channel empty/closed)", self.session_id);
+                    tracing::debug!(
+                        "Session {} recv_output got None (channel empty/closed)",
+                        self.session_id
+                    );
                     *last_log = Some(now);
                 }
-                
+
                 Ok(None)
             }
         }
@@ -206,11 +225,17 @@ impl StreamSession for StreamSessionHandle {
     async fn close(&mut self) -> Result<()> {
         if !self.is_active() {
             // Idempotent: already closed
-            tracing::debug!("Session {} close called but already closed", self.session_id);
+            tracing::debug!(
+                "Session {} close called but already closed",
+                self.session_id
+            );
             return Ok(());
         }
 
-        tracing::info!("Session {} closing, sending shutdown signal", self.session_id);
+        tracing::info!(
+            "Session {} closing, sending shutdown signal",
+            self.session_id
+        );
 
         // Signal shutdown
         if let Some(shutdown_tx) = &self.inner.shutdown_tx {

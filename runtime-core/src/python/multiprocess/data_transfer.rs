@@ -256,13 +256,9 @@ mod tests {
         assert_eq!(recovered.session_id, "test_session");
 
         // Deserialize payload as JSON
-        let payload_json: serde_json::Value =
-            serde_json::from_slice(&recovered.payload).unwrap();
+        let payload_json: serde_json::Value = serde_json::from_slice(&recovered.payload).unwrap();
 
-        assert_eq!(
-            payload_json["segment_id"].as_str().unwrap(),
-            "segment_123"
-        );
+        assert_eq!(payload_json["segment_id"].as_str().unwrap(), "segment_123");
         assert_eq!(payload_json["timestamp_ms"].as_u64().unwrap(), 1500);
         assert_eq!(
             payload_json["metadata"]["reason"].as_str().unwrap(),

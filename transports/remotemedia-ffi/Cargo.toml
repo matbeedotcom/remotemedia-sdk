@@ -10,14 +10,16 @@ repository.workspace = true
 
 [lib]
 name = "remotemedia_ffi"
-crate-type = ["cdylib", "rlib"]  # cdylib for Python extension, rlib for Rust
+# When building with extension-module: cdylib only
+# When building without: defaults to rlib
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # Core runtime (NO transport dependencies)
 remotemedia-runtime-core = { path = "../../runtime-core", default-features = true }
 
 # Python FFI
-pyo3 = { version = "0.26", features = ["abi3-py312", "auto-initialize"], default-features = false }
+pyo3 = { version = "0.26", features = ["abi3-py310", "auto-initialize"], default-features = false }
 pyo3-async-runtimes = { version = "0.26", features = ["tokio-runtime"] }
 numpy = { version = "0.26" }  # rust-numpy for zero-copy numpy array support
 
@@ -44,5 +46,5 @@ anyhow = { workspace = true }
 base64 = "0.22"
 
 [features]
-default = ["extension-module"]
+default = []  # No default features - use extension-module explicitly for .so builds
 extension-module = ["pyo3/extension-module"]

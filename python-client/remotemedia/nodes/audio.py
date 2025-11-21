@@ -379,7 +379,7 @@ class AudioResampleNode(Node):
             return False
         
         try:
-            import remotemedia_runtime
+            import remotemedia.runtime
             if self.runtime_hint == "rust":
                 return True
             # runtime_hint == "auto"
@@ -439,7 +439,7 @@ class AudioResampleNode(Node):
         """Resample using Rust runtime."""
         # TODO: Add FFI binding for direct Rust node calls
         # For now, fall back to Python implementation
-        # Future: remotemedia_runtime.resample_audio(audio_data, sample_rate, target_sr, quality)
+        # Future: remotemedia.runtime.resample_audio(audio_data, sample_rate, target_sr, quality)
         logger.debug(f"AudioResampleNode '{self.name}': Rust FFI not yet implemented, using Python")
         return self._resample_python(audio_data, sample_rate)
     
@@ -508,7 +508,7 @@ class VADNode(Node):
             return False
         
         try:
-            import remotemedia_runtime
+            import remotemedia.runtime
             if self.runtime_hint == "rust":
                 return True
             # runtime_hint == "auto"
@@ -567,7 +567,7 @@ class VADNode(Node):
         """Perform VAD using Rust runtime."""
         # TODO: Add FFI binding for direct Rust node calls
         # For now, fall back to Python implementation
-        # Future: remotemedia_runtime.detect_voice_activity(audio_data, sr, frame_ms, threshold)
+        # Future: remotemedia.runtime.detect_voice_activity(audio_data, sr, frame_ms, threshold)
         logger.debug(f"VADNode '{self.name}': Rust FFI not yet implemented, using Python")
         return self._vad_python(audio_data, sample_rate)
     
@@ -654,7 +654,7 @@ class FormatConverterNode(Node):
             return False
         
         try:
-            import remotemedia_runtime
+            import remotemedia.runtime
             if self.runtime_hint == "rust":
                 return True
             # runtime_hint == "auto"
@@ -710,7 +710,7 @@ class FormatConverterNode(Node):
         """Convert format using Rust runtime (zero-copy)."""
         # TODO: Add FFI binding for direct Rust node calls
         # For now, fall back to Python implementation  
-        # Future: remotemedia_runtime.convert_audio_format(audio_data, target_format)
+        # Future: remotemedia.runtime.convert_audio_format(audio_data, target_format)
         logger.debug(f"FormatConverterNode '{self.name}': Rust FFI not yet implemented, using Python")
         return self._convert_python(audio_data, sample_rate)
     

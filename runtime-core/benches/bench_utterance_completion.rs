@@ -144,7 +144,13 @@ fn bench_speculative_complete_utterance(c: &mut Criterion) {
     group.bench_function("forward_plus_vad_parallel", |b| {
         b.to_async(&runtime).iter(|| async {
             let speculative = SpeculativeVADGate::new();
-            let vad = std::sync::Arc::new(SileroVADNode::new(Some(0.5), Some(16000), Some(100), Some(200), None));
+            let vad = std::sync::Arc::new(SileroVADNode::new(
+                Some(0.5),
+                Some(16000),
+                Some(100),
+                Some(200),
+                None,
+            ));
 
             // Same 10 chunks of real audio
             let chunks: Vec<RuntimeData> = (0..10)
@@ -183,22 +189,22 @@ fn bench_speculative_complete_utterance(c: &mut Criterion) {
                 };
 
                 // Forward immediately (this is fast, doesn't block)
-                let _ = speculative.process_streaming(
-                    chunk.clone(),
-                    Some(format!("session_{}", idx)),
-                    asr_callback,
-                ).await;
+                let _ = speculative
+                    .process_streaming(
+                        chunk.clone(),
+                        Some(format!("session_{}", idx)),
+                        asr_callback,
+                    )
+                    .await;
 
                 // VAD runs in parallel (doesn't block ASR)
                 let vad_clone = vad.clone();
                 let chunk_clone = chunk.clone();
                 tokio::spawn(async move {
                     let callback = |_: RuntimeData| Ok(());
-                    let _ = vad_clone.process_streaming(
-                        chunk_clone,
-                        Some("vad_session".to_string()),
-                        callback,
-                    ).await;
+                    let _ = vad_clone
+                        .process_streaming(chunk_clone, Some("vad_session".to_string()), callback)
+                        .await;
                 });
             }
 

@@ -184,7 +184,7 @@ class MultiprocessNode(BaseNode):
             Processed data
         """
         if not HAS_RUNTIME_DATA:
-            raise ImportError("RuntimeData not available - please install remotemedia_runtime")
+            raise ImportError("RuntimeData not available - please install remotemedia.runtime")
 
         # Convert to RuntimeData if needed
         if isinstance(data, RuntimeData):

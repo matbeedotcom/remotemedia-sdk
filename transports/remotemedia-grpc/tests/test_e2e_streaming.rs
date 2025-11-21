@@ -29,8 +29,7 @@ async fn test_e2e_audio_streaming_pipeline() -> Result<(), Box<dyn std::error::E
 
     // Phase 1: Create PipelineRunner (transport-agnostic core)
     let runner = Arc::new(
-        PipelineRunner::new()
-            .map_err(|e| format!("Failed to create PipelineRunner: {}", e))?
+        PipelineRunner::new().map_err(|e| format!("Failed to create PipelineRunner: {}", e))?,
     );
     tracing::info!("✅ PipelineRunner created successfully");
 

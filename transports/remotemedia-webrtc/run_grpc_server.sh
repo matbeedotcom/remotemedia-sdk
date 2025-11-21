@@ -4,7 +4,7 @@
 # Features enabled:
 # - gRPC signaling (grpc-signaling)
 # - Multiprocess Python nodes (multiprocess - default in runtime-core)
-# - Docker executor support (docker-executor - default in runtime-core)
+# - Docker executor support (docker - default in runtime-core)
 # - Silero VAD (silero-vad - default in runtime-core)
 
 set -e  # Exit on error
@@ -123,12 +123,12 @@ ${YELLOW}Examples:${NC}
 ${YELLOW}Features Enabled:${NC}
   ✓ grpc-signaling       gRPC bidirectional streaming (instead of WebSocket)
   ✓ multiprocess         Process-isolated Python nodes with iceoryx2 IPC
-  ✓ docker-executor      Execute nodes in Docker containers
+  ✓ docker      Execute nodes in Docker containers
   ✓ silero-vad           Native Rust voice activity detection
 
 ${YELLOW}Dependencies:${NC}
   - Rust toolchain (1.87+)
-  - Docker daemon (for docker-executor feature)
+  - Docker daemon (for docker feature)
   - iceoryx2 system dependencies (for multiprocess feature)
 
 ${YELLOW}Pipeline Manifest Format:${NC}
@@ -180,7 +180,7 @@ cd "$SCRIPT_DIR"
 # Build the server
 if [ "$SKIP_BUILD" = false ]; then
     echo -e "${CYAN}Building WebRTC server...${NC}"
-    echo -e "${YELLOW}Features: grpc-signaling + runtime defaults (multiprocess, docker-executor, silero-vad)${NC}"
+    echo -e "${YELLOW}Features: grpc-signaling + runtime defaults (multiprocess, docker, silero-vad)${NC}"
     echo ""
     
     BUILD_CMD="cargo build --bin webrtc_server --features grpc-signaling"

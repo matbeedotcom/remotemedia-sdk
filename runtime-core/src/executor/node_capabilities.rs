@@ -214,7 +214,10 @@ impl NodeCapabilitiesRegistry {
 
     /// Update average processing time for a node type
     pub fn update_avg_processing(&mut self, node_type: &str, measurement_us: u64) {
-        let mut caps = self.capabilities.write().expect("Failed to acquire write lock");
+        let mut caps = self
+            .capabilities
+            .write()
+            .expect("Failed to acquire write lock");
 
         if let Some(cap) = caps.get_mut(node_type) {
             cap.update_avg_processing_us(measurement_us);
