@@ -98,14 +98,14 @@ impl InstanceExecutor {
             // Check for process method
             if !node_ref.hasattr("process")? {
                 return Err(PyErr::new::<pyo3::exceptions::PyAttributeError, _>(
-                    format!("Node '{}' missing required process() method", node_id)
+                    format!("Node '{}' missing required process() method", node_id),
                 ));
             }
 
             // Check for initialize method
             if !node_ref.hasattr("initialize")? {
                 return Err(PyErr::new::<pyo3::exceptions::PyAttributeError, _>(
-                    format!("Node '{}' missing required initialize() method", node_id)
+                    format!("Node '{}' missing required initialize() method", node_id),
                 ));
             }
 
@@ -116,7 +116,10 @@ impl InstanceExecutor {
                 .and_then(|v| v.extract::<bool>().ok())
                 .unwrap_or(false);
 
-            debug!("Created InstanceExecutor for node: {} (streaming: {})", node_id, is_streaming);
+            debug!(
+                "Created InstanceExecutor for node: {} (streaming: {})",
+                node_id, is_streaming
+            );
 
             Ok(InstanceExecutor {
                 node_instance,
@@ -144,7 +147,10 @@ impl InstanceExecutor {
         //     Ok(())
         // })
 
-        debug!("InstanceExecutor::initialize() stub for node: {}", self.node_id);
+        debug!(
+            "InstanceExecutor::initialize() stub for node: {}",
+            self.node_id
+        );
         Ok(())
     }
 
@@ -170,7 +176,8 @@ impl InstanceExecutor {
             let py_input = super::marshal::runtime_data_to_python(py, &input)?;
 
             // Call process method
-            let result = self.node_instance
+            let result = self
+                .node_instance
                 .call_method1(py, "process", (py_input,))
                 .map_err(|e| {
                     error!("Node '{}' process() failed: {}", self.node_id, e);

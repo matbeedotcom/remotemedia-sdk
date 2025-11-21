@@ -3,7 +3,9 @@
 //! Handles container creation, startup, health checks, and cleanup using bollard.
 
 use crate::{Error, Result};
-use bollard::container::{Config, CreateContainerOptions, RemoveContainerOptions, StopContainerOptions};
+use bollard::container::{
+    Config, CreateContainerOptions, RemoveContainerOptions, StopContainerOptions,
+};
 use bollard::models::HostConfig;
 use bollard::Docker;
 use std::collections::HashMap;
@@ -66,7 +68,9 @@ impl ContainerManager {
         // Reference: bollard::Docker::inspect_container
 
         tracing::warn!("TODO T016: start_container not yet implemented");
-        Err(Error::Execution("Container start not implemented".to_string()))
+        Err(Error::Execution(
+            "Container start not implemented".to_string(),
+        ))
     }
 
     /// Stop a container gracefully (T017)
@@ -83,7 +87,9 @@ impl ContainerManager {
         // Reference: STOPSIGNAL SIGTERM in Dockerfile
 
         tracing::warn!("TODO T017: stop_container not yet implemented");
-        Err(Error::Execution("Container stop not implemented".to_string()))
+        Err(Error::Execution(
+            "Container stop not implemented".to_string(),
+        ))
     }
 
     /// Remove a container and cleanup volumes (T018)

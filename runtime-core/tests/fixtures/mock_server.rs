@@ -23,8 +23,8 @@
 
 use remotemedia_grpc::generated::{
     pipeline_execution_service_server::{PipelineExecutionService, PipelineExecutionServiceServer},
-    ExecuteRequest, ExecuteResponse, ExecutionResult, ExecutionStatus, VersionRequest,
-    VersionResponse, VersionInfo,
+    ExecuteRequest, ExecuteResponse, ExecutionResult, ExecutionStatus, VersionInfo, VersionRequest,
+    VersionResponse,
 };
 use std::net::SocketAddr;
 use tokio::sync::oneshot;
@@ -141,9 +141,7 @@ impl PipelineExecutionService for MockPipelineService {
 
         // Echo back the first input
         let data_outputs = if let Some((_input_key, input_data)) = req.data_inputs.iter().next() {
-            vec![(node_id, input_data.clone())]
-                .into_iter()
-                .collect()
+            vec![(node_id, input_data.clone())].into_iter().collect()
         } else {
             std::collections::HashMap::new()
         };
@@ -157,9 +155,7 @@ impl PipelineExecutionService for MockPipelineService {
         };
 
         let response = ExecuteResponse {
-            outcome: Some(remotemedia_grpc::generated::execute_response::Outcome::Result(
-                result,
-            )),
+            outcome: Some(remotemedia_grpc::generated::execute_response::Outcome::Result(result)),
         };
 
         Ok(Response::new(response))

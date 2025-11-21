@@ -1,4 +1,4 @@
 pub mod multiprocess;
 
-#[cfg(feature = "docker-executor")]
+#[cfg(feature = "docker")]
 pub mod docker;

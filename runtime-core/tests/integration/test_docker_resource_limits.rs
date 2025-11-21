@@ -54,6 +54,7 @@ mod tests {
             shm_size_mb: 512,
             env_vars: HashMap::new(),
             volumes: vec![],
+            security: Default::default(),
         }
     }
 

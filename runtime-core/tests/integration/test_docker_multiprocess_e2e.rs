@@ -3,12 +3,10 @@
 
 #![cfg(all(feature = "docker", feature = "multiprocess"))]
 
-use remotemedia_runtime_core::{
-    python::multiprocess::{
-        multiprocess_executor::MultiprocessExecutor,
-        docker_support::{DockerSupport, DockerNodeConfig},
-        data_transfer::RuntimeData,
-    },
+use remotemedia_runtime_core::python::multiprocess::{
+    data_transfer::RuntimeData,
+    docker_support::{DockerNodeConfig, DockerSupport},
+    multiprocess_executor::MultiprocessExecutor,
 };
 use std::{
     collections::HashMap,
@@ -16,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, Mutex};
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
 // Helper to check if Docker is available
 async fn is_docker_available() -> bool {
@@ -26,18 +24,16 @@ async fn is_docker_available() -> bool {
     }
 
     match DockerSupport::new().await {
-        Ok(docker) => {
-            match docker.validate_docker_availability().await {
-                Ok(_) => {
-                    info!("Docker is available for E2E testing");
-                    true
-                }
-                Err(e) => {
-                    warn!("Docker validation failed: {}", e);
-                    false
-                }
+        Ok(docker) => match docker.validate_docker_availability().await {
+            Ok(_) => {
+                info!("Docker is available for E2E testing");
+                true
             }
-        }
+            Err(e) => {
+                warn!("Docker validation failed: {}", e);
+                false
+            }
+        },
         Err(e) => {
             warn!("Docker not available: {}", e);
             false
@@ -57,12 +53,7 @@ fn generate_test_audio(duration_ms: u32, frequency: f32) -> RuntimeData {
         })
         .collect();
 
-    RuntimeData::audio(
-        &samples,
-        sample_rate,
-        1,
-        "test_session",
-    )
+    RuntimeData::audio(&samples, sample_rate, 1, "test_session")
 }
 
 #[tokio::test]
@@ -119,7 +110,10 @@ async fn test_e2e_complete_docker_pipeline() {
 
     match executor.initialize(&ctx, &session_id).await {
         Ok(_) => {
-            info!("✓ Docker container initialized in {:?}", init_start.elapsed());
+            info!(
+                "✓ Docker container initialized in {:?}",
+                init_start.elapsed()
+            );
         }
         Err(e) => {
             error!("Failed to initialize Docker container: {}", e);
@@ -142,18 +136,21 @@ async fn test_e2e_complete_docker_pipeline() {
     });
 
     // Register output callback
-    executor.register_output_callback(
-        node_id,
-        &session_id,
-        Box::new(move |data| {
-            let tx = output_tx.clone();
-            Box::pin(async move {
-                if let Err(e) = tx.send(data).await {
-                    error!("Failed to send output: {}", e);
-                }
-            })
-        })
-    ).await.expect("Failed to register output callback");
+    executor
+        .register_output_callback(
+            node_id,
+            &session_id,
+            Box::new(move |data| {
+                let tx = output_tx.clone();
+                Box::pin(async move {
+                    if let Err(e) = tx.send(data).await {
+                        error!("Failed to send output: {}", e);
+                    }
+                })
+            }),
+        )
+        .await
+        .expect("Failed to register output callback");
 
     info!("✓ Output callback registered");
 
@@ -165,7 +162,10 @@ async fn test_e2e_complete_docker_pipeline() {
 
     info!("Sending audio data to Docker container");
 
-    match executor.send_data_to_node(node_id, &session_id, test_audio.clone()).await {
+    match executor
+        .send_data_to_node(node_id, &session_id, test_audio.clone())
+        .await
+    {
         Ok(_) => {
             info!("✓ Audio data sent to Docker container");
         }
@@ -177,15 +177,14 @@ async fn test_e2e_complete_docker_pipeline() {
     }
 
     // Test with text data
-    let text_data = RuntimeData::text(
-        "Hello from E2E test!",
-        Some("en"),
-        &session_id,
-    );
+    let text_data = RuntimeData::text("Hello from E2E test!", Some("en"), &session_id);
 
     info!("Sending text data to Docker container");
 
-    match executor.send_data_to_node(node_id, &session_id, text_data).await {
+    match executor
+        .send_data_to_node(node_id, &session_id, text_data)
+        .await
+    {
         Ok(_) => {
             info!("✓ Text data sent to Docker container");
         }
@@ -220,7 +219,9 @@ async fn test_e2e_complete_docker_pipeline() {
         let chunk_audio = generate_test_audio(50, 440.0 + (chunk_id as f32 * 100.0));
 
         debug!("Sending chunk {}", chunk_id);
-        executor.send_data_to_node(node_id, &session_id, chunk_audio).await
+        executor
+            .send_data_to_node(node_id, &session_id, chunk_audio)
+            .await
             .expect("Failed to send streaming chunk");
 
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -236,7 +237,13 @@ async fn test_e2e_complete_docker_pipeline() {
     let container_name = format!("{}_{}", session_id, node_id);
 
     let ps_output = Command::new("docker")
-        .args(&["ps", "--filter", &format!("name={}", container_name), "--format", "{{.Status}}"])
+        .args(&[
+            "ps",
+            "--filter",
+            &format!("name={}", container_name),
+            "--format",
+            "{{.Status}}",
+        ])
         .output()
         .expect("Failed to run docker ps");
 
@@ -262,7 +269,14 @@ async fn test_e2e_complete_docker_pipeline() {
 
     // Verify container is removed
     let ps_after = Command::new("docker")
-        .args(&["ps", "-a", "--filter", &format!("name={}", container_name), "--format", "{{.Names}}"])
+        .args(&[
+            "ps",
+            "-a",
+            "--filter",
+            &format!("name={}", container_name),
+            "--format",
+            "{{.Names}}",
+        ])
         .output()
         .expect("Failed to run docker ps");
 
@@ -379,8 +393,12 @@ async fn test_e2e_docker_resource_limits() {
             let container_name = format!("{}_{}", session_id, node_id);
 
             let inspect_output = Command::new("docker")
-                .args(&["inspect", &container_name, "--format",
-                       "Memory: {{.HostConfig.Memory}}, CPUs: {{.HostConfig.NanoCpus}}"])
+                .args(&[
+                    "inspect",
+                    &container_name,
+                    "--format",
+                    "Memory: {{.HostConfig.Memory}}, CPUs: {{.HostConfig.NanoCpus}}",
+                ])
                 .output();
 
             if let Ok(output) = inspect_output {
@@ -455,7 +473,10 @@ async fn test_e2e_docker_concurrent_sessions() {
                         &session_id,
                     );
 
-                    executor_clone.send_data_to_node(&node_id, &session_id, test_data).await.ok();
+                    executor_clone
+                        .send_data_to_node(&node_id, &session_id, test_data)
+                        .await
+                        .ok();
 
                     // Keep session active briefly
                     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -483,8 +504,14 @@ async fn test_e2e_docker_concurrent_sessions() {
         }
     }
 
-    info!("✓ {}/{} concurrent sessions completed successfully", success_count, num_sessions);
-    assert_eq!(success_count, num_sessions, "All concurrent sessions should succeed");
+    info!(
+        "✓ {}/{} concurrent sessions completed successfully",
+        success_count, num_sessions
+    );
+    assert_eq!(
+        success_count, num_sessions,
+        "All concurrent sessions should succeed"
+    );
 
     info!("=== Concurrent Sessions Test Completed ===");
 }

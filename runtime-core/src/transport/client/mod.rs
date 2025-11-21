@@ -330,8 +330,7 @@ pub fn validate_transport_config(config: &TransportConfig) -> crate::Result<()> 
                     "HTTP base_url cannot be empty".to_string(),
                 ));
             }
-            if !config.endpoint.starts_with("http://") && !config.endpoint.starts_with("https://")
-            {
+            if !config.endpoint.starts_with("http://") && !config.endpoint.starts_with("https://") {
                 return Err(crate::Error::ConfigError(format!(
                     "HTTP base_url must start with http:// or https://, got: {}",
                     config.endpoint

@@ -189,9 +189,7 @@ async fn test_control_message_types() {
 
     // DeadlineWarning
     receiver.receive_control_message(RuntimeData::ControlMessage {
-        message_type: ControlMessageType::DeadlineWarning {
-            deadline_us: 50000,
-        },
+        message_type: ControlMessageType::DeadlineWarning { deadline_us: 50000 },
         segment_id: None,
         timestamp_ms: 2,
         metadata: serde_json::json!({"policy": "new_policy"}),

@@ -36,9 +36,8 @@ pub struct ImageCache {
 impl ImageCache {
     /// Create or open image cache database
     pub fn new(db_path: &Path) -> Result<Self> {
-        let conn = Connection::open(db_path).map_err(|e| {
-            Error::Execution(format!("Failed to open image cache database: {}", e))
-        })?;
+        let conn = Connection::open(db_path)
+            .map_err(|e| Error::Execution(format!("Failed to open image cache database: {}", e)))?;
 
         // Initialize schema
         let schema = include_str!("image_cache_schema.sql");
@@ -196,9 +195,7 @@ impl ImageCache {
                     "DELETE FROM image_metadata WHERE image_id = ?",
                     params![image_id],
                 )
-                .map_err(|e| {
-                    Error::Execution(format!("Failed to delete image metadata: {}", e))
-                })?;
+                .map_err(|e| Error::Execution(format!("Failed to delete image metadata: {}", e)))?;
         }
 
         Ok(images_to_remove)

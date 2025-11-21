@@ -35,7 +35,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     // Load configuration from environment
-    let bind_address = std::env::var("HTTP_BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
+    let bind_address =
+        std::env::var("HTTP_BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
 
     info!(
         version = env!("CARGO_PKG_VERSION"),
@@ -61,12 +62,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         // Create HTTP server
-        let server = HttpServer::new(bind_address, runner)
-            .await
-            .map_err(|e| {
-                error!("Failed to create HTTP server: {}", e);
-                e
-            })?;
+        let server = HttpServer::new(bind_address, runner).await.map_err(|e| {
+            error!("Failed to create HTTP server: {}", e);
+            e
+        })?;
 
         info!("HTTP server ready - listening for connections");
 

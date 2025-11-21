@@ -3,13 +3,13 @@
 //! These tests complement the unit tests in plugin_registry.rs by testing
 //! integration-level behaviors, concurrent access patterns, and edge cases.
 
+use async_trait::async_trait;
 use remotemedia_runtime_core::transport::client::PipelineClient;
 use remotemedia_runtime_core::transport::runner::PipelineRunner;
 use remotemedia_runtime_core::transport::{
     ClientConfig, PipelineTransport, ServerConfig, TransportPlugin,
 };
 use remotemedia_runtime_core::Result;
-use async_trait::async_trait;
 use std::sync::Arc;
 
 // ============================================================================
@@ -60,7 +60,10 @@ fn test_register_duplicate_plugin_names() {
     let result2 = registry.register(plugin2);
 
     // Verify error is returned
-    assert!(result2.is_err(), "Second registration with same name should fail");
+    assert!(
+        result2.is_err(),
+        "Second registration with same name should fail"
+    );
 
     // Verify error message contains expected text
     match result2 {
@@ -89,7 +92,10 @@ fn test_register_duplicate_with_different_instances() {
     let plugin2 = Arc::new(MockPlugin { name: "grpc" });
     let result = registry.register(plugin2);
 
-    assert!(result.is_err(), "Should reject duplicate even with different instance");
+    assert!(
+        result.is_err(),
+        "Should reject duplicate even with different instance"
+    );
 }
 
 // ============================================================================
@@ -103,14 +109,20 @@ fn test_plugin_lookup_found() {
     // Create registry and register plugin
     let registry = TransportPluginRegistry::new();
     let plugin = Arc::new(MockPlugin { name: "webrtc" });
-    registry.register(plugin).expect("Registration should succeed");
+    registry
+        .register(plugin)
+        .expect("Registration should succeed");
 
     // Lookup existing plugin by name
     let retrieved = registry.get("webrtc");
 
     // Verify Some(plugin) returned
     assert!(retrieved.is_some(), "Should find registered plugin");
-    assert_eq!(retrieved.unwrap().name(), "webrtc", "Should return correct plugin");
+    assert_eq!(
+        retrieved.unwrap().name(),
+        "webrtc",
+        "Should return correct plugin"
+    );
 }
 
 #[test]
@@ -124,7 +136,10 @@ fn test_plugin_lookup_not_found() {
     let retrieved = registry.get("nonexistent");
 
     // Verify None returned
-    assert!(retrieved.is_none(), "Should return None for non-existent plugin");
+    assert!(
+        retrieved.is_none(),
+        "Should return None for non-existent plugin"
+    );
 }
 
 #[test]
@@ -136,8 +151,14 @@ fn test_plugin_lookup_case_sensitive() {
     registry.register(plugin).unwrap();
 
     // Lookup with different case should fail (names are case-sensitive)
-    assert!(registry.get("GRPC").is_none(), "Lookup should be case-sensitive");
-    assert!(registry.get("Grpc").is_none(), "Lookup should be case-sensitive");
+    assert!(
+        registry.get("GRPC").is_none(),
+        "Lookup should be case-sensitive"
+    );
+    assert!(
+        registry.get("Grpc").is_none(),
+        "Lookup should be case-sensitive"
+    );
 
     // Exact match should succeed
     assert!(registry.get("grpc").is_some(), "Exact case should match");
@@ -169,7 +190,10 @@ fn test_list_registered_plugins() {
     // Verify all names returned
     assert_eq!(plugins.len(), 3, "Should list all registered plugins");
     assert!(plugins.contains(&"grpc".to_string()), "Should contain grpc");
-    assert!(plugins.contains(&"webrtc".to_string()), "Should contain webrtc");
+    assert!(
+        plugins.contains(&"webrtc".to_string()),
+        "Should contain webrtc"
+    );
     assert!(plugins.contains(&"http".to_string()), "Should contain http");
 }
 
@@ -368,7 +392,10 @@ fn test_concurrent_mixed_operations() {
     // Verify registry is still functional
     let plugins = registry.list();
     assert!(plugins.len() >= 1, "Should have at least initial plugin");
-    assert!(plugins.contains(&"initial".to_string()), "Should still have initial plugin");
+    assert!(
+        plugins.contains(&"initial".to_string()),
+        "Should still have initial plugin"
+    );
 }
 
 // ============================================================================

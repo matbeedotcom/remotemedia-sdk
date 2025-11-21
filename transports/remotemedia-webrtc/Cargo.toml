@@ -17,7 +17,7 @@ name = "webrtc_server"
 path = "src/bin/webrtc_server.rs"
 
 [dependencies]
-# Core runtime (with default features: multiprocess, silero-vad, docker-executor)
+# Core runtime (with default features: multiprocess, silero-vad, docker)
 remotemedia-runtime-core = { path = "../../runtime-core", default-features = true }
 
 # WebRTC peer connections, ICE, DTLS, SRTP

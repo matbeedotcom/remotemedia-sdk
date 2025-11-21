@@ -34,10 +34,10 @@
 //! let result = client.execute_unary(manifest, input).await?;
 //! ```
 
+use async_trait::async_trait;
 use remotemedia_runtime_core::manifest::Manifest;
 use remotemedia_runtime_core::transport::client::{ClientStreamSession, PipelineClient};
 use remotemedia_runtime_core::transport::TransportData;
-use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::error::{Error, Result};
@@ -232,7 +232,9 @@ impl ClientStreamSession for WebRtcStreamSession {
 
     async fn send(&mut self, _data: TransportData) -> remotemedia_runtime_core::Result<()> {
         if !self.active {
-            return Err(remotemedia_runtime_core::Error::Transport("Session is closed".to_string()));
+            return Err(remotemedia_runtime_core::Error::Transport(
+                "Session is closed".to_string(),
+            ));
         }
 
         // TODO: Implement send over WebRTC data channel
@@ -307,13 +309,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_check_not_implemented() {
-        let client = WebRtcPipelineClient::new(
-            "wss://signaling.example.com",
-            vec![],
-            None,
-        )
-        .await
-        .unwrap();
+        let client = WebRtcPipelineClient::new("wss://signaling.example.com", vec![], None)
+            .await
+            .unwrap();
         let result = client.health_check().await;
         // Should return Ok(false) for stub implementation
         assert!(result.is_ok());

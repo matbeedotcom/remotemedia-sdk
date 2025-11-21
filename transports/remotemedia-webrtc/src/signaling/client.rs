@@ -5,7 +5,7 @@ use crate::{Error, Result};
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
-use tokio_tungstenite::{connect_async, tungstenite::Message, WebSocketStream, MaybeTlsStream};
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tracing::{debug, error, info, warn};
 
 type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
@@ -20,7 +20,8 @@ pub type OfferReceivedCallback = Arc<dyn Fn(String, String, String) + Send + Syn
 pub type AnswerReceivedCallback = Arc<dyn Fn(String, String, String) + Send + Sync>;
 
 /// Callback for handling received ICE candidates
-pub type IceCandidateReceivedCallback = Arc<dyn Fn(String, String, IceCandidateParams) + Send + Sync>;
+pub type IceCandidateReceivedCallback =
+    Arc<dyn Fn(String, String, IceCandidateParams) + Send + Sync>;
 
 /// Callback for handling peer disconnections
 pub type PeerDisconnectedCallback = Arc<dyn Fn(String) + Send + Sync>;
@@ -152,40 +153,50 @@ impl SignalingClient {
         if let Ok(req) = JsonRpcRequest::from_json(text) {
             match req.method.as_str() {
                 "peer.announce" => {
-                    let params: PeerAnnounceParams = serde_json::from_value(req.params)
-                        .map_err(|e| Error::InvalidData(format!("Invalid peer.announce params: {}", e)))?;
+                    let params: PeerAnnounceParams =
+                        serde_json::from_value(req.params).map_err(|e| {
+                            Error::InvalidData(format!("Invalid peer.announce params: {}", e))
+                        })?;
 
                     if let Some(cb) = callbacks.on_peer_announced.lock().await.as_ref() {
                         cb(params.peer_id, params.capabilities);
                     }
                 }
                 "peer.offer" => {
-                    let params: PeerOfferParams = serde_json::from_value(req.params)
-                        .map_err(|e| Error::InvalidData(format!("Invalid peer.offer params: {}", e)))?;
+                    let params: PeerOfferParams =
+                        serde_json::from_value(req.params).map_err(|e| {
+                            Error::InvalidData(format!("Invalid peer.offer params: {}", e))
+                        })?;
 
                     if let Some(cb) = callbacks.on_offer_received.lock().await.as_ref() {
                         cb(params.from, params.to, params.sdp);
                     }
                 }
                 "peer.answer" => {
-                    let params: PeerAnswerParams = serde_json::from_value(req.params)
-                        .map_err(|e| Error::InvalidData(format!("Invalid peer.answer params: {}", e)))?;
+                    let params: PeerAnswerParams =
+                        serde_json::from_value(req.params).map_err(|e| {
+                            Error::InvalidData(format!("Invalid peer.answer params: {}", e))
+                        })?;
 
                     if let Some(cb) = callbacks.on_answer_received.lock().await.as_ref() {
                         cb(params.from, params.to, params.sdp);
                     }
                 }
                 "peer.ice_candidate" => {
-                    let params: IceCandidateParams = serde_json::from_value(req.params)
-                        .map_err(|e| Error::InvalidData(format!("Invalid peer.ice_candidate params: {}", e)))?;
+                    let params: IceCandidateParams =
+                        serde_json::from_value(req.params).map_err(|e| {
+                            Error::InvalidData(format!("Invalid peer.ice_candidate params: {}", e))
+                        })?;
 
                     if let Some(cb) = callbacks.on_ice_candidate_received.lock().await.as_ref() {
                         cb(params.from.clone(), params.to.clone(), params);
                     }
                 }
                 "peer.disconnect" => {
-                    let params: PeerDisconnectParams = serde_json::from_value(req.params)
-                        .map_err(|e| Error::InvalidData(format!("Invalid peer.disconnect params: {}", e)))?;
+                    let params: PeerDisconnectParams =
+                        serde_json::from_value(req.params).map_err(|e| {
+                            Error::InvalidData(format!("Invalid peer.disconnect params: {}", e))
+                        })?;
 
                     if let Some(cb) = callbacks.on_peer_disconnected.lock().await.as_ref() {
                         cb(params.peer_id);
@@ -228,8 +239,9 @@ impl SignalingClient {
     /// * `to` - Target peer ID
     /// * `sdp` - SDP offer string
     pub async fn send_offer(&self, to: String, sdp: String) -> Result<()> {
-        let from = self.peer_id.read().await.clone()
-            .ok_or_else(|| Error::InvalidData("Peer ID not set, call announce_peer first".to_string()))?;
+        let from = self.peer_id.read().await.clone().ok_or_else(|| {
+            Error::InvalidData("Peer ID not set, call announce_peer first".to_string())
+        })?;
 
         let msg = SignalingMessage::PeerOffer {
             params: PeerOfferParams { from, to, sdp },
@@ -246,8 +258,9 @@ impl SignalingClient {
     /// * `to` - Target peer ID
     /// * `sdp` - SDP answer string
     pub async fn send_answer(&self, to: String, sdp: String) -> Result<()> {
-        let from = self.peer_id.read().await.clone()
-            .ok_or_else(|| Error::InvalidData("Peer ID not set, call announce_peer first".to_string()))?;
+        let from = self.peer_id.read().await.clone().ok_or_else(|| {
+            Error::InvalidData("Peer ID not set, call announce_peer first".to_string())
+        })?;
 
         let msg = SignalingMessage::PeerAnswer {
             params: PeerAnswerParams { from, to, sdp },
@@ -264,8 +277,9 @@ impl SignalingClient {
     /// * `to` - Target peer ID
     /// * `candidate` - ICE candidate string
     pub async fn send_ice_candidate(&self, to: String, candidate: String) -> Result<()> {
-        let from = self.peer_id.read().await.clone()
-            .ok_or_else(|| Error::InvalidData("Peer ID not set, call announce_peer first".to_string()))?;
+        let from = self.peer_id.read().await.clone().ok_or_else(|| {
+            Error::InvalidData("Peer ID not set, call announce_peer first".to_string())
+        })?;
 
         let msg = SignalingMessage::IceCandidate {
             params: IceCandidateParams {
@@ -283,7 +297,11 @@ impl SignalingClient {
 
     /// Send disconnect notification
     pub async fn disconnect(&self) -> Result<()> {
-        let peer_id = self.peer_id.read().await.clone()
+        let peer_id = self
+            .peer_id
+            .read()
+            .await
+            .clone()
             .ok_or_else(|| Error::InvalidData("Peer ID not set".to_string()))?;
 
         let msg = SignalingMessage::PeerDisconnect {

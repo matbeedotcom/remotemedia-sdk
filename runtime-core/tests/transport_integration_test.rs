@@ -109,8 +109,10 @@ async fn test_streaming_send_and_receive() {
 #[tokio::test]
 async fn test_session_close_idempotency() {
     let runner = PipelineRunner::new().unwrap();
-    let manifest =
-        Arc::new(serde_json::from_str::<Manifest>(r#"{"version":"v1","nodes":[],"connections":[]}"#).unwrap());
+    let manifest = Arc::new(
+        serde_json::from_str::<Manifest>(r#"{"version":"v1","nodes":[],"connections":[]}"#)
+            .unwrap(),
+    );
 
     let mut session = runner.create_stream_session(manifest).await.unwrap();
 
@@ -126,8 +128,10 @@ async fn test_session_close_idempotency() {
 #[tokio::test]
 async fn test_send_after_close_fails() {
     let runner = PipelineRunner::new().unwrap();
-    let manifest =
-        Arc::new(serde_json::from_str::<Manifest>(r#"{"version":"v1","nodes":[],"connections":[]}"#).unwrap());
+    let manifest = Arc::new(
+        serde_json::from_str::<Manifest>(r#"{"version":"v1","nodes":[],"connections":[]}"#)
+            .unwrap(),
+    );
 
     let mut session = runner.create_stream_session(manifest).await.unwrap();
 
@@ -145,8 +149,10 @@ async fn test_send_after_close_fails() {
 async fn test_mock_transport_trait_implementation() {
     let transport = MockTransport::new().unwrap();
 
-    let manifest =
-        Arc::new(serde_json::from_str::<Manifest>(r#"{"version":"v1","nodes":[],"connections":[]}"#).unwrap());
+    let manifest = Arc::new(
+        serde_json::from_str::<Manifest>(r#"{"version":"v1","nodes":[],"connections":[]}"#)
+            .unwrap(),
+    );
     let input = TransportData::new(RuntimeData::Text("via trait".into()));
 
     // Call via trait
@@ -170,8 +176,10 @@ async fn test_transport_data_builder_pattern() {
 #[tokio::test]
 async fn test_multiple_concurrent_sessions() {
     let runner = PipelineRunner::new().unwrap();
-    let manifest =
-        Arc::new(serde_json::from_str::<Manifest>(r#"{"version":"v1","nodes":[],"connections":[]}"#).unwrap());
+    let manifest = Arc::new(
+        serde_json::from_str::<Manifest>(r#"{"version":"v1","nodes":[],"connections":[]}"#)
+            .unwrap(),
+    );
 
     // Create multiple sessions concurrently
     let session1 = runner

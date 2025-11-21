@@ -52,7 +52,7 @@ fn remotemedia_ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add FFI functions from api module
     m.add_function(wrap_pyfunction!(api::execute_pipeline, m)?)?;
     m.add_function(wrap_pyfunction!(api::execute_pipeline_with_input, m)?)?;
-    m.add_function(wrap_pyfunction!(api::execute_pipeline_with_instances, m)?)?;  // Feature 011
+    m.add_function(wrap_pyfunction!(api::execute_pipeline_with_instances, m)?)?; // Feature 011
     m.add_function(wrap_pyfunction!(api::get_runtime_version, m)?)?;
     m.add_function(wrap_pyfunction!(api::is_available, m)?)?;
 

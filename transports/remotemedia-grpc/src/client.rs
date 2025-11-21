@@ -20,11 +20,11 @@
 //! let result = client.execute_unary(manifest, input).await?;
 //! ```
 
+use async_trait::async_trait;
 use remotemedia_runtime_core::manifest::Manifest;
 use remotemedia_runtime_core::transport::client::{ClientStreamSession, PipelineClient};
 use remotemedia_runtime_core::transport::TransportData;
 use remotemedia_runtime_core::{Error, Result};
-use async_trait::async_trait;
 use std::sync::Arc;
 
 /// gRPC client for remote pipeline execution
@@ -100,7 +100,10 @@ impl GrpcPipelineClient {
             .connect()
             .await
             .map_err(|e| {
-                Error::Transport(format!("Failed to connect to gRPC endpoint '{}': {}", endpoint, e))
+                Error::Transport(format!(
+                    "Failed to connect to gRPC endpoint '{}': {}",
+                    endpoint, e
+                ))
             })?;
 
         *guard = Some(channel.clone());
@@ -112,8 +115,9 @@ impl GrpcPipelineClient {
         let mut metadata = tonic::metadata::MetadataMap::new();
 
         if let Some(ref token) = self.auth_token {
-            let header_value = tonic::metadata::MetadataValue::try_from(format!("Bearer {}", token))
-                .map_err(|e| Error::ConfigError(format!("Invalid auth token: {}", e)))?;
+            let header_value =
+                tonic::metadata::MetadataValue::try_from(format!("Bearer {}", token))
+                    .map_err(|e| Error::ConfigError(format!("Invalid auth token: {}", e)))?;
 
             metadata.insert("authorization", header_value);
         }
@@ -154,7 +158,8 @@ impl PipelineClient for GrpcPipelineClient {
         _manifest: Arc<Manifest>,
     ) -> Result<Box<dyn ClientStreamSession>> {
         Err(Error::Transport(
-            "gRPC create_stream_session not yet fully implemented - will be completed in T011".to_string(),
+            "gRPC create_stream_session not yet fully implemented - will be completed in T011"
+                .to_string(),
         ))
     }
 

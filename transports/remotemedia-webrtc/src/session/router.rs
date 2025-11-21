@@ -2,10 +2,10 @@
 //!
 //! Routes data between WebRTC peers and pipeline execution.
 
-use crate::{Error, Result};
-use crate::session::{Session, SessionId};
-use crate::peer::PeerManager;
 use crate::media::tracks::rtp_to_runtime_data;
+use crate::peer::PeerManager;
+use crate::session::{Session, SessionId};
+use crate::{Error, Result};
 use remotemedia_runtime_core::data::RuntimeData;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -142,19 +142,18 @@ impl SessionRouter {
         let peer = self.peer_manager.get_peer(peer_id).await?;
 
         // Convert RTP to RuntimeData
-        let runtime_data = if is_audio {
-            let audio_track = peer
-                .audio_track()
-                .await
-                .ok_or_else(|| Error::MediaTrackError("No audio track configured".to_string()))?;
-            rtp_to_runtime_data(payload, true, Some(&audio_track), None).await?
-        } else {
-            let video_track = peer
-                .video_track()
-                .await
-                .ok_or_else(|| Error::MediaTrackError("No video track configured".to_string()))?;
-            rtp_to_runtime_data(payload, false, None, Some(&video_track)).await?
-        };
+        let runtime_data =
+            if is_audio {
+                let audio_track = peer.audio_track().await.ok_or_else(|| {
+                    Error::MediaTrackError("No audio track configured".to_string())
+                })?;
+                rtp_to_runtime_data(payload, true, Some(&audio_track), None).await?
+            } else {
+                let video_track = peer.video_track().await.ok_or_else(|| {
+                    Error::MediaTrackError("No video track configured".to_string())
+                })?;
+                rtp_to_runtime_data(payload, false, None, Some(&video_track)).await?
+            };
 
         Ok(runtime_data)
     }
@@ -171,7 +170,10 @@ impl SessionRouter {
         let peer_ids = self.session.list_peers().await;
 
         if peer_ids.is_empty() {
-            warn!("No peers connected to session {}, dropping output", self.session_id);
+            warn!(
+                "No peers connected to session {}, dropping output",
+                self.session_id
+            );
             return Ok(());
         }
 
@@ -190,31 +192,45 @@ impl SessionRouter {
         let peer = self.peer_manager.get_peer(peer_id).await?;
 
         match data {
-            RuntimeData::Audio { samples, sample_rate, .. } => {
-                let audio_track = peer
-                    .audio_track()
-                    .await
-                    .ok_or_else(|| Error::MediaTrackError("No audio track configured".to_string()))?;
+            RuntimeData::Audio {
+                samples,
+                sample_rate,
+                ..
+            } => {
+                let audio_track = peer.audio_track().await.ok_or_else(|| {
+                    Error::MediaTrackError("No audio track configured".to_string())
+                })?;
 
                 // Send audio directly (handles encoding + RTP transmission)
                 // Use sample rate from RuntimeData
-                audio_track.send_audio(Arc::new(samples.clone()), *sample_rate).await?;
+                audio_track
+                    .send_audio(Arc::new(samples.clone()), *sample_rate)
+                    .await?;
                 Ok(())
             }
-            RuntimeData::Video { width, height, pixel_data, format, timestamp_us, .. } => {
-                let video_track = peer
-                    .video_track()
-                    .await
-                    .ok_or_else(|| Error::MediaTrackError("No video track configured".to_string()))?;
+            RuntimeData::Video {
+                width,
+                height,
+                pixel_data,
+                format,
+                timestamp_us,
+                ..
+            } => {
+                let video_track = peer.video_track().await.ok_or_else(|| {
+                    Error::MediaTrackError("No video track configured".to_string())
+                })?;
 
                 // Convert format i32 to VideoFormat enum
                 use crate::media::video::VideoFormat;
                 let video_format = match format {
                     1 => VideoFormat::RGB24,
                     3 => VideoFormat::I420,
-                    _ => return Err(Error::EncodingError(
-                        format!("Unsupported video format code: {}", format)
-                    )),
+                    _ => {
+                        return Err(Error::EncodingError(format!(
+                            "Unsupported video format code: {}",
+                            format
+                        )))
+                    }
                 };
 
                 // Create VideoFrame
@@ -244,7 +260,8 @@ impl SessionRouter {
     pub async fn send_output(&self, data: RuntimeData) -> Result<()> {
         debug!("Sending output to router (session: {})", self.session_id);
 
-        self.output_tx.send(data)
+        self.output_tx
+            .send(data)
             .map_err(|e| Error::SessionError(format!("Failed to send output: {}", e)))?;
 
         Ok(())
@@ -307,11 +324,7 @@ mod tests {
         let session = Arc::new(Session::new("test-session".to_string()));
         let peer_manager = Arc::new(PeerManager::new(10).unwrap());
 
-        let router = SessionRouter::new(
-            "test-session".to_string(),
-            session,
-            peer_manager,
-        );
+        let router = SessionRouter::new("test-session".to_string(), session, peer_manager);
 
         assert!(router.is_ok());
     }

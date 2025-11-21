@@ -24,12 +24,7 @@ async fn start_test_server() -> (String, tokio::task::JoinHandle<()>) {
     // Create service
     let config = ServiceConfig::default();
     let metrics = Arc::new(ServiceMetrics::with_default_registry().unwrap());
-    let service = StreamingServiceImpl::new(
-        config.auth,
-        config.limits,
-        metrics,
-        runner,
-    );
+    let service = StreamingServiceImpl::new(config.auth, config.limits, metrics, runner);
 
     // Spawn server
     let handle = tokio::spawn(async move {
@@ -199,15 +194,12 @@ async fn test_pipeline_runner_end_to_end() {
     println!("✓ Sent test frame");
 
     // Receive result
-    let result = tokio::time::timeout(
-        Duration::from_secs(5),
-        session.recv_output(),
-    )
-    .await
-    .expect("Timeout")
-    .unwrap()
-    .expect("No output")
-    .data;
+    let result = tokio::time::timeout(Duration::from_secs(5), session.recv_output())
+        .await
+        .expect("Timeout")
+        .unwrap()
+        .expect("No output")
+        .data;
 
     println!("✓ Received result");
 

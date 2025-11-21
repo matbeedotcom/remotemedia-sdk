@@ -3,7 +3,7 @@
 //! This helps identify problematic files causing "unhandled tar header type 83" errors
 //!
 //! Usage:
-//!   cargo run --example test_tar_creation --features docker-executor
+//!   cargo run --example test_tar_creation --features docker
 
 use remotemedia_runtime_core::python::docker::config::{DockerExecutorConfig, ResourceLimits};
 use std::path::PathBuf;
@@ -19,23 +19,24 @@ fn main() {
         resource_limits: ResourceLimits {
             memory_mb: 512,
             cpu_cores: 1.0,
-            gpu_devices: vec![],
         },
         base_image: None,
         env: Default::default(),
     };
 
     println!("1. Generating Dockerfile...");
-    let dockerfile = match remotemedia_runtime_core::python::docker::image_builder::generate_dockerfile(&config) {
-        Ok(df) => {
-            println!("✓ Dockerfile generated ({} bytes)", df.len());
-            df
-        }
-        Err(e) => {
-            eprintln!("✗ Failed to generate Dockerfile: {}", e);
-            return;
-        }
-    };
+    let dockerfile =
+        match remotemedia_runtime_core::python::docker::image_builder::generate_dockerfile(&config)
+        {
+            Ok(df) => {
+                println!("✓ Dockerfile generated ({} bytes)", df.len());
+                df
+            }
+            Err(e) => {
+                eprintln!("✗ Failed to generate Dockerfile: {}", e);
+                return;
+            }
+        };
 
     println!("\n2. Creating tar archive...");
 
@@ -140,7 +141,10 @@ fn main() {
 
     println!("\n3. Tar archive summary:");
     println!("  Total size: {} bytes", tar_data.len());
-    println!("  Size (MB): {:.2}", tar_data.len() as f64 / 1024.0 / 1024.0);
+    println!(
+        "  Size (MB): {:.2}",
+        tar_data.len() as f64 / 1024.0 / 1024.0
+    );
 
     // Optionally save to file for inspection
     let tar_path = "/tmp/docker_build_test.tar";

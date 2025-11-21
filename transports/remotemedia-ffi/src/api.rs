@@ -273,7 +273,7 @@ pub fn execute_pipeline_with_instances<'py>(
 
         if executors.is_empty() {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Cannot execute empty pipeline"
+                "Cannot execute empty pipeline",
             ));
         }
 
@@ -290,10 +290,12 @@ pub fn execute_pipeline_with_instances<'py>(
             let outputs = executor.process(current_data)?;
 
             // Take first output as input for next node
-            current_data = outputs.into_iter().next()
-                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                    format!("Node '{}' produced no output", executor.node_id())
-                ))?;
+            current_data = outputs.into_iter().next().ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Node '{}' produced no output",
+                    executor.node_id()
+                ))
+            })?;
         }
 
         // Cleanup all nodes

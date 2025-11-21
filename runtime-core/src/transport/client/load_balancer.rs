@@ -188,7 +188,11 @@ impl EndpointPool {
     /// Record successful execution on endpoint
     pub async fn record_success(&self, endpoint: &Arc<Endpoint>) {
         *endpoint.last_success.write().await = Some(std::time::Instant::now());
-        endpoint.circuit_breaker.execute(|| async { Ok::<(), Error>(()) }).await.ok();
+        endpoint
+            .circuit_breaker
+            .execute(|| async { Ok::<(), Error>(()) })
+            .await
+            .ok();
     }
 
     /// Record failed execution on endpoint
@@ -257,16 +261,18 @@ mod tests {
 
         // Fail the only endpoint
         let endpoint = pool.select().await.unwrap();
-        endpoint.circuit_breaker
-            .execute(|| async {
-                Err::<(), _>(crate::Error::Transport("Failure".to_string()))
-            })
+        endpoint
+            .circuit_breaker
+            .execute(|| async { Err::<(), _>(crate::Error::Transport("Failure".to_string())) })
             .await
             .ok();
 
         // Next select should fail
         let result = pool.select().await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::AllEndpointsFailed { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::AllEndpointsFailed { .. }
+        ));
     }
 }

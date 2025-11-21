@@ -416,7 +416,10 @@ pub fn runtime_data_to_python(py: Python<'_>, data: &RuntimeData) -> PyResult<Py
             // Control message not fully supported yet
             let dict = PyDict::new(py);
             dict.set_item("type", "control_message")?;
-            dict.set_item("note", "Control message data not fully supported in FFI yet")?;
+            dict.set_item(
+                "note",
+                "Control message data not fully supported in FFI yet",
+            )?;
             Ok(dict.into())
         }
     }
