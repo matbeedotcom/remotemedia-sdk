@@ -9,6 +9,7 @@
 //! - **api.rs**: Main FFI functions (execute_pipeline, etc.)
 //! - **marshal.rs**: Python ↔ JSON conversion
 //! - **numpy_bridge.rs**: Zero-copy numpy array integration
+//! - **instance_handler.rs**: Python Node instance execution support
 //!
 //! # Usage (Python)
 //!
@@ -27,6 +28,7 @@
 #![warn(clippy::all)]
 
 mod api;
+mod instance_handler;
 mod marshal;
 mod numpy_bridge;
 
