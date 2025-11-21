@@ -229,14 +229,20 @@ impl SignalingMessage {
     /// Convert message to JSON string
     pub fn to_json(&self) -> crate::Result<String> {
         serde_json::to_string(self).map_err(|e| {
-            crate::Error::SerializationError(format!("Failed to serialize signaling message: {}", e))
+            crate::Error::SerializationError(format!(
+                "Failed to serialize signaling message: {}",
+                e
+            ))
         })
     }
 
     /// Parse message from JSON string
     pub fn from_json(json: &str) -> crate::Result<Self> {
         serde_json::from_str(json).map_err(|e| {
-            crate::Error::SerializationError(format!("Failed to deserialize signaling message: {}", e))
+            crate::Error::SerializationError(format!(
+                "Failed to deserialize signaling message: {}",
+                e
+            ))
         })
     }
 
@@ -284,7 +290,10 @@ impl JsonRpcRequest {
     /// Parse from JSON string
     pub fn from_json(json: &str) -> crate::Result<Self> {
         serde_json::from_str(json).map_err(|e| {
-            crate::Error::SerializationError(format!("Failed to deserialize JSON-RPC request: {}", e))
+            crate::Error::SerializationError(format!(
+                "Failed to deserialize JSON-RPC request: {}",
+                e
+            ))
         })
     }
 }
@@ -302,7 +311,10 @@ impl JsonRpcResponse {
     /// Convert to JSON string
     pub fn to_json(&self) -> crate::Result<String> {
         serde_json::to_string(self).map_err(|e| {
-            crate::Error::SerializationError(format!("Failed to serialize JSON-RPC response: {}", e))
+            crate::Error::SerializationError(format!(
+                "Failed to serialize JSON-RPC response: {}",
+                e
+            ))
         })
     }
 }

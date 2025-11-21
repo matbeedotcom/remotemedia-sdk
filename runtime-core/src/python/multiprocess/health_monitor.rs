@@ -387,9 +387,8 @@ impl HealthMonitor {
         );
 
         // Connect to Docker
-        let docker = Docker::connect_with_local_defaults().map_err(|e| {
-            crate::Error::Execution(format!("Failed to connect to Docker: {}", e))
-        })?;
+        let docker = Docker::connect_with_local_defaults()
+            .map_err(|e| crate::Error::Execution(format!("Failed to connect to Docker: {}", e)))?;
 
         // Check if container is running
         let inspect_result = docker
@@ -412,10 +411,7 @@ impl HealthMonitor {
             .unwrap_or(false);
 
         // Extract exit code and OOM killed status from container state
-        let exit_code = inspect_result
-            .state
-            .as_ref()
-            .and_then(|s| s.exit_code);
+        let exit_code = inspect_result.state.as_ref().and_then(|s| s.exit_code);
 
         let oom_killed = inspect_result
             .state
@@ -432,17 +428,10 @@ impl HealthMonitor {
         // Get container stats if running
         // Note: Stats collection is optional and may not be available in all environments
         let (memory_usage, cpu_usage) = if is_running {
-            match self
-                .get_container_stats(container_id, &docker)
-                .await
-            {
+            match self.get_container_stats(container_id, &docker).await {
                 Ok((mem, cpu)) => (Some(mem), Some(cpu)),
                 Err(e) => {
-                    tracing::debug!(
-                        "Stats not available for container {}: {}",
-                        container_id,
-                        e
-                    );
+                    tracing::debug!("Stats not available for container {}: {}", container_id, e);
                     (None, None)
                 }
             }
@@ -465,8 +454,8 @@ impl HealthMonitor {
         // Check for resource limit violations
         if !is_running {
             if let Some(resource_limit_type) =
-                self.detect_resource_limit_violation(exit_code, oom_killed, cpu_usage) {
-
+                self.detect_resource_limit_violation(exit_code, oom_killed, cpu_usage)
+            {
                 tracing::error!(
                     "Container {} for node {} exceeded resource limit: {:?}",
                     container_id,
@@ -475,21 +464,19 @@ impl HealthMonitor {
                 );
 
                 // Send resource limit exceeded event
-                let _ = self
-                    .event_sender
-                    .send(ProcessEvent::ResourceLimitExceeded {
-                        container_id: container_id.to_string(),
-                        node_id: node_id.to_string(),
-                        resource_type: resource_limit_type.clone(),
-                        exit_code,
-                        timestamp: Instant::now(),
-                    });
+                let _ = self.event_sender.send(ProcessEvent::ResourceLimitExceeded {
+                    container_id: container_id.to_string(),
+                    node_id: node_id.to_string(),
+                    resource_type: resource_limit_type.clone(),
+                    exit_code,
+                    timestamp: Instant::now(),
+                });
 
                 // Return error with clear message
                 let error_msg = self.format_resource_limit_error(
                     &resource_limit_type,
                     exit_code,
-                    error_message.as_deref()
+                    error_message.as_deref(),
                 );
 
                 return Err(crate::Error::Execution(error_msg));
@@ -605,13 +592,11 @@ impl HealthMonitor {
         );
 
         // Emit unhealthy event
-        let _ = self
-            .event_sender
-            .send(ProcessEvent::ContainerUnhealthy {
-                container_id: container_id.to_string(),
-                node_id: node_id.to_string(),
-                timestamp: Instant::now(),
-            });
+        let _ = self.event_sender.send(ProcessEvent::ContainerUnhealthy {
+            container_id: container_id.to_string(),
+            node_id: node_id.to_string(),
+            timestamp: Instant::now(),
+        });
 
         // Container health status is now managed in docker_support.rs
         // TODO: Update Docker health status if needed
@@ -629,10 +614,7 @@ impl HealthMonitor {
         let mut health_results = Vec::new();
 
         for (container_id, node_id) in containers {
-            match self
-                .check_container_health(container_id, node_id)
-                .await
-            {
+            match self.check_container_health(container_id, node_id).await {
                 Ok(health) => health_results.push(health),
                 Err(e) => {
                     tracing::error!(
@@ -725,15 +707,11 @@ impl HealthMonitor {
         error_message: Option<&str>,
     ) -> String {
         let base_message = match resource_type {
-            ResourceLimitType::Memory => {
-                "Container killed due to memory limit exceeded (OOM)"
-            }
+            ResourceLimitType::Memory => "Container killed due to memory limit exceeded (OOM)",
             ResourceLimitType::CpuThrottling => {
                 "Container terminated due to CPU throttling (CPU limit exceeded)"
             }
-            ResourceLimitType::Unknown => {
-                "Container terminated due to unknown resource limit"
-            }
+            ResourceLimitType::Unknown => "Container terminated due to unknown resource limit",
         };
 
         let mut message = base_message.to_string();
@@ -914,13 +892,11 @@ mod tests {
             .await;
 
         // Send a container unhealthy event
-        let _ = monitor
-            .event_sender
-            .send(ProcessEvent::ContainerUnhealthy {
-                container_id: "test_container".to_string(),
-                node_id: "test_node".to_string(),
-                timestamp: Instant::now(),
-            });
+        let _ = monitor.event_sender.send(ProcessEvent::ContainerUnhealthy {
+            container_id: "test_container".to_string(),
+            node_id: "test_node".to_string(),
+            timestamp: Instant::now(),
+        });
 
         // Process events
         monitor.process_events().await;
@@ -979,11 +955,8 @@ mod tests {
         assert!(error.contains("Consider increasing the memory limit"));
 
         // Test CPU throttling error formatting
-        let error = monitor.format_resource_limit_error(
-            &ResourceLimitType::CpuThrottling,
-            None,
-            None,
-        );
+        let error =
+            monitor.format_resource_limit_error(&ResourceLimitType::CpuThrottling, None, None);
         assert!(error.contains("CPU throttling"));
         assert!(error.contains("Consider increasing the CPU limit"));
     }

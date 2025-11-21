@@ -117,10 +117,7 @@ impl LatencyMetrics {
             Window::FifteenMinutes => &self.histogram_15min,
         };
 
-        histogram
-            .lock()
-            .unwrap()
-            .value_at_quantile(p)
+        histogram.lock().unwrap().value_at_quantile(p)
     }
 
     /// Get P50 latency (median)

@@ -50,9 +50,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         // Create test video frame (2x2 RGB24)
         let input_pixels = vec![
-            255, 0, 0,     // red
-            0, 255, 0,     // green
-            0, 0, 255,     // blue
+            255, 0, 0, // red
+            0, 255, 0, // green
+            0, 0, 255, // blue
             255, 255, 255, // white
         ];
 
@@ -229,9 +229,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let elapsed = start.elapsed();
         let fps = THROUGHPUT_FRAMES as f64 / elapsed.as_secs_f64();
 
-        println!("  ✓ Processed {} frames in {:.2}s", THROUGHPUT_FRAMES, elapsed.as_secs_f64());
+        println!(
+            "  ✓ Processed {} frames in {:.2}s",
+            THROUGHPUT_FRAMES,
+            elapsed.as_secs_f64()
+        );
         println!("  ✓ Throughput: {:.2} FPS", fps);
-        println!("  ✓ Avg latency: {:.2}ms per frame", elapsed.as_millis() as f64 / THROUGHPUT_FRAMES as f64);
+        println!(
+            "  ✓ Avg latency: {:.2}ms per frame",
+            elapsed.as_millis() as f64 / THROUGHPUT_FRAMES as f64
+        );
     }
 
     // Clean shutdown

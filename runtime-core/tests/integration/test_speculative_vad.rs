@@ -6,7 +6,9 @@
 //! 3. On false positive detection, a CancelSpeculation control message is emitted
 //! 4. Cancellation messages propagate to downstream nodes
 
-use remotemedia_runtime_core::data::{AudioBuffer, ControlMessage, ControlMessageType, RuntimeData, SpeculativeSegment, SegmentStatus};
+use remotemedia_runtime_core::data::{
+    AudioBuffer, ControlMessage, ControlMessageType, RuntimeData, SegmentStatus, SpeculativeSegment,
+};
 use remotemedia_runtime_core::nodes::{AsyncStreamingNode, StreamingNode};
 use remotemedia_runtime_core::Error;
 use std::sync::{Arc, Mutex};
@@ -205,14 +207,8 @@ async fn test_cancellation_on_false_positive() {
             timestamp_ms,
             metadata,
         } => {
-            matches!(
-                message_type,
-                ControlMessageType::CancelSpeculation { .. }
-            );
-            assert!(
-                segment_id.is_some(),
-                "Cancellation should have segment_id"
-            );
+            matches!(message_type, ControlMessageType::CancelSpeculation { .. });
+            assert!(segment_id.is_some(), "Cancellation should have segment_id");
             assert_eq!(
                 segment_id.as_ref().unwrap(),
                 "session2_segment_0",
@@ -262,11 +258,7 @@ async fn test_ring_buffer_storage() {
     // 3. clear_before() is called after segments are confirmed
 
     let outputs = gate.get_outputs();
-    assert_eq!(
-        outputs.len(),
-        3,
-        "Should have processed 3 audio chunks"
-    );
+    assert_eq!(outputs.len(), 3, "Should have processed 3 audio chunks");
 }
 
 #[tokio::test]
@@ -286,7 +278,11 @@ async fn test_speculation_acceptance_tracking() {
     // Accepted speculation (no cancellation)
     let callback_accept = |_: RuntimeData| Ok(());
     let result_accept = gate_accept
-        .process_streaming(audio.clone(), Some("accept_session".to_string()), callback_accept)
+        .process_streaming(
+            audio.clone(),
+            Some("accept_session".to_string()),
+            callback_accept,
+        )
         .await;
     assert_eq!(
         result_accept.unwrap(),

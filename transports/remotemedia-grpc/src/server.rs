@@ -16,8 +16,10 @@ use crate::{
 };
 
 use async_trait::async_trait;
-use remotemedia_runtime_core::transport::{PipelineRunner, PipelineTransport, StreamSession, TransportData};
 use remotemedia_runtime_core::manifest::Manifest;
+use remotemedia_runtime_core::transport::{
+    PipelineRunner, PipelineTransport, StreamSession, TransportData,
+};
 use std::sync::Arc;
 use tonic::{service::LayerExt as _, transport::Server};
 use tracing::{info, warn};

@@ -155,12 +155,8 @@ mod tests {
 
     #[test]
     fn test_segment_validation_fails_for_invalid_timestamps() {
-        let mut segment = SpeculativeSegment::new(
-            "session_123".to_string(),
-            1000000,
-            1020000,
-            (0, 320),
-        );
+        let mut segment =
+            SpeculativeSegment::new("session_123".to_string(), 1000000, 1020000, (0, 320));
 
         // Swap timestamps to make invalid
         segment.start_timestamp = 2000000;
@@ -185,12 +181,8 @@ mod tests {
 
     #[test]
     fn test_segment_state_transitions() {
-        let mut segment = SpeculativeSegment::new(
-            "session_123".to_string(),
-            1000000,
-            1020000,
-            (0, 320),
-        );
+        let mut segment =
+            SpeculativeSegment::new("session_123".to_string(), 1000000, 1020000, (0, 320));
 
         // Initial state: Speculative
         assert!(segment.is_speculative());
@@ -201,12 +193,8 @@ mod tests {
         assert!(!segment.is_speculative());
 
         // Create another segment and cancel it
-        let mut segment2 = SpeculativeSegment::new(
-            "session_123".to_string(),
-            2000000,
-            2020000,
-            (320, 640),
-        );
+        let mut segment2 =
+            SpeculativeSegment::new("session_123".to_string(), 2000000, 2020000, (320, 640));
 
         segment2.cancel("VAD determined it was noise".to_string());
         assert!(segment2.is_cancelled());
@@ -215,24 +203,16 @@ mod tests {
 
     #[test]
     fn test_segment_duration_us() {
-        let segment = SpeculativeSegment::new(
-            "session_123".to_string(),
-            1000000,
-            1020000,
-            (0, 320),
-        );
+        let segment =
+            SpeculativeSegment::new("session_123".to_string(), 1000000, 1020000, (0, 320));
 
         assert_eq!(segment.duration_us(), 20000); // 20ms = 20000 microseconds
     }
 
     #[test]
     fn test_buffer_range_validation() {
-        let mut segment = SpeculativeSegment::new(
-            "session_123".to_string(),
-            1000000,
-            1020000,
-            (0, 320),
-        );
+        let mut segment =
+            SpeculativeSegment::new("session_123".to_string(), 1000000, 1020000, (0, 320));
 
         assert!(segment.validate().is_ok());
 

@@ -57,12 +57,7 @@ impl VideoFlipNode {
     }
 
     /// Flip RGB24 image
-    fn flip_rgb24(
-        &self,
-        data: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<Vec<u8>, Error> {
+    fn flip_rgb24(&self, data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, Error> {
         let width = width as usize;
         let height = height as usize;
         let bytes_per_pixel = 3; // RGB24
@@ -83,7 +78,8 @@ impl VideoFlipNode {
                 // Flip vertically: reverse row order
                 for y in 0..height {
                     let src_row = &data[y * row_bytes..(y + 1) * row_bytes];
-                    let dst_row = &mut flipped[(height - 1 - y) * row_bytes..(height - y) * row_bytes];
+                    let dst_row =
+                        &mut flipped[(height - 1 - y) * row_bytes..(height - y) * row_bytes];
                     dst_row.copy_from_slice(src_row);
                 }
             }
@@ -103,7 +99,8 @@ impl VideoFlipNode {
                 for y in 0..height {
                     for x in 0..width {
                         let src_offset = (y * width + x) * bytes_per_pixel;
-                        let dst_offset = ((height - 1 - y) * width + (width - 1 - x)) * bytes_per_pixel;
+                        let dst_offset =
+                            ((height - 1 - y) * width + (width - 1 - x)) * bytes_per_pixel;
                         flipped[dst_offset..dst_offset + bytes_per_pixel]
                             .copy_from_slice(&data[src_offset..src_offset + bytes_per_pixel]);
                     }
@@ -115,12 +112,7 @@ impl VideoFlipNode {
     }
 
     /// Flip I420 (YUV420P) image
-    fn flip_i420(
-        &self,
-        data: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<Vec<u8>, Error> {
+    fn flip_i420(&self, data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, Error> {
         let width = width as usize;
         let height = height as usize;
 
@@ -161,12 +153,14 @@ impl VideoFlipNode {
                 for y in 0..uv_height {
                     // U plane
                     let src_row = &u_plane[y * uv_width..(y + 1) * uv_width];
-                    let dst_row = &mut u_dst[(uv_height - 1 - y) * uv_width..(uv_height - y) * uv_width];
+                    let dst_row =
+                        &mut u_dst[(uv_height - 1 - y) * uv_width..(uv_height - y) * uv_width];
                     dst_row.copy_from_slice(src_row);
 
                     // V plane
                     let src_row = &v_plane[y * uv_width..(y + 1) * uv_width];
-                    let dst_row = &mut v_dst[(uv_height - 1 - y) * uv_width..(uv_height - y) * uv_width];
+                    let dst_row =
+                        &mut v_dst[(uv_height - 1 - y) * uv_width..(uv_height - y) * uv_width];
                     dst_row.copy_from_slice(src_row);
                 }
             }
@@ -285,9 +279,9 @@ mod tests {
         // Top row: red, green
         // Bottom row: blue, white
         let input = vec![
-            255, 0, 0,   // red
-            0, 255, 0,   // green
-            0, 0, 255,   // blue
+            255, 0, 0, // red
+            0, 255, 0, // green
+            0, 0, 255, // blue
             255, 255, 255, // white
         ];
 
@@ -324,9 +318,9 @@ mod tests {
 
         // Create a simple 2x2 RGB24 image
         let input = vec![
-            255, 0, 0,   // red
-            0, 255, 0,   // green
-            0, 0, 255,   // blue
+            255, 0, 0, // red
+            0, 255, 0, // green
+            0, 0, 255, // blue
             255, 255, 255, // white
         ];
 
@@ -385,7 +379,14 @@ mod tests {
 
         let output = node.process(input_data).await.unwrap();
 
-        if let RuntimeData::Video { pixel_data, width, height, format, .. } = output {
+        if let RuntimeData::Video {
+            pixel_data,
+            width,
+            height,
+            format,
+            ..
+        } = output
+        {
             assert_eq!(width, 4);
             assert_eq!(height, 4);
             assert_eq!(format, 3);
@@ -393,7 +394,7 @@ mod tests {
 
             // Y plane should be flipped vertically
             assert_eq!(pixel_data[0..4], [12, 13, 14, 15]); // Last row becomes first
-            assert_eq!(pixel_data[12..16], [0, 1, 2, 3]);   // First row becomes last
+            assert_eq!(pixel_data[12..16], [0, 1, 2, 3]); // First row becomes last
         }
     }
 }

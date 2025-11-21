@@ -1,7 +1,10 @@
 use crate::audio::buffer::{AudioBuffer, AudioData};
 use crate::error::{Error, Result};
 use crate::nodes::audio::fast::FastAudioNode;
-use rubato::{Resampler as RubatoResampler, SincFixedOut, SincInterpolationParameters, SincInterpolationType, WindowFunction};
+use rubato::{
+    Resampler as RubatoResampler, SincFixedOut, SincInterpolationParameters, SincInterpolationType,
+    WindowFunction,
+};
 use tracing::info;
 
 /// Quality settings for audio resampling
@@ -119,9 +122,18 @@ impl FastAudioNode for FastResampleNode {
         tracing::debug!(
             "After deinterleave: channel 0 buffer has {} samples, first 3: [{:.6}, {:.6}, {:.6}]",
             self.input_buffer[0].len(),
-            self.input_buffer[0].get(self.input_buffer[0].len().saturating_sub(input_frames)).copied().unwrap_or(0.0),
-            self.input_buffer[0].get(self.input_buffer[0].len().saturating_sub(input_frames) + 1).copied().unwrap_or(0.0),
-            self.input_buffer[0].get(self.input_buffer[0].len().saturating_sub(input_frames) + 2).copied().unwrap_or(0.0)
+            self.input_buffer[0]
+                .get(self.input_buffer[0].len().saturating_sub(input_frames))
+                .copied()
+                .unwrap_or(0.0),
+            self.input_buffer[0]
+                .get(self.input_buffer[0].len().saturating_sub(input_frames) + 1)
+                .copied()
+                .unwrap_or(0.0),
+            self.input_buffer[0]
+                .get(self.input_buffer[0].len().saturating_sub(input_frames) + 2)
+                .copied()
+                .unwrap_or(0.0)
         );
 
         let mut all_output_samples = Vec::new();

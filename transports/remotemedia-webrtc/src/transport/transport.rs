@@ -8,11 +8,11 @@ use crate::{
     signaling::{IceCandidateParams, SignalingClient},
     Error, Result,
 };
+use remotemedia_runtime_core::data::RuntimeData;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
-use remotemedia_runtime_core::data::RuntimeData;
 
 /// Statistics from broadcasting data to multiple peers (T071)
 #[derive(Debug, Clone)]
@@ -151,7 +151,14 @@ impl WebRtcTransport {
                 let signaling_client = signaling_client.clone();
 
                 tokio::spawn(async move {
-                    if let Err(e) = Self::handle_offer_received(peer_manager, config, signaling_client, from, sdp).await
+                    if let Err(e) = Self::handle_offer_received(
+                        peer_manager,
+                        config,
+                        signaling_client,
+                        from,
+                        sdp,
+                    )
+                    .await
                     {
                         warn!("Failed to handle offer: {}", e);
                     }
@@ -343,16 +350,19 @@ impl WebRtcTransport {
     /// - Peer has no audio track configured
     /// - Audio encoding or transmission fails
     pub async fn send_audio(&self, peer_id: &str, samples: Arc<Vec<f32>>) -> Result<()> {
-        debug!("Sending audio to peer: {} ({} samples)", peer_id, samples.len());
+        debug!(
+            "Sending audio to peer: {} ({} samples)",
+            peer_id,
+            samples.len()
+        );
 
         // Get peer connection
         let peer = self.peer_manager.get_peer(peer_id).await?;
 
         // Get audio track
-        let audio_track = peer
-            .audio_track()
-            .await
-            .ok_or_else(|| Error::MediaTrackError(format!("Peer {} has no audio track", peer_id)))?;
+        let audio_track = peer.audio_track().await.ok_or_else(|| {
+            Error::MediaTrackError(format!("Peer {} has no audio track", peer_id))
+        })?;
 
         // Send audio via track with default 24kHz sample rate (for backwards compatibility)
         // TODO: Add sample_rate parameter to this method
@@ -374,17 +384,23 @@ impl WebRtcTransport {
     /// - Peer not found or not connected
     /// - Peer has no video track configured
     /// - Video encoding or transmission fails
-    pub async fn send_video(&self, peer_id: &str, frame: &crate::media::video::VideoFrame) -> Result<()> {
-        debug!("Sending video frame to peer: {} ({}x{})", peer_id, frame.width, frame.height);
+    pub async fn send_video(
+        &self,
+        peer_id: &str,
+        frame: &crate::media::video::VideoFrame,
+    ) -> Result<()> {
+        debug!(
+            "Sending video frame to peer: {} ({}x{})",
+            peer_id, frame.width, frame.height
+        );
 
         // Get peer connection
         let peer = self.peer_manager.get_peer(peer_id).await?;
 
         // Get video track
-        let video_track = peer
-            .video_track()
-            .await
-            .ok_or_else(|| Error::MediaTrackError(format!("Peer {} has no video track", peer_id)))?;
+        let video_track = peer.video_track().await.ok_or_else(|| {
+            Error::MediaTrackError(format!("Peer {} has no video track", peer_id))
+        })?;
 
         // Send video via track
         video_track.send_video(frame).await?;
@@ -403,16 +419,22 @@ impl WebRtcTransport {
     ///
     /// Silently skips peers that don't have audio tracks configured.
     /// Use `send_audio()` if you need to handle individual peer errors.
-    pub async fn broadcast_audio(&self, samples: Arc<Vec<f32>>, exclude: Option<Vec<String>>) -> Result<()> {
-        let exclude_set: std::collections::HashSet<String> = exclude
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+    pub async fn broadcast_audio(
+        &self,
+        samples: Arc<Vec<f32>>,
+        exclude: Option<Vec<String>>,
+    ) -> Result<()> {
+        let exclude_set: std::collections::HashSet<String> =
+            exclude.unwrap_or_default().into_iter().collect();
 
         let peers = self.peer_manager.list_connected_peers().await;
         let peer_count = peers.len();
 
-        debug!("Broadcasting audio to {} peers ({} samples)", peer_count, samples.len());
+        debug!(
+            "Broadcasting audio to {} peers ({} samples)",
+            peer_count,
+            samples.len()
+        );
 
         // Send to all connected peers with audio tracks
         for peer_info in peers {
@@ -420,8 +442,11 @@ impl WebRtcTransport {
                 continue;
             }
 
-            match self.send_audio(&peer_info.peer_id, Arc::clone(&samples)).await {
-                Ok(_) => {},
+            match self
+                .send_audio(&peer_info.peer_id, Arc::clone(&samples))
+                .await
+            {
+                Ok(_) => {}
                 Err(e) => {
                     // Log error but continue broadcasting to other peers
                     warn!("Failed to send audio to peer {}: {}", peer_info.peer_id, e);
@@ -443,16 +468,21 @@ impl WebRtcTransport {
     ///
     /// Silently skips peers that don't have video tracks configured.
     /// Use `send_video()` if you need to handle individual peer errors.
-    pub async fn broadcast_video(&self, frame: &crate::media::video::VideoFrame, exclude: Option<Vec<String>>) -> Result<()> {
-        let exclude_set: std::collections::HashSet<String> = exclude
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+    pub async fn broadcast_video(
+        &self,
+        frame: &crate::media::video::VideoFrame,
+        exclude: Option<Vec<String>>,
+    ) -> Result<()> {
+        let exclude_set: std::collections::HashSet<String> =
+            exclude.unwrap_or_default().into_iter().collect();
 
         let peers = self.peer_manager.list_connected_peers().await;
         let peer_count = peers.len();
 
-        debug!("Broadcasting video to {} peers ({}x{})", peer_count, frame.width, frame.height);
+        debug!(
+            "Broadcasting video to {} peers ({}x{})",
+            peer_count, frame.width, frame.height
+        );
 
         // Send to all connected peers with video tracks
         for peer_info in peers {
@@ -461,7 +491,7 @@ impl WebRtcTransport {
             }
 
             match self.send_video(&peer_info.peer_id, frame).await {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(e) => {
                     // Log error but continue broadcasting to other peers
                     warn!("Failed to send video to peer {}: {}", peer_info.peer_id, e);
@@ -561,8 +591,9 @@ impl WebRtcTransport {
         // Determine if this is audio or video and get the appropriate track
         match data {
             RuntimeData::Audio { .. } => {
-                let audio_track = peer.audio_track().await
-                    .ok_or_else(|| Error::MediaTrackError("No audio track configured for peer".to_string()))?;
+                let audio_track = peer.audio_track().await.ok_or_else(|| {
+                    Error::MediaTrackError("No audio track configured for peer".to_string())
+                })?;
 
                 // Encode and send audio
                 let _payload = runtime_data_to_rtp(data, Some(&audio_track), None).await?;
@@ -574,8 +605,9 @@ impl WebRtcTransport {
                 Ok(())
             }
             RuntimeData::Video { .. } => {
-                let video_track = peer.video_track().await
-                    .ok_or_else(|| Error::MediaTrackError("No video track configured for peer".to_string()))?;
+                let video_track = peer.video_track().await.ok_or_else(|| {
+                    Error::MediaTrackError("No video track configured for peer".to_string())
+                })?;
 
                 // Encode and send video
                 let _payload = runtime_data_to_rtp(data, None, Some(&video_track)).await?;
@@ -586,8 +618,8 @@ impl WebRtcTransport {
                 Ok(())
             }
             _ => Err(Error::MediaTrackError(
-                "Unsupported RuntimeData type for peer-to-peer transmission".to_string()
-            ))
+                "Unsupported RuntimeData type for peer-to-peer transmission".to_string(),
+            )),
         }
     }
 
@@ -674,9 +706,9 @@ impl WebRtcTransport {
 // PipelineTransport Trait Implementation (T132-T135)
 // ============================================================================
 
-use remotemedia_runtime_core::transport::{PipelineTransport, TransportData, PipelineRunner};
-use remotemedia_runtime_core::manifest::Manifest;
 use async_trait::async_trait;
+use remotemedia_runtime_core::manifest::Manifest;
+use remotemedia_runtime_core::transport::{PipelineRunner, PipelineTransport, TransportData};
 
 #[async_trait]
 impl PipelineTransport for WebRtcTransport {
@@ -701,7 +733,8 @@ impl PipelineTransport for WebRtcTransport {
     async fn stream(
         &self,
         manifest: Arc<Manifest>,
-    ) -> remotemedia_runtime_core::Result<Box<dyn remotemedia_runtime_core::transport::StreamSession>> {
+    ) -> remotemedia_runtime_core::Result<Box<dyn remotemedia_runtime_core::transport::StreamSession>>
+    {
         // Create pipeline runner
         let runner = PipelineRunner::new()?;
 

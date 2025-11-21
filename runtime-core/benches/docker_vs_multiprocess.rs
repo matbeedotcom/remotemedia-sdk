@@ -35,18 +35,15 @@
 //! SKIP_DOCKER_TESTS=1 cargo bench --bench docker_vs_multiprocess
 //! ```
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use std::collections::HashMap;
 
 #[cfg(feature = "multiprocess")]
 use remotemedia_runtime_core::python::multiprocess::{
-    data_transfer::RuntimeData as IPCRuntimeData,
-    multiprocess_executor::MultiprocessExecutor,
+    data_transfer::RuntimeData as IPCRuntimeData, multiprocess_executor::MultiprocessExecutor,
 };
 
 #[cfg(feature = "multiprocess")]
@@ -320,7 +317,10 @@ fn bench_multiprocess_throughput(c: &mut Criterion) {
         group.throughput(Throughput::Bytes((16000 * duration_ms * 4 / 1000) as u64));
 
         group.bench_with_input(
-            BenchmarkId::new("multiprocess_throughput", format!("{}ms_{}KB", duration_ms, message_size_kb)),
+            BenchmarkId::new(
+                "multiprocess_throughput",
+                format!("{}ms_{}KB", duration_ms, message_size_kb),
+            ),
             &duration_ms,
             |b, &duration_ms| {
                 b.to_async(&runtime).iter(|| async move {
@@ -364,7 +364,10 @@ fn bench_docker_throughput(c: &mut Criterion) {
         group.throughput(Throughput::Bytes((16000 * duration_ms * 4 / 1000) as u64));
 
         group.bench_with_input(
-            BenchmarkId::new("docker_throughput", format!("{}ms_{}KB", duration_ms, message_size_kb)),
+            BenchmarkId::new(
+                "docker_throughput",
+                format!("{}ms_{}KB", duration_ms, message_size_kb),
+            ),
             &duration_ms,
             |b, &duration_ms| {
                 b.to_async(&runtime).iter(|| async move {
@@ -675,7 +678,10 @@ fn bench_high_throughput_streaming(c: &mut Criterion) {
         group.throughput(Throughput::Elements(messages_per_sec as u64));
 
         group.bench_with_input(
-            BenchmarkId::new("multiprocess_streaming", format!("{}msg_per_sec", messages_per_sec)),
+            BenchmarkId::new(
+                "multiprocess_streaming",
+                format!("{}msg_per_sec", messages_per_sec),
+            ),
             &messages_per_sec,
             |b, &rate| {
                 b.to_async(&runtime).iter(|| async move {
@@ -720,7 +726,10 @@ fn bench_docker_high_throughput(c: &mut Criterion) {
         group.throughput(Throughput::Elements(messages_per_sec as u64));
 
         group.bench_with_input(
-            BenchmarkId::new("docker_streaming", format!("{}msg_per_sec", messages_per_sec)),
+            BenchmarkId::new(
+                "docker_streaming",
+                format!("{}msg_per_sec", messages_per_sec),
+            ),
             &messages_per_sec,
             |b, &rate| {
                 b.to_async(&runtime).iter(|| async move {
@@ -743,7 +752,9 @@ fn bench_docker_high_throughput(c: &mut Criterion) {
 
 #[cfg(not(all(feature = "docker", feature = "multiprocess")))]
 fn bench_docker_high_throughput(_c: &mut Criterion) {
-    println!("Skipping Docker high throughput benchmark: docker or multiprocess feature not enabled");
+    println!(
+        "Skipping Docker high throughput benchmark: docker or multiprocess feature not enabled"
+    );
 }
 
 // ============================================================================
@@ -774,10 +785,7 @@ criterion_group!(
     bench_docker_cpu_load,
 );
 
-criterion_group!(
-    memory_benches,
-    bench_memory_overhead,
-);
+criterion_group!(memory_benches, bench_memory_overhead,);
 
 criterion_group!(
     compute_benches,

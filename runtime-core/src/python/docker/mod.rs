@@ -22,9 +22,9 @@
 //!
 //! # Feature Flag
 //!
-//! This module requires the `docker-executor` feature flag to be enabled.
+//! This module requires the `docker` feature flag to be enabled.
 
-#![cfg(feature = "docker-executor")]
+#![cfg(feature = "docker")]
 
 pub mod config;
 pub mod container_manager;

@@ -3,14 +3,14 @@
 //! Handles Docker image building from configurations, caching built images,
 //! and managing the image lifecycle.
 
-use crate::{Result, Error};
 use crate::python::multiprocess::docker_support::{DockerNodeConfig, SecurityConfig};
+use crate::{Error, Result};
 use bollard::image::{BuildImageOptions, ListImagesOptions, TagImageOptions};
 use bollard::Docker;
 use bytes::Bytes;
-use http_body_util::{Full, Either, BodyExt};
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
+use http_body_util::{BodyExt, Either, Full};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -81,7 +81,9 @@ impl ImageCache {
     /// Add an image to the cache
     pub fn put(&mut self, image: ContainerImage) -> Result<()> {
         // Check if we need to evict images to make room
-        while self.total_size_bytes + image.size_bytes > self.max_size_bytes && !self.images.is_empty() {
+        while self.total_size_bytes + image.size_bytes > self.max_size_bytes
+            && !self.images.is_empty()
+        {
             // Simple LRU: remove oldest image
             if let Some(oldest_hash) = self.find_oldest_image() {
                 self.evict(&oldest_hash)?;
@@ -261,18 +263,25 @@ impl ContainerBuilder {
         let mut filters = HashMap::new();
         filters.insert("reference".to_string(), vec![image_tag.to_string()]);
 
-        let images = self.docker.list_images(Some(ListImagesOptions {
-            all: false,
-            filters,
-            ..Default::default()
-        })).await.map_err(|e| {
-            crate::Error::Execution(format!("Failed to list images after build: {}", e))
-        })?;
+        let images = self
+            .docker
+            .list_images(Some(ListImagesOptions {
+                all: false,
+                filters,
+                ..Default::default()
+            }))
+            .await
+            .map_err(|e| {
+                crate::Error::Execution(format!("Failed to list images after build: {}", e))
+            })?;
 
-        let image_id = images.first()
-            .ok_or_else(|| crate::Error::Execution(
-                "Failed to find built image after build completed".to_string()
-            ))?
+        let image_id = images
+            .first()
+            .ok_or_else(|| {
+                crate::Error::Execution(
+                    "Failed to find built image after build completed".to_string(),
+                )
+            })?
             .id
             .clone();
 
@@ -286,17 +295,17 @@ impl ContainerBuilder {
         let mut filters = HashMap::new();
         filters.insert("id".to_string(), vec![image_id.to_string()]);
 
-        let images = self.docker.list_images(Some(ListImagesOptions {
-            all: false,
-            filters,
-            ..Default::default()
-        })).await.map_err(|e| {
-            crate::Error::Execution(format!("Failed to inspect image: {}", e))
-        })?;
+        let images = self
+            .docker
+            .list_images(Some(ListImagesOptions {
+                all: false,
+                filters,
+                ..Default::default()
+            }))
+            .await
+            .map_err(|e| crate::Error::Execution(format!("Failed to inspect image: {}", e)))?;
 
-        let size = images.first()
-            .map(|img| img.size as u64)
-            .unwrap_or(0);
+        let size = images.first().map(|img| img.size as u64).unwrap_or(0);
 
         Ok(size)
     }
@@ -316,7 +325,11 @@ impl ContainerBuilder {
     ///
     /// # Returns
     /// The built and cached container image
-    pub async fn build_image(&self, config: &DockerNodeConfig, force_rebuild: bool) -> Result<ContainerImage> {
+    pub async fn build_image(
+        &self,
+        config: &DockerNodeConfig,
+        force_rebuild: bool,
+    ) -> Result<ContainerImage> {
         let config_hash = Self::compute_config_hash(config);
         let image_tag = format!("remotemedia/node:{}", &config_hash[..12]);
 
@@ -357,29 +370,29 @@ impl ContainerBuilder {
         // Convert tar bytes to the proper body type for bollard
         // bollard expects Either<Full<Bytes>, StreamBody>
         let body = Either::Left(Full::new(Bytes::from(tar_bytes)));
-        let mut build_stream = self.docker.build_image(
-            build_options,
-            None,
-            Some(body)
-        );
+        let mut build_stream = self.docker.build_image(build_options, None, Some(body));
 
         // Process build output with progress logging (T030)
         while let Some(build_info) = build_stream.next().await {
             match build_info {
-                Ok(bollard::models::BuildInfo { stream: Some(msg), .. }) => {
+                Ok(bollard::models::BuildInfo {
+                    stream: Some(msg), ..
+                }) => {
                     tracing::debug!("Docker build: {}", msg.trim());
-                },
-                Ok(bollard::models::BuildInfo { error: Some(err), .. }) => {
+                }
+                Ok(bollard::models::BuildInfo {
+                    error: Some(err), ..
+                }) => {
                     return Err(Error::Execution(format!("Docker build error: {}", err)));
-                },
+                }
                 Ok(bollard::models::BuildInfo { aux: Some(aux), .. }) => {
                     if let Some(id) = aux.id {
                         tracing::info!("Built image ID: {}", id);
                     }
-                },
+                }
                 Err(e) => {
                     return Err(Error::Execution(format!("Build stream error: {}", e)));
-                },
+                }
                 _ => {}
             }
         }
@@ -436,7 +449,11 @@ impl ContainerBuilder {
     /// Get cache statistics
     pub async fn cache_stats(&self) -> (usize, u64, u64) {
         let cache = self.cache.read().await;
-        (cache.images.len(), cache.total_size_bytes, cache.max_size_bytes)
+        (
+            cache.images.len(),
+            cache.total_size_bytes,
+            cache.max_size_bytes,
+        )
     }
 
     /// Generate a Dockerfile from DockerNodeConfig
@@ -529,7 +546,8 @@ impl ContainerBuilder {
             );
 
             dockerfile.push_str("# Install system dependencies\n");
-            dockerfile.push_str("RUN apt-get update && apt-get install -y --no-install-recommends \\\n");
+            dockerfile
+                .push_str("RUN apt-get update && apt-get install -y --no-install-recommends \\\n");
 
             // Sort packages for deterministic output
             let mut sorted_packages = config.system_packages.clone();
@@ -638,7 +656,9 @@ impl ContainerBuilder {
 
         // Create a health check (extensibility point)
         dockerfile.push_str("# Health check for container readiness\n");
-        dockerfile.push_str("HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \\\n");
+        dockerfile.push_str(
+            "HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \\\n",
+        );
         dockerfile.push_str("    CMD python -c \"import sys; sys.exit(0)\" || exit 1\n\n");
 
         // Add GPU configuration if GPU devices are specified
@@ -786,7 +806,10 @@ mod tests {
         let hash1 = ContainerBuilder::compute_config_hash(&config1);
         let hash2 = ContainerBuilder::compute_config_hash(&config2);
 
-        assert_ne!(hash1, hash2, "Different configs should produce different hashes");
+        assert_ne!(
+            hash1, hash2,
+            "Different configs should produce different hashes"
+        );
     }
 
     #[test]
@@ -842,8 +865,12 @@ mod tests {
     #[test]
     fn test_generate_dockerfile_with_env_vars() {
         let mut config = create_test_config();
-        config.env_vars.insert("MY_VAR".to_string(), "my_value".to_string());
-        config.env_vars.insert("ANOTHER_VAR".to_string(), "another_value".to_string());
+        config
+            .env_vars
+            .insert("MY_VAR".to_string(), "my_value".to_string());
+        config
+            .env_vars
+            .insert("ANOTHER_VAR".to_string(), "another_value".to_string());
 
         let dockerfile = ContainerBuilder::generate_dockerfile(&config).unwrap();
 
@@ -919,7 +946,10 @@ mod tests {
         // Cache should have evicted oldest image (image1)
         assert_eq!(cache.count(), 2);
         assert_eq!(cache.size(), 200 * 1024 * 1024);
-        assert!(cache.get("hash1").is_none(), "Oldest image should be evicted");
+        assert!(
+            cache.get("hash1").is_none(),
+            "Oldest image should be evicted"
+        );
         assert!(cache.get("hash2").is_some(), "Second image should remain");
         assert!(cache.get("hash3").is_some(), "Third image should remain");
     }
@@ -1026,7 +1056,9 @@ mod tests {
 
         // Clean up - remove the test image
         use bollard::query_parameters::RemoveImageOptions;
-        let _ = docker.remove_image(&image1.image_tag, Some(RemoveImageOptions::default()), None).await;
+        let _ = docker
+            .remove_image(&image1.image_tag, Some(RemoveImageOptions::default()), None)
+            .await;
     }
 
     #[tokio::test]

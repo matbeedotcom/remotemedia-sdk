@@ -68,8 +68,8 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             timestamp_ms,
             metadata,
         } => {
-            use remotemedia_runtime_core::data::ControlMessageType;
             use crate::generated::control_message::MessageType;
+            use remotemedia_runtime_core::data::ControlMessageType;
 
             // Convert ControlMessageType to protobuf oneof
             let proto_message_type = match message_type {

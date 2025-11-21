@@ -48,13 +48,13 @@ pub struct SpeculativeVADConfig {
 impl Default for SpeculativeVADConfig {
     fn default() -> Self {
         Self {
-            lookback_ms: 150,      // 150ms lookback
-            lookahead_ms: 50,      // 50ms lookahead
-            sample_rate: 16000,    // 16kHz default
-            vad_threshold: 0.5,    // 50% confidence
-            min_speech_ms: 250,    // 250ms minimum speech
-            min_silence_ms: 100,   // 100ms minimum silence
-            pad_ms: 30,            // 30ms padding
+            lookback_ms: 150,    // 150ms lookback
+            lookahead_ms: 50,    // 50ms lookahead
+            sample_rate: 16000,  // 16kHz default
+            vad_threshold: 0.5,  // 50% confidence
+            min_speech_ms: 250,  // 250ms minimum speech
+            min_silence_ms: 100, // 100ms minimum silence
+            pad_ms: 30,          // 30ms padding
         }
     }
 }
@@ -147,13 +147,19 @@ impl SpeculativeVADGate {
     }
 
     /// Get or create session state
-    async fn get_or_create_session(&self, session_id: &str) -> tokio::sync::MutexGuard<'_, HashMap<String, SessionState>> {
+    async fn get_or_create_session(
+        &self,
+        session_id: &str,
+    ) -> tokio::sync::MutexGuard<'_, HashMap<String, SessionState>> {
         let mut sessions = self.sessions.lock().await;
 
         if !sessions.contains_key(session_id) {
             let samples_per_ms = self.config.sample_rate / 1000;
             let ring_buffer_capacity = (self.config.lookback_ms * samples_per_ms) as usize;
-            sessions.insert(session_id.to_string(), SessionState::new(ring_buffer_capacity));
+            sessions.insert(
+                session_id.to_string(),
+                SessionState::new(ring_buffer_capacity),
+            );
         }
 
         sessions
@@ -222,11 +228,13 @@ impl SpeculativeVADGate {
 
                 // Update metrics
                 state.speculations_cancelled += 1;
-                self.metrics.set_speculation_acceptance_rate(state.acceptance_rate() * 100.0);
+                self.metrics
+                    .set_speculation_acceptance_rate(state.acceptance_rate() * 100.0);
             } else if vad.is_speech_end && vad.is_confirmed_speech {
                 // Confirmed speech - speculation accepted
                 state.speculations_accepted += 1;
-                self.metrics.set_speculation_acceptance_rate(state.acceptance_rate() * 100.0);
+                self.metrics
+                    .set_speculation_acceptance_rate(state.acceptance_rate() * 100.0);
 
                 // Clear old data from audio buffer (before this segment)
                 state.audio_buffer.clear();
@@ -272,7 +280,10 @@ impl AsyncStreamingNode for SpeculativeVADGate {
     }
 
     async fn initialize(&self) -> Result<(), Error> {
-        tracing::info!("SpeculativeVADGate initialized with config: {:?}", self.config);
+        tracing::info!(
+            "SpeculativeVADGate initialized with config: {:?}",
+            self.config
+        );
         Ok(())
     }
 

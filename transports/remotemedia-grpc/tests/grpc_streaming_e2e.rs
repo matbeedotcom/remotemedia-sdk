@@ -78,7 +78,7 @@ fn create_test_manifest() -> PipelineManifest {
             is_streaming: false,
             capabilities: None,
             host: String::new(),
-            runtime_hint: 0, // Auto
+            runtime_hint: 0,      // Auto
             input_types: vec![],  // Accept any type
             output_types: vec![], // Output any type
         }],
@@ -88,7 +88,7 @@ fn create_test_manifest() -> PipelineManifest {
 /// Create test video frame as DataBuffer (2x2 RGB24)
 fn create_test_video_buffer(frame_number: u64) -> DataBuffer {
     use remotemedia_grpc::generated::{PixelFormat, VideoFrame};
-    
+
     // Create 2x2 RGB24 image
     // Top row: red, green
     // Bottom row: blue, white
@@ -98,7 +98,7 @@ fn create_test_video_buffer(frame_number: u64) -> DataBuffer {
         0, 0, 255, // blue
         255, 255, 255, // white
     ];
-    
+
     let video_frame = VideoFrame {
         pixel_data: pixels,
         width: 2,
@@ -107,7 +107,7 @@ fn create_test_video_buffer(frame_number: u64) -> DataBuffer {
         frame_number,
         timestamp_us: frame_number * 33333, // ~30 FPS
     };
-    
+
     DataBuffer {
         data_type: Some(DataType::Video(video_frame)),
         metadata: std::collections::HashMap::new(),
@@ -173,7 +173,10 @@ async fn test_grpc_streaming_video_pipeline() {
     match ready_response.response {
         Some(StreamResponseType::Ready(ready)) => {
             println!("  ✓ Session created: {}", ready.session_id);
-            println!("  ✓ Recommended chunk size: {}", ready.recommended_chunk_size);
+            println!(
+                "  ✓ Recommended chunk size: {}",
+                ready.recommended_chunk_size
+            );
         }
         _ => panic!("Expected StreamReady response"),
     }
@@ -223,9 +226,11 @@ async fn test_grpc_streaming_video_pipeline() {
                 );
 
                 // Extract the video frame from the "flip" node output
-                let output_buffer = result.data_outputs.get("flip")
+                let output_buffer = result
+                    .data_outputs
+                    .get("flip")
                     .expect(&format!("Frame {} missing 'flip' output", i));
-                
+
                 let video_frame = match &output_buffer.data_type {
                     Some(DataType::Video(frame)) => frame,
                     _ => panic!("Frame {} output is not video", i),
@@ -233,10 +238,18 @@ async fn test_grpc_streaming_video_pipeline() {
 
                 assert_eq!(video_frame.width, 2, "Frame {} wrong width", i);
                 assert_eq!(video_frame.height, 2, "Frame {} wrong height", i);
-                assert_eq!(video_frame.pixel_data.len(), 12, "Frame {} wrong data size", i);
+                assert_eq!(
+                    video_frame.pixel_data.len(),
+                    12,
+                    "Frame {} wrong data size",
+                    i
+                );
 
                 // Step 6: Verify VideoFlip processed the frame correctly
-                println!("\n✅ Step 6: Verifying VideoFlip processing for frame {}...", i);
+                println!(
+                    "\n✅ Step 6: Verifying VideoFlip processing for frame {}...",
+                    i
+                );
 
                 // After vertical flip, the pixels should be reordered:
                 // Original top row: red (255,0,0), green (0,255,0)
@@ -246,12 +259,7 @@ async fn test_grpc_streaming_video_pipeline() {
 
                 let pixels = &video_frame.pixel_data;
                 assert_eq!(pixels[0..3], [0, 0, 255], "Frame {} pixel 0 (blue)", i);
-                assert_eq!(
-                    pixels[3..6],
-                    [255, 255, 255],
-                    "Frame {} pixel 1 (white)",
-                    i
-                );
+                assert_eq!(pixels[3..6], [255, 255, 255], "Frame {} pixel 1 (white)", i);
                 assert_eq!(pixels[6..9], [255, 0, 0], "Frame {} pixel 2 (red)", i);
                 assert_eq!(pixels[9..12], [0, 255, 0], "Frame {} pixel 3 (green)", i);
 
@@ -264,10 +272,7 @@ async fn test_grpc_streaming_video_pipeline() {
                 println!("  ✓ Sequence number correct: {}", result.sequence);
 
                 // Verify processing time exists
-                println!(
-                    "  ✓ Processing time: {:.2}ms",
-                    result.processing_time_ms
-                );
+                println!("  ✓ Processing time: {:.2}ms", result.processing_time_ms);
             }
             Some(StreamResponseType::Metrics(metrics)) => {
                 println!("  📊 Received metrics update");
@@ -336,9 +341,7 @@ async fn test_grpc_streaming_multiple_sessions() {
     let session1 = tokio::spawn({
         let url = server_url.clone();
         async move {
-            let mut client = StreamingPipelineServiceClient::connect(url)
-                .await
-                .unwrap();
+            let mut client = StreamingPipelineServiceClient::connect(url).await.unwrap();
 
             let (tx, rx) = tokio::sync::mpsc::channel(32);
             let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
@@ -356,14 +359,15 @@ async fn test_grpc_streaming_multiple_sessions() {
             .await
             .unwrap();
 
-            let mut response_stream = client.stream_pipeline(Request::new(stream)).await.unwrap().into_inner();
+            let mut response_stream = client
+                .stream_pipeline(Request::new(stream))
+                .await
+                .unwrap()
+                .into_inner();
 
             // Wait for ready
             let ready = response_stream.message().await.unwrap().unwrap();
-            assert!(matches!(
-                ready.response,
-                Some(StreamResponseType::Ready(_))
-            ));
+            assert!(matches!(ready.response, Some(StreamResponseType::Ready(_))));
 
             // Send one frame
             tx.send(StreamRequest {
@@ -392,9 +396,7 @@ async fn test_grpc_streaming_multiple_sessions() {
     let session2 = tokio::spawn({
         let url = server_url.clone();
         async move {
-            let mut client = StreamingPipelineServiceClient::connect(url)
-                .await
-                .unwrap();
+            let mut client = StreamingPipelineServiceClient::connect(url).await.unwrap();
 
             let (tx, rx) = tokio::sync::mpsc::channel(32);
             let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
@@ -412,14 +414,15 @@ async fn test_grpc_streaming_multiple_sessions() {
             .await
             .unwrap();
 
-            let mut response_stream = client.stream_pipeline(Request::new(stream)).await.unwrap().into_inner();
+            let mut response_stream = client
+                .stream_pipeline(Request::new(stream))
+                .await
+                .unwrap()
+                .into_inner();
 
             // Wait for ready
             let ready = response_stream.message().await.unwrap().unwrap();
-            assert!(matches!(
-                ready.response,
-                Some(StreamResponseType::Ready(_))
-            ));
+            assert!(matches!(ready.response, Some(StreamResponseType::Ready(_))));
 
             // Send one frame
             tx.send(StreamRequest {

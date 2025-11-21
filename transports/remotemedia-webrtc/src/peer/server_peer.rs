@@ -4,20 +4,16 @@
 //! routes media through a RemoteMedia pipeline. Created when clients announce
 //! via gRPC signaling.
 
-use crate::{
-    config::WebRtcTransportConfig,
-    peer::PeerConnection,
-    Error, Result,
-};
+use crate::{config::WebRtcTransportConfig, peer::PeerConnection, Error, Result};
+use prost::Message;
 use remotemedia_runtime_core::{
+    data::RuntimeData,
     manifest::Manifest,
     transport::{PipelineRunner, StreamSession, StreamSessionHandle, TransportData},
-    data::RuntimeData,
 };
-use prost::Message;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 /// Server-side WebRTC peer with pipeline integration
@@ -95,8 +91,13 @@ impl ServerPeer {
         info!("ServerPeer {} handling offer", self.peer_id);
 
         // Create pipeline session FIRST
-        let session_handle = self.runner.create_stream_session(Arc::clone(&self.manifest)).await
-            .map_err(|e| Error::InternalError(format!("Failed to create pipeline session: {}", e)))?;
+        let session_handle = self
+            .runner
+            .create_stream_session(Arc::clone(&self.manifest))
+            .await
+            .map_err(|e| {
+                Error::InternalError(format!("Failed to create pipeline session: {}", e))
+            })?;
 
         info!("Created pipeline session for peer {}", self.peer_id);
 
@@ -110,13 +111,16 @@ impl ServerPeer {
             ..Default::default() // Use default ring_buffer_capacity (1500 frames = 30s)
         };
 
-        self.peer_connection.add_audio_track(audio_config).await
+        self.peer_connection
+            .add_audio_track(audio_config)
+            .await
             .map_err(|e| Error::InternalError(format!("Failed to add audio track: {}", e)))?;
 
         info!("Added audio track to peer connection for {}", self.peer_id);
 
         // Set up bidirectional media routing and data channel (this will set up the data channel handler)
-        self.setup_media_routing_and_data_channel(session_handle).await?;
+        self.setup_media_routing_and_data_channel(session_handle)
+            .await?;
 
         // Now set remote description (offer) - data channel handler is already registered
         let offer = RTCSessionDescription::offer(offer_sdp)
@@ -129,7 +133,8 @@ impl ServerPeer {
             .map_err(|e| Error::WebRtcError(format!("Failed to set remote description: {}", e)))?;
 
         // Create answer
-        let answer = self.peer_connection
+        let answer = self
+            .peer_connection
             .peer_connection()
             .create_answer(None)
             .await
@@ -151,8 +156,14 @@ impl ServerPeer {
     ///
     /// - Incoming: WebRTC tracks + data channel → RuntimeData → pipeline input
     /// - Outgoing: pipeline output → RuntimeData → WebRTC tracks
-    async fn setup_media_routing_and_data_channel(&self, mut session_handle: StreamSessionHandle) -> Result<()> {
-        info!("Setting up media routing and data channel for peer {}", self.peer_id);
+    async fn setup_media_routing_and_data_channel(
+        &self,
+        mut session_handle: StreamSessionHandle,
+    ) -> Result<()> {
+        info!(
+            "Setting up media routing and data channel for peer {}",
+            self.peer_id
+        );
 
         // Create channel for data channel messages to pipeline
         let (dc_input_tx, mut dc_input_rx) = mpsc::channel::<TransportData>(32);
@@ -291,8 +302,10 @@ impl ServerPeer {
         // Spawn task to handle bidirectional routing
         let peer_id = self.peer_id.clone();
         let peer_connection = Arc::clone(&self.peer_connection);
-        let mut shutdown_rx = self.shutdown_rx.write().await.take()
-            .ok_or_else(|| Error::InternalError("Shutdown receiver already taken".to_string()))?;
+        let mut shutdown_rx =
+            self.shutdown_rx.write().await.take().ok_or_else(|| {
+                Error::InternalError("Shutdown receiver already taken".to_string())
+            })?;
 
         tokio::spawn(async move {
             loop {
@@ -366,13 +379,24 @@ impl ServerPeer {
         let runtime_data = &transport_data.data;
 
         match runtime_data {
-            RuntimeData::Audio { samples, sample_rate, channels } => {
-                debug!("Sending audio: {} samples, {}Hz, {} channels", samples.len(), sample_rate, channels);
+            RuntimeData::Audio {
+                samples,
+                sample_rate,
+                channels,
+            } => {
+                debug!(
+                    "Sending audio: {} samples, {}Hz, {} channels",
+                    samples.len(),
+                    sample_rate,
+                    channels
+                );
 
                 // Get the audio track
                 if let Some(audio_track) = peer_connection.audio_track().await {
                     // Send audio samples through the track with dynamic sample rate
-                    audio_track.send_audio(Arc::new(samples.clone()), *sample_rate).await?;
+                    audio_track
+                        .send_audio(Arc::new(samples.clone()), *sample_rate)
+                        .await?;
                     debug!("Audio sent successfully");
                 } else {
                     warn!("No audio track configured for peer, cannot send audio");

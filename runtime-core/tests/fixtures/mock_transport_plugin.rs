@@ -3,11 +3,11 @@
 use async_trait::async_trait;
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::manifest::Manifest;
-use remotemedia_runtime_core::transport::{
-    ClientConfig, ClientStreamSession, PipelineClient, PipelineTransport,
-    ServerConfig, StreamSession, TransportData, TransportPlugin,
-};
 use remotemedia_runtime_core::transport::runner::PipelineRunner;
+use remotemedia_runtime_core::transport::{
+    ClientConfig, ClientStreamSession, PipelineClient, PipelineTransport, ServerConfig,
+    StreamSession, TransportData, TransportPlugin,
+};
 use remotemedia_runtime_core::Result;
 use std::sync::Arc;
 
@@ -75,10 +75,7 @@ impl PipelineTransport for MockServer {
         Ok(input)
     }
 
-    async fn stream(
-        &self,
-        _manifest: Arc<Manifest>,
-    ) -> Result<Box<dyn StreamSession>> {
+    async fn stream(&self, _manifest: Arc<Manifest>) -> Result<Box<dyn StreamSession>> {
         Ok(Box::new(MockServerStreamSession::new()))
     }
 }

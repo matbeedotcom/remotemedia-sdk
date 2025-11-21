@@ -11,7 +11,7 @@
 #![cfg(feature = "grpc-client")]
 
 use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::nodes::{AsyncStreamingNode, remote_pipeline::RemotePipelineNode};
+use remotemedia_runtime_core::nodes::{remote_pipeline::RemotePipelineNode, AsyncStreamingNode};
 use serde_json::json;
 
 // Import mock server module
@@ -233,8 +233,8 @@ async fn test_multi_transport_pipeline() {
     // Load the microservices composition manifest
     let manifest_json = fs::read_to_string("tests/fixtures/microservices-composition.json")
         .expect("Failed to read microservices-composition.json");
-    let manifest: Manifest = serde_json::from_str(&manifest_json)
-        .expect("Failed to parse manifest");
+    let manifest: Manifest =
+        serde_json::from_str(&manifest_json).expect("Failed to parse manifest");
 
     // Verify manifest has nodes with different transports
     let remote_nodes: Vec<_> = manifest
@@ -258,8 +258,8 @@ async fn test_multi_transport_pipeline() {
 /// are detected and rejected.
 #[tokio::test]
 async fn test_circular_dependency_detection() {
-    use remotemedia_runtime_core::nodes::remote_pipeline::validate_no_circular_dependencies;
     use remotemedia_runtime_core::manifest::Manifest;
+    use remotemedia_runtime_core::nodes::remote_pipeline::validate_no_circular_dependencies;
 
     // Create manifest with circular dependency: A -> B -> A
     let manifest_json = json!({
@@ -295,8 +295,8 @@ async fn test_circular_dependency_detection() {
         "connections": []
     });
 
-    let manifest: Manifest = serde_json::from_value(manifest_json)
-        .expect("Failed to parse manifest");
+    let manifest: Manifest =
+        serde_json::from_value(manifest_json).expect("Failed to parse manifest");
 
     // Should detect circular dependency
     let result = validate_no_circular_dependencies(&manifest);
@@ -370,8 +370,8 @@ async fn test_manifest_name_resolution() {
 /// Test manifest caching
 #[tokio::test]
 async fn test_manifest_caching() {
-    use remotemedia_runtime_core::nodes::remote_pipeline::ManifestCache;
     use remotemedia_runtime_core::manifest::Manifest;
+    use remotemedia_runtime_core::nodes::remote_pipeline::ManifestCache;
     use std::time::Duration;
 
     let cache = ManifestCache::with_ttl(Duration::from_secs(1));

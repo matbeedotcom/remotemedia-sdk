@@ -4,9 +4,9 @@
 //! without the pipeline execution blocking or failing.
 
 use remotemedia_runtime_core::{
+    data::RuntimeData,
     manifest::Manifest,
     transport::{PipelineRunner, StreamSession, TransportData},
-    data::RuntimeData,
 };
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
@@ -39,21 +39,23 @@ async fn test_multi_request_streaming_session() {
     }
     "#;
 
-    let manifest: Manifest = serde_json::from_str(manifest_json)
-        .expect("Failed to parse manifest");
+    let manifest: Manifest = serde_json::from_str(manifest_json).expect("Failed to parse manifest");
     let manifest = Arc::new(manifest);
 
     // Create pipeline runner
-    let runner = PipelineRunner::new()
-        .expect("Failed to create pipeline runner");
+    let runner = PipelineRunner::new().expect("Failed to create pipeline runner");
 
     // Create streaming session
-    let mut session = runner.create_stream_session(Arc::clone(&manifest))
+    let mut session = runner
+        .create_stream_session(Arc::clone(&manifest))
         .await
         .expect("Failed to create streaming session");
 
     println!("Session created: {}", session.session_id());
-    assert!(session.is_active(), "Session should be active after creation");
+    assert!(
+        session.is_active(),
+        "Session should be active after creation"
+    );
 
     // Test 3 consecutive requests
     for request_num in 1..=3 {
@@ -66,7 +68,8 @@ async fn test_multi_request_streaming_session() {
 
         // Send input
         println!("Sending input: {}", input_text);
-        session.send_input(transport_data)
+        session
+            .send_input(transport_data)
             .await
             .expect("Failed to send input");
 
@@ -91,8 +94,11 @@ async fn test_multi_request_streaming_session() {
         println!("✓ Request {} succeeded", request_num);
 
         // Verify session is still active
-        assert!(session.is_active(),
-            "Session should remain active after request {}", request_num);
+        assert!(
+            session.is_active(),
+            "Session should remain active after request {}",
+            request_num
+        );
     }
 
     println!("\n=== All requests succeeded ===");
@@ -169,7 +175,10 @@ async fn test_select_starvation_with_delays() {
         .expect("Task timed out")
         .expect("Task panicked");
 
-    println!("\nProcessed {} inputs and {} outputs", input_count, output_count);
+    println!(
+        "\nProcessed {} inputs and {} outputs",
+        input_count, output_count
+    );
     assert_eq!(input_count, 3, "Should process all 3 inputs");
 }
 
@@ -251,7 +260,10 @@ async fn test_select_with_timeout() {
         .expect("Task timed out")
         .expect("Task panicked");
 
-    println!("\nProcessed {} inputs and {} outputs", input_count, output_count);
+    println!(
+        "\nProcessed {} inputs and {} outputs",
+        input_count, output_count
+    );
     assert_eq!(input_count, 3, "Should process all 3 inputs");
     assert_eq!(output_count, 3, "Should receive all 3 outputs");
 }

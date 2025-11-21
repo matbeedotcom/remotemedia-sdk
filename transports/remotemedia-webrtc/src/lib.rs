@@ -57,9 +57,9 @@
 #![warn(clippy::all)]
 
 // Public modules
+pub mod client;
 pub mod config;
 pub mod error;
-pub mod client;
 pub mod plugin;
 
 // Internal modules
@@ -68,11 +68,11 @@ mod signaling;
 #[cfg(feature = "grpc-signaling")]
 pub mod signaling;
 
-mod peer;
-mod sync;
-mod media;
 mod channels;
+mod media;
+mod peer;
 mod session;
+mod sync;
 mod transport;
 
 // Protobuf adapters (only with grpc-signaling)

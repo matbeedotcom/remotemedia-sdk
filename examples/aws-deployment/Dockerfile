@@ -22,7 +22,7 @@ COPY protos ./protos
 
 # Build in release mode with optimizations
 RUN cargo build --bin grpc-server --release \
-    --features grpc-signaling,docker-executor,multiprocess,silero-vad
+    --features grpc-signaling,docker,multiprocess,silero-vad
 
 # Stage 2: Runtime
 FROM debian:bookworm-slim

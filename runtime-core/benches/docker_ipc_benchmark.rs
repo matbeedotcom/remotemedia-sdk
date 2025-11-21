@@ -3,7 +3,7 @@
 //! This benchmark properly measures the ACTUAL iceoryx2 zero-copy IPC performance
 //! for both Docker containers and native processes.
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::time::{Duration, Instant};
 
 /// Helper to check if Docker is available
@@ -54,7 +54,7 @@ fn bench_initialization_overhead(c: &mut Criterion) {
                         "python:3.10-slim",
                         "python",
                         "-c",
-                        "import sys; sys.exit(0)"
+                        "import sys; sys.exit(0)",
                     ])
                     .status()
                     .expect("Failed to run Docker");
@@ -75,7 +75,7 @@ fn bench_iceoryx2_ipc(c: &mut Criterion) {
     let mut group = c.benchmark_group("iceoryx2_ipc_throughput");
 
     // Test different data sizes
-    for size_bytes in [1024, 16*1024, 256*1024, 1024*1024].iter() {
+    for size_bytes in [1024, 16 * 1024, 256 * 1024, 1024 * 1024].iter() {
         let size_mb = *size_bytes as f64 / (1024.0 * 1024.0);
         group.throughput(criterion::Throughput::Bytes(*size_bytes as u64));
 
@@ -91,7 +91,7 @@ fn bench_iceoryx2_ipc(c: &mut Criterion) {
                     let _ref = &data;
                     // This should be nanoseconds/picoseconds
                 });
-            }
+            },
         );
 
         // Docker iceoryx2 IPC (SAME as native since they share memory)
@@ -105,7 +105,7 @@ fn bench_iceoryx2_ipc(c: &mut Criterion) {
                     // Performance is IDENTICAL to native
                     let _ref = &data;
                 });
-            }
+            },
         );
     }
 
@@ -172,7 +172,9 @@ fn bench_e2e_with_ipc(c: &mut Criterion) {
 
             // 1. Start process
             let mut child = std::process::Command::new("python3")
-                .args(&["-c", "
+                .args(&[
+                    "-c",
+                    "
 import time
 # Simulate IPC setup
 time.sleep(0.001)
@@ -181,7 +183,8 @@ for _ in range(100):
     data = bytearray(1024)  # 1KB chunks
     # Process data (zero-copy in real iceoryx2)
     pass
-"])
+",
+                ])
                 .spawn()
                 .expect("Failed to start process");
 
@@ -201,13 +204,18 @@ for _ in range(100):
                 .args(&[
                     "run",
                     "--rm",
-                    "-m", "512m",
-                    "--cpus", "1.0",
-                    "-v", "/dev/shm:/dev/shm",  // iceoryx2 shared memory
-                    "-v", "/tmp/iceoryx2:/tmp/iceoryx2",  // iceoryx2 service discovery
+                    "-m",
+                    "512m",
+                    "--cpus",
+                    "1.0",
+                    "-v",
+                    "/dev/shm:/dev/shm", // iceoryx2 shared memory
+                    "-v",
+                    "/tmp/iceoryx2:/tmp/iceoryx2", // iceoryx2 service discovery
                     "python:3.10-slim",
                     "python",
-                    "-c", "
+                    "-c",
+                    "
 import time
 # Simulate IPC setup
 time.sleep(0.001)
@@ -216,7 +224,7 @@ for _ in range(100):
     data = bytearray(1024)  # 1KB chunks
     # Process data (zero-copy via shared memory mount)
     pass
-"
+",
                 ])
                 .status()
                 .expect("Failed to run Docker");
@@ -240,7 +248,7 @@ fn bench_overhead_breakdown(c: &mut Criterion) {
     group.bench_function("python_execution_only", |b| {
         b.iter(|| {
             std::process::Command::new("python3")
-                .args(&["-c", "pass"])  // Minimal Python execution
+                .args(&["-c", "pass"]) // Minimal Python execution
                 .status()
                 .expect("Failed to run Python");
         });
@@ -256,7 +264,7 @@ fn bench_overhead_breakdown(c: &mut Criterion) {
                     "python:3.10-slim",
                     "python",
                     "-c",
-                    "pass"  // Same minimal execution
+                    "pass", // Same minimal execution
                 ])
                 .status()
                 .expect("Failed to run Docker");
