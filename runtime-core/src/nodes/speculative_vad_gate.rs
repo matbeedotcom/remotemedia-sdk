@@ -199,49 +199,68 @@ impl SpeculativeVADGate {
 
         // **Step 3: Check VAD decision and handle false positives**
         if let Some(vad) = vad_result {
-            if vad.is_speech_end && !vad.is_confirmed_speech {
-                // False positive detected - emit cancellation
-                let segment_id = format!("{}_{}", session_id, state.segment_counter);
-                state.segment_counter += 1;
-
-                let from_timestamp = state.total_samples.saturating_sub(samples.len()) as u64;
-                let to_timestamp = state.total_samples as u64;
-
-                let cancel_msg = RuntimeData::ControlMessage {
-                    message_type: ControlMessageType::CancelSpeculation {
-                        from_timestamp,
-                        to_timestamp,
-                    },
-                    segment_id: Some(segment_id.clone()),
-                    timestamp_ms: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis() as u64,
-                    metadata: serde_json::json!({
-                        "reason": "vad_false_positive",
-                        "vad_confidence": vad.confidence,
-                        "duration_samples": samples.len(),
-                    }),
-                };
-
-                outputs.push(cancel_msg);
-
-                // Update metrics
-                state.speculations_cancelled += 1;
-                self.metrics
-                    .set_speculation_acceptance_rate(state.acceptance_rate() * 100.0);
-            } else if vad.is_speech_end && vad.is_confirmed_speech {
-                // Confirmed speech - speculation accepted
-                state.speculations_accepted += 1;
-                self.metrics
-                    .set_speculation_acceptance_rate(state.acceptance_rate() * 100.0);
-
-                // Clear old data from audio buffer (before this segment)
-                state.audio_buffer.clear();
-            }
+            outputs.extend(self.handle_vad_decision(state, session_id, vad));
         }
 
         Ok(outputs)
+    }
+
+    fn handle_vad_decision(
+        &self,
+        state: &mut SessionState,
+        session_id: &str,
+        vad: VADResult,
+    ) -> Vec<RuntimeData> {
+        let mut outputs = Vec::new();
+        if vad.is_speech_end && !vad.is_confirmed_speech {
+            // False positive detected - emit cancellation
+            let segment_id = format!("{}_{}", session_id, state.segment_counter);
+            state.segment_counter += 1;
+
+            let chunk_samples = vad.samples_in_chunk.max(1);
+            let from_timestamp = state.total_samples.saturating_sub(chunk_samples) as u64;
+            let to_timestamp = state.total_samples as u64;
+
+            let cancel_msg = RuntimeData::ControlMessage {
+                message_type: ControlMessageType::CancelSpeculation {
+                    from_timestamp,
+                    to_timestamp,
+                },
+                segment_id: Some(segment_id),
+                timestamp_ms: Self::current_timestamp_ms(),
+                metadata: serde_json::json!({
+                    "reason": "vad_false_positive",
+                    "vad_confidence": vad.confidence,
+                    "duration_samples": chunk_samples,
+                }),
+            };
+
+            outputs.push(cancel_msg);
+
+            // Update metrics
+            state.speculations_cancelled += 1;
+            let _ = self
+                .metrics
+                .set_speculation_acceptance_rate(state.acceptance_rate() * 100.0);
+        } else if vad.is_speech_end && vad.is_confirmed_speech {
+            // Confirmed speech - speculation accepted
+            state.speculations_accepted += 1;
+            let _ = self
+                .metrics
+                .set_speculation_acceptance_rate(state.acceptance_rate() * 100.0);
+
+            // Clear old data from audio buffer (before this segment)
+            state.audio_buffer.clear();
+        }
+
+        outputs
+    }
+
+    fn current_timestamp_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_else(|_| std::time::Duration::from_millis(0))
+            .as_millis() as u64
     }
 
     /// Get speculation acceptance rate for a session
@@ -258,6 +277,28 @@ impl SpeculativeVADGate {
         let mut sessions = self.sessions.lock().await;
         sessions.remove(session_id);
     }
+
+    /// Apply a VAD result after the corresponding audio was already forwarded
+    pub async fn process_vad_result<F>(
+        &self,
+        session_id: &str,
+        vad_result: VADResult,
+        mut callback: F,
+    ) -> Result<usize, Error>
+    where
+        F: FnMut(RuntimeData) -> Result<(), Error> + Send,
+    {
+        let mut sessions = self.get_or_create_session(session_id).await;
+        let state = sessions.get_mut(session_id).unwrap();
+        let outputs = self.handle_vad_decision(state, session_id, vad_result);
+
+        let count = outputs.len();
+        for output in outputs {
+            callback(output)?;
+        }
+
+        Ok(count)
+    }
 }
 
 /// VAD decision result
@@ -271,6 +312,9 @@ pub struct VADResult {
 
     /// VAD confidence score (0.0-1.0)
     pub confidence: f32,
+
+    /// Number of samples in the chunk that triggered this VAD result
+    pub samples_in_chunk: usize,
 }
 
 #[async_trait]
@@ -318,9 +362,9 @@ impl AsyncStreamingNode for SpeculativeVADGate {
             }
         };
 
-        // For MVP, we don't have real VAD integration yet
-        // In production, this would call SileroVAD or similar
-        let vad_result = None; // TODO: Integrate with actual VAD
+        // External VAD implementations (e.g. Silero) should call process_vad_result()
+        // once their asynchronous inference completes. Streaming mode forwards audio immediately.
+        let vad_result = None;
 
         // Process the audio chunk
         let outputs = self
