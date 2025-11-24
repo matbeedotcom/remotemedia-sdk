@@ -20,7 +20,7 @@ NC='\033[0m' # No Color
 BUILD_MODE="${BUILD_MODE:-release}"
 GRPC_ADDRESS="${GRPC_ADDRESS:-0.0.0.0:50051}"
 MANIFEST="${MANIFEST:-./examples/tts.json}"
-RUST_LOG="${RUST_LOG:-info,remotemedia=release}"
+RUST_LOG="${RUST_LOG:-info,remotemedia=info}"
 MAX_PEERS="${MAX_PEERS:-10}"
 STUN_SERVERS="${STUN_SERVERS:-stun:stun.l.google.com:19302}"
 
