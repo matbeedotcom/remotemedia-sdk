@@ -56,6 +56,10 @@ fn remotemedia_ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(api::get_runtime_version, m)?)?;
     m.add_function(wrap_pyfunction!(api::is_available, m)?)?;
 
+    // Note: numpy arrays are automatically converted to/from RuntimeData::Numpy
+    // via python_to_runtime_data and runtime_data_to_python in marshal.rs
+    // No explicit conversion functions needed!
+
     // Add version as module constant
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
