@@ -13,8 +13,13 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use remotemedia_runtime_core::data::RuntimeData;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
+
+#[cfg(feature = "silero-vad")]
+use remotemedia_runtime_core::nodes::{
+    AsyncStreamingNode, SileroVADNode, SpeculativeVADGate, VADResult,
+};
 
 /// Simulates a minimal pipeline for latency measurement
 struct LatencyMockPipeline {
@@ -89,6 +94,181 @@ fn create_audio_chunk(sample_count: usize) -> RuntimeData {
         sample_rate: 16000,
         channels: 1,
     }
+}
+
+#[cfg(feature = "silero-vad")]
+fn audio_sample_count(data: &RuntimeData) -> usize {
+    match data {
+        RuntimeData::Audio { samples, .. } => samples.len(),
+        _ => 0,
+    }
+}
+
+#[cfg(feature = "silero-vad")]
+async fn run_traditional_measurement(audio: RuntimeData) -> (Duration, Duration) {
+    let vad = SileroVADNode::new(Some(0.5), Some(16000), None, None, None);
+    let start = Instant::now();
+    let confirmation = Arc::new(Mutex::new(None));
+    let confirmation_clone = confirmation.clone();
+
+    let callback = move |data: RuntimeData| {
+        if let RuntimeData::Json(json) = data {
+            if json
+                .get("is_speech_end")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
+                let mut guard = confirmation_clone.lock().unwrap();
+                if guard.is_none() {
+                    *guard = Some(Instant::now());
+                }
+            }
+        }
+        Ok(())
+    };
+
+    vad.process_streaming(audio, Some("latency_traditional".to_string()), callback)
+        .await
+        .expect("traditional latency measurement failed");
+
+    let time_to_asr = start.elapsed();
+    let confirmation_time = confirmation
+        .lock()
+        .unwrap()
+        .map(|instant| instant.duration_since(start))
+        .unwrap_or(time_to_asr);
+
+    (time_to_asr, confirmation_time)
+}
+
+#[cfg(feature = "silero-vad")]
+async fn run_speculative_measurement(audio: RuntimeData) -> (Duration, Duration) {
+    let gate = Arc::new(SpeculativeVADGate::new());
+    let vad = Arc::new(SileroVADNode::new(Some(0.5), Some(16000), None, None, None));
+
+    let start = Instant::now();
+    let mut asr_received_at = None;
+    let session_id = "latency_speculative".to_string();
+
+    let gate_clone = gate.clone();
+    let callback = |data: RuntimeData| {
+        if matches!(data, RuntimeData::Audio { .. }) && asr_received_at.is_none() {
+            asr_received_at = Some(Instant::now());
+        }
+        Ok(())
+    };
+
+    gate_clone
+        .process_streaming(audio.clone(), Some(session_id.clone()), callback)
+        .await
+        .expect("speculative latency gate failed");
+
+    let confirmation_time = Arc::new(Mutex::new(None));
+    let confirmation_clone = confirmation_time.clone();
+    let gate_for_vad = gate.clone();
+    let vad_clone = vad.clone();
+    let samples_in_chunk = audio_sample_count(&audio);
+
+    let handle = tokio::spawn(async move {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = events.clone();
+        let callback = move |data: RuntimeData| {
+            if let RuntimeData::Json(json) = data {
+                events_clone.lock().unwrap().push(json);
+            }
+            Ok(())
+        };
+
+        vad_clone
+            .process_streaming(audio, Some("latency_speculative_vad".to_string()), callback)
+            .await
+            .expect("speculative latency VAD failed");
+
+        let events = events.lock().unwrap().clone();
+        for event in events {
+            let is_speech_end = event
+                .get("is_speech_end")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+
+            if !is_speech_end {
+                continue;
+            }
+
+            let has_speech = event
+                .get("has_speech")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let confidence = event
+                .get("speech_probability")
+                .and_then(|value| value.as_f64())
+                .unwrap_or(0.0) as f32;
+
+            let vad_result = VADResult {
+                is_speech_end,
+                is_confirmed_speech: has_speech,
+                confidence,
+                samples_in_chunk,
+            };
+
+            gate_for_vad
+                .process_vad_result(&session_id, vad_result, |_: RuntimeData| Ok(()))
+                .await
+                .expect("failed to process VAD confirmation");
+
+            let mut guard = confirmation_clone.lock().unwrap();
+            if guard.is_none() {
+                *guard = Some(Instant::now());
+            }
+        }
+    });
+
+    handle.await.expect("speculative latency task panicked");
+
+    let time_to_asr = asr_received_at
+        .map(|instant| instant.duration_since(start))
+        .unwrap_or_else(|| start.elapsed());
+    let confirmation_time = confirmation_time
+        .lock()
+        .unwrap()
+        .map(|instant| instant.duration_since(start))
+        .unwrap_or_else(|| start.elapsed());
+
+    (time_to_asr, confirmation_time)
+}
+
+#[cfg(feature = "silero-vad")]
+fn measured_latencies() -> (Duration, Duration) {
+    static LATENCIES: OnceLock<(Duration, Duration)> = OnceLock::new();
+    *LATENCIES.get_or_init(|| {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let audio = create_audio_chunk(320);
+            let (traditional, _) = run_traditional_measurement(audio.clone()).await;
+            let (speculative, _) = run_speculative_measurement(audio).await;
+            (traditional, speculative)
+        })
+    })
+}
+
+#[cfg(feature = "silero-vad")]
+fn vad_delay_us() -> u64 {
+    measured_latencies().0.as_micros() as u64
+}
+
+#[cfg(not(feature = "silero-vad"))]
+fn vad_delay_us() -> u64 {
+    19_460
+}
+
+#[cfg(feature = "silero-vad")]
+fn speculative_delay_us() -> u64 {
+    measured_latencies().1.as_micros() as u64
+}
+
+#[cfg(not(feature = "silero-vad"))]
+fn speculative_delay_us() -> u64 {
+    5
 }
 
 /// Benchmark: Single session end-to-end latency
@@ -182,10 +362,9 @@ fn bench_speculative_vs_non_speculative(c: &mut Criterion) {
 
     // Non-speculative: Wait for VAD decision before forwarding
     // Using actual measured VAD time
-    const MEASURED_VAD_TIME_US: u64 = 19_460; // 19.46ms from real SileroVAD
     group.bench_function("non_speculative", |b| {
         b.to_async(&runtime).iter(|| async {
-            let pipeline = LatencyMockPipeline::new(MEASURED_VAD_TIME_US);
+            let pipeline = LatencyMockPipeline::new(vad_delay_us());
             let audio = create_audio_chunk(320);
 
             let _output = pipeline.process_chunk(audio).await;
@@ -196,10 +375,9 @@ fn bench_speculative_vs_non_speculative(c: &mut Criterion) {
     });
 
     // Speculative: Forward immediately
-    const MEASURED_SPECULATION_OVERHEAD_US: u64 = 5; // 4.79us from real SpeculativeVADGate
     group.bench_function("speculative", |b| {
         b.to_async(&runtime).iter(|| async {
-            let pipeline = LatencyMockPipeline::new(MEASURED_SPECULATION_OVERHEAD_US);
+            let pipeline = LatencyMockPipeline::new(speculative_delay_us());
             let audio = create_audio_chunk(320);
 
             let _output = pipeline.process_chunk(audio).await;
@@ -345,10 +523,9 @@ fn bench_success_criteria_validation(c: &mut Criterion) {
     group.bench_function("speculative_100_sessions", |b| {
         b.to_async(&runtime).iter(|| async {
             // Simulates speculative approach: immediate forwarding
-            // Using MEASURED SpeculativeVADGate overhead from bench_real_vad_comparison
-            const MEASURED_SPECULATION_OVERHEAD_US: u64 = 5; // 4.79us measured, rounded to 5us
-
-            let pipeline = Arc::new(LatencyMockPipeline::new(MEASURED_SPECULATION_OVERHEAD_US));
+            // Uses real SpeculativeVADGate overhead measurements when available
+            let simulated_delay_us = speculative_delay_us();
+            let pipeline = Arc::new(LatencyMockPipeline::new(simulated_delay_us));
 
             let session_count = 100;
             let chunks_per_session = 50;
@@ -377,25 +554,17 @@ fn bench_success_criteria_validation(c: &mut Criterion) {
             let p99 = LatencyMockPipeline::calculate_percentile(&latencies, 99.0);
 
             println!("\n=== Speculative Results ===");
-            println!("Simulated delay: {}us", MEASURED_SPECULATION_OVERHEAD_US);
+            println!("Simulated delay: {}us", simulated_delay_us);
             println!("P50: {:?}", p50);
             println!("P95: {:?}", p95);
             println!("P99: {:?}", p99);
 
             // Calculate improvement ratio (data-driven, not hardcoded)
-            const MEASURED_VAD_TIME_US: u64 = 19_460;
-            let theoretical_improvement =
-                MEASURED_VAD_TIME_US as f64 / MEASURED_SPECULATION_OVERHEAD_US as f64;
+            let theoretical_improvement = vad_delay_us() as f64 / simulated_delay_us as f64;
 
             println!("\n=== IMPROVEMENT ANALYSIS ===");
-            println!(
-                "Traditional VAD time: {}ms",
-                MEASURED_VAD_TIME_US as f64 / 1000.0
-            );
-            println!(
-                "Speculative overhead: {}us",
-                MEASURED_SPECULATION_OVERHEAD_US
-            );
+            println!("Traditional VAD time: {}ms", vad_delay_us() as f64 / 1000.0);
+            println!("Speculative overhead: {}us", simulated_delay_us);
             println!(
                 "Theoretical improvement: {:.0}x faster",
                 theoretical_improvement

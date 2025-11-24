@@ -12,18 +12,26 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::nodes::AsyncStreamingNode;
+use remotemedia_runtime_core::nodes::{AsyncStreamingNode, SpeculativeVADGate, VADResult};
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "silero-vad")]
-use remotemedia_runtime_core::nodes::SileroVADNode;
+use std::sync::{Arc, Mutex};
 
-use remotemedia_runtime_core::nodes::SpeculativeVADGate;
+#[cfg(feature = "silero-vad")]
+use tokio::task::JoinSet;
+
+#[cfg(feature = "silero-vad")]
+use remotemedia_runtime_core::nodes::SileroVADNode;
 
 /// Simulate the real pipeline: 48kHz input → 16kHz VAD → 24kHz output
 struct PipelineMetrics {
     /// Time first chunk reached output
     time_to_first_output: Option<Duration>,
+    /// Time the first VAD decision completed
+    time_to_first_vad_decision: Option<Duration>,
+    /// Time downstream inference (ASR/LLM) could start
+    llm_inference_start: Option<Duration>,
     /// Time each chunk reached output (for smoothness analysis)
     chunk_times: Vec<Duration>,
     /// Total pipeline latency
@@ -34,8 +42,17 @@ impl PipelineMetrics {
     fn new() -> Self {
         Self {
             time_to_first_output: None,
+            time_to_first_vad_decision: None,
+            llm_inference_start: None,
             chunk_times: Vec::new(),
             total_latency: Duration::from_millis(0),
+        }
+    }
+
+    fn record_chunk_latency(&mut self, chunk_idx: usize, latency: Duration) {
+        self.chunk_times.push(latency);
+        if chunk_idx == 0 && self.time_to_first_output.is_none() {
+            self.time_to_first_output = Some(latency);
         }
     }
 
@@ -67,13 +84,200 @@ impl PipelineMetrics {
     }
 }
 
+#[cfg(feature = "silero-vad")]
+enum PipelineMode {
+    Traditional,
+    Speculative,
+}
+
+#[cfg(feature = "silero-vad")]
+fn resample_to_16khz(input_chunk: &RuntimeData) -> RuntimeData {
+    match input_chunk {
+        RuntimeData::Audio { samples, .. } => RuntimeData::Audio {
+            samples: samples.iter().step_by(3).copied().collect(),
+            sample_rate: 16000,
+            channels: 1,
+        },
+        other => other.clone(),
+    }
+}
+
+#[cfg(feature = "silero-vad")]
+async fn execute_pipeline(mode: PipelineMode) -> PipelineMetrics {
+    const CHUNK_COUNT: usize = 10;
+
+    let vad = Arc::new(SileroVADNode::new(
+        Some(0.5),
+        Some(16000),
+        Some(100),
+        Some(200),
+        None,
+    ));
+
+    let mut join_set = JoinSet::new();
+    let first_vad_completion = Arc::new(Mutex::new(None));
+    let mut metrics = PipelineMetrics::new();
+    let start = Instant::now();
+    let input_chunks: Vec<RuntimeData> = (0..CHUNK_COUNT).map(create_browser_audio_chunk).collect();
+    let speculative_gate = if matches!(mode, PipelineMode::Speculative) {
+        Some(Arc::new(SpeculativeVADGate::new()))
+    } else {
+        None
+    };
+
+    for (idx, input_chunk) in input_chunks.iter().enumerate() {
+        let chunk_start = Instant::now();
+        let resampled = resample_to_16khz(input_chunk);
+        let samples_in_chunk = match &resampled {
+            RuntimeData::Audio { samples, .. } => samples.len(),
+            _ => 0,
+        };
+
+        match mode {
+            PipelineMode::Traditional => {
+                let callback = |_: RuntimeData| Ok(());
+                let session = format!("traditional_chunk_{}", idx);
+                let _ = vad
+                    .process_streaming(resampled, Some(session), callback)
+                    .await;
+
+                let mut guard = first_vad_completion.lock().unwrap();
+                if guard.is_none() {
+                    *guard = Some(Instant::now());
+                }
+            }
+            PipelineMode::Speculative => {
+                let gate = speculative_gate
+                    .as_ref()
+                    .expect("Speculative gate missing for speculative mode")
+                    .clone();
+                let spec_session = format!("speculative_chunk_{}", idx);
+                let spec_callback = |_: RuntimeData| Ok(());
+                let _ = gate
+                    .process_streaming(resampled.clone(), Some(spec_session.clone()), spec_callback)
+                    .await;
+
+                let vad_clone = vad.clone();
+                let vad_chunk = resampled.clone();
+                let vad_session = format!("vad_confirmation_chunk_{}", idx);
+                let first_vad_clone = first_vad_completion.clone();
+                let gate_for_vad = gate.clone();
+                let session_for_vad = spec_session.clone();
+                let chunk_samples = samples_in_chunk;
+
+                join_set.spawn(async move {
+                    let collected_events = Arc::new(Mutex::new(Vec::new()));
+                    let collected_events_clone = collected_events.clone();
+                    let callback = move |data: RuntimeData| {
+                        if let RuntimeData::Json(json) = data {
+                            collected_events_clone.lock().unwrap().push(json);
+                        }
+                        Ok(())
+                    };
+
+                    match vad_clone
+                        .process_streaming(vad_chunk, Some(vad_session), callback)
+                        .await
+                    {
+                        Ok(_) => {
+                            let events = collected_events.lock().unwrap().clone();
+                            for event in events {
+                                let is_speech_end = event
+                                    .get("is_speech_end")
+                                    .and_then(|value| value.as_bool())
+                                    .unwrap_or(false);
+
+                                if !is_speech_end {
+                                    continue;
+                                }
+
+                                let has_speech = event
+                                    .get("has_speech")
+                                    .and_then(|value| value.as_bool())
+                                    .unwrap_or(false);
+                                let confidence = event
+                                    .get("speech_probability")
+                                    .and_then(|value| value.as_f64())
+                                    .unwrap_or(0.0)
+                                    as f32;
+
+                                let vad_result = VADResult {
+                                    is_speech_end,
+                                    is_confirmed_speech: has_speech,
+                                    confidence,
+                                    samples_in_chunk: chunk_samples,
+                                };
+
+                                gate_for_vad
+                                    .process_vad_result(
+                                        &session_for_vad,
+                                        vad_result,
+                                        |_: RuntimeData| Ok(()),
+                                    )
+                                    .await?;
+                            }
+
+                            {
+                                let mut guard = first_vad_clone.lock().unwrap();
+                                if guard.is_none() {
+                                    *guard = Some(Instant::now());
+                                }
+                            }
+
+                            Ok(())
+                        }
+                        Err(err) => Err(err),
+                    }
+                });
+            }
+        }
+
+        let chunk_latency = chunk_start.elapsed();
+        metrics.record_chunk_latency(idx, chunk_latency);
+    }
+
+    if matches!(mode, PipelineMode::Speculative) {
+        while let Some(join_result) = join_set.join_next().await {
+            match join_result {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => panic!("Speculative VAD task failed: {err:?}"),
+                Err(join_err) => panic!("Speculative VAD task panicked: {join_err}"),
+            }
+        }
+    }
+
+    metrics.total_latency = start.elapsed();
+    {
+        let guard = first_vad_completion.lock().unwrap();
+        metrics.time_to_first_vad_decision = guard.map(|instant| instant.duration_since(start));
+    }
+
+    metrics.llm_inference_start = match mode {
+        PipelineMode::Traditional => metrics.time_to_first_vad_decision,
+        PipelineMode::Speculative => metrics.time_to_first_output,
+    };
+
+    metrics
+}
+
+fn format_duration(duration: Duration) -> String {
+    if duration.as_millis() > 0 {
+        format!("{:.2} ms", duration.as_secs_f64() * 1_000.0)
+    } else if duration.as_micros() > 0 {
+        format!("{:.2} us", duration.as_secs_f64() * 1_000_000.0)
+    } else {
+        format!("{:.2} ns", duration.as_secs_f64() * 1_000_000_000.0)
+    }
+}
+
 /// Create realistic browser audio (48kHz, mono)
 fn create_browser_audio_chunk(chunk_idx: usize) -> RuntimeData {
     // 1024 samples @ 48kHz = 21.3ms
     let samples: Vec<f32> = (0..1024)
         .map(|s| {
             let t = (chunk_idx * 1024 + s) as f32 / 48000.0;
-            (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 0.3
+            let amplitude = if chunk_idx < 8 { 0.3 } else { 0.0 };
+            (2.0 * std::f32::consts::PI * 440.0 * t).sin() * amplitude
         })
         .collect();
 
@@ -98,59 +302,13 @@ fn bench_traditional_pipeline(c: &mut Criterion) {
 
     group.bench_function("sequential_vad_blocking", |b| {
         b.to_async(&runtime).iter(|| async {
-            let vad = SileroVADNode::new(Some(0.5), Some(16000), Some(100), Some(200), None);
-
-            // Simulate 10 browser audio chunks (48kHz)
-            let input_chunks: Vec<RuntimeData> = (0..10).map(create_browser_audio_chunk).collect();
-
-            let start = Instant::now();
-            let mut metrics = PipelineMetrics::new();
-
-            for (idx, input_chunk) in input_chunks.iter().enumerate() {
-                let chunk_start = Instant::now();
-
-                // Step 1: Resample 48kHz → 16kHz (fast, ~100us)
-                // (Simulated - would use actual FastResampleNode)
-                let samples_16k: Vec<f32> = match input_chunk {
-                    RuntimeData::Audio { samples, .. } => {
-                        // Simple decimation 48→16 (3:1 ratio)
-                        samples.iter().step_by(3).copied().collect()
-                    }
-                    _ => vec![],
-                };
-
-                let resampled = RuntimeData::Audio {
-                    samples: samples_16k,
-                    sample_rate: 16000,
-                    channels: 1,
-                };
-
-                // Step 2: Process through VAD (BLOCKS here ~19ms)
-                let vad_callback = |_: RuntimeData| Ok(());
-                let _ = vad
-                    .process_streaming(resampled, Some("session".to_string()), vad_callback)
-                    .await;
-
-                // Step 3: Would go to buffer, then resample 16→24kHz
-                // Output available AFTER VAD completes
-
-                let chunk_latency = chunk_start.elapsed();
-                metrics.chunk_times.push(chunk_latency);
-
-                if idx == 0 {
-                    metrics.time_to_first_output = Some(chunk_latency);
-                }
-            }
-
-            metrics.total_latency = start.elapsed();
-
-            let smoothness = metrics.smoothness_variance();
-
-            // Traditional: High latency (~19ms per chunk), high variance (choppy)
+            let metrics = execute_pipeline(PipelineMode::Traditional).await;
             black_box((
                 metrics.total_latency,
                 metrics.time_to_first_output,
-                smoothness,
+                metrics.time_to_first_vad_decision,
+                metrics.llm_inference_start,
+                metrics.smoothness_variance(),
             ))
         });
     });
@@ -179,80 +337,13 @@ fn bench_speculative_pipeline(c: &mut Criterion) {
 
     group.bench_function("parallel_vad_smooth", |b| {
         b.to_async(&runtime).iter(|| async {
-            let speculative = SpeculativeVADGate::new();
-            let vad = std::sync::Arc::new(SileroVADNode::new(
-                Some(0.5),
-                Some(16000),
-                Some(100),
-                Some(200),
-                None,
-            ));
-
-            // Same 10 browser audio chunks
-            let input_chunks: Vec<RuntimeData> = (0..10).map(create_browser_audio_chunk).collect();
-
-            let start = Instant::now();
-            let mut metrics = PipelineMetrics::new();
-
-            for (idx, input_chunk) in input_chunks.iter().enumerate() {
-                let chunk_start = Instant::now();
-
-                // Step 1: Resample 48kHz → 16kHz (fast)
-                let samples_16k: Vec<f32> = match input_chunk {
-                    RuntimeData::Audio { samples, .. } => {
-                        samples.iter().step_by(3).copied().collect()
-                    }
-                    _ => vec![],
-                };
-
-                let resampled = RuntimeData::Audio {
-                    samples: samples_16k,
-                    sample_rate: 16000,
-                    channels: 1,
-                };
-
-                // Step 2: SpeculativeVADGate forwards immediately (~5μs)
-                let spec_callback = |_: RuntimeData| Ok(());
-                let _ = speculative
-                    .process_streaming(
-                        resampled.clone(),
-                        Some(format!("session_{}", idx)),
-                        spec_callback,
-                    )
-                    .await;
-
-                // Step 3: VAD runs in parallel (doesn't block output)
-                let vad_clone = vad.clone();
-                let resampled_clone = resampled.clone();
-                tokio::spawn(async move {
-                    let callback = |_: RuntimeData| Ok(());
-                    let _ = vad_clone
-                        .process_streaming(
-                            resampled_clone,
-                            Some("vad_session".to_string()),
-                            callback,
-                        )
-                        .await;
-                });
-
-                // Output available immediately (smooth!)
-                let chunk_latency = chunk_start.elapsed();
-                metrics.chunk_times.push(chunk_latency);
-
-                if idx == 0 {
-                    metrics.time_to_first_output = Some(chunk_latency);
-                }
-            }
-
-            metrics.total_latency = start.elapsed();
-
-            let smoothness = metrics.smoothness_variance();
-
-            // Speculative: Low latency (~50μs per chunk), low variance (smooth)
+            let metrics = execute_pipeline(PipelineMode::Speculative).await;
             black_box((
                 metrics.total_latency,
                 metrics.time_to_first_output,
-                smoothness,
+                metrics.time_to_first_vad_decision,
+                metrics.llm_inference_start,
+                metrics.smoothness_variance(),
             ))
         });
     });
@@ -266,6 +357,101 @@ fn bench_speculative_pipeline(_c: &mut Criterion) {
 }
 
 /// Summary: Explain the real-world pipeline benefits
+#[cfg(feature = "silero-vad")]
+fn bench_pipeline_summary(_c: &mut Criterion) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (traditional, speculative) = runtime.block_on(async {
+        (
+            execute_pipeline(PipelineMode::Traditional).await,
+            execute_pipeline(PipelineMode::Speculative).await,
+        )
+    });
+
+    let ratio = match (
+        traditional.time_to_first_output,
+        speculative.time_to_first_output,
+    ) {
+        (Some(traditional_first), Some(speculative_first)) if speculative_first.as_nanos() > 0 => {
+            traditional_first.as_secs_f64() / speculative_first.as_secs_f64()
+        }
+        _ => 0.0,
+    };
+    let llm_start_ratio = match (
+        traditional.llm_inference_start,
+        speculative.llm_inference_start,
+    ) {
+        (Some(traditional_start), Some(speculative_start)) if speculative_start.as_nanos() > 0 => {
+            traditional_start.as_secs_f64() / speculative_start.as_secs_f64()
+        }
+        _ => 0.0,
+    };
+
+    println!("\n╔════════ REAL-WORLD PIPELINE BENCHMARK ════════╗");
+    println!("║  Traditional vs Speculative (measured live)  ║");
+    println!("╚══════════════════════════════════════════════╝\n");
+    println!("🔴 Traditional (blocking VAD)");
+    if let Some(first) = traditional.time_to_first_output {
+        println!("  • Time to first output: {}", format_duration(first));
+    }
+    if let Some(first_decision) = traditional.time_to_first_vad_decision {
+        println!(
+            "  • First VAD decision surfaces at {}",
+            format_duration(first_decision)
+        );
+    }
+    println!(
+        "  • Total pipeline latency: {}",
+        format_duration(traditional.total_latency)
+    );
+    println!(
+        "  • Output smoothness (std dev): {:.2} us",
+        traditional.smoothness_variance()
+    );
+    if let Some(llm_start) = traditional.llm_inference_start {
+        println!(
+            "  • LLM/ASR inference can start at {}",
+            format_duration(llm_start)
+        );
+    }
+
+    println!("\n🟢 Speculative (parallel VAD)");
+    if let Some(first) = speculative.time_to_first_output {
+        println!("  • Time to first output: {}", format_duration(first));
+    }
+    if let Some(first_decision) = speculative.time_to_first_vad_decision {
+        println!(
+            "  • First VAD decision (confirmation) visible at {}",
+            format_duration(first_decision)
+        );
+    }
+    println!(
+        "  • Total pipeline latency (including VAD waits): {}",
+        format_duration(speculative.total_latency)
+    );
+    println!(
+        "  • Output smoothness (std dev): {:.2} us",
+        speculative.smoothness_variance()
+    );
+    if let Some(llm_start) = speculative.llm_inference_start {
+        println!(
+            "  • LLM/ASR inference can start at {}",
+            format_duration(llm_start)
+        );
+    }
+
+    println!(
+        "\n⚡ Measured improvement (time to first output): {:.1}x faster",
+        ratio
+    );
+    println!(
+        "⚡ Improvement (LLM readiness): {:.1}x earlier inference start",
+        llm_start_ratio
+    );
+    println!("✅ Speculative forwarding keeps ASR fed immediately while VAD confirmation runs off the critical path.");
+    println!("════════════════════════════════════════════════\n");
+}
+
+#[cfg(not(feature = "silero-vad"))]
 fn bench_pipeline_summary(_c: &mut Criterion) {
     println!("\n╔════════════════════════════════════════════════════════════════╗");
     println!("║  REAL-WORLD PIPELINE BENCHMARK - SMOOTHNESS COMPARISON        ║");
@@ -276,21 +462,7 @@ fn bench_pipeline_summary(_c: &mut Criterion) {
     println!("  Per-chunk latency: ~19ms");
     println!("  Output smoothness: CHOPPY (19ms gaps between chunks)");
     println!("  User experience: Stuttery, robotic audio");
-    println!("\n🟢 Speculative (VAD runs in parallel):");
-    println!("  Flow: Chunk → Resample → SpeculativeGate → Buffer → Output");
-    println!("                              ↓ (parallel)");
-    println!("                            VAD (doesn't block)");
-    println!("  Per-chunk latency: ~50μs");
-    println!("  Output smoothness: SMOOTH (consistent ~50μs)");
-    println!("  User experience: Natural, real-time audio");
-    println!("\n⚡ MEASURED IMPROVEMENT:");
-    println!("  • Latency: 990x faster (19ms → 50μs per chunk)");
-    println!("  • Smoothness: Low variance (no stuttering)");
-    println!("  • User experience: Choppy → Natural");
-    println!("\n💡 WHY THIS MATTERS:");
-    println!("  Your NextJS app needs smooth audio return for real-time interaction.");
-    println!("  Traditional VAD creates 19ms gaps = choppy, robotic sound");
-    println!("  Speculative VAD creates 50μs gaps = smooth, natural sound");
+    println!("Enable the `silero-vad` feature to run live measurements.");
     println!("\n✅ Run: cargo bench --bench bench_real_pipeline");
     println!("═══════════════════════════════════════════════════════════════════\n");
 }

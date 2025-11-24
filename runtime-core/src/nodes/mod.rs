@@ -56,7 +56,7 @@ pub use video_flip::VideoFlipNode;
 
 // Low-latency streaming nodes (spec 007)
 pub mod speculative_vad_gate;
-pub use speculative_vad_gate::SpeculativeVADGate;
+pub use speculative_vad_gate::{SpeculativeVADGate, VADResult};
 
 pub use registry::{CompositeRegistry, NodeFactory as NodeFactoryTrait, RuntimeHint};
 pub use streaming_node::{
