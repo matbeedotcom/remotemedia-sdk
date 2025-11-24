@@ -59,6 +59,7 @@
 // Public modules
 pub mod client;
 pub mod config;
+pub mod custom_nodes;
 pub mod error;
 pub mod plugin;
 
