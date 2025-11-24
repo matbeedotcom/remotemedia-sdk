@@ -44,33 +44,34 @@ async def test_numpy_passthrough_simple():
     # Create a simple numpy array
     audio_data = np.array([0.1, 0.2, 0.3, 0.4, 0.5], dtype=np.float32)
     
-    # Empty pipeline (passthrough)
+    # Simple passthrough pipeline with identity node
     manifest = {
         "version": "v1",
         "metadata": {"name": "numpy_passthrough_test"},
-        "nodes": [],
+        "nodes": [
+            {
+                "id": "passthrough",
+                "node_type": "PassThrough",
+                "config": {}
+            }
+        ],
         "connections": []
     }
     
-    try:
-        result = await execute_pipeline_with_input(
-            json.dumps(manifest),
-            [audio_data],
-            None  # enable_metrics
-        )
-        
-        print(f"Input type: {type(audio_data)}, shape: {audio_data.shape}")
-        print(f"Result type: {type(result)}")
-        
-        # Result should be a numpy array (if pipeline returns it)
-        # OR the same data we sent in
-        assert result is not None
-        print("✓ Pipeline executed successfully with numpy input")
-        
-    except Exception as e:
-        print(f"Pipeline execution: {e}")
-        # This might fail if there are no nodes to process, which is expected
-        print("✓ No errors in FFI layer (pipeline may require nodes)")
+    result = await execute_pipeline_with_input(
+        json.dumps(manifest),
+        [audio_data],
+        None  # enable_metrics
+    )
+    
+    print(f"Input type: {type(audio_data)}, shape: {audio_data.shape}")
+    print(f"Result type: {type(result)}")
+    
+    # Result should be a numpy array
+    assert result is not None
+    assert isinstance(result, np.ndarray), f"Expected numpy array, got {type(result)}"
+    assert result.shape == audio_data.shape, f"Shape mismatch: {result.shape} != {audio_data.shape}"
+    print("✓ Pipeline executed successfully with numpy input")
 
 
 @pytest.mark.skipif(not RUNTIME_AVAILABLE, reason="Runtime not available")
@@ -85,20 +86,25 @@ async def test_numpy_different_dtypes_ffi():
     manifest = {
         "version": "v1",
         "metadata": {"name": "dtype_test"},
-        "nodes": [],
+        "nodes": [
+            {
+                "id": "passthrough",
+                "node_type": "PassThrough",
+                "config": {}
+            }
+        ],
         "connections": []
     }
     
     for dtype_name, arr in test_cases:
-        try:
-            result = await execute_pipeline_with_input(
-                json.dumps(manifest),
-                [arr],
-                None  # enable_metrics
-            )
-            print(f"✓ {dtype_name}: FFI accepted numpy array")
-        except Exception as e:
-            print(f"✗ {dtype_name}: {e}")
+        result = await execute_pipeline_with_input(
+            json.dumps(manifest),
+            [arr],
+            None  # enable_metrics
+        )
+        assert result is not None, f"{dtype_name}: Pipeline returned None"
+        assert isinstance(result, np.ndarray), f"{dtype_name}: Expected numpy array, got {type(result)}"
+        print(f"✓ {dtype_name}: FFI accepted numpy array and returned {type(result)}")
 
 
 @pytest.mark.skipif(not RUNTIME_AVAILABLE, reason="Runtime not available")
@@ -111,24 +117,28 @@ async def test_numpy_multidimensional_ffi():
     manifest = {
         "version": "v1",
         "metadata": {"name": "multidim_test"},
-        "nodes": [],
+        "nodes": [
+            {
+                "id": "passthrough",
+                "node_type": "PassThrough",
+                "config": {}
+            }
+        ],
         "connections": []
     }
     
-    try:
-        result = await execute_pipeline_with_input(
-            json.dumps(manifest),
-            [stereo_audio],
-            None  # enable_metrics
-        )
-        
-        print(f"Input shape: {stereo_audio.shape}")
-        print(f"Result type: {type(result)}")
-        print("✓ Multidimensional numpy array passed through FFI")
-        
-    except Exception as e:
-        print(f"Multidimensional test: {e}")
-        print("✓ No FFI layer errors")
+    result = await execute_pipeline_with_input(
+        json.dumps(manifest),
+        [stereo_audio],
+        None  # enable_metrics
+    )
+    
+    print(f"Input shape: {stereo_audio.shape}")
+    print(f"Result type: {type(result)}")
+    assert result is not None
+    assert isinstance(result, np.ndarray), f"Expected numpy array, got {type(result)}"
+    assert result.ndim == 2, f"Expected 2D array, got {result.ndim}D"
+    print("✓ Multidimensional numpy array passed through FFI")
 
 
 @pytest.mark.skipif(not RUNTIME_AVAILABLE, reason="Runtime not available")
@@ -152,33 +162,36 @@ async def test_numpy_vs_dict_comparison():
     manifest = {
         "version": "v1",
         "metadata": {"name": "comparison_test"},
-        "nodes": [],
+        "nodes": [
+            {
+                "id": "passthrough",
+                "node_type": "PassThrough",
+                "config": {}
+            }
+        ],
         "connections": []
     }
     
     print("\n=== Numpy Input ===")
-    try:
-        result1 = await execute_pipeline_with_input(
-            json.dumps(manifest),
-            [numpy_input],
-            None  # enable_metrics
-        )
-        print(f"Numpy result type: {type(result1)}")
-        print("✓ Numpy input works")
-    except Exception as e:
-        print(f"Numpy input: {e}")
+    result1 = await execute_pipeline_with_input(
+        json.dumps(manifest),
+        [numpy_input],
+        None  # enable_metrics
+    )
+    print(f"Numpy result type: {type(result1)}")
+    assert isinstance(result1, np.ndarray), f"Expected numpy array, got {type(result1)}"
+    print("✓ Numpy input works - returned numpy array!")
     
     print("\n=== Dict Input ===")
-    try:
-        result2 = await execute_pipeline_with_input(
-            json.dumps(manifest),
-            [dict_input],
-            None  # enable_metrics
-        )
-        print(f"Dict result type: {type(result2)}")
-        print("✓ Dict input works (backward compatibility)")
-    except Exception as e:
-        print(f"Dict input: {e}")
+    result2 = await execute_pipeline_with_input(
+        json.dumps(manifest),
+        [dict_input],
+        None  # enable_metrics
+    )
+    print(f"Dict result type: {type(result2)}")
+    # Dict input returns dict (backward compatibility)
+    assert result2 is not None
+    print("✓ Dict input works (backward compatibility)")
 
 
 @pytest.mark.skipif(not RUNTIME_AVAILABLE, reason="Runtime not available")
@@ -215,7 +228,13 @@ async def test_streaming_simulation():
     manifest = {
         "version": "v1",
         "metadata": {"name": "streaming_test"},
-        "nodes": [],
+        "nodes": [
+            {
+                "id": "passthrough",
+                "node_type": "PassThrough",
+                "config": {}
+            }
+        ],
         "connections": []
     }
     
@@ -230,22 +249,19 @@ async def test_streaming_simulation():
             dtype=np.float32
         ))
         
-        try:
-            result = await execute_pipeline_with_input(
-                json.dumps(manifest),
-                [frame],
-                None  # enable_metrics
-            )
-            
-            if i == 0:
-                print(f"Frame {i}: Input shape={frame.shape}, dtype={frame.dtype}")
-                print(f"Frame {i}: Result type={type(result)}")
+        result = await execute_pipeline_with_input(
+            json.dumps(manifest),
+            [frame],
+            None  # enable_metrics
+        )
         
-        except Exception as e:
-            if i == 0:
-                print(f"Frame {i}: {e}")
+        if i == 0:
+            print(f"Frame {i}: Input shape={frame.shape}, dtype={frame.dtype}")
+            print(f"Frame {i}: Result type={type(result)}")
+            assert isinstance(result, np.ndarray), f"Expected numpy array, got {type(result)}"
+            assert result.shape == frame.shape, f"Shape mismatch: {result.shape} != {frame.shape}"
     
-    print(f"✓ Sent 10 frames through FFI layer")
+    print(f"✓ Sent 10 frames through FFI layer - all returned as numpy arrays!")
 
 
 @pytest.mark.skipif(not RUNTIME_AVAILABLE, reason="Runtime not available")  
