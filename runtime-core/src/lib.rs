@@ -148,17 +148,34 @@ pub mod data {
             /// Timestamp in microseconds
             timestamp_us: u64,
         },
-        /// Tensor data
-        Tensor {
-            /// Flattened tensor data
-            data: Vec<u8>,
-            /// Tensor shape
-            shape: Vec<i32>,
-            /// Data type (0=float32, 1=int32, etc.)
-            dtype: i32,
-        },
-        /// JSON data
-        Json(serde_json::Value),
+    /// Tensor data
+    Tensor {
+        /// Flattened tensor data
+        data: Vec<u8>,
+        /// Tensor shape
+        shape: Vec<i32>,
+        /// Data type (0=float32, 1=int32, etc.)
+        dtype: i32,
+    },
+    /// Numpy array data (zero-copy passthrough until IPC boundary)
+    /// This allows numpy arrays to flow through the pipeline without conversion,
+    /// only serializing once at the IPC boundary for iceoryx2 transport.
+    Numpy {
+        /// Raw array data
+        data: Vec<u8>,
+        /// Array shape (dimensions)
+        shape: Vec<usize>,
+        /// Data type string (e.g., "float32", "int16", "uint8")
+        dtype: String,
+        /// Array strides (bytes to step in each dimension)
+        strides: Vec<isize>,
+        /// Whether array is C-contiguous
+        c_contiguous: bool,
+        /// Whether array is Fortran-contiguous
+        f_contiguous: bool,
+    },
+    /// JSON data
+    Json(serde_json::Value),
         /// Text data
         Text(String),
         /// Binary data
@@ -183,6 +200,7 @@ pub mod data {
                 RuntimeData::Audio { .. } => "audio",
                 RuntimeData::Video { .. } => "video",
                 RuntimeData::Tensor { .. } => "tensor",
+                RuntimeData::Numpy { .. } => "numpy",
                 RuntimeData::Json(_) => "json",
                 RuntimeData::Text(_) => "text",
                 RuntimeData::Binary(_) => "binary",
@@ -196,6 +214,7 @@ pub mod data {
                 RuntimeData::Audio { samples, .. } => samples.len(),
                 RuntimeData::Video { .. } => 1,
                 RuntimeData::Tensor { data, .. } => data.len(),
+                RuntimeData::Numpy { shape, .. } => shape.iter().product(),
                 RuntimeData::Json(value) => match value {
                     serde_json::Value::Array(arr) => arr.len(),
                     serde_json::Value::Object(obj) => obj.len(),
@@ -213,6 +232,12 @@ pub mod data {
                 RuntimeData::Audio { samples, .. } => samples.len() * 4,
                 RuntimeData::Video { pixel_data, .. } => pixel_data.len(),
                 RuntimeData::Tensor { data, .. } => data.len(),
+                RuntimeData::Numpy { data, shape, dtype, strides, .. } => {
+                    // Size includes data + metadata overhead
+                    let data_size = data.len();
+                    let metadata_size = shape.len() * 8 + strides.len() * 8 + dtype.len() + 10;
+                    data_size + metadata_size
+                }
                 RuntimeData::Json(value) => {
                     serde_json::to_string(value).map(|s| s.len()).unwrap_or(0)
                 }

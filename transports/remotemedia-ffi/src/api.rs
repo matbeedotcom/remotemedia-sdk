@@ -5,7 +5,7 @@
 //!
 //! Uses PipelineRunner from runtime-core for transport-agnostic execution.
 
-use super::marshal::{json_to_python, python_to_json};
+use super::marshal::{json_to_python, python_to_json, python_to_runtime_data, runtime_data_to_python};
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 use remotemedia_runtime_core::{
@@ -67,39 +67,9 @@ pub fn execute_pipeline(
 
         // Convert output to Python
         Python::attach(|py| {
-            // Convert RuntimeData to JSON for Python marshaling
-            let output_json = match &output.data {
-                RuntimeData::Audio {
-                    samples,
-                    sample_rate,
-                    channels,
-                } => {
-                    serde_json::json!({
-                        "type": "audio",
-                        "samples": samples,
-                        "sample_rate": sample_rate,
-                        "channels": channels
-                    })
-                }
-                RuntimeData::Text(s) => {
-                    serde_json::json!({ "type": "text", "data": s })
-                }
-                RuntimeData::Json(v) => v.clone(),
-                RuntimeData::Binary(b) => {
-                    serde_json::json!({ "type": "binary", "data": b })
-                }
-                RuntimeData::Video { .. } => {
-                    serde_json::json!({ "type": "video", "note": "Video data not fully supported in FFI yet" })
-                }
-                RuntimeData::Tensor { .. } => {
-                    serde_json::json!({ "type": "tensor", "note": "Tensor data not fully supported in FFI yet" })
-                }
-                RuntimeData::ControlMessage { .. } => {
-                    serde_json::json!({ "type": "control_message", "note": "Control message data not fully supported in FFI yet" })
-                }
-            };
-
-            let outputs_py = json_to_python(py, &output_json)?;
+            // Use runtime_data_to_python for direct conversion (zero-copy for numpy!)
+            // This avoids JSON serialization and converts RuntimeData::Numpy directly to numpy arrays
+            let outputs_py = runtime_data_to_python(py, &output.data)?;
 
             // Include metrics if requested (TODO: get metrics from PipelineRunner)
             if enable_metrics.unwrap_or(false) {
@@ -108,7 +78,7 @@ pub fn execute_pipeline(
                 dict.set_item("metrics", "{}")?; // Placeholder - metrics not yet exposed from PipelineRunner
                 Ok(dict.into_any().unbind())
             } else {
-                Ok(outputs_py.unbind())
+                Ok(outputs_py)  // runtime_data_to_python already returns PyObject (unbound)
             }
         })
     })
@@ -135,10 +105,10 @@ pub fn execute_pipeline_with_input<'py>(
     input_data: Vec<Bound<'py, PyAny>>,
     enable_metrics: Option<bool>,
 ) -> PyResult<Bound<'py, PyAny>> {
-    // Convert input_data to JSON immediately before the async block
-    let rust_input: Vec<serde_json::Value> = input_data
+    // Convert input_data to RuntimeData directly (zero-copy for numpy!)
+    let rust_input: Vec<RuntimeData> = input_data
         .iter()
-        .map(|obj| python_to_json(py, obj))
+        .map(|obj| python_to_runtime_data(py, obj))
         .collect::<PyResult<Vec<_>>>()?;
 
     future_into_py(py, async move {
@@ -159,14 +129,9 @@ pub fn execute_pipeline_with_input<'py>(
             ))
         })?;
 
-        // Convert JSON input to RuntimeData (simplified - assumes first input item)
+        // Use first input item or empty text
         let input_data = if let Some(first) = rust_input.first() {
-            if let Some(text) = first.as_str() {
-                RuntimeData::Text(text.to_string())
-            } else {
-                // Try to handle as JSON
-                RuntimeData::Json(first.clone())
-            }
+            first.clone()
         } else {
             RuntimeData::Text(String::new())
         };
@@ -179,39 +144,9 @@ pub fn execute_pipeline_with_input<'py>(
 
         // Convert output to Python
         Python::attach(|py| {
-            // Convert RuntimeData to JSON for Python marshaling
-            let output_json = match &output.data {
-                RuntimeData::Audio {
-                    samples,
-                    sample_rate,
-                    channels,
-                } => {
-                    serde_json::json!({
-                        "type": "audio",
-                        "samples": samples,
-                        "sample_rate": sample_rate,
-                        "channels": channels
-                    })
-                }
-                RuntimeData::Text(s) => {
-                    serde_json::json!({ "type": "text", "data": s })
-                }
-                RuntimeData::Json(v) => v.clone(),
-                RuntimeData::Binary(b) => {
-                    serde_json::json!({ "type": "binary", "data": b })
-                }
-                RuntimeData::Video { .. } => {
-                    serde_json::json!({ "type": "video", "note": "Video data not fully supported in FFI yet" })
-                }
-                RuntimeData::Tensor { .. } => {
-                    serde_json::json!({ "type": "tensor", "note": "Tensor data not fully supported in FFI yet" })
-                }
-                RuntimeData::ControlMessage { .. } => {
-                    serde_json::json!({ "type": "control_message", "note": "Control message data not fully supported in FFI yet" })
-                }
-            };
-
-            let outputs_py = json_to_python(py, &output_json)?;
+            // Use runtime_data_to_python for direct conversion (zero-copy for numpy!)
+            // This avoids JSON serialization and converts RuntimeData::Numpy directly to numpy arrays
+            let outputs_py = runtime_data_to_python(py, &output.data)?;
 
             // Include metrics if requested (TODO: get metrics from PipelineRunner)
             if enable_metrics.unwrap_or(false) {
@@ -220,7 +155,7 @@ pub fn execute_pipeline_with_input<'py>(
                 dict.set_item("metrics", "{}")?; // Placeholder
                 Ok(dict.into_any().unbind())
             } else {
-                Ok(outputs_py.unbind())
+                Ok(outputs_py)  // runtime_data_to_python already returns PyObject (unbound)
             }
         })
     })
