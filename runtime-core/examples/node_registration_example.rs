@@ -8,7 +8,7 @@
 use async_trait::async_trait;
 use remotemedia_runtime_core::executor::node_executor::NodeHandler;
 use remotemedia_runtime_core::nodes::registry::{NodeRegistry, RuntimeHint};
-use remotemedia_runtime_core::{
+use remotemedia_runtime_core::registration_macros::{
     register_python_node, register_python_nodes, register_rust_node, register_rust_node_default,
 };
 use serde_json::Value;

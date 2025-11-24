@@ -45,6 +45,12 @@ pub mod audio;
 pub mod executor;
 pub mod nodes;
 pub mod python;
+/// Public entrypoint for ergonomic registration macros.
+pub mod registration_macros {
+    pub use crate::{
+        register_python_node, register_python_nodes, register_rust_node, register_rust_node_default,
+    };
+}
 
 // Manifest
 pub use manifest::Manifest;
