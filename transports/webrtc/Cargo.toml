@@ -74,6 +74,10 @@ bollard = { workspace = true }
 [dev-dependencies]
 tokio-test = "0.4"
 criterion = "0.5"
+tracing-subscriber = { workspace = true }
+
+# Enable grpc-signaling for E2E tests
+remotemedia-webrtc = { path = ".", features = ["grpc-signaling"] }
 
 [build-dependencies]
 tonic-prost-build = { workspace = true }
