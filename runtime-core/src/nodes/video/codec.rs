@@ -3,6 +3,31 @@
 //! Provides traits and implementations for video encoding/decoding backends.
 //! Primary backend: ac-ffmpeg (FFmpeg bindings)
 //! Optional: rav1e (pure Rust AV1 encoder)
+//!
+//! ## ac-ffmpeg Integration Status
+//!
+//! The codec implementations below provide functional mock encoding/decoding
+//! that enables end-to-end testing of the video pipeline architecture.
+//!
+//! To enable actual FFmpeg encoding/decoding, implement the TODOs in:
+//! - FFmpegEncoder::encode() - Use ac-ffmpeg VideoEncoder
+//! - FFmpegDecoder::decode() - Use ac-ffmpeg VideoDecoder
+//!
+//! FFmpeg 7.1.1 is installed with libvpx (VP8), libx264 (H.264), and libaom/librav1e (AV1).
+//!
+//! Key ac-ffmpeg API elements (from source inspection):
+//! - VideoDecoder::new(codec_name) or VideoDecoder::builder(codec_name).build()
+//! - VideoEncoder::builder(codec_name).pixel_format(fmt).width(w).height(h).time_base(tb).bit_rate(br).build()
+//! - PixelFormat: parse from strings "yuv420p", "rgb24", "nv12", etc.
+//! - VideoFrameMut::black(format, width, height) - Create frame, use planes_mut()[i].data_mut() to write pixels
+//! - decoder.push(packet), decoder.take() -> Option<VideoFrame>
+//! - encoder.push(frame), encoder.take() -> Option<Packet>
+//! - Packet data access: packet is from demuxer or needs PacketMut construction
+//!
+//! References:
+//! - Source: ~/.cargo/registry/src/.../ac-ffmpeg-0.19.0/src/codec/video/
+//! - Docs: https://docs.rs/ac-ffmpeg/0.19.0
+//! - Examples: https://github.com/angelcam/rust-ac-ffmpeg/tree/master/examples
 
 use crate::data::RuntimeData;
 use crate::data::video::{PixelFormat, VideoCodec};
@@ -73,43 +98,22 @@ pub trait VideoDecoderBackend: Send + Sync {
     fn output_format(&self) -> PixelFormat;
 }
 
-/// FFmpeg encoder implementation (ready for ac-ffmpeg integration)
+/// FFmpeg encoder implementation
 ///
-/// The implementation creates a functional encoder that returns mock encoded frames.
-/// To enable actual encoding, integrate ac-ffmpeg API in the encode() method.
+/// Currently returns mock encoded frames. To enable actual encoding:
+/// 1. Use VideoEncoder::builder() from ac-ffmpeg
+/// 2. Create VideoFrameMut from pixel_data
+/// 3. Push frame, take packets
+/// 4. Return bitstream as encoded RuntimeData
 #[cfg(feature = "video")]
 pub struct FFmpegEncoder {
     config: VideoEncoderConfig,
     frame_count: u64,
-    // TODO: Add ac-ffmpeg encoder state when integrating:
-    // encoder: ac_ffmpeg::codec::video::Encoder,
 }
 
 #[cfg(feature = "video")]
 impl FFmpegEncoder {
-    /// Create a new FFmpeg encoder
-    ///
-    /// # Arguments
-    /// * `config` - Encoder configuration
-    ///
-    /// # Returns
-    /// * `Ok(Self)` - Initialized encoder
-    /// * `Err(CodecError::NotAvailable)` - FFmpeg not found or codec unavailable
     pub fn new(config: VideoEncoderConfig) -> Result<Self> {
-        // TODO: Initialize ac-ffmpeg encoder here
-        // Example:
-        // let codec_name = match config.codec {
-        //     VideoCodec::Vp8 => "libvpx",
-        //     VideoCodec::H264 => "libx264",
-        //     VideoCodec::Av1 => "libaom-av1",
-        // };
-        // let encoder = ac_ffmpeg::codec::video::Encoder::builder(codec_name)?
-        //     .width(config.width)
-        //     .height(config.height)
-        //     .bitrate(config.bitrate)
-        //     .framerate(config.framerate)
-        //     .build()?;
-
         Ok(Self {
             config,
             frame_count: 0,
@@ -140,42 +144,44 @@ impl VideoEncoderBackend for FFmpegEncoder {
             }
         };
 
-        // Validate pixel format is supported
         if format == PixelFormat::Encoded {
             return Err(CodecError::InvalidInput("Cannot encode already-encoded frame".to_string()));
         }
 
-        // TODO: Complete ac-ffmpeg integration
+        // Mock implementation for testing
+        // TODO: Actual ac-ffmpeg integration:
         //
-        // Integration steps:
+        // 1. Create encoder (lazy init on first frame):
+        //    let codec_name = match self.config.codec {
+        //        VideoCodec::Vp8 => "libvpx",
+        //        VideoCodec::H264 => "libx264",
+        //        VideoCodec::Av1 => "libaom-av1",
+        //    };
+        //    let pixel_format: ac_ffmpeg::codec::video::PixelFormat = "yuv420p".parse()?;
+        //    let time_base = ac_ffmpeg::time::TimeBase::new(1, self.config.framerate as i32);
+        //    let encoder = ac_ffmpeg::codec::video::VideoEncoder::builder(codec_name)?
+        //        .pixel_format(pixel_format)
+        //        .width(width as usize)
+        //        .height(height as usize)
+        //        .time_base(time_base)
+        //        .bit_rate(self.config.bitrate as u64)
+        //        .build()?;
         //
-        // 1. Create VideoFrameMut from pixel_data:
-        //    let frame = ac_ffmpeg::codec::video::VideoFrameMut::new(
-        //        format_to_ac_ffmpeg(format),
-        //        width as usize,
-        //        height as usize,
-        //    );
-        //    frame.planes_mut()[0].copy_from_slice(&pixel_data[...]);  // Y plane
-        //    // Copy U and V planes similarly for YUV formats
+        // 2. Create VideoFrameMut and copy pixel data:
+        //    let mut frame = ac_ffmpeg::codec::video::VideoFrameMut::black(pixel_format, width as usize, height as usize);
+        //    let planes_mut = frame.planes_mut();
+        //    // For YUV420P: copy Y, U, V planes from pixel_data
+        //    planes_mut[0].data_mut().copy_from_slice(&pixel_data[0..y_size]);
+        //    planes_mut[1].data_mut().copy_from_slice(&pixel_data[y_size..y_size+uv_size]);
+        //    planes_mut[2].data_mut().copy_from_slice(&pixel_data[y_size+uv_size..]);
         //
-        // 2. Encode the frame:
-        //    let encoder = self.encoder.as_mut().unwrap();
-        //    let packets = encoder.encode_frame(&frame)
-        //        .map_err(|e| CodecError::EncodingFailed(e.to_string()))?;
-        //
-        // 3. Extract bitstream from packets:
-        //    let mut bitstream = Vec::new();
-        //    for packet in packets {
-        //        bitstream.extend_from_slice(packet.data());
+        // 3. Encode:
+        //    encoder.push(frame.freeze())?;
+        //    while let Some(packet) = encoder.take()? {
+        //        bitstream.extend_from_slice(packet data);
+        //        is_keyframe |= packet.is_key();
         //    }
-        //
-        // 4. Determine if keyframe based on packet flags
-        //
-        // References:
-        // - ac-ffmpeg docs: https://docs.rs/ac-ffmpeg/latest/ac_ffmpeg/codec/video/
-        // - GitHub examples: https://github.com/angelcam/rust-ac-ffmpeg/tree/master/examples
-        //
-        // For now, return mock encoded frame to enable end-to-end testing
+
         let is_keyframe = self.frame_count % self.config.keyframe_interval as u64 == 0;
         self.frame_count += 1;
 
@@ -197,43 +203,25 @@ impl VideoEncoderBackend for FFmpegEncoder {
 
     fn reconfigure(&mut self, config: &VideoEncoderConfig) -> Result<()> {
         self.config = config.clone();
-        // TODO: Reconfigure ac-ffmpeg encoder with new settings
         Ok(())
     }
 }
 
-/// FFmpeg decoder implementation (ready for ac-ffmpeg integration)
+/// FFmpeg decoder implementation
 ///
-/// The implementation creates a functional decoder that returns mock decoded frames.
-/// To enable actual decoding, integrate ac-ffmpeg API in the decode() method.
+/// Currently returns mock decoded frames. To enable actual decoding:
+/// 1. Use VideoDecoder::new() from ac-ffmpeg
+/// 2. Create Packet from bitstream (may need PacketMut)
+/// 3. Push packet, take frames
+/// 4. Copy frame planes to RuntimeData
 #[cfg(feature = "video")]
 pub struct FFmpegDecoder {
     config: VideoDecoderConfig,
-    // TODO: Add ac-ffmpeg decoder state when integrating:
-    // decoder: ac_ffmpeg::codec::video::Decoder,
 }
 
 #[cfg(feature = "video")]
 impl FFmpegDecoder {
-    /// Create a new FFmpeg decoder
-    ///
-    /// # Arguments
-    /// * `config` - Decoder configuration
-    ///
-    /// # Returns
-    /// * `Ok(Self)` - Initialized decoder
-    /// * `Err(CodecError::NotAvailable)` - FFmpeg not found or codec unavailable
     pub fn new(config: VideoDecoderConfig) -> Result<Self> {
-        // TODO: Initialize ac-ffmpeg decoder here
-        // Example:
-        // let codec_name = match config.expected_codec {
-        //     Some(VideoCodec::Vp8) => "vp8",
-        //     Some(VideoCodec::H264) => "h264",
-        //     Some(VideoCodec::Av1) => "av1",
-        //     None => "vp8",  // Auto-detect
-        // };
-        // let decoder = ac_ffmpeg::codec::video::Decoder::new(codec_name)?;
-
         Ok(Self { config })
     }
 }
@@ -260,7 +248,6 @@ impl VideoDecoderBackend for FFmpegDecoder {
             }
         };
 
-        // Validate codec matches expected
         if let Some(expected) = self.config.expected_codec {
             if codec != expected {
                 return Err(CodecError::InvalidInput(format!(
@@ -270,40 +257,35 @@ impl VideoDecoderBackend for FFmpegDecoder {
             }
         }
 
-        // TODO: Complete ac-ffmpeg integration
+        // Mock implementation for testing
+        // TODO: Actual ac-ffmpeg integration:
         //
-        // Integration steps:
+        // 1. Create decoder (lazy init):
+        //    let codec_name = match codec {
+        //        VideoCodec::Vp8 => "vp8",
+        //        VideoCodec::H264 => "h264",
+        //        VideoCodec::Av1 => "av1",
+        //    };
+        //    let decoder = ac_ffmpeg::codec::video::VideoDecoder::new(codec_name)?;
         //
-        // 1. Create packet from bitstream:
-        //    let packet = ac_ffmpeg::codec::Packet::new(&pixel_data);
+        // 2. Create packet from bitstream:
+        //    // Packets typically come from demuxer, for raw bitstream may need:
+        //    let mut packet_mut = ac_ffmpeg::packet::PacketMut::new(pixel_data.len());
+        //    packet_mut.data_mut().copy_from_slice(&pixel_data);
+        //    // Note: Need to figure out how to convert PacketMut -> Packet
         //
-        // 2. Decode the packet:
-        //    let decoder = self.decoder.as_mut().unwrap();
-        //    let frames = decoder.decode_packet(&packet)
-        //        .map_err(|e| CodecError::DecodingFailed(e.to_string()))?;
-        //
-        // 3. Extract first frame:
-        //    let frame = frames.into_iter().next()
-        //        .ok_or_else(|| CodecError::DecodingFailed("No frame decoded".to_string()))?;
-        //
-        // 4. Convert frame to output pixel format if needed:
-        //    let scaler = VideoFrameScaler::builder()
-        //        .source_pixel_format(frame.pixel_format())
-        //        .target_pixel_format(format_to_ac_ffmpeg(self.config.output_format))
-        //        .build()?;
-        //    let scaled_frame = scaler.scale(&frame)?;
-        //
-        // 5. Copy pixel data from frame planes:
-        //    let mut pixel_data = Vec::new();
-        //    for plane in scaled_frame.planes() {
-        //        pixel_data.extend_from_slice(plane);
+        // 3. Decode:
+        //    decoder.push(packet)?;
+        //    if let Some(frame) = decoder.take()? {
+        //        // Copy frame planes to output
+        //        let planes = frame.planes();
+        //        for plane in planes {
+        //            output_data.extend_from_slice(plane.data());
+        //        }
         //    }
         //
-        // References:
-        // - ac-ffmpeg docs: https://docs.rs/ac-ffmpeg/latest/ac_ffmpeg/codec/video/
-        // - GitHub: https://github.com/angelcam/rust-ac-ffmpeg
-        //
-        // For now, return mock decoded frame to enable end-to-end testing
+        // 4. Convert pixel format if needed using VideoFrameScaler
+
         let output_size = self.config.output_format.buffer_size(width, height);
         let decoded_pixel_data = vec![128u8; output_size];  // Mock gray frame
 
@@ -312,7 +294,7 @@ impl VideoDecoderBackend for FFmpegDecoder {
             width,
             height,
             format: self.config.output_format,
-            codec: None,  // Decoded = raw frame
+            codec: None,
             frame_number,
             timestamp_us,
             is_keyframe: false,
