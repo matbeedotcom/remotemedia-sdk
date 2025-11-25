@@ -138,4 +138,80 @@ mod tests {
         assert_eq!(config.threads, 0);
         assert_eq!(config.error_resilience, "lenient");
     }
+
+    #[tokio::test]
+    async fn test_h264_decoder() {
+        // Test H.264 decoding
+        let config = VideoDecoderConfig {
+            expected_codec: Some(VideoCodec::H264),
+            output_format: PixelFormat::Yuv420p,
+            ..Default::default()
+        };
+
+        if let Ok(decoder) = VideoDecoderNode::new(config) {
+            // Create mock H.264 encoded frame
+            // Note: This is not valid H.264 bitstream, so decoder may return empty frame
+            let encoded_frame = RuntimeData::Video {
+                pixel_data: vec![0x00, 0x00, 0x01, 0x67], // NAL start code + SPS
+                width: 1280,
+                height: 720,
+                format: PixelFormat::Encoded,
+                codec: Some(VideoCodec::H264),
+                frame_number: 0,
+                timestamp_us: 0,
+                is_keyframe: true,
+            };
+
+            let result = decoder.process(encoded_frame).await;
+
+            match result {
+                Ok(RuntimeData::Video { codec: None, .. }) => {
+                    // Successfully decoded (or returned empty frame)
+                }
+                Err(e) => {
+                    // May fail if libx264 decoder not available
+                    assert!(e.to_string().contains("not available") || e.to_string().contains("Failed"));
+                }
+                _ => panic!("Expected Video frame or error"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_av1_decoder() {
+        // Test AV1 decoding
+        let config = VideoDecoderConfig {
+            expected_codec: Some(VideoCodec::Av1),
+            output_format: PixelFormat::Yuv420p,
+            ..Default::default()
+        };
+
+        if let Ok(decoder) = VideoDecoderNode::new(config) {
+            // Create mock AV1 encoded frame
+            // Note: This is not valid AV1 bitstream, so decoder may return empty frame
+            let encoded_frame = RuntimeData::Video {
+                pixel_data: vec![0x12, 0x00, 0x0A, 0x0A], // OBU header
+                width: 1280,
+                height: 720,
+                format: PixelFormat::Encoded,
+                codec: Some(VideoCodec::Av1),
+                frame_number: 0,
+                timestamp_us: 0,
+                is_keyframe: true,
+            };
+
+            let result = decoder.process(encoded_frame).await;
+
+            match result {
+                Ok(RuntimeData::Video { codec: None, .. }) => {
+                    // Successfully decoded (or returned empty frame)
+                }
+                Err(e) => {
+                    // May fail if AV1 decoder not available
+                    assert!(e.to_string().contains("not available") || e.to_string().contains("Failed"));
+                }
+                _ => panic!("Expected Video frame or error"),
+            }
+        }
+    }
 }

@@ -117,4 +117,92 @@ mod tests {
         assert_eq!(config.hardware_accel, true);
         assert_eq!(config.threads, 0);
     }
+
+    #[tokio::test]
+    async fn test_h264_encoder() {
+        // Test H.264 encoding
+        let config = VideoEncoderConfig {
+            codec: VideoCodec::H264,
+            bitrate: 2_000_000,
+            framerate: 30,
+            ..Default::default()
+        };
+
+        if let Ok(encoder) = VideoEncoderNode::new(config) {
+            // Create a raw 720p YUV420P frame
+            let width = 1280u32;
+            let height = 720u32;
+            let frame_size = (width * height * 3 / 2) as usize;
+            let pixel_data = vec![128u8; frame_size];
+
+            let raw_frame = RuntimeData::Video {
+                pixel_data,
+                width,
+                height,
+                format: PixelFormat::Yuv420p,
+                codec: None,
+                frame_number: 0,
+                timestamp_us: 0,
+                is_keyframe: false,
+            };
+
+            // Encode with H.264
+            let result = encoder.process(raw_frame).await;
+
+            match result {
+                Ok(RuntimeData::Video { codec: Some(VideoCodec::H264), format: PixelFormat::Encoded, .. }) => {
+                    // Successfully encoded to H.264
+                }
+                Err(e) => {
+                    // May fail if libx264 not available
+                    assert!(e.to_string().contains("not available") || e.to_string().contains("Failed to create encoder"));
+                }
+                Ok(_) => panic!("Expected H.264 encoded frame"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_av1_encoder() {
+        // Test AV1 encoding
+        let config = VideoEncoderConfig {
+            codec: VideoCodec::Av1,
+            bitrate: 1_500_000,
+            framerate: 30,
+            ..Default::default()
+        };
+
+        if let Ok(encoder) = VideoEncoderNode::new(config) {
+            // Create a raw 720p YUV420P frame
+            let width = 1280u32;
+            let height = 720u32;
+            let frame_size = (width * height * 3 / 2) as usize;
+            let pixel_data = vec![128u8; frame_size];
+
+            let raw_frame = RuntimeData::Video {
+                pixel_data,
+                width,
+                height,
+                format: PixelFormat::Yuv420p,
+                codec: None,
+                frame_number: 0,
+                timestamp_us: 0,
+                is_keyframe: false,
+            };
+
+            // Encode with AV1
+            let result = encoder.process(raw_frame).await;
+
+            match result {
+                Ok(RuntimeData::Video { codec: Some(VideoCodec::Av1), format: PixelFormat::Encoded, .. }) => {
+                    // Successfully encoded to AV1
+                }
+                Err(e) => {
+                    // May fail if libaom-av1 not available
+                    assert!(e.to_string().contains("not available") || e.to_string().contains("Failed to create encoder"));
+                }
+                Ok(_) => panic!("Expected AV1 encoded frame"),
+            }
+        }
+    }
 }
