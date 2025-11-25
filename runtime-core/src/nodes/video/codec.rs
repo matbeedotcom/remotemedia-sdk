@@ -109,6 +109,7 @@ pub trait VideoDecoderBackend: Send + Sync {
 pub struct FFmpegEncoder {
     config: VideoEncoderConfig,
     frame_count: u64,
+    encoder: Option<ac_ffmpeg::codec::video::VideoEncoder>,
 }
 
 #[cfg(feature = "video")]
@@ -117,6 +118,7 @@ impl FFmpegEncoder {
         Ok(Self {
             config,
             frame_count: 0,
+            encoder: None, // Lazy initialization on first frame
         })
     }
 }
@@ -148,45 +150,95 @@ impl VideoEncoderBackend for FFmpegEncoder {
             return Err(CodecError::InvalidInput("Cannot encode already-encoded frame".to_string()));
         }
 
-        // Mock implementation for testing
-        // TODO: Actual ac-ffmpeg integration:
-        //
-        // 1. Create encoder (lazy init on first frame):
-        //    let codec_name = match self.config.codec {
-        //        VideoCodec::Vp8 => "libvpx",
-        //        VideoCodec::H264 => "libx264",
-        //        VideoCodec::Av1 => "libaom-av1",
-        //    };
-        //    let pixel_format: ac_ffmpeg::codec::video::PixelFormat = "yuv420p".parse()?;
-        //    let time_base = ac_ffmpeg::time::TimeBase::new(1, self.config.framerate as i32);
-        //    let encoder = ac_ffmpeg::codec::video::VideoEncoder::builder(codec_name)?
-        //        .pixel_format(pixel_format)
-        //        .width(width as usize)
-        //        .height(height as usize)
-        //        .time_base(time_base)
-        //        .bit_rate(self.config.bitrate as u64)
-        //        .build()?;
-        //
-        // 2. Create VideoFrameMut and copy pixel data:
-        //    let mut frame = ac_ffmpeg::codec::video::VideoFrameMut::black(pixel_format, width as usize, height as usize);
-        //    let planes_mut = frame.planes_mut();
-        //    // For YUV420P: copy Y, U, V planes from pixel_data
-        //    planes_mut[0].data_mut().copy_from_slice(&pixel_data[0..y_size]);
-        //    planes_mut[1].data_mut().copy_from_slice(&pixel_data[y_size..y_size+uv_size]);
-        //    planes_mut[2].data_mut().copy_from_slice(&pixel_data[y_size+uv_size..]);
-        //
-        // 3. Encode:
-        //    encoder.push(frame.freeze())?;
-        //    while let Some(packet) = encoder.take()? {
-        //        bitstream.extend_from_slice(packet data);
-        //        is_keyframe |= packet.is_key();
-        //    }
+        // Lazy initialize encoder on first frame
+        if self.encoder.is_none() {
+            use ac_ffmpeg::codec::{Encoder, video::{VideoEncoder, frame::get_pixel_format}};
+            use ac_ffmpeg::time::TimeBase;
 
-        let is_keyframe = self.frame_count % self.config.keyframe_interval as u64 == 0;
+            let codec_name = match self.config.codec {
+                VideoCodec::Vp8 => "libvpx",
+                VideoCodec::H264 => "libx264",
+                VideoCodec::Av1 => "libaom-av1",
+            };
+
+            let pixel_format = get_pixel_format("yuv420p");
+            let time_base = TimeBase::new(1, self.config.framerate as i32);
+
+            let encoder = VideoEncoder::builder(codec_name)
+                .map_err(|e| CodecError::EncodingFailed(format!("Failed to create encoder builder: {}", e)))?
+                .pixel_format(pixel_format)
+                .width(width as usize)
+                .height(height as usize)
+                .time_base(time_base)
+                .bit_rate(self.config.bitrate as u64)
+                .build()
+                .map_err(|e| CodecError::EncodingFailed(format!("Failed to build encoder: {}", e)))?;
+
+            self.encoder = Some(encoder);
+        }
+
+        let encoder = self.encoder.as_mut().unwrap();
+
+        // Create frame and copy pixel data
+        use ac_ffmpeg::codec::{Encoder, video::{VideoFrameMut, frame::get_pixel_format}};
+        use ac_ffmpeg::time::{TimeBase, Timestamp};
+
+        let pixel_format = get_pixel_format("yuv420p");
+        let time_base = TimeBase::new(1, self.config.framerate as i32);
+
+        let mut frame = VideoFrameMut::black(pixel_format, width as usize, height as usize);
+
+        // Copy pixel data to frame planes (YUV420P format)
+        let y_size = (width * height) as usize;
+        let uv_size = (width * height / 4) as usize;
+
+        if pixel_data.len() >= y_size + 2 * uv_size {
+            let mut planes_mut = frame.planes_mut();
+
+            // Y plane
+            if planes_mut.len() > 0 {
+                let y_plane = planes_mut[0].data_mut();
+                let copy_len = y_plane.len().min(y_size);
+                y_plane[..copy_len].copy_from_slice(&pixel_data[..copy_len]);
+            }
+
+            // U plane
+            if planes_mut.len() > 1 {
+                let u_plane = planes_mut[1].data_mut();
+                let copy_len = u_plane.len().min(uv_size);
+                u_plane[..copy_len].copy_from_slice(&pixel_data[y_size..y_size + copy_len]);
+            }
+
+            // V plane
+            if planes_mut.len() > 2 {
+                let v_plane = planes_mut[2].data_mut();
+                let copy_len = v_plane.len().min(uv_size);
+                v_plane[..copy_len].copy_from_slice(&pixel_data[y_size + uv_size..y_size + uv_size + copy_len]);
+            }
+        }
+
+        // Set timestamp
+        let pts = Timestamp::new(self.frame_count as i64, time_base);
+        let frame = frame.with_time_base(time_base).with_pts(pts).freeze();
+
+        // Encode frame
+        encoder.push(frame)
+            .map_err(|e| CodecError::EncodingFailed(format!("Failed to push frame to encoder: {}", e)))?;
+
+        // Collect encoded packets
+        let mut bitstream = Vec::new();
+        let mut is_keyframe = false;
+
+        while let Some(packet) = encoder.take()
+            .map_err(|e| CodecError::EncodingFailed(format!("Failed to take packet from encoder: {}", e)))? {
+            bitstream.extend_from_slice(packet.data());
+            is_keyframe |= packet.is_key();
+        }
+
         self.frame_count += 1;
 
         Ok(RuntimeData::Video {
-            pixel_data: vec![0x00, 0x01, 0x02],  // Mock bitstream
+            pixel_data: bitstream,
             width,
             height,
             format: PixelFormat::Encoded,
@@ -217,12 +269,16 @@ impl VideoEncoderBackend for FFmpegEncoder {
 #[cfg(feature = "video")]
 pub struct FFmpegDecoder {
     config: VideoDecoderConfig,
+    decoder: Option<ac_ffmpeg::codec::video::VideoDecoder>,
 }
 
 #[cfg(feature = "video")]
 impl FFmpegDecoder {
     pub fn new(config: VideoDecoderConfig) -> Result<Self> {
-        Ok(Self { config })
+        Ok(Self {
+            config,
+            decoder: None, // Lazy initialization on first frame
+        })
     }
 }
 
@@ -257,48 +313,74 @@ impl VideoDecoderBackend for FFmpegDecoder {
             }
         }
 
-        // Mock implementation for testing
-        // TODO: Actual ac-ffmpeg integration:
-        //
-        // 1. Create decoder (lazy init):
-        //    let codec_name = match codec {
-        //        VideoCodec::Vp8 => "vp8",
-        //        VideoCodec::H264 => "h264",
-        //        VideoCodec::Av1 => "av1",
-        //    };
-        //    let decoder = ac_ffmpeg::codec::video::VideoDecoder::new(codec_name)?;
-        //
-        // 2. Create packet from bitstream:
-        //    // Packets typically come from demuxer, for raw bitstream may need:
-        //    let mut packet_mut = ac_ffmpeg::packet::PacketMut::new(pixel_data.len());
-        //    packet_mut.data_mut().copy_from_slice(&pixel_data);
-        //    // Note: Need to figure out how to convert PacketMut -> Packet
-        //
-        // 3. Decode:
-        //    decoder.push(packet)?;
-        //    if let Some(frame) = decoder.take()? {
-        //        // Copy frame planes to output
-        //        let planes = frame.planes();
-        //        for plane in planes {
-        //            output_data.extend_from_slice(plane.data());
-        //        }
-        //    }
-        //
-        // 4. Convert pixel format if needed using VideoFrameScaler
+        // Lazy initialize decoder on first frame
+        if self.decoder.is_none() {
+            use ac_ffmpeg::codec::{Decoder, video::VideoDecoder};
 
-        let output_size = self.config.output_format.buffer_size(width, height);
-        let decoded_pixel_data = vec![128u8; output_size];  // Mock gray frame
+            let codec_name = match codec {
+                VideoCodec::Vp8 => "vp8",
+                VideoCodec::H264 => "h264",
+                VideoCodec::Av1 => "av1",
+            };
 
-        Ok(RuntimeData::Video {
-            pixel_data: decoded_pixel_data,
-            width,
-            height,
-            format: self.config.output_format,
-            codec: None,
-            frame_number,
-            timestamp_us,
-            is_keyframe: false,
-        })
+            let decoder = VideoDecoder::builder(codec_name)
+                .map_err(|e| CodecError::DecodingFailed(format!("Failed to create decoder builder: {}", e)))?
+                .build()
+                .map_err(|e| CodecError::DecodingFailed(format!("Failed to build decoder: {}", e)))?;
+
+            self.decoder = Some(decoder);
+        }
+
+        let decoder = self.decoder.as_mut().unwrap();
+
+        // Create packet from bitstream
+        use ac_ffmpeg::codec::Decoder;
+        use ac_ffmpeg::packet::PacketMut;
+
+        let mut packet_mut = PacketMut::new(pixel_data.len());
+        packet_mut.data_mut().copy_from_slice(&pixel_data);
+        let packet = packet_mut.freeze();
+
+        // Decode packet
+        decoder.push(packet)
+            .map_err(|e| CodecError::DecodingFailed(format!("Failed to push packet to decoder: {}", e)))?;
+
+        // Take decoded frame
+        if let Some(frame) = decoder.take()
+            .map_err(|e| CodecError::DecodingFailed(format!("Failed to take frame from decoder: {}", e)))? {
+
+            // Copy frame planes to output buffer (YUV420P format)
+            let mut decoded_pixel_data = Vec::new();
+
+            let planes = frame.planes();
+            for plane in planes.iter() {
+                decoded_pixel_data.extend_from_slice(plane.data());
+            }
+
+            Ok(RuntimeData::Video {
+                pixel_data: decoded_pixel_data,
+                width: frame.width() as u32,
+                height: frame.height() as u32,
+                format: self.config.output_format,
+                codec: None,
+                frame_number,
+                timestamp_us,
+                is_keyframe: false,
+            })
+        } else {
+            // No frame available yet (decoder may need more packets)
+            // Return empty frame to indicate no output
+            Ok(RuntimeData::Video {
+                pixel_data: vec![],
+                width: 0,
+                height: 0,
+                format: PixelFormat::Unspecified,
+                codec: None,
+                frame_number: 0,
+                timestamp_us: 0,
+                is_keyframe: false,
+            })
+        }
     }
 
     fn codec(&self) -> VideoCodec {
