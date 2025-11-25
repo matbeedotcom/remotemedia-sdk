@@ -4,7 +4,7 @@ FFI Integration Tests for Feature 011 - Python Node Instance Execution
 
 Tests T022-T028: Rust/Python integration via remotemedia.runtime module
 
-Run with: pytest transports/remotemedia-ffi/tests/test_ffi_instances.py
+Run with: pytest transports/ffi/tests/test_ffi_instances.py
 """
 
 import sys

@@ -40,7 +40,7 @@ cd python-client
 pip install -e . --no-deps
 
 # 2. Build and link Rust runtime
-cd ../transports/remotemedia-ffi
+cd ../transports/ffi
 ./dev-install.sh
 ```
 
@@ -62,7 +62,7 @@ pip install remotemedia_ffi-0.4.0-cp310-abi3-macosx_11_0_arm64.whl
 Or build the wheel yourself:
 
 ```bash
-cd transports/remotemedia-ffi
+cd transports/ffi
 pip install maturin
 maturin build --release --features extension-module
 # Wheel will be in: ../../target/wheels/

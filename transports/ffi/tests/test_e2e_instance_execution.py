@@ -28,7 +28,7 @@ async def test_basic_instance_execution():
         # Check if Rust runtime is available
         if not is_rust_runtime_available():
             print("  ⚠️ Rust runtime not available - cannot test FFI integration")
-            print("  Run: cd transports/remotemedia-ffi && ./dev-install.sh")
+            print("  Run: cd transports/ffi && ./dev-install.sh")
             return False
 
         print("  ✓ Rust runtime is available")
@@ -376,7 +376,7 @@ async def main():
         print()
         print(f"⚠️ Partial success: {passed_count}/{total_count} tests passed")
         print("Note: Some tests may require Rust FFI to be built and installed")
-        print("Run: cd transports/remotemedia-ffi && ./dev-install.sh")
+        print("Run: cd transports/ffi && ./dev-install.sh")
         return 1
     else:
         print()

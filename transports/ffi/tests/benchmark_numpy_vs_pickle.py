@@ -246,7 +246,7 @@ async def run_comparison():
 if __name__ == "__main__":
     if not RUNTIME_AVAILABLE:
         print("❌ Runtime not available - cannot run benchmark")
-        print("   Build with: cd transports/remotemedia-ffi && ./dev-install.sh")
+        print("   Build with: cd transports/ffi && ./dev-install.sh")
         sys.exit(1)
     
     results = asyncio.run(run_comparison())

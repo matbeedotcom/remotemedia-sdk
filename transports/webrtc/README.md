@@ -70,7 +70,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-remotemedia-webrtc = { path = "transports/remotemedia-webrtc" }
+remotemedia-webrtc = { path = "transports/webrtc" }
 tokio = { version = "1.35", features = ["full"] }
 ```
 
@@ -133,7 +133,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```bash
 # Build the library
-cd transports/remotemedia-webrtc
+cd transports/webrtc
 cargo build --release
 
 # Run tests
@@ -394,7 +394,7 @@ A standalone server executable is provided for testing and deployment:
 
 ```bash
 # Build the server
-cd transports/remotemedia-webrtc
+cd transports/webrtc
 cargo build --bin webrtc_server --release
 
 # Run with default configuration
@@ -429,7 +429,7 @@ The WebRTC transport now supports **gRPC bidirectional streaming** as an alterna
 ### Building with gRPC Signaling
 
 ```bash
-cd transports/remotemedia-webrtc
+cd transports/webrtc
 
 # Build with gRPC signaling only
 cargo build --bin webrtc_server --release --features grpc-signaling

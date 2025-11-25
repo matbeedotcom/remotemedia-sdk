@@ -1526,7 +1526,7 @@ pub mod ipc {
 6. **RemoteMedia SDK**
    - See `CLAUDE.md` for session router patterns
    - `runtime-core/src/transport/` for abstraction layer
-   - `transports/remotemedia-grpc/` for streaming reference
+   - `transports/grpc/` for streaming reference
 
 ---
 

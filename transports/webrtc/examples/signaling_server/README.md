@@ -16,7 +16,7 @@ A JSON-RPC 2.0 over WebSocket signaling server for the RemoteMedia WebRTC transp
 ### Installation
 
 ```bash
-cd transports/remotemedia-webrtc/examples/signaling_server
+cd transports/webrtc/examples/signaling_server
 npm install
 ```
 

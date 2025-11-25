@@ -80,7 +80,7 @@ rustc --version  # Should be >= 1.87.0
 ### 1. Build the WebRTC Server
 
 ```bash
-cd transports/remotemedia-webrtc
+cd transports/webrtc
 cargo build --bin webrtc_server --release
 ```
 
@@ -348,7 +348,7 @@ WEBRTC_TURN_SERVERS="turn:turn.example.com:3478:username:password"
 ### Unit Tests
 
 ```bash
-cd transports/remotemedia-webrtc
+cd transports/webrtc
 cargo test
 ```
 
@@ -398,7 +398,7 @@ WORKDIR /app
 COPY . .
 
 # Build WebRTC server
-RUN cd transports/remotemedia-webrtc && \
+RUN cd transports/webrtc && \
     cargo build --bin webrtc_server --release
 
 FROM debian:bookworm-slim
