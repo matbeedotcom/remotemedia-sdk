@@ -370,7 +370,7 @@ RUST_LOG=info
 
 ```bash
 # Build server with WebRTC signaling support
-cd transports/remotemedia-grpc
+cd transports/grpc
 cargo build --bin grpc-server --release
 
 # Run server
@@ -412,7 +412,7 @@ EOF
 ### Unit Tests
 
 ```bash
-cd transports/remotemedia-grpc
+cd transports/grpc
 cargo test webrtc_signaling
 ```
 

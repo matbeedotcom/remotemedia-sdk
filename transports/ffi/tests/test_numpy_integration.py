@@ -297,7 +297,7 @@ if __name__ == "__main__":
     
     if not RUNTIME_AVAILABLE:
         print("⚠️  Runtime not available - cannot run integration tests")
-        print("    Build the FFI with: cd transports/remotemedia-ffi && ./dev-install.sh")
+        print("    Build the FFI with: cd transports/ffi && ./dev-install.sh")
         sys.exit(0)
     
     # Run tests
