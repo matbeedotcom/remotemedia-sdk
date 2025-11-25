@@ -71,6 +71,7 @@ async fn test_vp8_encoder_for_webrtc() {
         frame_number: 0,
         timestamp_us: 0,
         is_keyframe: false,
+        stream_id: None,
     };
 
     // Encode

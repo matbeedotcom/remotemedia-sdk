@@ -70,6 +70,18 @@ pub enum Error {
     #[error("Pipeline error: {0}")]
     PipelineError(String),
 
+    /// Invalid stream_id (Spec 013: Dynamic Multi-Track Streaming)
+    #[error("Invalid stream_id: {0}")]
+    InvalidStreamId(String),
+
+    /// Track limit exceeded (Spec 013: FR-018, FR-019)
+    #[error("Track limit exceeded: {0}")]
+    TrackLimitExceeded(String),
+
+    /// Track not found (Spec 013)
+    #[error("Track not found: {0}")]
+    TrackNotFound(String),
+
     /// WebSocket error
     #[error("WebSocket error: {0}")]
     WebSocketError(String),

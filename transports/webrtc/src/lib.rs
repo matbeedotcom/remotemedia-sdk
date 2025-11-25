@@ -70,7 +70,7 @@ mod signaling;
 pub mod signaling;
 
 mod channels;
-mod media;
+pub mod media;
 mod peer;
 mod session;
 mod sync;

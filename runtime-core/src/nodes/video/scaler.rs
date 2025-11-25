@@ -117,6 +117,7 @@ impl VideoScalerBackend for FFmpegScaler {
                 frame_number,
                 timestamp_us,
                 is_keyframe,
+                stream_id: _,
             } => (pixel_data, width, height, format, codec, frame_number, timestamp_us, is_keyframe),
             _ => return Err("Expected video frame".to_string()),
         };
@@ -140,6 +141,7 @@ impl VideoScalerBackend for FFmpegScaler {
                 frame_number,
                 timestamp_us,
                 is_keyframe,
+                stream_id: None,
             });
         }
 
@@ -220,6 +222,7 @@ impl VideoScalerBackend for FFmpegScaler {
             frame_number,
             timestamp_us,
             is_keyframe,
+            stream_id: None,
         })
     }
 }

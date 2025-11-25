@@ -43,6 +43,7 @@ impl AsyncStreamingNode for ResampleStreamingNode {
                 samples,
                 sample_rate,
                 channels,
+                stream_id: _,
             } => (samples.clone(), *sample_rate, *channels),
             _ => {
                 return Err(Error::InvalidInput {
@@ -86,6 +87,7 @@ impl AsyncStreamingNode for ResampleStreamingNode {
                 samples: f32_samples.to_vec(),
                 sample_rate: resampled.sample_rate,
                 channels: resampled.channels as u32,
+                stream_id: None,
             });
         }
 
@@ -139,6 +141,7 @@ impl AsyncStreamingNode for ResampleStreamingNode {
             samples: all_output_samples,
             sample_rate: target_rate,
             channels: input_channels,
+            stream_id: None,
         })
     }
 }

@@ -644,6 +644,7 @@ impl Executor {
                                 samples,
                                 sample_rate,
                                 channels,
+                                stream_id: _,
                             } => format!(
                                 "Audio({} samples, {}Hz, {} ch)",
                                 samples.len(),

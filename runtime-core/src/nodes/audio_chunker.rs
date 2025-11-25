@@ -126,6 +126,7 @@ impl AsyncStreamingNode for AudioChunkerNode {
                 ref samples,
                 sample_rate,
                 channels,
+                stream_id: _,
             } => (samples.clone(), sample_rate, channels),
             _ => {
                 return Err(Error::Execution(
@@ -161,6 +162,7 @@ impl AsyncStreamingNode for AudioChunkerNode {
                 samples: chunk,
                 sample_rate: state.sample_rate,
                 channels: state.channels,
+                stream_id: None,
             })?;
             output_count += 1;
         }
