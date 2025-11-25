@@ -4,10 +4,11 @@
 
 use super::audio::{AudioEncoder, AudioEncoderConfig};
 use super::audio_sender::AudioSender;
-use super::video::{VideoDecoder, VideoEncoder, VideoEncoderConfig, VideoFormat, VideoFrame};
+use super::video::{VideoEncoderConfig as WebRtcVideoConfig, VideoFormat, VideoFrame};
 use crate::{Error, Result};
 use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::data::video::PixelFormat;
+use remotemedia_runtime_core::data::video::{PixelFormat, VideoCodec};
+use remotemedia_runtime_core::nodes::video::{VideoEncoderNode, VideoDecoderNode, VideoEncoderConfig, VideoDecoderConfig};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -211,60 +212,138 @@ impl AudioTrack {
 
 /// Video track for WebRTC
 ///
-/// Manages video encoding/decoding and RTP transmission.
+/// Manages video encoding/decoding and RTP transmission using runtime-core video nodes.
 pub struct VideoTrack {
     /// Underlying WebRTC track
     track: Arc<TrackLocalStaticSample>,
 
-    /// Video encoder
-    encoder: Arc<RwLock<VideoEncoder>>,
+    /// Video encoder (runtime-core VideoEncoderNode for VP8/H.264/AV1)
+    encoder: Arc<VideoEncoderNode>,
 
-    /// Video decoder
-    decoder: Arc<RwLock<VideoDecoder>>,
+    /// Video decoder (runtime-core VideoDecoderNode for VP8/H.264/AV1)
+    decoder: Arc<VideoDecoderNode>,
 
     /// RTP sequence number
     sequence_number: Arc<RwLock<u16>>,
 
     /// RTP timestamp
     timestamp: Arc<RwLock<u32>>,
+
+    /// Video codec being used
+    codec: VideoCodec,
 }
 
 impl VideoTrack {
-    /// Create a new video track
+    /// Create a new video track with runtime-core encoder/decoder
     ///
     /// # Arguments
     ///
     /// * `track` - Underlying WebRTC track
-    /// * `config` - Video encoder configuration
-    pub fn new(track: Arc<TrackLocalStaticSample>, config: VideoEncoderConfig) -> Result<Self> {
-        let encoder = Arc::new(RwLock::new(VideoEncoder::new(config.clone())?));
-        let decoder = Arc::new(RwLock::new(VideoDecoder::new(config)?));
+    /// * `codec` - Video codec to use (VP8, H.264, or AV1)
+    /// * `width` - Frame width in pixels
+    /// * `height` - Frame height in pixels
+    /// * `bitrate` - Target bitrate in bits/second
+    /// * `framerate` - Target framerate
+    pub fn new(
+        track: Arc<TrackLocalStaticSample>,
+        codec: VideoCodec,
+        width: u32,
+        height: u32,
+        bitrate: u32,
+        framerate: u32,
+    ) -> Result<Self> {
+        // Create runtime-core encoder
+        let encoder_config = VideoEncoderConfig {
+            codec,
+            bitrate,
+            framerate,
+            keyframe_interval: 60,
+            quality_preset: "medium".to_string(),
+            hardware_accel: true,
+            threads: 0,
+        };
+        let encoder = VideoEncoderNode::new(encoder_config)
+            .map_err(|e| Error::EncodingError(format!("Failed to create video encoder: {}", e)))?;
+
+        // Create runtime-core decoder
+        let decoder_config = VideoDecoderConfig {
+            expected_codec: Some(codec),
+            output_format: PixelFormat::Yuv420p,
+            hardware_accel: true,
+            threads: 0,
+            error_resilience: "lenient".to_string(),
+        };
+        let decoder = VideoDecoderNode::new(decoder_config)
+            .map_err(|e| Error::EncodingError(format!("Failed to create video decoder: {}", e)))?;
 
         Ok(Self {
             track,
-            encoder,
-            decoder,
+            encoder: Arc::new(encoder),
+            decoder: Arc::new(decoder),
             sequence_number: Arc::new(RwLock::new(0)),
             timestamp: Arc::new(RwLock::new(0)),
+            codec,
         })
     }
 
-    /// Send video frame over RTP
+    /// Send video frame over RTP (legacy VideoFrame API)
     ///
     /// # Arguments
     ///
-    /// * `frame` - Video frame to send
+    /// * `frame` - WebRTC VideoFrame
     ///
     /// # Note
     ///
-    /// Sends video via WebRTC RTP with proper timestamp handling (90kHz clock).
-    /// For codec encoding, use runtime-core VideoEncoderNode before passing to this method.
-    /// Supports VP8/H.264/AV1 via runtime-core integration.
-    ///
-    /// Phase 5 T078: RTP timestamp mapping implemented (90kHz clock for video)
+    /// Converts VideoFrame to RuntimeData, encodes with runtime-core, sends via RTP.
+    /// For new code, use `send_video_runtime_data` directly with RuntimeData::Video.
     pub async fn send_video(&self, frame: &VideoFrame) -> Result<()> {
-        // Encode video frame
-        let encoded = self.encoder.write().await.encode(frame)?;
+        // Convert VideoFrame to RuntimeData
+        let runtime_data = RuntimeData::Video {
+            pixel_data: frame.data.clone(),
+            width: frame.width,
+            height: frame.height,
+            format: match frame.format {
+                VideoFormat::I420 => PixelFormat::I420,
+                VideoFormat::NV12 => PixelFormat::NV12,
+                VideoFormat::RGB24 => PixelFormat::Rgb24,
+            },
+            codec: None, // Raw frame
+            frame_number: 0,
+            timestamp_us: frame.timestamp_us,
+            is_keyframe: frame.is_keyframe,
+        };
+
+        self.send_video_runtime_data(runtime_data).await
+    }
+
+    /// Send video frame over RTP (encodes using runtime-core VideoEncoderNode)
+    ///
+    /// # Arguments
+    ///
+    /// * `runtime_data` - Raw video frame (RuntimeData::Video with codec=None)
+    ///
+    /// # Note
+    ///
+    /// Encodes raw frames using runtime-core VideoEncoderNode (VP8/H.264/AV1 via ac-ffmpeg),
+    /// then sends via WebRTC RTP with proper timestamp handling (90kHz clock).
+    ///
+    /// Phase 5 T067, T078: RTP transmission with 90kHz timestamp mapping
+    pub async fn send_video_runtime_data(&self, runtime_data: RuntimeData) -> Result<()> {
+        use remotemedia_runtime_core::nodes::streaming_node::AsyncStreamingNode;
+
+        // Encode raw frame using runtime-core VideoEncoderNode
+        let encoded = self.encoder.process(runtime_data).await
+            .map_err(|e| Error::EncodingError(format!("Video encoding failed: {}", e)))?;
+
+        // Extract encoded bitstream
+        let bitstream = match &encoded {
+            RuntimeData::Video {
+                pixel_data,
+                codec: Some(_),
+                ..
+            } => pixel_data.clone(),
+            _ => return Err(Error::EncodingError("Expected encoded video frame".to_string())),
+        };
 
         // Update sequence number
         let mut seq = self.sequence_number.write().await;
@@ -275,21 +354,20 @@ impl VideoTrack {
         let timestamp_increment = 90000 / 30; // Assuming 30fps
         *ts = ts.wrapping_add(timestamp_increment);
 
-        // Create WebRTC sample with encoded VP9 data
-        // Video frames typically have variable duration based on framerate
+        // Create WebRTC sample with encoded bitstream
         let frame_duration = Duration::from_millis(33); // ~30fps
         let sample = Sample {
-            data: encoded.into(),
+            data: bitstream.into(),
             duration: frame_duration,
             timestamp: std::time::SystemTime::now(),
             ..Default::default()
         };
 
-        // Send sample (handles RTP packetization internally)
+        // Send sample (webrtc-rs handles RTP packetization per RFC 7741/6184)
         self.track
             .write_sample(&sample)
             .await
-            .map_err(|e| Error::MediaTrackError(format!("Failed to write sample: {}", e)))?;
+            .map_err(|e| Error::MediaTrackError(format!("Failed to write RTP sample: {}", e)))?;
 
         Ok(())
     }
@@ -299,22 +377,38 @@ impl VideoTrack {
         Arc::clone(&self.track)
     }
 
-    /// Decode received RTP packet to video frame
+    /// Decode received RTP packet to RuntimeData (uses runtime-core VideoDecoderNode)
     ///
     /// # Arguments
     ///
-    /// * `payload` - RTP payload (VP9 encoded data)
+    /// * `payload` - RTP payload (encoded video bitstream)
     ///
     /// # Returns
     ///
-    /// Decoded video frame (I420 format)
+    /// Decoded RuntimeData::Video frame
     ///
     /// # Note
     ///
-    /// This method is called when an RTP video packet is received.
-    /// Requires the `codecs` feature flag for actual decoding.
-    pub async fn on_rtp_packet(&self, payload: &[u8]) -> Result<VideoFrame> {
-        self.decoder.write().await.decode(payload)
+    /// Decodes RTP payload using runtime-core VideoDecoderNode (VP8/H.264/AV1 via ac-ffmpeg).
+    /// Phase 5 T068: RTP depacketization and decoding
+    pub async fn decode_rtp_payload(&self, payload: &[u8]) -> Result<RuntimeData> {
+        use remotemedia_runtime_core::nodes::streaming_node::AsyncStreamingNode;
+
+        // Create encoded RuntimeData from RTP payload
+        let encoded_data = RuntimeData::Video {
+            pixel_data: payload.to_vec(),
+            width: 1280, // Will be overridden by decoder
+            height: 720,
+            format: PixelFormat::Encoded,
+            codec: Some(self.codec),
+            frame_number: 0,
+            timestamp_us: 0,
+            is_keyframe: false,
+        };
+
+        // Decode using runtime-core VideoDecoderNode
+        self.decoder.process(encoded_data).await
+            .map_err(|e| Error::EncodingError(format!("Video decoding failed: {}", e)))
     }
 
     /// Get current RTP sequence number
@@ -327,9 +421,51 @@ impl VideoTrack {
         *self.timestamp.read().await
     }
 
+    /// Get the video codec being used
+    pub fn codec(&self) -> VideoCodec {
+        self.codec
+    }
+
     /// Check if the next frame should be a keyframe
     pub async fn should_force_keyframe(&self) -> bool {
-        self.encoder.read().await.should_force_keyframe()
+        // Keyframe every 60 frames (matches encoder config)
+        let seq = *self.sequence_number.read().await;
+        seq % 60 == 0
+    }
+
+    /// Legacy method: Decode received RTP packet to VideoFrame
+    ///
+    /// For new code, use `decode_rtp_payload` which returns RuntimeData::Video
+    pub async fn on_rtp_packet(&self, payload: &[u8]) -> Result<VideoFrame> {
+        let runtime_data = self.decode_rtp_payload(payload).await?;
+
+        // Convert RuntimeData::Video back to VideoFrame for backward compatibility
+        match runtime_data {
+            RuntimeData::Video {
+                pixel_data,
+                width,
+                height,
+                format,
+                ..
+            } => {
+                let video_format = match format {
+                    PixelFormat::I420 | PixelFormat::Yuv420p => VideoFormat::I420,
+                    PixelFormat::NV12 => VideoFormat::NV12,
+                    PixelFormat::Rgb24 => VideoFormat::RGB24,
+                    _ => VideoFormat::I420,
+                };
+
+                Ok(VideoFrame {
+                    width,
+                    height,
+                    format: video_format,
+                    data: pixel_data,
+                    timestamp_us: 0,
+                    is_keyframe: false,
+                })
+            }
+            _ => Err(Error::EncodingError("Expected video frame".to_string())),
+        }
     }
 }
 
@@ -358,15 +494,21 @@ mod tests {
     async fn test_video_track_creation() {
         let track = Arc::new(TrackLocalStaticSample::new(
             RTCRtpCodecCapability {
-                mime_type: "video/VP9".to_string(),
+                mime_type: "video/VP8".to_string(),
                 ..Default::default()
             },
             "video".to_string(),
             "stream".to_string(),
         ));
 
-        let config = VideoEncoderConfig::default();
-        let video_track = VideoTrack::new(track, config);
+        let video_track = VideoTrack::new(
+            track,
+            VideoCodec::Vp8,
+            1280,
+            720,
+            2_000_000,
+            30,
+        );
         assert!(video_track.is_ok());
     }
 }
@@ -449,8 +591,9 @@ pub async fn runtime_data_to_rtp(
                 is_keyframe: video_track.should_force_keyframe().await,
             };
 
-            // Encode the video frame
-            video_track.encoder.write().await.encode(&frame)
+            // Encode using VideoTrack's send_video method
+            video_track.send_video(&frame).await?;
+            Ok(vec![]) // Return empty Vec since data is sent via track
         }
 
         _ => Err(Error::MediaTrackError(format!(

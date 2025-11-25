@@ -1,7 +1,17 @@
 //! WebRTC video integration test
 //!
 //! Spec 012: Video Codec Support - Phase 5 validation
-//! Tests that video codecs work with WebRTC configuration
+//! Tests video encoding via runtime-core nodes for WebRTC streaming
+//!
+//! ## Architecture
+//!
+//! The correct usage pattern for WebRTC video is:
+//! 1. Encode raw frames with runtime-core VideoEncoderNode (VP8/H.264/AV1)
+//! 2. Pass encoded data to WebRTC VideoTrack for RTP transmission
+//! 3. WebRTC handles RTP packetization, peer connections, SDP negotiation
+//! 4. On receive: WebRTC depacketizes RTP, app uses VideoDecoderNode to decode
+//!
+//! This test validates that runtime-core codecs are compatible with WebRTC requirements.
 
 use remotemedia_runtime_core::data::video::{PixelFormat, VideoCodec};
 use remotemedia_runtime_core::data::RuntimeData;
