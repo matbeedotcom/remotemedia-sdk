@@ -15,6 +15,6 @@ pub mod format_converter;
 pub use encoder::{VideoEncoderConfig, VideoEncoderNode};
 pub use decoder::{VideoDecoderConfig, VideoDecoderNode};
 
-// Scaler and format converter will be added in Phase 6 (User Story 4)
-// pub use scaler::{VideoScalerNode, VideoScalerConfig};
+// Phase 6: Video processing nodes (T084-T095)
+pub use scaler::{VideoScalerNode, VideoScalerConfig};
 // pub use format_converter::{VideoFormatConverterNode, VideoFormatConverterConfig};

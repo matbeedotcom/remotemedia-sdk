@@ -353,8 +353,15 @@ impl VideoDecoderBackend for FFmpegDecoder {
             let mut decoded_pixel_data = Vec::new();
 
             let planes = frame.planes();
-            for plane in planes.iter() {
-                decoded_pixel_data.extend_from_slice(plane.data());
+            // Only access first 3 planes (Y, U, V for YUV420P)
+            // Planes index 3 may be uninitialized/invalid
+            for i in 0..3 {
+                if i < planes.len() {
+                    let plane_data = planes[i].data();
+                    if !plane_data.is_empty() {
+                        decoded_pixel_data.extend_from_slice(plane_data);
+                    }
+                }
             }
 
             Ok(RuntimeData::Video {
