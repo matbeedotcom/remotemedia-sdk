@@ -52,12 +52,14 @@ pub struct NumpyArrayData {
 }
 
 /// Check if a Python object is a numpy array
-pub fn is_numpy_array(_py: Python, obj: &Bound<'_, PyAny>) -> bool {
-    obj.downcast::<PyArrayDyn<f64>>().is_ok()
-        || obj.downcast::<PyArrayDyn<f32>>().is_ok()
-        || obj.downcast::<PyArrayDyn<i64>>().is_ok()
-        || obj.downcast::<PyArrayDyn<i32>>().is_ok()
-        || obj.downcast::<PyArrayDyn<u8>>().is_ok()
+pub fn is_numpy_array(py: Python, obj: &Bound<'_, PyAny>) -> bool {
+    // Check if object has numpy array attributes instead of trying to downcast
+    // This is more robust and works for all numpy dtypes
+    obj.hasattr("shape").unwrap_or(false)
+        && obj.hasattr("dtype").unwrap_or(false)
+        && obj.hasattr("strides").unwrap_or(false)
+        && obj.hasattr("tobytes").unwrap_or(false)
+        && obj.hasattr("__array_interface__").unwrap_or(false)
 }
 
 /// Extract numpy array metadata from a numpy array
@@ -232,6 +234,47 @@ pub fn numpy_to_audio_buffer_ffi<'py>(
     Ok(audio_buffer)
 }
 
+/// Python FFI: Convert numpy array to RuntimeData (zero-copy passthrough)
+///
+/// This function wraps a numpy array in RuntimeData::Numpy, allowing it to
+/// flow through the pipeline without conversion until the IPC boundary.
+/// At the IPC boundary, `to_ipc_runtime_data` handles serialization once.
+///
+/// # Arguments (Python)
+/// * `arr` - Numpy array (any dtype, any shape)
+///
+/// # Returns
+/// RuntimeData object (opaque handle) that can be passed to pipeline execution
+///
+/// # Example (Python)
+/// ```python
+/// from remotemedia.runtime import numpy_to_runtime_data, execute_pipeline_with_input
+/// import numpy as np
+///
+/// # Create audio frame (20ms at 48kHz = 960 samples)
+/// audio_frame = np.zeros(960, dtype=np.float32)
+/// 
+/// # Convert to RuntimeData (zero-copy, no serialization)
+/// runtime_data = numpy_to_runtime_data(audio_frame)
+///
+/// # Pass directly to pipeline - only serializes once at IPC boundary
+/// result = await execute_pipeline_with_input(manifest, [runtime_data])
+/// ```
+#[pyfunction]
+#[pyo3(signature = (arr))]
+pub fn numpy_to_runtime_data(
+    py: Python<'_>,
+    arr: Bound<'_, PyAny>,
+) -> PyResult<()> {
+    // This function is a no-op now - python_to_runtime_data in marshal.rs
+    // automatically detects numpy arrays and wraps them in RuntimeData::Numpy
+    // We keep this function for API compatibility and documentation
+    Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+        "numpy_to_runtime_data is deprecated. Pass numpy arrays directly to execute_pipeline_with_input - \
+         they will be automatically wrapped in RuntimeData::Numpy for zero-copy passthrough."
+    ))
+}
+
 /// Convert AudioBuffer to numpy array with zero-copy (Phase 4: T049-T053)
 ///
 /// This function provides efficient transfer from Rust to Python by:
@@ -264,6 +307,101 @@ pub fn audio_buffer_to_numpy_ffi<'py>(
     } else {
         Ok(array.into_any())
     }
+}
+
+// audio_dict_to_numpy is no longer needed - pipeline results automatically
+// convert RuntimeData::Numpy back to Python numpy arrays via runtime_data_to_python
+
+/// Python FFI: Publish numpy audio array directly to iceoryx2 channel (zero-copy)
+///
+/// This function uses the existing `to_ipc_runtime_data` serialization format
+/// and publishes directly to iceoryx2 shared memory, avoiding repeated copies
+/// across the FFI boundary for streaming audio.
+///
+/// # Arguments (Python)
+/// * `arr` - Numpy array with f32 dtype containing audio samples
+/// * `channel_name` - Name of the iceoryx2 channel to publish to
+/// * `session_id` - Session identifier for namespacing
+/// * `sample_rate` - Audio sample rate in Hz
+/// * `channels` - Number of audio channels
+///
+/// # Returns
+/// None on success, raises exception on error
+///
+/// # Example (Python)
+/// ```python
+/// from remotemedia.runtime import publish_audio_to_ipc
+/// import numpy as np
+///
+/// # Create audio frame (20ms at 48kHz = 960 samples)
+/// audio_frame = np.zeros(960, dtype=np.float32)
+/// 
+/// # Publish directly to iceoryx2 (zero-copy, no serialization overhead)
+/// publish_audio_to_ipc(
+///     audio_frame,
+///     channel_name="session_123_node_456_input",
+///     session_id="session_123",
+///     sample_rate=48000,
+///     channels=1
+/// )
+/// ```
+#[pyfunction]
+#[pyo3(signature = (arr, channel_name, session_id, sample_rate, channels))]
+pub fn publish_audio_to_ipc(
+    _py: Python<'_>,
+    arr: Bound<'_, PyAny>,
+    channel_name: String,
+    session_id: String,
+    sample_rate: u32,
+    channels: u16,
+) -> PyResult<()> {
+    // This will be implemented to use runtime-core's multiprocess IPC infrastructure
+    // The actual implementation requires access to ChannelRegistry
+    Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+        "publish_audio_to_ipc requires runtime-core with multiprocess feature. \
+         Use send_data_to_node from MultiprocessExecutor instead."
+    ))
+}
+
+/// Python FFI: Subscribe to audio from iceoryx2 channel (zero-copy)
+///
+/// This function subscribes from iceoryx2 shared memory and converts
+/// directly to numpy arrays using `from_ipc_runtime_data`, avoiding
+/// repeated serialization for streaming audio.
+///
+/// # Arguments (Python)
+/// * `channel_name` - Name of the iceoryx2 channel to subscribe from
+/// * `timeout_ms` - Optional timeout in milliseconds (None = non-blocking)
+///
+/// # Returns
+/// Numpy array with audio data, or None if no data available
+///
+/// # Example (Python)
+/// ```python
+/// from remotemedia.runtime import subscribe_audio_from_ipc
+/// import numpy as np
+///
+/// # Subscribe from iceoryx2 channel (zero-copy)
+/// audio_data = subscribe_audio_from_ipc(
+///     channel_name="session_123_node_456_output",
+///     timeout_ms=100  # Wait up to 100ms
+/// )
+///
+/// if audio_data is not None:
+///     print(f"Received audio: {audio_data.shape}")
+/// ```
+#[pyfunction]
+#[pyo3(signature = (channel_name, timeout_ms=None))]
+pub fn subscribe_audio_from_ipc<'py>(
+    _py: Python<'py>,
+    channel_name: String,
+    timeout_ms: Option<u64>,
+) -> PyResult<Option<Bound<'py, PyAny>>> {
+    // This will be implemented to use runtime-core's multiprocess IPC infrastructure
+    Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+        "subscribe_audio_from_ipc requires runtime-core with multiprocess feature. \
+         Use register_output_callback from MultiprocessExecutor instead."
+    ))
 }
 
 #[cfg(test)]

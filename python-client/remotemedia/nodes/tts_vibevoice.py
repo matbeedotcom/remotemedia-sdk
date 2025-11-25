@@ -30,18 +30,16 @@ from typing import AsyncGenerator, List, Optional, TYPE_CHECKING, Union, Dict, A
 import numpy as np
 
 # RuntimeData bindings (type-safe passthrough with Rust runtime)
-if TYPE_CHECKING:
-    from remotemedia.core.multiprocessing.data import RuntimeData
-
+from remotemedia.core.multiprocessing.data import RuntimeData
+logging.warning("[VibeVoiceTTSNode] RuntimeData: %s", RuntimeData)
 try:  # Runtime bridge
-    from remotemedia.core.multiprocessing.data import RuntimeData, numpy_to_audio, audio_to_numpy
+    from remotemedia.core.multiprocessing.data import numpy_to_audio, audio_to_numpy
     RUNTIME_DATA_AVAILABLE = True
 except ImportError:
     RUNTIME_DATA_AVAILABLE = False
-    RuntimeData = None  # type: ignore
     numpy_to_audio = None  # type: ignore
     audio_to_numpy = None  # type: ignore
-    logging.warning("RuntimeData bindings not available. Using fallback implementation.")
+    logging.warning("[VibeVoiceTTSNode] numpy_to_audio and audio_to_numpy bindings not available. Using fallback implementation.")
 
 # Import MultiprocessNode base class from core
 from remotemedia.core import MultiprocessNode, NodeConfig

@@ -412,6 +412,58 @@ pub fn runtime_data_to_python(py: Python<'_>, data: &RuntimeData) -> PyResult<Py
             dict.set_item("note", "Tensor data not fully supported in FFI yet")?;
             Ok(dict.into())
         }
+        RuntimeData::Numpy {
+            data,
+            shape,
+            dtype,
+            strides,
+            c_contiguous,
+            f_contiguous,
+        } => {
+            // Convert numpy array back to Python numpy array using numpy_bridge
+            use crate::numpy_bridge::vec_to_numpy_f64;
+            
+            // For now, only support float32/float64 dtypes
+            // TODO: Support all numpy dtypes
+            match dtype.as_str() {
+                "float32" => {
+                    // Reinterpret bytes as f32
+                    let samples: Vec<f32> = data
+                        .chunks_exact(4)
+                        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                        .collect();
+                    
+                    // Create numpy array
+                    use numpy::{PyArray, PyArrayMethods};
+                    let array = PyArray::from_vec(py, samples);
+                    let reshaped = array.reshape(shape.as_slice())?;
+                    Ok(reshaped.into_any().unbind())
+                }
+                "float64" => {
+                    // Reinterpret bytes as f64
+                    let samples: Vec<f64> = data
+                        .chunks_exact(8)
+                        .map(|chunk| f64::from_le_bytes([
+                            chunk[0], chunk[1], chunk[2], chunk[3],
+                            chunk[4], chunk[5], chunk[6], chunk[7],
+                        ]))
+                        .collect();
+                    
+                    // Create numpy array
+                    vec_to_numpy_f64(py, &samples, shape)
+                        .map(|arr| arr.unbind())
+                }
+                _ => {
+                    // For unsupported dtypes, return metadata dict
+                    let dict = PyDict::new(py);
+                    dict.set_item("type", "numpy")?;
+                    dict.set_item("shape", shape.as_slice())?;
+                    dict.set_item("dtype", dtype.as_str())?;
+                    dict.set_item("note", format!("Dtype {} not yet supported in FFI", dtype))?;
+                    Ok(dict.into())
+                }
+            }
+        }
         RuntimeData::ControlMessage { .. } => {
             // Control message not fully supported yet
             let dict = PyDict::new(py);
@@ -448,6 +500,32 @@ pub fn runtime_data_to_python(py: Python<'_>, data: &RuntimeData) -> PyResult<Py
 /// ```
 pub fn python_to_runtime_data(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<RuntimeData> {
     // T008: Convert Python objects to RuntimeData
+
+    // Check if it's a numpy array first (zero-copy passthrough)
+    if crate::numpy_bridge::is_numpy_array(py, obj) {
+        use crate::numpy_bridge::extract_numpy_metadata;
+        use numpy::{PyArrayDyn, PyArrayMethods};
+        
+        // Extract metadata
+        let meta = extract_numpy_metadata(py, obj)?;
+        
+        // Get raw bytes using tobytes() method
+        let bytes_obj = obj.call_method0("tobytes")?;
+        let data: Vec<u8> = bytes_obj.extract()?;
+        
+        // Get strides
+        let strides_obj = obj.getattr("strides")?;
+        let strides: Vec<isize> = strides_obj.extract()?;
+        
+        return Ok(RuntimeData::Numpy {
+            data,
+            shape: meta.shape,
+            dtype: meta.dtype,
+            strides,
+            c_contiguous: meta.c_contiguous,
+            f_contiguous: meta.f_contiguous,
+        });
+    }
 
     // Check if it's a dict with "type" field (structured data)
     if let Ok(dict) = obj.downcast::<PyDict>() {

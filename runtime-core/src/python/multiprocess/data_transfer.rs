@@ -149,6 +149,70 @@ impl RuntimeData {
         }
     }
 
+    /// Create numpy runtime data
+    ///
+    /// Serializes numpy array metadata and data for zero-copy IPC transfer.
+    /// The payload format is:
+    /// - shape_len (2 bytes)
+    /// - shape (8 bytes per dimension)
+    /// - strides_len (2 bytes)
+    /// - strides (8 bytes per dimension)
+    /// - dtype_len (2 bytes)
+    /// - dtype (variable bytes, UTF-8)
+    /// - flags (1 byte: bit 0 = c_contiguous, bit 1 = f_contiguous)
+    /// - data (remaining bytes)
+    pub fn numpy(
+        data: &[u8],
+        shape: &[usize],
+        dtype: &str,
+        strides: &[isize],
+        c_contiguous: bool,
+        f_contiguous: bool,
+        session_id: &str,
+    ) -> Self {
+        let mut payload = Vec::new();
+
+        // Serialize shape
+        payload.extend_from_slice(&(shape.len() as u16).to_le_bytes());
+        for &dim in shape {
+            payload.extend_from_slice(&(dim as u64).to_le_bytes());
+        }
+
+        // Serialize strides
+        payload.extend_from_slice(&(strides.len() as u16).to_le_bytes());
+        for &stride in strides {
+            payload.extend_from_slice(&(stride as i64).to_le_bytes());
+        }
+
+        // Serialize dtype
+        let dtype_bytes = dtype.as_bytes();
+        payload.extend_from_slice(&(dtype_bytes.len() as u16).to_le_bytes());
+        payload.extend_from_slice(dtype_bytes);
+
+        // Serialize flags
+        let mut flags: u8 = 0;
+        if c_contiguous {
+            flags |= 0x01;
+        }
+        if f_contiguous {
+            flags |= 0x02;
+        }
+        payload.push(flags);
+
+        // Append array data
+        payload.extend_from_slice(data);
+
+        Self {
+            data_type: DataType::Numpy,
+            session_id: session_id.to_string(),
+            timestamp: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_micros() as u64,
+            payload,
+        }
+    }
+
     /// Convert to bytes for IPC transfer
     pub fn to_bytes(&self) -> Vec<u8> {
         // Simple format: type (1 byte) | session_len (2 bytes) | session | timestamp (8 bytes) | payload_len (4 bytes) | payload
@@ -255,6 +319,7 @@ impl RuntimeData {
             3 => DataType::Text,
             4 => DataType::Tensor,
             5 => DataType::ControlMessage,
+            6 => DataType::Numpy,
             _ => return Err(format!("Invalid data type: {}", bytes[pos])),
         };
         pos += 1;
@@ -315,6 +380,7 @@ pub enum DataType {
     Text = 3,
     Tensor = 4,
     ControlMessage = 5, // Spec 007: Control messages for low-latency streaming
+    Numpy = 6,          // Numpy arrays with metadata for zero-copy passthrough
 }
 
 #[cfg(test)]
@@ -346,6 +412,215 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&recovered.payload), "Hello, IPC!");
     }
 
+    #[test]
+    fn test_numpy_float32_roundtrip() {
+        // Test numpy array serialization/deserialization
+        let data = vec![0.1f32, 0.2, 0.3, 0.4, 0.5];
+        let data_bytes: Vec<u8> = data
+            .iter()
+            .flat_map(|&f| f.to_le_bytes())
+            .collect();
+        
+        let shape = vec![5];
+        let strides = vec![4]; // 4 bytes per f32
+        let dtype = "float32";
+        
+        let numpy_data = RuntimeData::numpy(
+            &data_bytes,
+            &shape,
+            dtype,
+            &strides,
+            true,  // c_contiguous
+            false, // f_contiguous
+            "test_session"
+        );
+        
+        let bytes = numpy_data.to_bytes();
+        let recovered = RuntimeData::from_bytes(&bytes).unwrap();
+        
+        assert_eq!(recovered.data_type, DataType::Numpy);
+        assert_eq!(recovered.session_id, "test_session");
+        
+        // Verify payload contains shape + strides + dtype + flags + data
+        assert!(recovered.payload.len() > data_bytes.len());
+    }
+    
+    #[test]
+    fn test_numpy_multidimensional() {
+        // Test 2D numpy array (e.g., stereo audio: frames × channels)
+        let frames = 960; // 20ms at 48kHz
+        let channels = 2;
+        let total_samples = frames * channels;
+        
+        let data: Vec<f32> = (0..total_samples)
+            .map(|i| (i as f32) * 0.001)
+            .collect();
+        let data_bytes: Vec<u8> = data
+            .iter()
+            .flat_map(|&f| f.to_le_bytes())
+            .collect();
+        
+        let shape = vec![frames, channels];
+        let strides = vec![8, 4]; // row stride = 2 floats = 8 bytes, col stride = 4 bytes
+        
+        let numpy_data = RuntimeData::numpy(
+            &data_bytes,
+            &shape,
+            "float32",
+            &strides,
+            true,
+            false,
+            "test_session"
+        );
+        
+        let bytes = numpy_data.to_bytes();
+        let recovered = RuntimeData::from_bytes(&bytes).unwrap();
+        
+        assert_eq!(recovered.data_type, DataType::Numpy);
+        assert_eq!(recovered.payload.len(), 2 + 16 + 2 + 16 + 2 + 7 + 1 + data_bytes.len());
+        // shape_len(2) + shape(2×8) + strides_len(2) + strides(2×8) + dtype_len(2) + dtype(7) + flags(1) + data
+    }
+    
+    #[test]
+    fn test_numpy_fortran_order() {
+        // Test Fortran-contiguous array
+        let data_bytes = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
+        let shape = vec![2, 2];
+        let strides = vec![4, 8]; // F-order: column-major
+        
+        let numpy_data = RuntimeData::numpy(
+            &data_bytes,
+            &shape,
+            "float32",
+            &strides,
+            false, // not c_contiguous
+            true,  // f_contiguous
+            "test_session"
+        );
+        
+        let bytes = numpy_data.to_bytes();
+        let recovered = RuntimeData::from_bytes(&bytes).unwrap();
+        
+        assert_eq!(recovered.data_type, DataType::Numpy);
+        
+        // Parse flags from payload to verify F-contiguous flag is set
+        // Flags are after: shape_len(2) + shape(16) + strides_len(2) + strides(16) + dtype_len(2) + dtype
+        let flags_offset = 2 + 16 + 2 + 16 + 2 + 7; // = 45
+        let flags = recovered.payload[flags_offset];
+        assert_eq!(flags & 0x02, 0x02); // F-contiguous bit should be set
+        assert_eq!(flags & 0x01, 0x00); // C-contiguous bit should not be set
+    }
+    
+    #[test]
+    fn test_numpy_different_dtypes() {
+        // Test various dtypes
+        let test_cases = vec![
+            ("float32", 4),
+            ("float64", 8),
+            ("int16", 2),
+            ("int32", 4),
+            ("uint8", 1),
+        ];
+        
+        for (dtype, bytes_per_element) in test_cases {
+            let data_bytes = vec![0u8; bytes_per_element * 10]; // 10 elements
+            let shape = vec![10];
+            let strides = vec![bytes_per_element as isize];
+            
+            let numpy_data = RuntimeData::numpy(
+                &data_bytes,
+                &shape,
+                dtype,
+                &strides,
+                true,
+                false,
+                "test_session"
+            );
+            
+            let bytes = numpy_data.to_bytes();
+            let recovered = RuntimeData::from_bytes(&bytes).unwrap();
+            
+            assert_eq!(recovered.data_type, DataType::Numpy);
+            assert_eq!(recovered.session_id, "test_session");
+        }
+    }
+    
+    #[test]
+    fn test_numpy_metadata_preservation() {
+        // Test that all metadata is preserved through serialization
+        let data_bytes = vec![1.0f32, 2.0, 3.0, 4.0]
+            .iter()
+            .flat_map(|&f| f.to_le_bytes())
+            .collect::<Vec<u8>>();
+        
+        let shape = vec![2, 2];
+        let strides = vec![8, 4];
+        let dtype = "float32";
+        let c_contiguous = true;
+        let f_contiguous = false;
+        
+        let numpy_data = RuntimeData::numpy(
+            &data_bytes,
+            &shape,
+            dtype,
+            &strides,
+            c_contiguous,
+            f_contiguous,
+            "test_session"
+        );
+        
+        let bytes = numpy_data.to_bytes();
+        let recovered = RuntimeData::from_bytes(&bytes).unwrap();
+        
+        // Deserialize and verify metadata
+        let payload = &recovered.payload;
+        let mut pos = 0;
+        
+        // Read shape
+        let shape_len = u16::from_le_bytes([payload[pos], payload[pos + 1]]) as usize;
+        pos += 2;
+        assert_eq!(shape_len, 2);
+        
+        let mut recovered_shape = Vec::new();
+        for _ in 0..shape_len {
+            let dim = u64::from_le_bytes([
+                payload[pos], payload[pos + 1], payload[pos + 2], payload[pos + 3],
+                payload[pos + 4], payload[pos + 5], payload[pos + 6], payload[pos + 7],
+            ]) as usize;
+            recovered_shape.push(dim);
+            pos += 8;
+        }
+        assert_eq!(recovered_shape, shape);
+        
+        // Read strides
+        let strides_len = u16::from_le_bytes([payload[pos], payload[pos + 1]]) as usize;
+        pos += 2;
+        assert_eq!(strides_len, 2);
+        
+        let mut recovered_strides = Vec::new();
+        for _ in 0..strides_len {
+            let stride = i64::from_le_bytes([
+                payload[pos], payload[pos + 1], payload[pos + 2], payload[pos + 3],
+                payload[pos + 4], payload[pos + 5], payload[pos + 6], payload[pos + 7],
+            ]) as isize;
+            recovered_strides.push(stride);
+            pos += 8;
+        }
+        assert_eq!(recovered_strides, strides);
+        
+        // Read dtype
+        let dtype_len = u16::from_le_bytes([payload[pos], payload[pos + 1]]) as usize;
+        pos += 2;
+        let recovered_dtype = String::from_utf8_lossy(&payload[pos..pos + dtype_len]).to_string();
+        assert_eq!(recovered_dtype, dtype);
+        pos += dtype_len;
+        
+        // Read flags
+        let flags = payload[pos];
+        assert_eq!(flags & 0x01, if c_contiguous { 0x01 } else { 0x00 });
+        assert_eq!(flags & 0x02, if f_contiguous { 0x02 } else { 0x00 });
+    }
+    
     #[test]
     fn test_control_message_roundtrip() {
         // Test control message serialization/deserialization

@@ -55,7 +55,7 @@ except ImportError:
     RuntimeData = None  # type: ignore
     numpy_to_audio = None  # type: ignore
     audio_to_numpy = None  # type: ignore
-    logging.warning("RuntimeData bindings not available. Using fallback implementation.")
+    logging.warning("[LFM2AudioNode] RuntimeData bindings not available. Using fallback implementation.")
 
 # Import MultiprocessNode base class from core
 from remotemedia.core import MultiprocessNode, NodeConfig
