@@ -227,22 +227,24 @@ impl AsyncStreamingNode for VideoFlipNode {
                 width,
                 height,
                 format,
+                codec,
                 frame_number,
                 timestamp_us,
+                is_keyframe,
             } => {
+                use crate::data::video::PixelFormat;
+
                 // Flip based on format
                 let flipped_data = match format {
-                    1 => {
-                        // RGB24
+                    PixelFormat::Rgb24 => {
                         self.flip_rgb24(&pixel_data, width, height)?
                     }
-                    3 => {
-                        // I420 (YUV420P)
+                    PixelFormat::Yuv420p | PixelFormat::I420 => {
                         self.flip_i420(&pixel_data, width, height)?
                     }
                     _ => {
                         return Err(Error::Execution(format!(
-                            "VideoFlip only supports RGB24 (format=1) and I420 (format=3), got format={}",
+                            "VideoFlip only supports RGB24 and I420/YUV420P, got format={:?}",
                             format
                         )));
                     }
@@ -253,8 +255,10 @@ impl AsyncStreamingNode for VideoFlipNode {
                     width,
                     height,
                     format,
+                    codec,
                     frame_number,
                     timestamp_us,
+                    is_keyframe,
                 })
             }
             _ => Err(Error::Execution(
@@ -267,6 +271,7 @@ impl AsyncStreamingNode for VideoFlipNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::video::PixelFormat;
 
     #[tokio::test]
     async fn test_flip_rgb24_vertical() {
@@ -289,9 +294,11 @@ mod tests {
             pixel_data: input,
             width: 2,
             height: 2,
-            format: 1, // RGB24
+            format: PixelFormat::Rgb24,
+            codec: None,
             frame_number: 0,
             timestamp_us: 0,
+            is_keyframe: false,
         };
 
         let output = node.process(input_data).await.unwrap();
@@ -328,9 +335,11 @@ mod tests {
             pixel_data: input,
             width: 2,
             height: 2,
-            format: 1, // RGB24
+            format: PixelFormat::Rgb24,
+            codec: None,
             frame_number: 0,
             timestamp_us: 0,
+            is_keyframe: false,
         };
 
         let output = node.process(input_data).await.unwrap();
@@ -372,9 +381,11 @@ mod tests {
             pixel_data: input,
             width: 4,
             height: 4,
-            format: 3, // I420
+            format: PixelFormat::I420,
+            codec: None,
             frame_number: 0,
             timestamp_us: 0,
+            is_keyframe: false,
         };
 
         let output = node.process(input_data).await.unwrap();
@@ -389,7 +400,7 @@ mod tests {
         {
             assert_eq!(width, 4);
             assert_eq!(height, 4);
-            assert_eq!(format, 3);
+            assert_eq!(format, PixelFormat::I420);
             assert_eq!(pixel_data.len(), 24);
 
             // Y plane should be flipped vertically

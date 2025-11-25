@@ -106,14 +106,16 @@ enum AudioFormat {
 
 // Video frame data with pixel format and dimensions
 //
-// Supports common uncompressed pixel formats.
-// Codec support (H.264, H.265) is out of scope - nodes handle encoding if needed.
+// Supports both raw and encoded video frames (Spec 012: Video Codec Support).
+// For raw frames: codec=UNSPECIFIED, format indicates pixel layout
+// For encoded frames: codec specifies compression, pixel_data contains bitstream
 //
 // Validation:
-//   pixel_data.len() == width * height * format.bytes_per_pixel()
+//   Raw: pixel_data.len() == width * height * format.bytes_per_pixel()
+//   Encoded: pixel_data.len() is variable (codec-dependent)
 message VideoFrame {
-  // Raw pixel data (format specified by format field)
-  // Layout determined by PixelFormat
+  // Raw pixel data or encoded bitstream
+  // Layout determined by PixelFormat (raw) or VideoCodec (encoded)
   bytes pixel_data = 1;
 
   // Frame width in pixels (must be > 0)
@@ -122,7 +124,7 @@ message VideoFrame {
   // Frame height in pixels (must be > 0)
   uint32 height = 3;
 
-  // Pixel format
+  // Pixel format (for raw frames) or ENCODED (for compressed)
   PixelFormat format = 4;
 
   // Frame sequence number for ordering
@@ -130,6 +132,15 @@ message VideoFrame {
 
   // Timestamp in microseconds (for synchronization)
   uint64 timestamp_us = 6;
+
+  // Video codec (Spec 012: Video Codec Support)
+  // UNSPECIFIED for raw frames, or VP8/H264/AV1 for encoded frames
+  VideoCodec codec = 7;
+
+  // Keyframe indicator (Spec 012)
+  // True for I-frames (can be decoded independently)
+  // False for P/B-frames (require previous frames)
+  bool is_keyframe = 8;
 }
 
 // Pixel format enumeration
@@ -150,6 +161,31 @@ enum PixelFormat {
 
   // Grayscale, 8-bit (1 byte/pixel)
   PIXEL_FORMAT_GRAY8 = 4;
+
+  // I420 format (identical to YUV420P, WebRTC compatibility)
+  PIXEL_FORMAT_I420 = 5;
+
+  // NV12 semi-planar (Y plane + interleaved UV)
+  PIXEL_FORMAT_NV12 = 6;
+
+  // Encoded bitstream (not raw pixels)
+  PIXEL_FORMAT_ENCODED = 255;
+}
+
+// Video codec enumeration (Spec 012: Video Codec Support)
+enum VideoCodec {
+  VIDEO_CODEC_UNSPECIFIED = 0;
+
+  // VP8 (WebM, WebRTC standard, royalty-free)
+  // RFC 6386
+  VIDEO_CODEC_VP8 = 1;
+
+  // H.264/AVC (widely supported, hardware acceleration)
+  // ITU-T H.264
+  VIDEO_CODEC_H264 = 2;
+
+  // AV1 (next-gen royalty-free, superior compression)
+  VIDEO_CODEC_AV1 = 3;
 }
 
 // ============================================================================

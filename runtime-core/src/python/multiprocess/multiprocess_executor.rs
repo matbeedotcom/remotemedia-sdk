@@ -791,6 +791,88 @@ impl MultiprocessExecutor {
                     channels: 1,        // TODO: Extract from IPC metadata
                 })
             }
+            DataType::Video => {
+                // Deserialize video metadata from payload (Spec 012)
+                use crate::data::video::{PixelFormat, VideoCodec};
+
+                if ipc_data.payload.len() < 19 {
+                    return Err(Error::Execution("Video payload too short".to_string()));
+                }
+
+                let mut pos = 0;
+
+                // Width (4 bytes)
+                let width = u32::from_le_bytes([
+                    ipc_data.payload[pos],
+                    ipc_data.payload[pos + 1],
+                    ipc_data.payload[pos + 2],
+                    ipc_data.payload[pos + 3],
+                ]);
+                pos += 4;
+
+                // Height (4 bytes)
+                let height = u32::from_le_bytes([
+                    ipc_data.payload[pos],
+                    ipc_data.payload[pos + 1],
+                    ipc_data.payload[pos + 2],
+                    ipc_data.payload[pos + 3],
+                ]);
+                pos += 4;
+
+                // Format (1 byte)
+                let format = match ipc_data.payload[pos] {
+                    0 => PixelFormat::Unspecified,
+                    1 => PixelFormat::Yuv420p,
+                    2 => PixelFormat::I420,
+                    3 => PixelFormat::NV12,
+                    4 => PixelFormat::Rgb24,
+                    5 => PixelFormat::Rgba32,
+                    255 => PixelFormat::Encoded,
+                    _ => PixelFormat::Unspecified,
+                };
+                pos += 1;
+
+                // Codec (1 byte)
+                let codec = match ipc_data.payload[pos] {
+                    0 => None,
+                    1 => Some(VideoCodec::Vp8),
+                    2 => Some(VideoCodec::H264),
+                    3 => Some(VideoCodec::Av1),
+                    _ => None,
+                };
+                pos += 1;
+
+                // Frame number (8 bytes)
+                let frame_number = u64::from_le_bytes([
+                    ipc_data.payload[pos],
+                    ipc_data.payload[pos + 1],
+                    ipc_data.payload[pos + 2],
+                    ipc_data.payload[pos + 3],
+                    ipc_data.payload[pos + 4],
+                    ipc_data.payload[pos + 5],
+                    ipc_data.payload[pos + 6],
+                    ipc_data.payload[pos + 7],
+                ]);
+                pos += 8;
+
+                // Is keyframe (1 byte)
+                let is_keyframe = ipc_data.payload[pos] != 0;
+                pos += 1;
+
+                // Pixel data (remaining bytes)
+                let pixel_data = ipc_data.payload[pos..].to_vec();
+
+                Ok(MainRD::Video {
+                    pixel_data,
+                    width,
+                    height,
+                    format,
+                    codec,
+                    frame_number,
+                    timestamp_us: ipc_data.timestamp,
+                    is_keyframe,
+                })
+            }
             _ => Err(Error::Execution(format!(
                 "Unsupported IPC data type: {:?}",
                 ipc_data.data_type

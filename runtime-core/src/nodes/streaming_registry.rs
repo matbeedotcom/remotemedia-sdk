@@ -8,6 +8,8 @@ use crate::nodes::remote_pipeline::RemotePipelineNodeFactory;
 // use crate::nodes::sync_av::SynchronizedAudioVideoNode;
 use crate::nodes::video_flip::VideoFlipNode;
 // use crate::nodes::video_processor::VideoProcessorNode;
+#[cfg(feature = "video")]
+use crate::nodes::video::{VideoEncoderNode, VideoEncoderConfig, VideoDecoderNode, VideoDecoderConfig};
 use crate::nodes::{
     AsyncNodeWrapper, StreamingNode, StreamingNodeFactory, StreamingNodeRegistry, SyncNodeWrapper,
 };
@@ -76,6 +78,64 @@ impl StreamingNodeFactory for VideoFlipNodeFactory {
 
     fn node_type(&self) -> &str {
         "VideoFlip"
+    }
+}
+
+#[cfg(feature = "video")]
+struct VideoEncoderNodeFactory;
+
+#[cfg(feature = "video")]
+impl StreamingNodeFactory for VideoEncoderNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        let config = if params.is_null() {
+            VideoEncoderConfig::default()
+        } else {
+            serde_json::from_value(params.clone())
+                .map_err(|e| Error::Execution(format!("Invalid VideoEncoder config: {}", e)))?
+        };
+
+        let node = VideoEncoderNode::new(config)
+            .map_err(|e| Error::Execution(format!("Failed to create VideoEncoder: {}", e)))?;
+
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "VideoEncoder"
+    }
+}
+
+#[cfg(feature = "video")]
+struct VideoDecoderNodeFactory;
+
+#[cfg(feature = "video")]
+impl StreamingNodeFactory for VideoDecoderNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        let config = if params.is_null() {
+            VideoDecoderConfig::default()
+        } else {
+            serde_json::from_value(params.clone())
+                .map_err(|e| Error::Execution(format!("Invalid VideoDecoder config: {}", e)))?
+        };
+
+        let node = VideoDecoderNode::new(config)
+            .map_err(|e| Error::Execution(format!("Failed to create VideoDecoder: {}", e)))?;
+
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "VideoDecoder"
     }
 }
 
@@ -721,6 +781,14 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
     // Temporarily disabled - incomplete implementations
     // registry.register(Arc::new(VideoProcessorNodeFactory));
     registry.register(Arc::new(VideoFlipNodeFactory));
+
+    // Register video codec nodes (Spec 012: Video Codec Support)
+    #[cfg(feature = "video")]
+    {
+        registry.register(Arc::new(VideoEncoderNodeFactory));
+        registry.register(Arc::new(VideoDecoderNodeFactory));
+    }
+
     // registry.register(Arc::new(SynchronizedAudioVideoNodeFactory));
     registry.register(Arc::new(PassThroughNodeFactory));
 
