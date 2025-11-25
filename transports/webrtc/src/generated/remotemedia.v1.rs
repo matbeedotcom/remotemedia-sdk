@@ -23,7 +23,7 @@ pub struct DataBuffer {
         ::prost::alloc::string::String,
     >,
     /// Data type discriminator (exactly one must be set)
-    #[prost(oneof = "data_buffer::DataType", tags = "1, 2, 3, 4, 5, 6, 7")]
+    #[prost(oneof = "data_buffer::DataType", tags = "1, 2, 3, 4, 5, 6, 7, 8")]
     pub data_type: ::core::option::Option<data_buffer::DataType>,
 }
 /// Nested message and enum types in `DataBuffer`.
@@ -46,6 +46,9 @@ pub mod data_buffer {
         /// Spec 007: Control messages for low-latency streaming
         #[prost(message, tag = "7")]
         Control(super::ControlMessage),
+        /// NumPy array data with full metadata
+        #[prost(message, tag = "8")]
+        Numpy(super::NumpyBuffer),
     }
 }
 /// Multi-channel audio data with sample rate and format metadata
@@ -78,14 +81,14 @@ pub struct AudioBuffer {
 /// Video frame data with pixel format and dimensions
 ///
 /// Supports common uncompressed pixel formats.
-/// Codec support (H.264, H.265) is out of scope - nodes handle encoding if needed.
+/// Codec support (H.264, H.265, VP8, AV1) added via Spec 012.
 ///
 /// Validation:
 /// pixel_data.len() == width * height * format.bytes_per_pixel()
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct VideoFrame {
-    /// Raw pixel data (format specified by format field)
-    /// Layout determined by PixelFormat
+    /// Raw pixel data or encoded bitstream
+    /// Layout determined by PixelFormat (raw) or VideoCodec (encoded)
     #[prost(bytes = "vec", tag = "1")]
     pub pixel_data: ::prost::alloc::vec::Vec<u8>,
     /// Frame width in pixels (must be > 0)
@@ -94,7 +97,7 @@ pub struct VideoFrame {
     /// Frame height in pixels (must be > 0)
     #[prost(uint32, tag = "3")]
     pub height: u32,
-    /// Pixel format
+    /// Pixel format (for raw frames) or ENCODED (for compressed)
     #[prost(enumeration = "PixelFormat", tag = "4")]
     pub format: i32,
     /// Frame sequence number for ordering
@@ -103,6 +106,15 @@ pub struct VideoFrame {
     /// Timestamp in microseconds (for synchronization)
     #[prost(uint64, tag = "6")]
     pub timestamp_us: u64,
+    /// Video codec (Spec 012: Video Codec Support)
+    /// UNSPECIFIED for raw frames, or VP8/H264/AV1 for encoded frames
+    #[prost(enumeration = "VideoCodec", tag = "7")]
+    pub codec: i32,
+    /// Keyframe indicator (Spec 012)
+    /// True for I-frames (can be decoded independently)
+    /// False for P/B-frames (require previous frames)
+    #[prost(bool, tag = "8")]
+    pub is_keyframe: bool,
 }
 /// Multi-dimensional tensor data with shape and dtype
 ///
@@ -203,6 +215,48 @@ pub struct BinaryBuffer {
     /// Not validated by protocol (client responsibility)
     #[prost(string, tag = "2")]
     pub mime_type: ::prost::alloc::string::String,
+}
+/// NumPy array data with full memory layout metadata
+///
+/// Preserves all NumPy metadata required for zero-copy reconstruction:
+///
+/// * shape: array dimensions
+/// * dtype: data type string (e.g., "float32", "int16")
+/// * strides: byte offsets for each dimension
+/// * c_contiguous/f_contiguous: memory layout flags
+///
+/// Example (stereo audio float32 array):
+/// NumpyBuffer {
+/// data: <raw bytes>,
+/// shape: \[960, 2\],
+/// dtype: "float32",
+/// strides: \[8, 4\],
+/// c_contiguous: true,
+/// f_contiguous: false
+/// }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct NumpyBuffer {
+    /// Raw array data (bytes)
+    #[prost(bytes = "vec", tag = "1")]
+    pub data: ::prost::alloc::vec::Vec<u8>,
+    /// Array shape (dimensions)
+    /// Example: \[960\] for 1D, \[960, 2\] for stereo audio
+    #[prost(uint64, repeated, tag = "2")]
+    pub shape: ::prost::alloc::vec::Vec<u64>,
+    /// Data type string
+    /// Examples: "float32", "float64", "int16", "int32", "uint8"
+    #[prost(string, tag = "3")]
+    pub dtype: ::prost::alloc::string::String,
+    /// Array strides (bytes to step in each dimension)
+    /// Critical for memory layout reconstruction
+    #[prost(int64, repeated, tag = "4")]
+    pub strides: ::prost::alloc::vec::Vec<i64>,
+    /// Whether array is C-contiguous (row-major)
+    #[prost(bool, tag = "5")]
+    pub c_contiguous: bool,
+    /// Whether array is Fortran-contiguous (column-major)
+    #[prost(bool, tag = "6")]
+    pub f_contiguous: bool,
 }
 /// Control message for pipeline flow control
 ///
@@ -468,6 +522,12 @@ pub enum PixelFormat {
     Yuv420p = 3,
     /// Grayscale, 8-bit (1 byte/pixel)
     Gray8 = 4,
+    /// I420 format (identical to YUV420P, WebRTC compatibility)
+    I420 = 5,
+    /// NV12 semi-planar (Y plane + interleaved UV)
+    Nv12 = 6,
+    /// Encoded bitstream (not raw pixels)
+    Encoded = 255,
 }
 impl PixelFormat {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -481,6 +541,9 @@ impl PixelFormat {
             Self::Rgba32 => "PIXEL_FORMAT_RGBA32",
             Self::Yuv420p => "PIXEL_FORMAT_YUV420P",
             Self::Gray8 => "PIXEL_FORMAT_GRAY8",
+            Self::I420 => "PIXEL_FORMAT_I420",
+            Self::Nv12 => "PIXEL_FORMAT_NV12",
+            Self::Encoded => "PIXEL_FORMAT_ENCODED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -491,6 +554,47 @@ impl PixelFormat {
             "PIXEL_FORMAT_RGBA32" => Some(Self::Rgba32),
             "PIXEL_FORMAT_YUV420P" => Some(Self::Yuv420p),
             "PIXEL_FORMAT_GRAY8" => Some(Self::Gray8),
+            "PIXEL_FORMAT_I420" => Some(Self::I420),
+            "PIXEL_FORMAT_NV12" => Some(Self::Nv12),
+            "PIXEL_FORMAT_ENCODED" => Some(Self::Encoded),
+            _ => None,
+        }
+    }
+}
+/// Video codec enumeration (Spec 012: Video Codec Support)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum VideoCodec {
+    Unspecified = 0,
+    /// VP8 (WebM, WebRTC standard, royalty-free)
+    /// RFC 6386
+    Vp8 = 1,
+    /// H.264/AVC (widely supported, hardware acceleration)
+    /// ITU-T H.264
+    H264 = 2,
+    /// AV1 (next-gen royalty-free, superior compression)
+    Av1 = 3,
+}
+impl VideoCodec {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "VIDEO_CODEC_UNSPECIFIED",
+            Self::Vp8 => "VIDEO_CODEC_VP8",
+            Self::H264 => "VIDEO_CODEC_H264",
+            Self::Av1 => "VIDEO_CODEC_AV1",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "VIDEO_CODEC_UNSPECIFIED" => Some(Self::Unspecified),
+            "VIDEO_CODEC_VP8" => Some(Self::Vp8),
+            "VIDEO_CODEC_H264" => Some(Self::H264),
+            "VIDEO_CODEC_AV1" => Some(Self::Av1),
             _ => None,
         }
     }

@@ -6,8 +6,8 @@
 use crate::generated::data_buffer::DataType;
 use crate::generated::{
     AudioBuffer, AudioFormat, BatchHint, BinaryBuffer, CancelSpeculation, ControlMessage,
-    DataBuffer, DeadlineWarning, JsonData, PixelFormat, TensorBuffer, TensorDtype, TextBuffer,
-    VideoFrame,
+    DataBuffer, DeadlineWarning, JsonData, NumpyBuffer, PixelFormat, TensorBuffer, TensorDtype,
+    TextBuffer, VideoFrame,
 };
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::transport::TransportData;
@@ -55,6 +55,21 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
                 layout: String::new(), // Empty layout - nodes document expected layout
             })
         }
+        RuntimeData::Numpy {
+            data,
+            shape,
+            dtype,
+            strides,
+            c_contiguous,
+            f_contiguous,
+        } => DataType::Numpy(NumpyBuffer {
+            data: data.clone(),
+            shape: shape.iter().map(|&s| s as u64).collect(),
+            dtype: dtype.clone(),
+            strides: strides.iter().map(|&s| s as i64).collect(),
+            c_contiguous: *c_contiguous,
+            f_contiguous: *f_contiguous,
+        }),
         RuntimeData::Json(value) => DataType::Json(JsonData {
             json_payload: serde_json::to_string(value).unwrap_or_default(),
             schema_type: String::new(),
@@ -178,6 +193,14 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
             .ok()
             .map(RuntimeData::Text),
         Some(DataType::Binary(bin)) => Some(RuntimeData::Binary(bin.data.clone())),
+        Some(DataType::Numpy(numpy)) => Some(RuntimeData::Numpy {
+            data: numpy.data.clone(),
+            shape: numpy.shape.iter().map(|&s| s as usize).collect(),
+            dtype: numpy.dtype.clone(),
+            strides: numpy.strides.iter().map(|&s| s as isize).collect(),
+            c_contiguous: numpy.c_contiguous,
+            f_contiguous: numpy.f_contiguous,
+        }),
         _ => None,
     }
 }

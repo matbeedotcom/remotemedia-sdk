@@ -4,7 +4,7 @@
  * This implements just enough of the Protobuf encoding spec to send
  * Text data via WebRTC data channels to the Rust backend.
  *
- * Based on transports/remotemedia-grpc/protos/common.proto
+ * Based on transports/grpc/protos/common.proto
  */
 
 /**

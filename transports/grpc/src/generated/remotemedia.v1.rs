@@ -23,7 +23,7 @@ pub struct DataBuffer {
         ::prost::alloc::string::String,
     >,
     /// Data type discriminator (exactly one must be set)
-    #[prost(oneof = "data_buffer::DataType", tags = "1, 2, 3, 4, 5, 6, 7")]
+    #[prost(oneof = "data_buffer::DataType", tags = "1, 2, 3, 4, 5, 6, 7, 8")]
     pub data_type: ::core::option::Option<data_buffer::DataType>,
 }
 /// Nested message and enum types in `DataBuffer`.
@@ -46,6 +46,9 @@ pub mod data_buffer {
         /// Spec 007: Control messages for low-latency streaming
         #[prost(message, tag = "7")]
         Control(super::ControlMessage),
+        /// Zero-copy numpy array passthrough
+        #[prost(message, tag = "8")]
+        Numpy(super::NumpyBuffer),
     }
 }
 /// Multi-channel audio data with sample rate and format metadata
@@ -147,6 +150,45 @@ pub struct TensorBuffer {
     /// No automatic conversion performed
     #[prost(string, tag = "4")]
     pub layout: ::prost::alloc::string::String,
+}
+/// Numpy array buffer for zero-copy passthrough
+///
+/// Enables numpy arrays to flow through the pipeline without conversion
+/// until the IPC boundary. Preserves array metadata (shape, strides, contiguity)
+/// for correct reconstruction on the Python side.
+///
+/// Example (960 float32 samples):
+/// NumpyBuffer {
+/// data: \<3840 bytes>,
+/// shape: \[960\],
+/// dtype: "float32",
+/// strides: \[4\],
+/// c_contiguous: true,
+/// f_contiguous: false
+/// }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct NumpyBuffer {
+    /// Raw array data (bytes)
+    #[prost(bytes = "vec", tag = "1")]
+    pub data: ::prost::alloc::vec::Vec<u8>,
+    /// Array shape (dimensions)
+    /// Example: \[960\] for 1D, \[960, 2\] for stereo audio
+    #[prost(uint64, repeated, tag = "2")]
+    pub shape: ::prost::alloc::vec::Vec<u64>,
+    /// Data type string
+    /// Examples: "float32", "float64", "int16", "int32", "uint8"
+    #[prost(string, tag = "3")]
+    pub dtype: ::prost::alloc::string::String,
+    /// Array strides (bytes to step in each dimension)
+    /// Critical for memory layout reconstruction
+    #[prost(int64, repeated, tag = "4")]
+    pub strides: ::prost::alloc::vec::Vec<i64>,
+    /// Whether array is C-contiguous (row-major)
+    #[prost(bool, tag = "5")]
+    pub c_contiguous: bool,
+    /// Whether array is Fortran-contiguous (column-major)
+    #[prost(bool, tag = "6")]
+    pub f_contiguous: bool,
 }
 /// JSON payload for structured data, control parameters, and metadata
 ///
