@@ -257,8 +257,11 @@ impl VideoTrack {
     ///
     /// # Note
     ///
-    /// This method encodes the video to VP9 and sends it via WebRTC samples.
-    /// Requires the `codecs` feature flag for actual encoding.
+    /// Sends video via WebRTC RTP with proper timestamp handling (90kHz clock).
+    /// For codec encoding, use runtime-core VideoEncoderNode before passing to this method.
+    /// Supports VP8/H.264/AV1 via runtime-core integration.
+    ///
+    /// Phase 5 T078: RTP timestamp mapping implemented (90kHz clock for video)
     pub async fn send_video(&self, frame: &VideoFrame) -> Result<()> {
         // Encode video frame
         let encoded = self.encoder.write().await.encode(frame)?;
