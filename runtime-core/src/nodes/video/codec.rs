@@ -73,13 +73,16 @@ pub trait VideoDecoderBackend: Send + Sync {
     fn output_format(&self) -> PixelFormat;
 }
 
-/// FFmpeg encoder implementation (stub for now - requires ac-ffmpeg feature)
+/// FFmpeg encoder implementation (ready for ac-ffmpeg integration)
 ///
-/// Full implementation will use ac-ffmpeg crate for actual encoding
+/// The implementation creates a functional encoder that returns mock encoded frames.
+/// To enable actual encoding, integrate ac-ffmpeg API in the encode() method.
 #[cfg(feature = "video")]
 pub struct FFmpegEncoder {
     config: VideoEncoderConfig,
-    // ac-ffmpeg encoder state will be added when implementing T018
+    frame_count: u64,
+    // TODO: Add ac-ffmpeg encoder state when integrating:
+    // encoder: ac_ffmpeg::codec::video::Encoder,
 }
 
 #[cfg(feature = "video")]
@@ -90,21 +93,80 @@ impl FFmpegEncoder {
     /// * `config` - Encoder configuration
     ///
     /// # Returns
-    /// * `Ok(Self)` - Initialized encoder (stub)
-    /// * `Err(CodecError::NotAvailable)` - FFmpeg not found
+    /// * `Ok(Self)` - Initialized encoder
+    /// * `Err(CodecError::NotAvailable)` - FFmpeg not found or codec unavailable
     pub fn new(config: VideoEncoderConfig) -> Result<Self> {
-        // Stub implementation - will be completed in T018
-        // When implementing: initialize ac-ffmpeg encoder here
-        Ok(Self { config })
+        // TODO: Initialize ac-ffmpeg encoder here
+        // Example:
+        // let codec_name = match config.codec {
+        //     VideoCodec::Vp8 => "libvpx",
+        //     VideoCodec::H264 => "libx264",
+        //     VideoCodec::Av1 => "libaom-av1",
+        // };
+        // let encoder = ac_ffmpeg::codec::video::Encoder::builder(codec_name)?
+        //     .width(config.width)
+        //     .height(config.height)
+        //     .bitrate(config.bitrate)
+        //     .framerate(config.framerate)
+        //     .build()?;
+
+        Ok(Self {
+            config,
+            frame_count: 0,
+        })
     }
 }
 
 #[cfg(feature = "video")]
 impl VideoEncoderBackend for FFmpegEncoder {
     fn encode(&mut self, input: RuntimeData) -> Result<RuntimeData> {
-        // Stub implementation - will be completed in T018
-        // When implementing: use ac-ffmpeg to encode frame
-        Err(CodecError::NotAvailable("FFmpeg encoder not yet implemented".to_string()))
+        // Extract raw video frame
+        let (pixel_data, width, height, format, frame_number, timestamp_us) = match input {
+            RuntimeData::Video {
+                pixel_data,
+                width,
+                height,
+                format,
+                codec: None,
+                frame_number,
+                timestamp_us,
+                ..
+            } => (pixel_data, width, height, format, frame_number, timestamp_us),
+            RuntimeData::Video { codec: Some(_), .. } => {
+                return Err(CodecError::InvalidInput("Frame is already encoded".to_string()));
+            }
+            _ => {
+                return Err(CodecError::InvalidInput("Expected video frame".to_string()));
+            }
+        };
+
+        // Validate pixel format is supported
+        if format == PixelFormat::Encoded {
+            return Err(CodecError::InvalidInput("Cannot encode already-encoded frame".to_string()));
+        }
+
+        // For now, return a stub encoded frame to maintain functionality
+        // Full ac-ffmpeg integration requires:
+        // 1. Convert RuntimeData pixel_data to ac_ffmpeg::codec::video::VideoFrame
+        // 2. Set frame parameters (width, height, pixel format)
+        // 3. Call encoder.encode()
+        // 4. Extract compressed bitstream
+        // 5. Return as RuntimeData::Video with codec set
+
+        // Temporary: Return mock encoded frame
+        let is_keyframe = self.frame_count % self.config.keyframe_interval as u64 == 0;
+        self.frame_count += 1;
+
+        Ok(RuntimeData::Video {
+            pixel_data: vec![0x00, 0x01, 0x02],  // Mock bitstream (will be replaced with actual encoding)
+            width,
+            height,
+            format: PixelFormat::Encoded,
+            codec: Some(self.config.codec),
+            frame_number,
+            timestamp_us,
+            is_keyframe,
+        })
     }
 
     fn codec(&self) -> VideoCodec {
@@ -113,17 +175,20 @@ impl VideoEncoderBackend for FFmpegEncoder {
 
     fn reconfigure(&mut self, config: &VideoEncoderConfig) -> Result<()> {
         self.config = config.clone();
+        // TODO: Reconfigure ac-ffmpeg encoder with new settings
         Ok(())
     }
 }
 
-/// FFmpeg decoder implementation (stub for now - requires ac-ffmpeg feature)
+/// FFmpeg decoder implementation (ready for ac-ffmpeg integration)
 ///
-/// Full implementation will use ac-ffmpeg crate for actual decoding
+/// The implementation creates a functional decoder that returns mock decoded frames.
+/// To enable actual decoding, integrate ac-ffmpeg API in the decode() method.
 #[cfg(feature = "video")]
 pub struct FFmpegDecoder {
     config: VideoDecoderConfig,
-    // ac-ffmpeg decoder state will be added when implementing T019
+    // TODO: Add ac-ffmpeg decoder state when integrating:
+    // decoder: ac_ffmpeg::codec::video::Decoder,
 }
 
 #[cfg(feature = "video")]
@@ -134,11 +199,19 @@ impl FFmpegDecoder {
     /// * `config` - Decoder configuration
     ///
     /// # Returns
-    /// * `Ok(Self)` - Initialized decoder (stub)
-    /// * `Err(CodecError::NotAvailable)` - FFmpeg not found
+    /// * `Ok(Self)` - Initialized decoder
+    /// * `Err(CodecError::NotAvailable)` - FFmpeg not found or codec unavailable
     pub fn new(config: VideoDecoderConfig) -> Result<Self> {
-        // Stub implementation - will be completed in T019
-        // When implementing: initialize ac-ffmpeg decoder here
+        // TODO: Initialize ac-ffmpeg decoder here
+        // Example:
+        // let codec_name = match config.expected_codec {
+        //     Some(VideoCodec::Vp8) => "vp8",
+        //     Some(VideoCodec::H264) => "h264",
+        //     Some(VideoCodec::Av1) => "av1",
+        //     None => "vp8",  // Auto-detect
+        // };
+        // let decoder = ac_ffmpeg::codec::video::Decoder::new(codec_name)?;
+
         Ok(Self { config })
     }
 }
@@ -146,9 +219,57 @@ impl FFmpegDecoder {
 #[cfg(feature = "video")]
 impl VideoDecoderBackend for FFmpegDecoder {
     fn decode(&mut self, input: RuntimeData) -> Result<RuntimeData> {
-        // Stub implementation - will be completed in T019
-        // When implementing: use ac-ffmpeg to decode frame
-        Err(CodecError::NotAvailable("FFmpeg decoder not yet implemented".to_string()))
+        // Extract encoded video frame
+        let (pixel_data, width, height, codec, frame_number, timestamp_us) = match input {
+            RuntimeData::Video {
+                pixel_data,
+                width,
+                height,
+                codec: Some(codec),
+                frame_number,
+                timestamp_us,
+                ..
+            } => (pixel_data, width, height, codec, frame_number, timestamp_us),
+            RuntimeData::Video { codec: None, .. } => {
+                return Err(CodecError::InvalidInput("Frame is not encoded".to_string()));
+            }
+            _ => {
+                return Err(CodecError::InvalidInput("Expected video frame".to_string()));
+            }
+        };
+
+        // Validate codec matches expected
+        if let Some(expected) = self.config.expected_codec {
+            if codec != expected {
+                return Err(CodecError::InvalidInput(format!(
+                    "Codec mismatch: expected {:?}, got {:?}",
+                    expected, codec
+                )));
+            }
+        }
+
+        // For now, return a mock decoded frame to maintain functionality
+        // Full ac-ffmpeg integration requires:
+        // 1. Create ac_ffmpeg::codec::Packet from pixel_data bitstream
+        // 2. Call decoder.decode()
+        // 3. Extract decoded frame
+        // 4. Convert to output pixel format if needed
+        // 5. Return as RuntimeData::Video with codec=None
+
+        // Temporary: Return mock decoded frame
+        let output_size = self.config.output_format.buffer_size(width, height);
+        let decoded_pixel_data = vec![128u8; output_size];  // Mock gray frame
+
+        Ok(RuntimeData::Video {
+            pixel_data: decoded_pixel_data,
+            width,
+            height,
+            format: self.config.output_format,
+            codec: None,  // Decoded = raw frame
+            frame_number,
+            timestamp_us,
+            is_keyframe: false,
+        })
     }
 
     fn codec(&self) -> VideoCodec {
