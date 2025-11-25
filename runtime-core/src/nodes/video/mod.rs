@@ -17,4 +17,4 @@ pub use decoder::{VideoDecoderConfig, VideoDecoderNode};
 
 // Phase 6: Video processing nodes (T084-T095)
 pub use scaler::{VideoScalerNode, VideoScalerConfig};
-// pub use format_converter::{VideoFormatConverterNode, VideoFormatConverterConfig};
+pub use format_converter::{VideoFormatConverterNode, VideoFormatConverterConfig};
