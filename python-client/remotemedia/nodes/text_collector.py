@@ -26,7 +26,7 @@ try:
 except ImportError:
     RUNTIME_DATA_AVAILABLE = False
     RuntimeData = None  # type: ignore
-    logging.warning("RuntimeData bindings not available. Using fallback implementation.")
+    logging.warning("[TextCollectorNode] RuntimeData bindings not available. Using fallback implementation.")
 
 logger = logging.getLogger(__name__)
 

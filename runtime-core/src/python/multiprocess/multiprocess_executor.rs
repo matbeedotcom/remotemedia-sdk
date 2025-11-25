@@ -758,6 +758,25 @@ impl MultiprocessExecutor {
                     session_id,
                 )
             }
+            MainRD::Numpy {
+                data,
+                shape,
+                dtype,
+                strides,
+                c_contiguous,
+                f_contiguous,
+            } => {
+                // Zero-copy passthrough: numpy arrays go through IPC without conversion
+                IPCRuntimeData::numpy(
+                    data,
+                    shape,
+                    dtype,
+                    strides,
+                    *c_contiguous,
+                    *f_contiguous,
+                    session_id,
+                )
+            }
             _ => {
                 // For now, convert unsupported types to text representation
                 IPCRuntimeData::text(&format!("{:?}", data), session_id)
@@ -871,6 +890,97 @@ impl MultiprocessExecutor {
                     frame_number,
                     timestamp_us: ipc_data.timestamp,
                     is_keyframe,
+                })
+            }
+            DataType::Numpy => {
+                // Deserialize numpy array metadata from IPC payload
+                let payload = &ipc_data.payload;
+                let mut pos = 0;
+
+                // Read shape
+                if pos + 2 > payload.len() {
+                    return Err(Error::Execution("Invalid numpy payload: shape length".into()));
+                }
+                let shape_len = u16::from_le_bytes([payload[pos], payload[pos + 1]]) as usize;
+                pos += 2;
+
+                let mut shape = Vec::with_capacity(shape_len);
+                for _ in 0..shape_len {
+                    if pos + 8 > payload.len() {
+                        return Err(Error::Execution("Invalid numpy payload: shape data".into()));
+                    }
+                    let dim = u64::from_le_bytes([
+                        payload[pos],
+                        payload[pos + 1],
+                        payload[pos + 2],
+                        payload[pos + 3],
+                        payload[pos + 4],
+                        payload[pos + 5],
+                        payload[pos + 6],
+                        payload[pos + 7],
+                    ]) as usize;
+                    shape.push(dim);
+                    pos += 8;
+                }
+
+                // Read strides
+                if pos + 2 > payload.len() {
+                    return Err(Error::Execution("Invalid numpy payload: strides length".into()));
+                }
+                let strides_len = u16::from_le_bytes([payload[pos], payload[pos + 1]]) as usize;
+                pos += 2;
+
+                let mut strides = Vec::with_capacity(strides_len);
+                for _ in 0..strides_len {
+                    if pos + 8 > payload.len() {
+                        return Err(Error::Execution("Invalid numpy payload: strides data".into()));
+                    }
+                    let stride = i64::from_le_bytes([
+                        payload[pos],
+                        payload[pos + 1],
+                        payload[pos + 2],
+                        payload[pos + 3],
+                        payload[pos + 4],
+                        payload[pos + 5],
+                        payload[pos + 6],
+                        payload[pos + 7],
+                    ]) as isize;
+                    strides.push(stride);
+                    pos += 8;
+                }
+
+                // Read dtype
+                if pos + 2 > payload.len() {
+                    return Err(Error::Execution("Invalid numpy payload: dtype length".into()));
+                }
+                let dtype_len = u16::from_le_bytes([payload[pos], payload[pos + 1]]) as usize;
+                pos += 2;
+
+                if pos + dtype_len > payload.len() {
+                    return Err(Error::Execution("Invalid numpy payload: dtype data".into()));
+                }
+                let dtype = String::from_utf8_lossy(&payload[pos..pos + dtype_len]).to_string();
+                pos += dtype_len;
+
+                // Read flags
+                if pos + 1 > payload.len() {
+                    return Err(Error::Execution("Invalid numpy payload: flags".into()));
+                }
+                let flags = payload[pos];
+                let c_contiguous = (flags & 0x01) != 0;
+                let f_contiguous = (flags & 0x02) != 0;
+                pos += 1;
+
+                // Read array data
+                let data = payload[pos..].to_vec();
+
+                Ok(MainRD::Numpy {
+                    data,
+                    shape,
+                    dtype,
+                    strides,
+                    c_contiguous,
+                    f_contiguous,
                 })
             }
             _ => Err(Error::Execution(format!(

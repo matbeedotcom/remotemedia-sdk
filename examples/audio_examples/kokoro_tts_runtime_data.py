@@ -22,7 +22,7 @@ try:
     RUNTIME_DATA_AVAILABLE = True
 except ImportError:
     RUNTIME_DATA_AVAILABLE = False
-    logging.warning("RuntimeData bindings not available. Using fallback implementation.")
+    logging.warning("[KokoroTTSNode] RuntimeData bindings not available. Using fallback implementation.")
 
 logger = logging.getLogger(__name__)
 

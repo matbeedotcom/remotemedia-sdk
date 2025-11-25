@@ -15,6 +15,7 @@ __email__ = "mail@matbee.com"
 # Runtime detection (Phase 8 - T130-T132)
 _rust_runtime_available = False
 _rust_runtime = None
+runtime = None  # Will be set to the runtime module if available
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,10 @@ try:
 except Exception:
     pass  # Silent failure, warnings will be shown when used
 
+# Expose runtime module as remotemedia.runtime if available
+if _rust_runtime_available and _rust_runtime is not None:
+    runtime = _rust_runtime
+
 # Core imports
 from .core.pipeline import Pipeline
 from .core.node import Node, RemoteExecutorConfig
@@ -138,6 +143,8 @@ __all__ = [
     "is_rust_runtime_available",
     "get_rust_runtime",
     "try_load_rust_runtime",
+    # Runtime module (if available)
+    "runtime",
     # Runtime execution wrappers (Feature 011 - Python instance support)
     "execute_pipeline",
     "execute_pipeline_with_input",
