@@ -4401,6 +4401,7 @@ dependencies = [
  "opus",
  "prost",
  "remotemedia-runtime-core",
+ "remotemedia-webrtc",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
