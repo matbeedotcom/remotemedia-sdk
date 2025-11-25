@@ -7,6 +7,7 @@ use crate::peer::PeerManager;
 use crate::session::{Session, SessionId};
 use crate::{Error, Result};
 use remotemedia_runtime_core::data::RuntimeData;
+use remotemedia_runtime_core::data::video::PixelFormat;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -220,14 +221,14 @@ impl SessionRouter {
                     Error::MediaTrackError("No video track configured".to_string())
                 })?;
 
-                // Convert format i32 to VideoFormat enum
+                // Convert PixelFormat enum to VideoFormat enum
                 use crate::media::video::VideoFormat;
                 let video_format = match format {
-                    1 => VideoFormat::RGB24,
-                    3 => VideoFormat::I420,
+                    PixelFormat::Rgb24 => VideoFormat::RGB24,
+                    PixelFormat::Yuv420p | PixelFormat::I420 => VideoFormat::I420,
                     _ => {
                         return Err(Error::EncodingError(format!(
-                            "Unsupported video format code: {}",
+                            "Unsupported video format: {:?}",
                             format
                         )))
                     }
