@@ -183,6 +183,7 @@ impl SpeculativeVADGate {
             samples: samples.to_vec(),
             sample_rate,
             channels,
+            stream_id: None,
         };
         outputs.push(audio_output);
 
@@ -354,6 +355,7 @@ impl AsyncStreamingNode for SpeculativeVADGate {
                 samples,
                 sample_rate,
                 channels,
+                stream_id: _,
             } => (samples.clone(), *sample_rate, *channels),
             _ => {
                 return Err(Error::Execution(

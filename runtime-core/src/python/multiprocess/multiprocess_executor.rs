@@ -735,6 +735,7 @@ impl MultiprocessExecutor {
                 samples,
                 sample_rate,
                 channels,
+                stream_id: _,
             } => {
                 // RuntimeData::Audio has inline f32 samples, convert directly
                 IPCRuntimeData::audio(samples, *sample_rate, *channels as u16, session_id)
@@ -808,6 +809,7 @@ impl MultiprocessExecutor {
                     samples,
                     sample_rate: 24000, // TODO: Extract from IPC metadata
                     channels: 1,        // TODO: Extract from IPC metadata
+                    stream_id: None,
                 })
             }
             DataType::Video => {
@@ -890,6 +892,7 @@ impl MultiprocessExecutor {
                     frame_number,
                     timestamp_us: ipc_data.timestamp,
                     is_keyframe,
+                    stream_id: None,
                 })
             }
             DataType::Numpy => {
