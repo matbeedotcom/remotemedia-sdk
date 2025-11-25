@@ -87,9 +87,11 @@ pub enum AudioCodec {
 /// Supported video codecs
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VideoCodec {
-    /// VP9 codec (default, recommended)
+    /// VP8 codec (WebRTC standard, wide compatibility)
+    VP8,
+    /// VP9 codec (better compression, modern browsers)
     VP9,
-    /// H.264 codec (fallback for compatibility)
+    /// H.264 codec (universal compatibility)
     H264,
 }
 

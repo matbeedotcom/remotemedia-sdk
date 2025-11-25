@@ -99,7 +99,10 @@ impl PeerConnection {
         // Create MediaEngine with default codecs
         let mut media_engine = MediaEngine::default();
 
-        // Register default codecs (Opus, VP8, VP9, H.264)
+        // Register default codecs (Opus for audio, VP8/VP9/H.264 for video)
+        // Phase 5 T064-T066: VP8 and H.264 codecs are registered by webrtc-rs internally
+        // AV1 support requires webrtc-rs v0.15+ (currently using v0.14)
+        // Actual encoding/decoding delegated to runtime-core VideoEncoderNode/VideoDecoderNode
         media_engine
             .register_default_codecs()
             .map_err(|e| Error::WebRtcError(format!("Failed to register codecs: {}", e)))?;

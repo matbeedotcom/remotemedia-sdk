@@ -126,6 +126,7 @@ impl WebRtcTransport {
         }
 
         match self.config.video_codec {
+            crate::config::VideoCodec::VP8 => caps.push("video".to_string()),
             crate::config::VideoCodec::VP9 => caps.push("video".to_string()),
             crate::config::VideoCodec::H264 => caps.push("video".to_string()),
         }

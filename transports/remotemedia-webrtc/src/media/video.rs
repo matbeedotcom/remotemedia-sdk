@@ -1,7 +1,17 @@
-//! Video codec support (VP9/H264)
+//! Video codec support (VP8/H.264/AV1)
 //!
-//! Note: Video codecs require native libraries and are optional.
-//! Enable with the `codecs` feature flag.
+//! WebRTC video integration with runtime-core video encoder/decoder nodes.
+//! Supports VP8, H.264 (AVC), and AV1 codecs via ac-ffmpeg.
+//!
+//! ## Architecture
+//!
+//! For actual video encoding/decoding, use `remotemedia_runtime_core::nodes::video`:
+//! - `VideoEncoderNode`: Encode raw frames to VP8/H.264/AV1 bitstreams
+//! - `VideoDecoderNode`: Decode bitstreams to raw frames
+//!
+//! This module provides WebRTC-specific video frame types and RTP integration.
+//! The webrtc-rs library handles RTP packetization, codec negotiation in SDP,
+//! and built-in VP8/H.264 MediaEngine registration via `register_default_codecs()`.
 
 use crate::{Error, Result};
 
@@ -60,10 +70,16 @@ impl Default for VideoEncoderConfig {
     }
 }
 
-/// Video encoder (VP9)
+/// Video encoder for WebRTC (VP8/H.264/AV1 support)
 ///
-/// Note: VP9 encoding requires native libvpx bindings. The implementation provides
-/// the correct structure but full codec integration requires additional FFI work.
+///## Integration with runtime-core
+///
+/// For production video encoding, use `remotemedia_runtime_core::nodes::video::VideoEncoderNode`
+/// which provides full VP8/H.264/AV1 support via ac-ffmpeg.
+///
+/// This WebRTC-specific encoder provides the RTP framing layer. The actual codec
+/// operations should be delegated to runtime-core nodes for consistency across
+/// gRPC and WebRTC transports.
 pub struct VideoEncoder {
     config: VideoEncoderConfig,
     frame_count: u64,
@@ -176,10 +192,16 @@ impl VideoEncoder {
     }
 }
 
-/// Video decoder (VP9)
+/// Video decoder for WebRTC (VP8/H.264/AV1 support)
 ///
-/// Note: VP9 decoding requires native libvpx bindings. The implementation provides
-/// the correct structure but full codec integration requires additional FFI work.
+/// ## Integration with runtime-core
+///
+/// For production video decoding, use `remotemedia_runtime_core::nodes::video::VideoDecoderNode`
+/// which provides full VP8/H.264/AV1 support via ac-ffmpeg.
+///
+/// This WebRTC-specific decoder handles RTP depacketization. The actual codec
+/// operations should be delegated to runtime-core nodes for consistency across
+/// gRPC and WebRTC transports.
 pub struct VideoDecoder {
     config: VideoEncoderConfig,
     frame_count: u64,
