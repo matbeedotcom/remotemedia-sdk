@@ -469,8 +469,16 @@ impl PeerConnection {
             .await
             .map_err(|e| Error::MediaTrackError(format!("Failed to add video track: {}", e)))?;
 
-        // Create VideoTrack wrapper
-        let video_track = Arc::new(VideoTrack::new(track, config)?);
+        // Create VideoTrack wrapper with runtime-core encoder/decoder
+        // Use VP8 as default WebRTC video codec
+        let video_track = Arc::new(VideoTrack::new(
+            track,
+            remotemedia_runtime_core::data::video::VideoCodec::Vp8,
+            config.width,
+            config.height,
+            config.bitrate,
+            config.framerate,
+        )?);
 
         // Store track and sender
         *self.video_track.write().await = Some(video_track.clone());
