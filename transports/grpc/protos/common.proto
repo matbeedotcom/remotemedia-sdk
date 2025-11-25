@@ -45,6 +45,7 @@ message DataBuffer {
     TextBuffer text = 5;
     BinaryBuffer binary = 6;
     ControlMessage control = 7;  // Spec 007: Control messages for low-latency streaming
+    NumpyBuffer numpy = 8;  // Zero-copy numpy array passthrough
   }
 
   // Optional metadata for extensibility
@@ -242,6 +243,48 @@ enum TensorDtype {
 
   // 8-bit unsigned int (1 byte per element)
   TENSOR_DTYPE_U8 = 5;
+}
+
+// ============================================================================
+// Numpy Array Types (NEW - Zero-Copy)
+// ============================================================================
+
+// Numpy array buffer for zero-copy passthrough
+//
+// Enables numpy arrays to flow through the pipeline without conversion
+// until the IPC boundary. Preserves array metadata (shape, strides, contiguity)
+// for correct reconstruction on the Python side.
+//
+// Example (960 float32 samples):
+//   NumpyBuffer {
+//     data: <3840 bytes>,
+//     shape: [960],
+//     dtype: "float32",
+//     strides: [4],
+//     c_contiguous: true,
+//     f_contiguous: false
+//   }
+message NumpyBuffer {
+  // Raw array data (bytes)
+  bytes data = 1;
+
+  // Array shape (dimensions)
+  // Example: [960] for 1D, [960, 2] for stereo audio
+  repeated uint64 shape = 2;
+
+  // Data type string
+  // Examples: "float32", "float64", "int16", "int32", "uint8"
+  string dtype = 3;
+
+  // Array strides (bytes to step in each dimension)
+  // Critical for memory layout reconstruction
+  repeated int64 strides = 4;
+
+  // Whether array is C-contiguous (row-major)
+  bool c_contiguous = 5;
+
+  // Whether array is Fortran-contiguous (column-major)
+  bool f_contiguous = 6;
 }
 
 // ============================================================================

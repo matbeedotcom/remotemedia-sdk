@@ -8,7 +8,7 @@ The RemoteMedia WebRTC server is a sophisticated real-time media streaming trans
 
 ## 1. Entry Point: WebRTC Server Binary
 
-**File**: `/Users/mathieugosbee/dev/originals/remotemedia-sdk/transports/remotemedia-webrtc/src/bin/webrtc_server.rs`
+**File**: `/Users/mathieugosbee/dev/originals/remotemedia-sdk/transports/webrtc/src/bin/webrtc_server.rs`
 
 ### Server Modes
 
@@ -71,7 +71,7 @@ struct Args {
 
 ## 2. gRPC Signaling Service
 
-**File**: `/Users/mathieugosbee/dev/originals/remotemedia-sdk/transports/remotemedia-webrtc/src/signaling/grpc/service.rs`
+**File**: `/Users/mathieugosbee/dev/originals/remotemedia-sdk/transports/webrtc/src/signaling/grpc/service.rs`
 
 ### Architecture
 
@@ -327,7 +327,7 @@ Used in P2P mode to complete handshake.
 
 ## 4. Server-Side Peer Management (ServerPeer)
 
-**File**: `/Users/mathieugosbee/dev/originals/remotemedia-sdk/transports/remotemedia-webrtc/src/peer/server_peer.rs`
+**File**: `/Users/mathieugosbee/dev/originals/remotemedia-sdk/transports/webrtc/src/peer/server_peer.rs`
 
 ### Purpose
 
@@ -651,7 +651,7 @@ pub async fn handle_ice_candidate(
 
 ## 5. WebRTC Peer Connection
 
-**File**: `/Users/mathieugosbee/dev/originals/remotemedia-sdk/transports/remotemedia-webrtc/src/peer/connection.rs`
+**File**: `/Users/mathieugosbee/dev/originals/remotemedia-sdk/transports/webrtc/src/peer/connection.rs`
 
 ### Purpose
 
@@ -765,7 +765,7 @@ where
 
 ## 6. Audio Track Management
 
-**File**: `/Users/mathieugosbee/dev/originals/remotemedia-sdk/transports/remotemedia-webrtc/src/media/tracks.rs`
+**File**: `/Users/mathieugosbee/dev/originals/remotemedia-sdk/transports/webrtc/src/media/tracks.rs`
 
 ### AudioTrack (lines 16-167)
 
@@ -850,7 +850,7 @@ pub async fn on_rtp_packet(&self, payload: &[u8]) -> Result<Vec<f32>> {
 
 ## 7. Audio Codec Support (Opus)
 
-**File**: `/Users/mathieugosbee/dev/originals/remotemedia-sdk/transports/remotemedia-webrtc/src/media/audio.rs`
+**File**: `/Users/mathieugosbee/dev/originals/remotemedia-sdk/transports/webrtc/src/media/audio.rs`
 
 ### AudioEncoder (lines 32-107)
 

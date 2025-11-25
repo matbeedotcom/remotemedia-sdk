@@ -228,7 +228,7 @@ Announced → Available → Disconnected
 ## File Organization
 
 ```
-transports/remotemedia-webrtc/src/
+transports/webrtc/src/
 ├── bin/webrtc_server.rs              # Entry point
 ├── signaling/
 │   └── grpc/service.rs                # gRPC service

@@ -323,9 +323,9 @@ remotemedia-sdk/
 [workspace]
 members = [
     "runtime-core",
-    "transports/remotemedia-grpc",
-    "transports/remotemedia-ffi",
-    "transports/remotemedia-webrtc",
+    "transports/grpc",
+    "transports/ffi",
+    "transports/webrtc",
 ]
 resolver = "2"
 
@@ -340,7 +340,7 @@ tracing = "0.1"
 
 ### 3. Example gRPC Transport Implementation
 
-**transports/remotemedia-grpc/src/service.rs:**
+**transports/grpc/src/service.rs:**
 
 ```rust
 //! gRPC service implementation using runtime-core
@@ -476,7 +476,7 @@ impl PipelineExecutionService for GrpcPipelineService {
 
 ### 4. Example FFI Transport Implementation
 
-**transports/remotemedia-ffi/src/api.rs:**
+**transports/ffi/src/api.rs:**
 
 ```rust
 //! Python FFI API using runtime-core
@@ -536,7 +536,7 @@ fn remotemedia_runtime(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #### Phase 2: Extract gRPC Transport (Week 2)
 
-1. Create `transports/remotemedia-grpc/` crate
+1. Create `transports/grpc/` crate
 2. Move `grpc_service/*` → `remotemedia-grpc/src/`
 3. Implement `PipelineTransport` trait for gRPC
 4. Create adapter layer: Protobuf ↔ `TransportData`
@@ -545,7 +545,7 @@ fn remotemedia_runtime(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #### Phase 3: Extract FFI Transport (Week 3)
 
-1. Create `transports/remotemedia-ffi/` crate
+1. Create `transports/ffi/` crate
 2. Move `python/ffi.rs` → `remotemedia-ffi/src/api.rs`
 3. Move marshaling code
 4. Update Python client to import from new crate
@@ -587,7 +587,7 @@ cd runtime-core
 cargo build  # ~30s instead of ~60s
 
 # Building only gRPC transport
-cd transports/remotemedia-grpc
+cd transports/grpc
 cargo build  # Only rebuilds when transport changes
 ```
 

@@ -64,7 +64,7 @@ The Rust WebRTC server already has full support for bidirectional audio:
 
 ### Server-Side Components
 
-#### 1. AudioTrack Decoding ([tracks.rs:136-147](../../transports/remotemedia-webrtc/src/media/tracks.rs#L136-L147))
+#### 1. AudioTrack Decoding ([tracks.rs:136-147](../../transports/webrtc/src/media/tracks.rs#L136-L147))
 ```rust
 pub async fn on_rtp_packet(&self, payload: &[u8]) -> Result<Vec<f32>> {
     // Decode Opus RTP payload to f32 samples
@@ -73,7 +73,7 @@ pub async fn on_rtp_packet(&self, payload: &[u8]) -> Result<Vec<f32>> {
 }
 ```
 
-#### 2. PeerConnection on_track Handler ([connection.rs:518-524](../../transports/remotemedia-webrtc/src/peer/connection.rs#L518-L524))
+#### 2. PeerConnection on_track Handler ([connection.rs:518-524](../../transports/webrtc/src/peer/connection.rs#L518-L524))
 ```rust
 pub async fn on_track<F>(&self, handler: F)
 where
@@ -81,7 +81,7 @@ where
         -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static
 ```
 
-#### 3. ServerPeer Remote Track Processing ([server_peer.rs:222-290](../../transports/remotemedia-webrtc/src/peer/server_peer.rs#L222-L290))
+#### 3. ServerPeer Remote Track Processing ([server_peer.rs:222-290](../../transports/webrtc/src/peer/server_peer.rs#L222-L290))
 ```rust
 self.peer_connection.on_track(move |track, _receiver, _transceiver| {
     // Spawns background task to:
@@ -127,7 +127,7 @@ Browser text input
 
 ## Example Pipeline Manifests
 
-### TTS Only ([tts.json](../../transports/remotemedia-webrtc/examples/tts.json))
+### TTS Only ([tts.json](../../transports/webrtc/examples/tts.json))
 ```json
 {
   "nodes": [
@@ -140,7 +140,7 @@ Browser text input
 }
 ```
 
-### VAD + TTS ([vad_bidirectional.json](../../transports/remotemedia-webrtc/examples/vad_bidirectional.json))
+### VAD + TTS ([vad_bidirectional.json](../../transports/webrtc/examples/vad_bidirectional.json))
 ```json
 {
   "nodes": [
@@ -165,7 +165,7 @@ Browser text input
 
 ### 1. Start WebRTC Server
 ```bash
-cd transports/remotemedia-webrtc
+cd transports/webrtc
 powershell.exe -File run_grpc_server.ps1
 # Uses vad_bidirectional.json by default
 ```
@@ -287,4 +287,4 @@ Browser microphone access requires HTTPS in production:
 - [getUserMedia](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia)
 - [RTCPeerConnection](https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection)
 - [Opus Codec](https://opus-codec.org/)
-- [RemoteMedia WebRTC Transport](../../transports/remotemedia-webrtc/README.md)
+- [RemoteMedia WebRTC Transport](../../transports/webrtc/README.md)

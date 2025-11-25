@@ -14,7 +14,7 @@ Write-Host ""
 
 $env:WEBRTC_ENABLE_GRPC_SIGNALING = "true"
 $env:GRPC_SIGNALING_ADDRESS = "0.0.0.0:50051"
-$env:WEBRTC_PIPELINE_MANIFEST = "./examples/docker-node/simple_docker_node.json"
+$env:WEBRTC_PIPELINE_MANIFEST = "./examples/simple_docker_node.json"
 $env:RUST_LOG = "info"
 
 Write-Host "Starting WebRTC server with gRPC signaling on port 50051..." -ForegroundColor Green
