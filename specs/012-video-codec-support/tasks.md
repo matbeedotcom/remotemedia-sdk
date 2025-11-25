@@ -164,35 +164,35 @@
 
 ### WebRTC Media Engine Integration
 
-- [ ] T064 [US3] Register VP8 video codec in webrtc-rs MediaEngine in transports/remotemedia-webrtc/src/media/video.rs
-- [ ] T065 [P] [US3] Register H.264 video codec in webrtc-rs MediaEngine in transports/remotemedia-webrtc/src/media/video.rs
+- [X] T064 [US3] Register VP8 video codec in webrtc-rs MediaEngine in transports/remotemedia-webrtc/src/media/video.rs
+- [X] T065 [P] [US3] Register H.264 video codec in webrtc-rs MediaEngine in transports/remotemedia-webrtc/src/media/video.rs
 - [ ] T066 [P] [US3] Register AV1 video codec (if supported by webrtc-rs) in transports/remotemedia-webrtc/src/media/video.rs
-- [ ] T067 [US3] Implement send_video_frame() for WebRTC transport in transports/remotemedia-webrtc/src/media/video.rs (RTP packetization)
-- [ ] T068 [US3] Implement receive_video_frame() for WebRTC transport in transports/remotemedia-webrtc/src/media/video.rs (RTP depacketization)
+- [X] T067 [US3] Implement send_video_frame() for WebRTC transport in transports/remotemedia-webrtc/src/media/video.rs (RTP packetization)
+- [X] T068 [US3] Implement receive_video_frame() for WebRTC transport in transports/remotemedia-webrtc/src/media/video.rs (RTP depacketization)
 
 ### Video Track Management
 
-- [ ] T069 [US3] Create TrackLocalStaticRTP for video in transports/remotemedia-webrtc/src/media/tracks.rs
-- [ ] T070 [US3] Implement video track addition to peer connection in transports/remotemedia-webrtc/src/peer/connection.rs
-- [ ] T071 [US3] Handle video transceiver setup in SDP offer/answer in transports/remotemedia-webrtc/src/peer/server_peer.rs
-- [ ] T072 [US3] Implement video stream routing in session router in transports/remotemedia-webrtc/src/session/router.rs
+- [X] T069 [US3] Create TrackLocalStaticRTP for video in transports/remotemedia-webrtc/src/media/tracks.rs
+- [X] T070 [US3] Implement video track addition to peer connection in transports/remotemedia-webrtc/src/peer/connection.rs
+- [X] T071 [US3] Handle video transceiver setup in SDP offer/answer in transports/remotemedia-webrtc/src/peer/server_peer.rs
+- [X] T072 [US3] Implement video stream routing in session router in transports/remotemedia-webrtc/src/session/router.rs
 
 ### RTP Packetization & Quality Control
 
-- [ ] T073 [US3] Implement VP8 RTP payload formatting (RFC 7741) in transports/remotemedia-webrtc/src/media/video.rs
-- [ ] T074 [P] [US3] Implement H.264 RTP payload formatting (RFC 6184) in transports/remotemedia-webrtc/src/media/video.rs
+- [X] T073 [US3] Implement VP8 RTP payload formatting (RFC 7741) in transports/remotemedia-webrtc/src/media/video.rs
+- [X] T074 [P] [US3] Implement H.264 RTP payload formatting (RFC 6184) in transports/remotemedia-webrtc/src/media/video.rs
 - [ ] T075 [US3] Add keyframe request handling (PLI/FIR) in transports/remotemedia-webrtc/src/media/video.rs
 - [ ] T076 [US3] Implement adaptive bitrate control (REMB/TWCC feedback) in transports/remotemedia-webrtc/src/peer/connection.rs
 
 ### Audio/Video Synchronization
 
-- [ ] T077 [US3] Implement timestamp synchronization between audio/video tracks in transports/remotemedia-webrtc/src/session/session.rs
-- [ ] T078 [US3] Add RTP timestamp mapping (90kHz clock for video) in transports/remotemedia-webrtc/src/media/video.rs
+- [X] T077 [US3] Implement timestamp synchronization between audio/video tracks in transports/remotemedia-webrtc/src/session/session.rs
+- [X] T078 [US3] Add RTP timestamp mapping (90kHz clock for video) in transports/remotemedia-webrtc/src/media/video.rs
 - [ ] T079 [US3] Handle clock drift compensation in transports/remotemedia-webrtc/src/session/router.rs
 
 ### Testing & Validation (User Story 3)
 
-- [ ] T080 [P] [US3] Create integration test for WebRTC video streaming in tests/integration/test_video_webrtc.rs (local peer → remote peer VP8)
+- [X] T080 [P] [US3] Create integration test for WebRTC video streaming in tests/integration/test_video_webrtc.rs (local peer → remote peer VP8)
 - [ ] T081 [P] [US3] Create integration test for audio/video sync in tests/integration/test_video_webrtc.rs (send both, verify timestamps)
 - [ ] T082 [US3] Create WebRTC keyframe request test in tests/integration/test_video_webrtc.rs (simulate packet loss, verify recovery)
 - [ ] T083 [US3] Create adaptive bitrate test in tests/integration/test_video_webrtc.rs (simulate network congestion, verify bitrate adjustment)
