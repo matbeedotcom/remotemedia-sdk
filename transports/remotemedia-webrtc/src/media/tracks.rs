@@ -7,6 +7,7 @@ use super::audio_sender::AudioSender;
 use super::video::{VideoDecoder, VideoEncoder, VideoEncoderConfig, VideoFormat, VideoFrame};
 use crate::{Error, Result};
 use remotemedia_runtime_core::data::RuntimeData;
+use remotemedia_runtime_core::data::video::PixelFormat;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -420,14 +421,13 @@ pub async fn runtime_data_to_rtp(
                 Error::MediaTrackError("No video track available for encoding".to_string())
             })?;
 
-            // Convert format i32 to VideoFormat enum
-            // 0=unspecified, 1=RGB24, 2=RGBA32, 3=YUV420P (I420)
+            // Convert PixelFormat enum to VideoFormat enum
             let video_format = match format {
-                1 => VideoFormat::RGB24,
-                3 => VideoFormat::I420,
+                PixelFormat::Rgb24 => VideoFormat::RGB24,
+                PixelFormat::Yuv420p | PixelFormat::I420 => VideoFormat::I420,
                 _ => {
                     return Err(Error::EncodingError(format!(
-                        "Unsupported video format code: {}",
+                        "Unsupported video format: {:?}",
                         format
                     )))
                 }
@@ -499,20 +499,22 @@ pub async fn rtp_to_runtime_data(
         // Decode VP9 to VideoFrame
         let frame = video_track.on_rtp_packet(payload).await?;
 
-        // Convert VideoFormat to format code (0=unspecified, 1=RGB24, 2=RGBA32, 3=YUV420P)
-        let format_code = match frame.format {
-            VideoFormat::I420 => 3,
-            VideoFormat::NV12 => 0, // Map NV12 to unspecified for now
-            VideoFormat::RGB24 => 1,
+        // Convert VideoFormat to PixelFormat enum
+        let format = match frame.format {
+            VideoFormat::I420 => PixelFormat::I420,
+            VideoFormat::NV12 => PixelFormat::NV12,
+            VideoFormat::RGB24 => PixelFormat::Rgb24,
         };
 
         Ok(RuntimeData::Video {
             pixel_data: frame.data,
             width: frame.width,
             height: frame.height,
-            format: format_code,
+            format,
+            codec: None, // Raw frame from WebRTC
             frame_number: 0, // Will be set by caller if needed
             timestamp_us: frame.timestamp_us,
+            is_keyframe: false, // Will be set by encoder
         })
     }
 }
