@@ -145,20 +145,42 @@ impl VideoEncoderBackend for FFmpegEncoder {
             return Err(CodecError::InvalidInput("Cannot encode already-encoded frame".to_string()));
         }
 
-        // For now, return a stub encoded frame to maintain functionality
-        // Full ac-ffmpeg integration requires:
-        // 1. Convert RuntimeData pixel_data to ac_ffmpeg::codec::video::VideoFrame
-        // 2. Set frame parameters (width, height, pixel format)
-        // 3. Call encoder.encode()
-        // 4. Extract compressed bitstream
-        // 5. Return as RuntimeData::Video with codec set
-
-        // Temporary: Return mock encoded frame
+        // TODO: Complete ac-ffmpeg integration
+        //
+        // Integration steps:
+        //
+        // 1. Create VideoFrameMut from pixel_data:
+        //    let frame = ac_ffmpeg::codec::video::VideoFrameMut::new(
+        //        format_to_ac_ffmpeg(format),
+        //        width as usize,
+        //        height as usize,
+        //    );
+        //    frame.planes_mut()[0].copy_from_slice(&pixel_data[...]);  // Y plane
+        //    // Copy U and V planes similarly for YUV formats
+        //
+        // 2. Encode the frame:
+        //    let encoder = self.encoder.as_mut().unwrap();
+        //    let packets = encoder.encode_frame(&frame)
+        //        .map_err(|e| CodecError::EncodingFailed(e.to_string()))?;
+        //
+        // 3. Extract bitstream from packets:
+        //    let mut bitstream = Vec::new();
+        //    for packet in packets {
+        //        bitstream.extend_from_slice(packet.data());
+        //    }
+        //
+        // 4. Determine if keyframe based on packet flags
+        //
+        // References:
+        // - ac-ffmpeg docs: https://docs.rs/ac-ffmpeg/latest/ac_ffmpeg/codec/video/
+        // - GitHub examples: https://github.com/angelcam/rust-ac-ffmpeg/tree/master/examples
+        //
+        // For now, return mock encoded frame to enable end-to-end testing
         let is_keyframe = self.frame_count % self.config.keyframe_interval as u64 == 0;
         self.frame_count += 1;
 
         Ok(RuntimeData::Video {
-            pixel_data: vec![0x00, 0x01, 0x02],  // Mock bitstream (will be replaced with actual encoding)
+            pixel_data: vec![0x00, 0x01, 0x02],  // Mock bitstream
             width,
             height,
             format: PixelFormat::Encoded,
@@ -248,15 +270,40 @@ impl VideoDecoderBackend for FFmpegDecoder {
             }
         }
 
-        // For now, return a mock decoded frame to maintain functionality
-        // Full ac-ffmpeg integration requires:
-        // 1. Create ac_ffmpeg::codec::Packet from pixel_data bitstream
-        // 2. Call decoder.decode()
-        // 3. Extract decoded frame
-        // 4. Convert to output pixel format if needed
-        // 5. Return as RuntimeData::Video with codec=None
-
-        // Temporary: Return mock decoded frame
+        // TODO: Complete ac-ffmpeg integration
+        //
+        // Integration steps:
+        //
+        // 1. Create packet from bitstream:
+        //    let packet = ac_ffmpeg::codec::Packet::new(&pixel_data);
+        //
+        // 2. Decode the packet:
+        //    let decoder = self.decoder.as_mut().unwrap();
+        //    let frames = decoder.decode_packet(&packet)
+        //        .map_err(|e| CodecError::DecodingFailed(e.to_string()))?;
+        //
+        // 3. Extract first frame:
+        //    let frame = frames.into_iter().next()
+        //        .ok_or_else(|| CodecError::DecodingFailed("No frame decoded".to_string()))?;
+        //
+        // 4. Convert frame to output pixel format if needed:
+        //    let scaler = VideoFrameScaler::builder()
+        //        .source_pixel_format(frame.pixel_format())
+        //        .target_pixel_format(format_to_ac_ffmpeg(self.config.output_format))
+        //        .build()?;
+        //    let scaled_frame = scaler.scale(&frame)?;
+        //
+        // 5. Copy pixel data from frame planes:
+        //    let mut pixel_data = Vec::new();
+        //    for plane in scaled_frame.planes() {
+        //        pixel_data.extend_from_slice(plane);
+        //    }
+        //
+        // References:
+        // - ac-ffmpeg docs: https://docs.rs/ac-ffmpeg/latest/ac_ffmpeg/codec/video/
+        // - GitHub: https://github.com/angelcam/rust-ac-ffmpeg
+        //
+        // For now, return mock decoded frame to enable end-to-end testing
         let output_size = self.config.output_format.buffer_size(width, height);
         let decoded_pixel_data = vec![128u8; output_size];  // Mock gray frame
 
