@@ -139,6 +139,68 @@ impl StreamingNodeFactory for VideoDecoderNodeFactory {
     }
 }
 
+#[cfg(feature = "video")]
+struct VideoScalerNodeFactory;
+
+#[cfg(feature = "video")]
+impl StreamingNodeFactory for VideoScalerNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::video::{VideoScalerNode, VideoScalerConfig};
+
+        let config = if params.is_null() {
+            VideoScalerConfig::default()
+        } else {
+            serde_json::from_value(params.clone())
+                .map_err(|e| Error::Execution(format!("Invalid VideoScaler config: {}", e)))?
+        };
+
+        let node = VideoScalerNode::new(config)
+            .map_err(|e| Error::Execution(format!("Failed to create VideoScaler: {}", e)))?;
+
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "VideoScaler"
+    }
+}
+
+#[cfg(feature = "video")]
+struct VideoFormatConverterNodeFactory;
+
+#[cfg(feature = "video")]
+impl StreamingNodeFactory for VideoFormatConverterNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::video::{VideoFormatConverterNode, VideoFormatConverterConfig};
+
+        let config = if params.is_null() {
+            VideoFormatConverterConfig::default()
+        } else {
+            serde_json::from_value(params.clone())
+                .map_err(|e| Error::Execution(format!("Invalid VideoFormatConverter config: {}", e)))?
+        };
+
+        let node = VideoFormatConverterNode::new(config)
+            .map_err(|e| Error::Execution(format!("Failed to create VideoFormatConverter: {}", e)))?;
+
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "VideoFormatConverter"
+    }
+}
+
 // Temporarily disabled - SynchronizedAudioVideoNode has incomplete implementation
 /*
 struct SynchronizedAudioVideoNodeFactory;
@@ -787,6 +849,8 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
     {
         registry.register(Arc::new(VideoEncoderNodeFactory));
         registry.register(Arc::new(VideoDecoderNodeFactory));
+        registry.register(Arc::new(VideoScalerNodeFactory));
+        registry.register(Arc::new(VideoFormatConverterNodeFactory));
     }
 
     // registry.register(Arc::new(SynchronizedAudioVideoNodeFactory));
