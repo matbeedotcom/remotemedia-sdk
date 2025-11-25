@@ -31,16 +31,22 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             width,
             height,
             format,
+            codec,
             frame_number,
             timestamp_us,
-        } => DataType::Video(VideoFrame {
-            pixel_data: pixel_data.clone(),
-            width: *width,
-            height: *height,
-            format: *format,
-            frame_number: *frame_number,
-            timestamp_us: *timestamp_us,
-        }),
+            is_keyframe,
+        } => {
+            DataType::Video(VideoFrame {
+                pixel_data: pixel_data.clone(),
+                width: *width,
+                height: *height,
+                format: *format as i32,  // Convert PixelFormat enum to i32
+                frame_number: *frame_number,
+                timestamp_us: *timestamp_us,
+                codec: codec.map(|c| c as i32).unwrap_or(0),  // Convert VideoCodec to i32
+                is_keyframe: *is_keyframe,
+            })
+        }
         RuntimeData::Tensor { data, shape, dtype } => {
             DataType::Tensor(TensorBuffer {
                 data: data.clone(),
@@ -124,14 +130,42 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
                 channels: audio.channels,
             })
         }
-        Some(DataType::Video(video)) => Some(RuntimeData::Video {
-            pixel_data: video.pixel_data.clone(),
-            width: video.width,
-            height: video.height,
-            format: video.format,
-            frame_number: video.frame_number,
-            timestamp_us: video.timestamp_us,
-        }),
+        Some(DataType::Video(video)) => {
+            use remotemedia_runtime_core::data::video::{PixelFormat, VideoCodec};
+
+            // Convert i32 format to PixelFormat enum
+            let format = match video.format {
+                0 => PixelFormat::Unspecified,
+                1 => PixelFormat::Rgb24,
+                2 => PixelFormat::Rgba32,
+                3 => PixelFormat::Yuv420p,
+                4 => PixelFormat::Unspecified, // GRAY8 not mapped
+                5 => PixelFormat::I420,
+                6 => PixelFormat::NV12,
+                255 => PixelFormat::Encoded,
+                _ => PixelFormat::Unspecified,
+            };
+
+            // Convert i32 codec to VideoCodec enum
+            let codec = match video.codec {
+                0 => None,  // Unspecified = raw frame
+                1 => Some(VideoCodec::Vp8),
+                2 => Some(VideoCodec::H264),
+                3 => Some(VideoCodec::Av1),
+                _ => None,
+            };
+
+            Some(RuntimeData::Video {
+                pixel_data: video.pixel_data.clone(),
+                width: video.width,
+                height: video.height,
+                format,
+                codec,
+                frame_number: video.frame_number,
+                timestamp_us: video.timestamp_us,
+                is_keyframe: video.is_keyframe,
+            })
+        }
         Some(DataType::Tensor(tensor)) => Some(RuntimeData::Tensor {
             data: tensor.data.clone(),
             shape: tensor.shape.iter().map(|&s| s as i32).collect(),

@@ -25,6 +25,10 @@ pub mod remote_pipeline;
 pub mod streaming_node;
 pub mod streaming_registry;
 
+// Video codec support (spec 012)
+#[cfg(feature = "video")]
+pub mod video;
+
 // Temporarily disabled - incomplete implementation
 // pub mod sync_av;
 // pub mod video_processor;

@@ -56,6 +56,61 @@ impl RuntimeData {
         }
     }
 
+    /// Create video runtime data (Spec 012: Video Codec Support)
+    ///
+    /// Serializes video frame with metadata for zero-copy IPC transfer.
+    ///
+    /// # Binary Format
+    /// ```text
+    /// width (4 bytes) | height (4 bytes) | format (1 byte) | codec (1 byte) |
+    /// frame_number (8 bytes) | is_keyframe (1 byte) | pixel_data (variable)
+    /// ```
+    ///
+    /// Total metadata overhead: 19 bytes + pixel_data
+    ///
+    /// # Arguments
+    /// * `pixel_data` - Raw pixel data or encoded bitstream
+    /// * `width` - Frame width in pixels
+    /// * `height` - Frame height in pixels
+    /// * `format` - Pixel format (0-255, see PixelFormat enum)
+    /// * `codec` - Video codec (0=None/raw, 1=VP8, 2=H264, 3=AV1)
+    /// * `frame_number` - Sequential frame number
+    /// * `is_keyframe` - True for I-frames
+    /// * `session_id` - Session identifier
+    pub fn video(
+        pixel_data: &[u8],
+        width: u32,
+        height: u32,
+        format: u8,
+        codec: u8,
+        frame_number: u64,
+        is_keyframe: bool,
+        session_id: &str,
+    ) -> Self {
+        let mut payload = Vec::with_capacity(19 + pixel_data.len());
+
+        // Video metadata (19 bytes)
+        payload.extend_from_slice(&width.to_le_bytes());
+        payload.extend_from_slice(&height.to_le_bytes());
+        payload.push(format);
+        payload.push(codec);
+        payload.extend_from_slice(&frame_number.to_le_bytes());
+        payload.push(if is_keyframe { 1 } else { 0 });
+
+        // Pixel data (zero-copy via extend)
+        payload.extend_from_slice(pixel_data);
+
+        Self {
+            data_type: DataType::Video,
+            session_id: session_id.to_string(),
+            timestamp: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_micros() as u64,
+            payload,
+        }
+    }
+
     /// Create control message runtime data (spec 007)
     ///
     /// Serializes control message as JSON for IPC transfer per wire format spec.
@@ -115,6 +170,74 @@ impl RuntimeData {
         bytes.extend_from_slice(&self.payload);
 
         bytes
+    }
+
+    /// Deserialize video frame from payload (Spec 012)
+    ///
+    /// Extracts video metadata from the payload and returns a tuple:
+    /// (width, height, format, codec, frame_number, is_keyframe, pixel_data)
+    ///
+    /// # Returns
+    /// * `Ok((u32, u32, u8, u8, u64, bool, &[u8]))` - Video metadata and pixel data slice
+    /// * `Err(String)` - If payload is malformed
+    pub fn video_metadata(&self) -> Result<(u32, u32, u8, u8, u64, bool, &[u8]), String> {
+        if self.data_type != DataType::Video {
+            return Err("Not a video frame".to_string());
+        }
+
+        if self.payload.len() < 19 {
+            return Err("Video payload too short".to_string());
+        }
+
+        let mut pos = 0;
+
+        // Width (4 bytes)
+        let width = u32::from_le_bytes([
+            self.payload[pos],
+            self.payload[pos + 1],
+            self.payload[pos + 2],
+            self.payload[pos + 3],
+        ]);
+        pos += 4;
+
+        // Height (4 bytes)
+        let height = u32::from_le_bytes([
+            self.payload[pos],
+            self.payload[pos + 1],
+            self.payload[pos + 2],
+            self.payload[pos + 3],
+        ]);
+        pos += 4;
+
+        // Format (1 byte)
+        let format = self.payload[pos];
+        pos += 1;
+
+        // Codec (1 byte)
+        let codec = self.payload[pos];
+        pos += 1;
+
+        // Frame number (8 bytes)
+        let frame_number = u64::from_le_bytes([
+            self.payload[pos],
+            self.payload[pos + 1],
+            self.payload[pos + 2],
+            self.payload[pos + 3],
+            self.payload[pos + 4],
+            self.payload[pos + 5],
+            self.payload[pos + 6],
+            self.payload[pos + 7],
+        ]);
+        pos += 8;
+
+        // Is keyframe (1 byte)
+        let is_keyframe = self.payload[pos] != 0;
+        pos += 1;
+
+        // Pixel data (rest of payload)
+        let pixel_data = &self.payload[pos..];
+
+        Ok((width, height, format, codec, frame_number, is_keyframe, pixel_data))
     }
 
     /// Convert from bytes after IPC transfer
