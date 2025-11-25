@@ -19,7 +19,6 @@ use numpy::{PyArray, PyArrayDyn, PyArrayMethods};
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
 
 use remotemedia_runtime_core::audio::{AudioBuffer, AudioFormat};
 
