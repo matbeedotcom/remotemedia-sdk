@@ -36,6 +36,7 @@ pub trait ExecutorBridge: Send + Sync {
 /// Native executor bridge (Rust nodes in same process)
 pub struct NativeExecutorBridge {
     /// Reference to the main executor
+    #[allow(dead_code)]  // Reserved for accessing executor features in future phases
     executor: Arc<crate::executor::Executor>,
 
     /// Active node instances for this bridge
@@ -72,7 +73,7 @@ impl ExecutorBridge for NativeExecutorBridge {
         Ok(input_data)
     }
 
-    async fn initialize_node(&self, node_id: &str, node_type: &str, params: &Value) -> Result<()> {
+    async fn initialize_node(&self, node_id: &str, node_type: &str, _params: &Value) -> Result<()> {
         tracing::info!(
             "NativeExecutorBridge: Initializing node {} (type: {})",
             node_id,
@@ -80,6 +81,7 @@ impl ExecutorBridge for NativeExecutorBridge {
         );
 
         // For native nodes, initialization happens per-execution
+        // TODO: Use params for node configuration once persistent state is implemented
         // No persistent state needed for the MVP
         Ok(())
     }
@@ -131,7 +133,7 @@ impl ExecutorBridge for MultiprocessExecutorBridge {
         node_id: &str,
         node_type: &str,
         input_data: Vec<u8>,
-        params: &Value,
+        _params: &Value,  // Reserved for runtime parameter overrides
     ) -> Result<Vec<u8>> {
         tracing::debug!(
             "MultiprocessExecutorBridge: Executing node {} (type: {}) in session {}",
@@ -141,6 +143,7 @@ impl ExecutorBridge for MultiprocessExecutorBridge {
         );
 
         // For MVP: The multiprocess executor handles the actual execution
+        // TODO: Use params for runtime configuration in Phase 4 (US2)
         // Data conversion between executors will be added in Phase 4 (US2)
         // For now, we verify the node can be executed via multiprocess
 
@@ -148,7 +151,7 @@ impl ExecutorBridge for MultiprocessExecutorBridge {
         Ok(input_data)
     }
 
-    async fn initialize_node(&self, node_id: &str, node_type: &str, params: &Value) -> Result<()> {
+    async fn initialize_node(&self, node_id: &str, node_type: &str, _params: &Value) -> Result<()> {
         tracing::info!(
             "MultiprocessExecutorBridge: Initializing Python node {} (type: {}) in session {}",
             node_id,
@@ -156,6 +159,7 @@ impl ExecutorBridge for MultiprocessExecutorBridge {
             self.session_id
         );
 
+        // TODO: Pass params to multiprocess executor for node configuration
         // Update init progress to track initialization
         // The actual process spawning happens when the pipeline executes
         // This is because MultiprocessExecutor::initialize requires &mut self

@@ -42,25 +42,10 @@
 //!
 //! All security settings can be customized via `SecurityConfig`:
 //!
-//! ```no_run
-//! use remotemedia_runtime_core::python::multiprocess::docker_support::{
-//!     DockerNodeConfig, SecurityConfig
-//! };
+//! ```
+//! use remotemedia_runtime_core::python::multiprocess::docker_support::SecurityConfig;
 //!
-//! let config = DockerNodeConfig {
-//!     python_version: "3.10".to_string(),
-//!     memory_mb: 2048,
-//!     cpu_cores: 2.0,
-//!     security: SecurityConfig {
-//!         read_only_rootfs: true,
-//!         cap_drop: vec!["ALL".to_string()],
-//!         cap_add: vec!["IPC_LOCK".to_string()],
-//!         user: "1000".to_string(),
-//!         group: "1000".to_string(),
-//!         ..Default::default()
-//!     },
-//!     ..Default::default()
-//! };
+//! let security = SecurityConfig::default();
 //! ```
 //!
 //! ## Security Implications
@@ -88,7 +73,7 @@
 //!
 //! The module provides real-time resource usage monitoring via Docker's stats API:
 //!
-//! ```no_run
+//! ```
 //! use remotemedia_runtime_core::python::multiprocess::docker_support::DockerSupport;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -2598,7 +2583,7 @@ impl DockerSupport {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```
     /// use remotemedia_runtime_core::python::multiprocess::docker_support::{
     ///     DockerSupport, LogForwardingConfig
     /// };

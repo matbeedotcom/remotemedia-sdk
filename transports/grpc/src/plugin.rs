@@ -6,12 +6,13 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```
 //! use remotemedia_grpc::plugin::GrpcTransportPlugin;
-//! use remotemedia_runtime_core::transport::PluginRegistry;
+//! use remotemedia_runtime_core::transport::TransportPluginRegistry;
+//! use std::sync::Arc;
 //!
-//! let mut registry = PluginRegistry::new();
-//! registry.register(Box::new(GrpcTransportPlugin));
+//! let registry = TransportPluginRegistry::new();
+//! registry.register(Arc::new(GrpcTransportPlugin)).unwrap();
 //! ```
 
 use async_trait::async_trait;

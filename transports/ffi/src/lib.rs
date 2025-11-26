@@ -28,8 +28,8 @@
 #![warn(clippy::all)]
 
 mod api;
-mod instance_handler;
-mod marshal;
+pub mod instance_handler;
+pub mod marshal;
 mod numpy_bridge;
 
 use pyo3::prelude::*;

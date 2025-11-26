@@ -152,7 +152,7 @@ impl VideoEncoderBackend for FFmpegEncoder {
 
         // Lazy initialize encoder on first frame
         if self.encoder.is_none() {
-            use ac_ffmpeg::codec::{Encoder, video::{VideoEncoder, frame::get_pixel_format}};
+            use ac_ffmpeg::codec::video::{VideoEncoder, frame::get_pixel_format};
             use ac_ffmpeg::time::TimeBase;
 
             let codec_name = match self.config.codec {
@@ -315,7 +315,7 @@ impl VideoDecoderBackend for FFmpegDecoder {
 
         // Lazy initialize decoder on first frame
         if self.decoder.is_none() {
-            use ac_ffmpeg::codec::{Decoder, video::VideoDecoder};
+            use ac_ffmpeg::codec::video::VideoDecoder;
 
             let codec_name = match codec {
                 VideoCodec::Vp8 => "vp8",

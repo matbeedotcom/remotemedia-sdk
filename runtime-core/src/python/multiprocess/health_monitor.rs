@@ -266,8 +266,9 @@ impl HealthMonitor {
 
     /// Monitor process exit (event-driven)
     async fn monitor_exit(&self, process: ProcessHandle) {
-        let event_sender = self.event_sender.clone();
-        let health_stats = self.health_stats.clone();
+        // TODO: Implement event-driven monitoring using these channels
+        let _event_sender = self.event_sender.clone();  // Reserved for future health event notifications
+        let _health_stats = self.health_stats.clone();  // Reserved for stats collection on exit
 
         tokio::spawn(async move {
             // This task will be notified by the process manager when exit occurs

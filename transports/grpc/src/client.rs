@@ -13,11 +13,14 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```
 //! use remotemedia_grpc::client::GrpcPipelineClient;
 //!
-//! let client = GrpcPipelineClient::new("localhost:50051", None).await?;
-//! let result = client.execute_unary(manifest, input).await?;
+//! # tokio_test::block_on(async {
+//! let client = GrpcPipelineClient::new("localhost:50051", None).await.unwrap();
+//! // Use client.execute_unary(manifest, input).await for unary execution
+//! // Use client.create_stream_session(manifest).await for streaming
+//! # });
 //! ```
 
 use async_trait::async_trait;
@@ -56,8 +59,12 @@ impl GrpcPipelineClient {
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// let client = GrpcPipelineClient::new("localhost:50051", None).await?;
+    /// ```
+    /// use remotemedia_grpc::client::GrpcPipelineClient;
+    ///
+    /// # tokio_test::block_on(async {
+    /// let client = GrpcPipelineClient::new("localhost:50051", None).await.unwrap();
+    /// # });
     /// ```
     pub async fn new(endpoint: impl Into<String>, auth_token: Option<String>) -> Result<Self> {
         let endpoint = endpoint.into();

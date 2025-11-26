@@ -33,9 +33,7 @@ pub mod video;
 // pub mod sync_av;
 // pub mod video_processor;
 
-#[cfg(feature = "whisper")]
-mod whisper;
-#[cfg(feature = "whisper")]
+pub mod whisper;
 pub use whisper::RustWhisperNode;
 
 #[cfg(feature = "silero-vad")]
@@ -588,21 +586,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_registry() {
-        let registry = NodeRegistry::default();
+        use crate::nodes::registry::RuntimeHint;
 
-        assert!(registry.has_node_type("PassThrough"));
-        assert!(registry.has_node_type("Echo"));
-        assert!(!registry.has_node_type("NonExistent"));
+        // Use create_builtin_registry() which registers built-in nodes
+        let registry = create_builtin_registry();
 
-        let node = registry.create("PassThrough").unwrap();
-        let info = node.info();
-        assert_eq!(info.name, "PassThrough");
+        assert!(registry.has_rust_impl("PassThrough"));
+        assert!(registry.has_rust_impl("Echo"));
+        assert!(!registry.has_rust_impl("NonExistent"));
+
+        // Verify we can create a node (no info() method on NodeExecutor trait)
+        let node_result =
+            registry.create_node("PassThrough", RuntimeHint::Rust, serde_json::Value::Null);
+        assert!(node_result.is_ok());
     }
 
     #[tokio::test]
     async fn test_registry_create_unknown() {
-        let registry = NodeRegistry::default();
-        let result = registry.create("UnknownNode");
+        use crate::nodes::registry::RuntimeHint;
+
+        let registry = create_builtin_registry();
+        let result =
+            registry.create_node("UnknownNode", RuntimeHint::Rust, serde_json::Value::Null);
         assert!(result.is_err());
     }
 }

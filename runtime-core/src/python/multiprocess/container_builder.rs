@@ -3,14 +3,14 @@
 //! Handles Docker image building from configurations, caching built images,
 //! and managing the image lifecycle.
 
-use crate::python::multiprocess::docker_support::{DockerNodeConfig, SecurityConfig};
+use crate::python::multiprocess::docker_support::DockerNodeConfig;
 use crate::{Error, Result};
 use bollard::image::{BuildImageOptions, ListImagesOptions, TagImageOptions};
 use bollard::Docker;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use http_body_util::{BodyExt, Either, Full};
+use http_body_util::{Either, Full};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -479,21 +479,25 @@ impl ContainerBuilder {
     /// Result containing the generated Dockerfile string, or error if configuration is invalid
     ///
     /// # Example
-    /// ```ignore
+    /// ```
+    /// use remotemedia_runtime_core::python::multiprocess::docker_support::DockerNodeConfig;
+    /// use remotemedia_runtime_core::python::multiprocess::container_builder::ContainerBuilder;
+    ///
     /// let config = DockerNodeConfig {
     ///     python_version: "3.10".to_string(),
     ///     base_image: None,
-    ///     system_packages: vec!["curl".to_string(), "git".to_string()],
-    ///     python_packages: vec!["numpy".to_string(), "torch".to_string()],
+    ///     system_packages: vec![],
+    ///     python_packages: vec![],
     ///     memory_mb: 2048,
     ///     cpu_cores: 2.0,
     ///     gpu_devices: vec![],
     ///     shm_size_mb: 2048,
     ///     env_vars: Default::default(),
     ///     volumes: vec![],
+    ///     security: Default::default(),
     /// };
-    ///
-    /// let dockerfile = ContainerBuilder::generate_dockerfile(&config)?;
+    /// let dockerfile = ContainerBuilder::generate_dockerfile(&config).unwrap();
+    /// assert!(dockerfile.contains("FROM"));
     /// ```
     pub fn generate_dockerfile(config: &DockerNodeConfig) -> Result<String> {
         // Validate configuration before generating
@@ -767,6 +771,7 @@ impl ContainerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::python::multiprocess::docker_support::SecurityConfig;
     use std::collections::HashMap;
 
     fn create_test_config() -> DockerNodeConfig {

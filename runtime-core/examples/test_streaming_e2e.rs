@@ -60,9 +60,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             pixel_data: input_pixels,
             width: 2,
             height: 2,
-            format: 1, // RGB24
+            format: remotemedia_runtime_core::data::PixelFormat::Rgb24,
+            codec: None,
             frame_number: 0,
             timestamp_us: 0,
+            is_keyframe: true,
         };
 
         // Send input (wrap in TransportData)

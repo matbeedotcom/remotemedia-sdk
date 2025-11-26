@@ -56,9 +56,9 @@ impl ExecutionTarget {
     /// Check if the execution target is still running
     pub async fn is_alive(&self) -> bool {
         match self {
-            ExecutionTarget::Process(child) => {
+            ExecutionTarget::Process(_child) => {
                 // Check process status
-                // Note: This would need the child to be mutable in real implementation
+                // TODO: This would need the child to be mutable to call try_wait()
                 // For now, return true as placeholder
                 true
             }
@@ -182,6 +182,11 @@ pub struct SpawnConfig {
 
     /// Capture stdout/stderr
     pub capture_output: bool,
+
+    /// Additional Python modules to import for node registration
+    /// These modules are imported before looking up the node type,
+    /// allowing tests and custom applications to register nodes dynamically.
+    pub register_modules: Vec<String>,
 }
 
 impl Default for SpawnConfig {
@@ -192,6 +197,7 @@ impl Default for SpawnConfig {
             env_vars: HashMap::new(),
             working_dir: None,
             capture_output: true,
+            register_modules: Vec::new(),
         }
     }
 }
@@ -201,8 +207,8 @@ pub struct ProcessManager {
     /// Active processes
     processes: Arc<RwLock<HashMap<u32, ProcessHandle>>>,
 
-    /// Spawn configuration
-    spawn_config: SpawnConfig,
+    /// Spawn configuration (wrapped in RwLock for runtime updates)
+    spawn_config: Arc<RwLock<SpawnConfig>>,
 
     /// Configuration
     config: MultiprocessConfig,
@@ -221,10 +227,26 @@ impl ProcessManager {
 
         Self {
             processes: Arc::new(RwLock::new(HashMap::new())),
-            spawn_config,
+            spawn_config: Arc::new(RwLock::new(spawn_config)),
             config,
             exit_handlers: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    /// Register a Python module for node registration
+    ///
+    /// This module will be imported before looking up node types,
+    /// allowing tests and custom applications to register nodes dynamically.
+    pub async fn register_module(&self, module: String) {
+        let mut config = self.spawn_config.write().await;
+        if !config.register_modules.contains(&module) {
+            config.register_modules.push(module);
+        }
+    }
+
+    /// Get the list of registered modules
+    pub async fn get_registered_modules(&self) -> Vec<String> {
+        self.spawn_config.read().await.register_modules.clone()
     }
 
     /// Spawn a new Python node process
@@ -242,8 +264,11 @@ impl ProcessManager {
             session_id
         );
 
+        // Read spawn config once at the start
+        let spawn_config = self.spawn_config.read().await;
+
         // Build command for Python subprocess
-        let mut command = Command::new(&self.spawn_config.python_executable);
+        let mut command = Command::new(&spawn_config.python_executable);
 
         // Add multiprocess runner module
         command.args([
@@ -258,15 +283,19 @@ impl ProcessManager {
             "--params-stdin", // Signal that params come from stdin
         ]);
 
+        // Add custom node registration modules
+        for module in &spawn_config.register_modules {
+            command.args(["--register-module", module]);
+        }
+
         // Set environment variables
-        for (key, value) in &self.spawn_config.env_vars {
+        for (key, value) in &spawn_config.env_vars {
             command.env(key, value);
         }
 
         // Set Python path
-        if !self.spawn_config.python_path.is_empty() {
-            let python_path = self
-                .spawn_config
+        if !spawn_config.python_path.is_empty() {
+            let python_path = spawn_config
                 .python_path
                 .iter()
                 .map(|p| p.to_string_lossy())
@@ -277,7 +306,7 @@ impl ProcessManager {
         }
 
         // Set working directory
-        if let Some(ref dir) = self.spawn_config.working_dir {
+        if let Some(ref dir) = spawn_config.working_dir {
             command.current_dir(dir);
         }
 
@@ -290,10 +319,14 @@ impl ProcessManager {
 
         // Configure I/O
         command.stdin(Stdio::piped()); // Always need stdin for params
-        if self.spawn_config.capture_output {
+        let capture_output = spawn_config.capture_output;
+        if capture_output {
             command.stdout(Stdio::piped());
             command.stderr(Stdio::piped());
         }
+
+        // Drop the lock before spawning (don't hold across await points)
+        drop(spawn_config);
 
         // Spawn the process
         let mut child = command
@@ -303,7 +336,7 @@ impl ProcessManager {
         let pid = child.id();
 
         // Capture stderr for logging if process crashes
-        let stderr_handle = if self.spawn_config.capture_output {
+        let stderr_handle = if capture_output {
             child.stderr.take()
         } else {
             None
@@ -510,7 +543,7 @@ impl ProcessManager {
         &self,
         node_type: &str,
         node_id: &str,
-        params: &Value,
+        _params: &Value,  // Reserved for node-specific container configuration
         session_id: &str,
         docker_support: &super::docker_support::DockerSupport,
         docker_config: &super::docker_support::DockerNodeConfig,

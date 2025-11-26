@@ -518,17 +518,20 @@ impl PeerConnection {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
-    /// use std::sync::Arc;
-    /// use webrtc::track::track_remote::TrackRemote;
-    /// use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
-    /// use webrtc::rtp_transceiver::RTCRtpTransceiver;
+    /// Register a callback to handle incoming media tracks.
+    /// The callback receives the remote track, RTP receiver, and transceiver.
     ///
-    /// peer_connection.on_track(Box::new(move |track: Arc<TrackRemote>, _receiver: Arc<RTCRtpReceiver>, _transceiver: Arc<RTCRtpTransceiver>| {
-    ///     Box::pin(async move {
-    ///         // Handle incoming audio/video packets
-    ///     })
-    /// })).await;
+    /// ```
+    /// use std::sync::Arc;
+    /// use std::pin::Pin;
+    /// use std::future::Future;
+    ///
+    /// // Handler signature for on_track callback
+    /// type TrackHandler = Box<dyn Fn(
+    ///     Arc<webrtc::track::track_remote::TrackRemote>,
+    ///     Arc<webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver>,
+    ///     Arc<webrtc::rtp_transceiver::RTCRtpTransceiver>,
+    /// ) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
     /// ```
     pub async fn on_track<F>(&self, handler: F)
     where

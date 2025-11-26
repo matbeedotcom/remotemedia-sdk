@@ -21,18 +21,11 @@ use std::sync::{Arc, OnceLock, RwLock};
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use remotemedia_runtime_core::transport::plugin_registry::TransportPluginRegistry;
-/// use std::sync::Arc;
 ///
 /// let registry = TransportPluginRegistry::new();
-///
-/// // Register a plugin
-/// let plugin = Arc::new(GrpcTransportPlugin);
-/// registry.register(plugin)?;
-///
-/// // Lookup a plugin
-/// let grpc = registry.get("grpc")?;
+/// assert!(registry.list().is_empty());
 /// ```
 pub struct TransportPluginRegistry {
     plugins: RwLock<HashMap<String, Arc<dyn TransportPlugin>>>,
@@ -43,7 +36,9 @@ impl TransportPluginRegistry {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// use remotemedia_runtime_core::transport::plugin_registry::TransportPluginRegistry;
+    ///
     /// let registry = TransportPluginRegistry::new();
     /// ```
     pub fn new() -> Self {
@@ -75,18 +70,8 @@ impl TransportPluginRegistry {
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// use std::sync::Arc;
-    ///
-    /// let registry = TransportPluginRegistry::new();
-    /// let plugin = Arc::new(GrpcTransportPlugin);
-    ///
-    /// // First registration succeeds
-    /// registry.register(plugin.clone())?;
-    ///
-    /// // Duplicate registration fails
-    /// assert!(registry.register(plugin).is_err());
-    /// ```
+    /// See the integration tests in `tests/fixtures/mock_transport_plugin.rs` for
+    /// a complete example of plugin registration.
     ///
     /// # Panics
     ///
@@ -126,15 +111,13 @@ impl TransportPluginRegistry {
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// let registry = TransportPluginRegistry::new();
-    /// registry.register(Arc::new(GrpcTransportPlugin))?;
-    /// registry.register(Arc::new(WebRtcTransportPlugin))?;
+    /// ```
+    /// use remotemedia_runtime_core::transport::plugin_registry::TransportPluginRegistry;
     ///
-    /// let plugins = registry.list();
-    /// assert_eq!(plugins.len(), 2);
-    /// assert!(plugins.contains(&"grpc".to_string()));
-    /// assert!(plugins.contains(&"webrtc".to_string()));
+    /// let registry = TransportPluginRegistry::new();
+    /// // Initially empty
+    /// assert!(registry.list().is_empty());
+    /// // After registering plugins, list() returns their names
     /// ```
     ///
     /// # Lock Poisoning
@@ -166,18 +149,14 @@ impl TransportPluginRegistry {
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// let registry = TransportPluginRegistry::new();
-    /// let plugin = Arc::new(GrpcTransportPlugin);
-    /// registry.register(plugin)?;
+    /// ```
+    /// use remotemedia_runtime_core::transport::plugin_registry::TransportPluginRegistry;
     ///
-    /// // Lookup succeeds
-    /// let grpc = registry.get("grpc");
-    /// assert!(grpc.is_some());
+    /// let registry = TransportPluginRegistry::new();
     ///
     /// // Lookup for non-existent plugin returns None
-    /// let webrtc = registry.get("webrtc");
-    /// assert!(webrtc.is_none());
+    /// let plugin = registry.get("nonexistent");
+    /// assert!(plugin.is_none());
     /// ```
     ///
     /// # Thread Safety
@@ -220,7 +199,7 @@ static GLOBAL_REGISTRY: OnceLock<TransportPluginRegistry> = OnceLock::new();
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use remotemedia_runtime_core::transport::plugin_registry::global_registry;
 ///
 /// let registry = global_registry();
@@ -247,14 +226,13 @@ pub fn global_registry() -> &'static TransportPluginRegistry {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use remotemedia_runtime_core::transport::plugin_registry::init_global_registry;
-/// use std::sync::Arc;
 ///
-/// init_global_registry(|registry| {
-///     registry.register(Arc::new(MyPlugin))?;
+/// init_global_registry(|_registry| {
+///     // Register plugins here
 ///     Ok(())
-/// })?;
+/// }).unwrap();
 /// ```
 pub fn init_global_registry<F>(init_fn: F) -> Result<()>
 where
@@ -287,19 +265,19 @@ where
 ///
 /// Applications should register transport plugins explicitly:
 ///
-/// ```rust,ignore
+/// ```
 /// use remotemedia_runtime_core::transport::plugin_registry::global_registry;
-/// use remotemedia_grpc::GrpcTransportPlugin;
-/// use remotemedia_webrtc::WebRtcTransportPlugin;
-/// use std::sync::Arc;
 ///
-/// // Register gRPC plugin
+/// // Get the global registry singleton
 /// let registry = global_registry();
-/// registry.register(Arc::new(GrpcTransportPlugin))?;
 ///
-/// // Register WebRTC plugin
-/// registry.register(Arc::new(WebRtcTransportPlugin))?;
-/// # Ok::<(), remotemedia_runtime_core::Error>(())
+/// // List currently registered plugins
+/// let plugins = registry.list();
+/// println!("Registered plugins: {:?}", plugins);
+///
+/// // At application startup, register plugins from transport crates:
+/// // use remotemedia_grpc::GrpcTransportPlugin;
+/// // registry.register(Arc::new(GrpcTransportPlugin)).unwrap();
 /// ```
 ///
 /// # Future HTTP Plugin
