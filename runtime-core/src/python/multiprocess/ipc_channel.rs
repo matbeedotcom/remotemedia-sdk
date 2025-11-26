@@ -390,6 +390,7 @@ pub struct Publisher<'a> {
     channel_name: String,
     inner: iceoryx2::port::publisher::Publisher<ipc::Service, [u8], ()>,
     stats: Arc<RwLock<ChannelStats>>,
+    #[allow(dead_code)]  // Reserved for future backpressure handling
     backpressure: bool,
     _lifetime: std::marker::PhantomData<&'a ()>,
 }

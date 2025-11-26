@@ -193,11 +193,11 @@ impl ContainerBuilder {
     /// Build image with progress logging (T030)
     ///
     /// Builds the Docker image and logs progress information from the Docker daemon.
-    #[instrument(skip(self, tar_data), fields(image_tag = %image_tag))]
+    #[instrument(skip(self, _tar_data), fields(image_tag = %image_tag))]
     async fn build_image_with_progress(
         &self,
         image_tag: &str,
-        tar_data: Vec<u8>,
+        _tar_data: Vec<u8>,  // Used via instrument macro for logging
     ) -> Result<String> {
         let build_options = BuildImageOptions {
             dockerfile: "Dockerfile".to_string(),

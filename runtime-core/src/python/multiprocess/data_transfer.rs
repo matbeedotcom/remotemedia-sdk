@@ -23,7 +23,7 @@ pub struct RuntimeData {
 
 impl RuntimeData {
     /// Create audio runtime data
-    pub fn audio(samples: &[f32], sample_rate: u32, channels: u16, session_id: &str) -> Self {
+    pub fn audio(samples: &[f32], _sample_rate: u32, _channels: u16, session_id: &str) -> Self {
         let payload = unsafe {
             std::slice::from_raw_parts(
                 samples.as_ptr() as *const u8,

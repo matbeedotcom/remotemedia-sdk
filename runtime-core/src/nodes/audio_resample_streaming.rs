@@ -77,9 +77,9 @@ impl AsyncStreamingNode for ResampleStreamingNode {
                 .as_f32()
                 .ok_or_else(|| Error::Execution("Resampler output must be F32".into()))?;
 
-            let num_samples = f32_samples.len() as u64;
+            let _num_samples = f32_samples.len() as u64;  // TODO: Use for metadata
 
-            let bytes: Vec<u8> = f32_samples.iter().flat_map(|&f| f.to_le_bytes()).collect();
+            let _bytes: Vec<u8> = f32_samples.iter().flat_map(|&f| f.to_le_bytes()).collect();  // TODO: Support byte format output
 
             // Return resampled audio as RuntimeData
             return Ok(RuntimeData::Audio {

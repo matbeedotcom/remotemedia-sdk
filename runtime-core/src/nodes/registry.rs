@@ -204,7 +204,7 @@ impl CompositeRegistry {
         hint: RuntimeHint,
         params: Value,
     ) -> Result<Box<dyn NodeExecutor>> {
-        for (idx, registry) in self.registries.iter().enumerate() {
+        for (_idx, registry) in self.registries.iter().enumerate() {
             // Check if this registry has the node type
             let has_node = match hint {
                 RuntimeHint::Rust => registry.has_rust_impl(node_type),

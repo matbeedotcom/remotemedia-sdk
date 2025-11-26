@@ -286,7 +286,7 @@ impl FFmpegDecoder {
 impl VideoDecoderBackend for FFmpegDecoder {
     fn decode(&mut self, input: RuntimeData) -> Result<RuntimeData> {
         // Extract encoded video frame
-        let (pixel_data, width, height, codec, frame_number, timestamp_us) = match input {
+        let (pixel_data, _width, _height, codec, frame_number, timestamp_us) = match input {
             RuntimeData::Video {
                 pixel_data,
                 width,

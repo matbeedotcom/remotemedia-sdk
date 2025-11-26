@@ -235,7 +235,6 @@ impl PipelineRunnerInner {
 
         // Create streaming session router task
         let session_id_clone = session_id.clone();
-        let executor = Arc::clone(&self.executor);
         let manifest_clone = Arc::clone(&manifest);
 
         tokio::spawn(async move {

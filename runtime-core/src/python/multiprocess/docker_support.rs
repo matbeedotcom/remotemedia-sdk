@@ -372,6 +372,7 @@ struct ParsedLogEntry {
     /// Whether this is from stderr
     is_stderr: bool,
     /// Additional fields from JSON logs
+    #[allow(dead_code)]  // Reserved for structured logging metadata
     fields: HashMap<String, serde_json::Value>,
 }
 
