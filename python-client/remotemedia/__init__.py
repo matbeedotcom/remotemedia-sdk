@@ -5,6 +5,9 @@ A Python SDK for building distributed audio/video/data processing pipelines
 with transparent remote offloading capabilities.
 """
 
+# Enable namespace package behavior to allow remotemedia.runtime from FFI package
+__path__ = __import__('pkgutil').extend_path(__path__, __name__)
+
 import logging
 import warnings
 
