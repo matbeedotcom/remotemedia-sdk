@@ -57,8 +57,10 @@ impl PipelineRunner {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// let runner = PipelineRunner::new()?;
+    /// ```
+    /// use remotemedia_runtime_core::transport::PipelineRunner;
+    ///
+    /// let runner = PipelineRunner::new().unwrap();
     /// // Runner is ready to use
     /// ```
     pub fn new() -> Result<Self> {

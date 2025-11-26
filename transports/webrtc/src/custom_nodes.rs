@@ -7,7 +7,7 @@
 //!
 //! ## Registering a Custom Python Node
 //!
-//! ```ignore
+//! ```
 //! use remotemedia_webrtc::custom_nodes::{create_custom_registry, PythonNodeFactory};
 //! use remotemedia_runtime_core::transport::PipelineRunner;
 //! use std::sync::Arc;
@@ -22,7 +22,7 @@
 //!
 //! ## Registering a Custom Rust Node
 //!
-//! ```ignore
+//! ```
 //! use remotemedia_webrtc::custom_nodes::create_custom_registry_with_factories;
 //! use remotemedia_runtime_core::nodes::{StreamingNodeFactory, StreamingNode};
 //!
@@ -68,7 +68,7 @@ impl PythonNodeFactory {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// let factory = PythonNodeFactory::new("MyCustomASR", false);
     /// registry.register(Arc::new(factory));
     /// ```
@@ -123,7 +123,7 @@ impl StreamingNodeFactory for PythonNodeFactory {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
 /// use remotemedia_webrtc::custom_nodes::create_custom_registry;
 ///
 /// let registry = create_custom_registry(&[
@@ -157,7 +157,7 @@ pub fn create_custom_registry(python_nodes: &[(&str, bool)]) -> StreamingNodeReg
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
 /// use remotemedia_webrtc::custom_nodes::{create_custom_registry_with_factories, PythonNodeFactory};
 /// use std::sync::Arc;
 ///

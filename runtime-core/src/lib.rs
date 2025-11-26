@@ -18,23 +18,18 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use remotemedia_runtime_core::transport::PipelineRunner;
 //! use remotemedia_runtime_core::transport::TransportData;
 //! use remotemedia_runtime_core::data::RuntimeData;
-//! use std::sync::Arc;
 //!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let runner = PipelineRunner::new()?;
+//! // Create the pipeline runner
+//! let runner = PipelineRunner::new().unwrap();
 //!
-//!     let manifest = Arc::new(load_manifest()?);
-//!     let input = TransportData::new(RuntimeData::Text("hello".into()));
+//! // Create transport data
+//! let input = TransportData::new(RuntimeData::Text("hello".into()));
 //!
-//!     let output = runner.execute_unary(manifest, input).await?;
-//!     println!("Result: {:?}", output.data);
-//!     Ok(())
-//! }
+//! // Use runner.execute_unary(manifest, input).await for execution
 //! ```
 
 #![warn(clippy::all)]

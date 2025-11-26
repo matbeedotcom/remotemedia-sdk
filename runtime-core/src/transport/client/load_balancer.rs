@@ -11,23 +11,12 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! let endpoints = vec![
-//!     "server1:50051".to_string(),
-//!     "server2:50051".to_string(),
-//!     "server3:50051".to_string(),
-//! ];
+//! ```
+//! use remotemedia_runtime_core::transport::client::LoadBalanceStrategy;
 //!
-//! let pool = EndpointPool::new(endpoints, LoadBalanceStrategy::RoundRobin, config);
-//!
-//! // Select endpoint
-//! let endpoint = pool.select().await?;
-//!
-//! // Execute and track result
-//! match execute_on_endpoint(&endpoint).await {
-//!     Ok(result) => pool.record_success(&endpoint).await,
-//!     Err(e) => pool.record_failure(&endpoint).await,
-//! }
+//! // Load balancing strategies
+//! let strategy = LoadBalanceStrategy::RoundRobin;
+//! // Other options: LoadBalanceStrategy::LeastConnections, LoadBalanceStrategy::Random
 //! ```
 
 use super::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState};

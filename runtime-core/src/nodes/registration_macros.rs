@@ -12,7 +12,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use remotemedia_runtime_core::nodes::registry::NodeRegistry;
 //! use remotemedia_runtime_core::register_python_node;
 //!
@@ -27,9 +27,7 @@
 ///
 /// # Syntax
 ///
-/// ```ignore
-/// register_python_node!(registry, "NodeClassName");
-/// ```
+/// `register_python_node!(registry, "NodeClassName");`
 ///
 /// # Parameters
 ///
@@ -38,7 +36,7 @@
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use remotemedia_runtime_core::nodes::registry::NodeRegistry;
 /// use remotemedia_runtime_core::register_python_node;
 ///
@@ -50,19 +48,8 @@
 ///
 /// # Generated Code
 ///
-/// The macro generates an anonymous factory struct that implements `NodeFactory`:
-///
-/// ```ignore
-/// struct Factory;
-/// impl NodeFactory for Factory {
-///     fn create(&self, _params: Value) -> Result<Box<dyn NodeExecutor>> {
-///         Ok(Box::new(PythonNodeExecutor::new("OmniASRNode")))
-///     }
-///     fn node_type(&self) -> &str { "OmniASRNode" }
-///     fn is_rust_native(&self) -> bool { false }
-/// }
-/// registry.register_python(Arc::new(Factory));
-/// ```
+/// The macro generates an anonymous factory struct that implements `NodeFactory`,
+/// creating a `PythonNodeExecutor` for the given node name.
 #[macro_export]
 macro_rules! register_python_node {
     ($registry:expr, $node_name:literal) => {{
@@ -97,9 +84,7 @@ macro_rules! register_python_node {
 ///
 /// # Syntax
 ///
-/// ```ignore
-/// register_python_nodes!(registry, ["Node1", "Node2", "Node3"]);
-/// ```
+/// `register_python_nodes!(registry, ["Node1", "Node2", "Node3"]);`
 ///
 /// # Parameters
 ///
@@ -108,7 +93,7 @@ macro_rules! register_python_node {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use remotemedia_runtime_core::nodes::registry::NodeRegistry;
 /// use remotemedia_runtime_core::register_python_nodes;
 ///
@@ -124,16 +109,7 @@ macro_rules! register_python_node {
 ///
 /// # Behavior
 ///
-/// Expands to multiple `register_python_node!` invocations:
-///
-/// ```ignore
-/// register_python_nodes!(registry, ["Node1", "Node2"]);
-///
-/// // Expands to:
-/// register_python_node!(registry, "Node1");
-/// register_python_node!(registry, "Node2");
-/// ```
-///
+/// Expands to multiple `register_python_node!` invocations.
 /// Duplicate names are allowed (last registration wins).
 #[macro_export]
 macro_rules! register_python_nodes {
@@ -151,11 +127,7 @@ macro_rules! register_python_nodes {
 ///
 /// # Syntax
 ///
-/// ```ignore
-/// register_rust_node!(registry, NodeType, |params| {
-///     NodeType::new(params)
-/// });
-/// ```
+/// `register_rust_node!(registry, NodeType, |params| { NodeType::new(params) });`
 ///
 /// # Parameters
 ///
@@ -165,22 +137,7 @@ macro_rules! register_python_nodes {
 ///
 /// # Example
 ///
-/// ```ignore
-/// use remotemedia_runtime_core::nodes::registry::NodeRegistry;
-/// use remotemedia_runtime_core::register_rust_node;
-///
-/// struct AudioChunkerNode {
-///     chunk_size: usize,
-/// }
-///
-/// impl NodeHandler for AudioChunkerNode { /* ... */ }
-///
-/// let mut registry = NodeRegistry::new();
-/// register_rust_node!(registry, AudioChunkerNode, |params| {
-///     let chunk_size = params.get("chunk_size")?.as_u64()? as usize;
-///     Ok(AudioChunkerNode { chunk_size })
-/// });
-/// ```
+/// See `register_rust_node_default!` for simpler usage with Default-implementing types.
 ///
 /// # Guarantees
 ///
@@ -226,9 +183,7 @@ macro_rules! register_rust_node {
 ///
 /// # Syntax
 ///
-/// ```ignore
-/// register_rust_node_default!(registry, NodeType);
-/// ```
+/// `register_rust_node_default!(registry, NodeType);`
 ///
 /// # Parameters
 ///
@@ -237,18 +192,7 @@ macro_rules! register_rust_node {
 ///
 /// # Example
 ///
-/// ```ignore
-/// use remotemedia_runtime_core::nodes::registry::NodeRegistry;
-/// use remotemedia_runtime_core::register_rust_node_default;
-///
-/// #[derive(Default)]
-/// struct PassThroughNode;
-///
-/// impl NodeHandler for PassThroughNode { /* ... */ }
-///
-/// let mut registry = NodeRegistry::new();
-/// register_rust_node_default!(registry, PassThroughNode);
-/// ```
+/// Types must implement both `Default` and `NodeHandler` traits.
 ///
 /// # Compile-time Requirements
 ///

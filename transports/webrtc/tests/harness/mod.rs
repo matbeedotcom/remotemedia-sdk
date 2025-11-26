@@ -8,25 +8,15 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use harness::WebRtcTestHarness;
+//! See the integration tests in `tests/` for complete usage examples.
 //!
-//! #[tokio::test]
-//! async fn test_audio_passthrough() {
-//!     let mut harness = WebRtcTestHarness::new(PASSTHROUGH_MANIFEST).await.unwrap();
-//!     let client = harness.create_client("test-client-1").await.unwrap();
-//!     
-//!     // Send audio
-//!     let samples = harness.generate_sine_wave(440.0, 0.1, 48000);
-//!     client.send_audio(&samples, 48000).await.unwrap();
-//!     
-//!     // Receive and validate
-//!     let output = harness.expect_audio_output(&client, Duration::from_secs(5)).await.unwrap();
-//!     harness.assert_audio_similar(&samples, &output, 0.01);
-//!     
-//!     harness.shutdown().await;
-//! }
-//! ```
+//! Basic usage pattern:
+//!
+//! 1. Create a `WebRtcTestHarness` with a pipeline manifest
+//! 2. Create test clients using `harness.create_client()`
+//! 3. Send media data using client methods
+//! 4. Validate outputs using harness assertion helpers
+//! 5. Call `harness.shutdown()` to clean up
 
 pub mod media;
 pub mod test_client;

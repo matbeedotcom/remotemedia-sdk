@@ -212,13 +212,50 @@ impl ChannelRegistry {
     }
 
     /// Destroy a channel and cleanup resources
+    /// 
+    /// This method:
+    /// 1. Removes the service from the registry (drops all publishers/subscribers)
+    /// 2. Removes the channel handle
+    /// 3. When the service is dropped, iceoryx2 cleans up the shared memory
     #[cfg(feature = "multiprocess")]
     pub async fn destroy_channel(&self, channel: ChannelHandle) -> Result<()> {
+        let channel_name = channel.name.clone();
+        
+        // CRITICAL: Remove the service FIRST to drop publishers/subscribers
+        // When the service is dropped, iceoryx2 cleans up its shared memory segments
+        {
+            let mut services = self.services.write().await;
+            if let Some(_service) = services.remove(&channel_name) {
+                tracing::debug!("Removed iceoryx2 service for channel: {}", channel_name);
+                // Service is dropped here, which triggers iceoryx2 cleanup
+            }
+        }
+        
+        // Then remove the channel handle
         let mut channels = self.channels.write().await;
-        channels.remove(&channel.name);
+        channels.remove(&channel_name);
 
-        tracing::info!("Destroyed channel: {}", channel.name);
+        tracing::info!("Destroyed channel and cleaned up iceoryx2 service: {}", channel_name);
         Ok(())
+    }
+    
+    /// Drain all pending messages from a channel's subscriber
+    /// Call this before destroying a channel to ensure no stale messages remain
+    #[cfg(feature = "multiprocess")]
+    pub async fn drain_channel(&self, channel_name: &str) -> Result<usize> {
+        let subscriber = self.create_subscriber(channel_name).await?;
+        let mut count = 0;
+        
+        // Drain all pending messages
+        while let Ok(Some(_)) = subscriber.receive() {
+            count += 1;
+        }
+        
+        if count > 0 {
+            tracing::info!("Drained {} stale messages from channel: {}", count, channel_name);
+        }
+        
+        Ok(count)
     }
 
     /// Create a publisher for a channel
@@ -253,6 +290,9 @@ impl ChannelRegistry {
     }
 
     /// Create a subscriber for a channel
+    /// 
+    /// Note: By default, this creates a subscriber that can receive historical messages.
+    /// Use `create_subscriber_fresh` if you want to skip any stale messages.
     #[cfg(feature = "multiprocess")]
     pub async fn create_subscriber(&self, channel_name: &str) -> Result<Subscriber> {
         let services = self.services.read().await;
@@ -283,6 +323,31 @@ impl ChannelRegistry {
             inner: subscriber,
             stats: handle.stats.clone(),
         })
+    }
+    
+    /// Create a subscriber and immediately drain any stale messages
+    /// 
+    /// This is useful when creating a new session to ensure we don't process
+    /// messages from a previous session that wasn't properly cleaned up.
+    #[cfg(feature = "multiprocess")]
+    pub async fn create_subscriber_fresh(&self, channel_name: &str) -> Result<Subscriber> {
+        let subscriber = self.create_subscriber(channel_name).await?;
+        
+        // Drain any stale messages from previous sessions
+        let mut stale_count = 0;
+        while let Ok(Some(_)) = subscriber.receive() {
+            stale_count += 1;
+        }
+        
+        if stale_count > 0 {
+            tracing::warn!(
+                "Drained {} stale messages from channel '{}' - previous session may not have been cleaned up properly",
+                stale_count,
+                channel_name
+            );
+        }
+        
+        Ok(subscriber)
     }
 
     /// Create a raw subscriber for control channels (bypasses RuntimeData deserialization)
@@ -369,11 +434,13 @@ impl<'a> Publisher<'a> {
             bytes.len()
         );
 
-        // Update stats
-        let mut stats = self.stats.blocking_write();
-        stats.messages_sent += 1;
-        stats.bytes_transferred += bytes.len() as u64;
-        stats.last_activity = Some(std::time::Instant::now());
+        // Update stats (use try_write to avoid blocking in async contexts)
+        if let Ok(mut stats) = self.stats.try_write() {
+            stats.messages_sent += 1;
+            stats.bytes_transferred += bytes.len() as u64;
+            stats.last_activity = Some(std::time::Instant::now());
+        }
+        // If lock is contended, skip stats update (non-critical)
 
         Ok(())
     }
@@ -419,11 +486,13 @@ impl<'a> Publisher<'a> {
             bytes.len()
         );
 
-        // Update stats
-        let mut stats = self.stats.blocking_write();
-        stats.messages_sent += 1;
-        stats.bytes_transferred += bytes.len() as u64;
-        stats.last_activity = Some(std::time::Instant::now());
+        // Update stats (use try_write to avoid blocking in async contexts)
+        if let Ok(mut stats) = self.stats.try_write() {
+            stats.messages_sent += 1;
+            stats.bytes_transferred += bytes.len() as u64;
+            stats.last_activity = Some(std::time::Instant::now());
+        }
+        // If lock is contended, skip stats update (non-critical)
 
         Ok(())
     }
@@ -456,11 +525,12 @@ impl Subscriber {
                 let data = RuntimeData::from_bytes(bytes)
                     .map_err(|e| Error::IpcError(format!("Failed to deserialize: {}", e)))?;
 
-                // Update stats
-                let mut stats = self.stats.blocking_write();
-                stats.messages_received += 1;
-                stats.bytes_transferred += bytes.len() as u64;
-                stats.last_activity = Some(std::time::Instant::now());
+                // Update stats (use try_write to avoid blocking in async contexts)
+                if let Ok(mut stats) = self.stats.try_write() {
+                    stats.messages_received += 1;
+                    stats.bytes_transferred += bytes.len() as u64;
+                    stats.last_activity = Some(std::time::Instant::now());
+                }
 
                 Ok(Some(data))
             }

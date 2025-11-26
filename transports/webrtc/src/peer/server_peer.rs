@@ -118,22 +118,6 @@ impl ServerPeer {
 
         info!("Added audio track to peer connection for {}", self.peer_id);
 
-        // Add video track for sending pipeline video output to client
-        let video_config = crate::media::video::VideoEncoderConfig {
-            width: 1280,
-            height: 720,
-            framerate: 30,
-            bitrate: 2_000_000,
-            keyframe_interval: 60,
-        };
-
-        self.peer_connection
-            .add_video_track(video_config)
-            .await
-            .map_err(|e| Error::InternalError(format!("Failed to add video track: {}", e)))?;
-
-        info!("Added video track to peer connection for {}", self.peer_id);
-
         // Set up bidirectional media routing and data channel (this will set up the data channel handler)
         self.setup_media_routing_and_data_channel(session_handle)
             .await?;
@@ -378,6 +362,13 @@ impl ServerPeer {
                 }
             }
 
+            // CRITICAL: Explicitly close the session to terminate the pipeline and cleanup resources
+            // This ensures any background processing tasks know to stop and prevents stale data
+            info!("Closing pipeline session for peer {}", peer_id);
+            if let Err(e) = session_handle.close().await {
+                warn!("Error closing pipeline session for peer {}: {}", peer_id, e);
+            }
+
             info!("Media routing task ended for peer {}", peer_id);
         });
 
@@ -419,18 +410,8 @@ impl ServerPeer {
                 }
             }
             RuntimeData::Video { .. } => {
-                debug!("Sending video frame via WebRTC");
-
-                // Get the video track
-                if let Some(video_track) = peer_connection.video_track().await {
-                    // Send video using VideoTrack's send_video_runtime_data method
-                    video_track
-                        .send_video_runtime_data(runtime_data.clone())
-                        .await?;
-                    debug!("Video sent successfully");
-                } else {
-                    warn!("No video track configured for peer, cannot send video");
-                }
+                debug!("Video output not yet implemented");
+                // TODO: Implement video transmission when needed
             }
             _ => {
                 debug!("Unsupported RuntimeData type for WebRTC output");

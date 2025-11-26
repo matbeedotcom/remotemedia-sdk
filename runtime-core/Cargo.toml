@@ -35,6 +35,11 @@ bytemuck = { workspace = true }
 ort = { workspace = true, optional = true }
 ndarray = { workspace = true }
 
+# Whisper transcription support
+rwhisper = "0.4"
+rodio = "0.20"  # Match rwhisper's rodio version
+base64 = "0.22"
+
 # Video codec support (spec 012)
 ac-ffmpeg = { version = "0.19", optional = true }
 rav1e = { version = "0.8", optional = true }

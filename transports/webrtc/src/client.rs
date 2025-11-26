@@ -24,7 +24,7 @@
 //!
 //! # Usage (Future)
 //!
-//! ```ignore
+//! ```
 //! use remotemedia_webrtc::client::WebRtcPipelineClient;
 //!
 //! let client = WebRtcPipelineClient::new(
@@ -76,7 +76,7 @@ impl WebRtcPipelineClient {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// let client = WebRtcPipelineClient::new(
     ///     "wss://signaling.example.com",
     ///     vec!["stun:stun.example.com:3478".to_string()],

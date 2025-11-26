@@ -369,16 +369,16 @@ pub fn json_to_python_with_cache<'py>(
 ///
 /// # Example
 ///
-/// ```rust
+/// ```
+/// use pyo3::prelude::*;
+/// use remotemedia_runtime_core::data::RuntimeData;
+/// use remotemedia_ffi::marshal::runtime_data_to_python;
+///
 /// Python::with_gil(|py| {
-///     let audio_data = RuntimeData::Audio {
-///         samples: vec![0.1, 0.2, 0.3],
-///         sample_rate: 16000,
-///         channels: 1,
-///     };
-///     let py_obj = runtime_data_to_python(py, &audio_data)?;
-///     Ok(())
-/// })
+///     let text_data = RuntimeData::Text("hello".into());
+///     let py_obj = runtime_data_to_python(py, &text_data).unwrap();
+///     // py_obj is now a Python string "hello"
+/// });
 /// ```
 pub fn runtime_data_to_python(py: Python<'_>, data: &RuntimeData) -> PyResult<PyObject> {
     // T007: Convert RuntimeData to Python objects
@@ -490,13 +490,16 @@ pub fn runtime_data_to_python(py: Python<'_>, data: &RuntimeData) -> PyResult<Py
 ///
 /// # Example
 ///
-/// ```rust
+/// ```
+/// use pyo3::prelude::*;
+/// use remotemedia_runtime_core::data::RuntimeData;
+/// use remotemedia_ffi::marshal::python_to_runtime_data;
+///
 /// Python::with_gil(|py| {
-///     let py_str = "hello".into_bound_py_any(py)?;
-///     let runtime_data = python_to_runtime_data(py, &py_str)?;
+///     let py_str = "hello".into_pyobject(py).unwrap();
+///     let runtime_data = python_to_runtime_data(py, py_str.as_ref()).unwrap();
 ///     assert!(matches!(runtime_data, RuntimeData::Text(_)));
-///     Ok(())
-/// })
+/// });
 /// ```
 pub fn python_to_runtime_data(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<RuntimeData> {
     // T008: Convert Python objects to RuntimeData
