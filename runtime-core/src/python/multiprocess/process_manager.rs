@@ -211,6 +211,7 @@ pub struct ProcessManager {
     spawn_config: Arc<RwLock<SpawnConfig>>,
 
     /// Configuration
+    #[allow(dead_code)]  // Reserved for future process management policies
     config: MultiprocessConfig,
 
     /// Process event handlers

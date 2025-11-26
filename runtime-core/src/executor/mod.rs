@@ -1532,6 +1532,7 @@ impl Executor {
     /// Check if output is from a streaming node (async generator that returned multiple items)
     ///
     /// Phase 1.11.2: Heuristic to detect streaming output
+    #[allow(dead_code)]  // Reserved for streaming output detection heuristic
     fn is_streaming_output(&self, value: &Value) -> bool {
         // If it's an array and seems like streamed chunks, flatten it
         // This is a heuristic - in the future we could use metadata

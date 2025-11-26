@@ -544,7 +544,7 @@ impl NodeExecutor for RustWhisperNode {
         )),
             };
 
-            let mut builder = WhisperBuilder::default().with_source(source);
+            let builder = WhisperBuilder::default().with_source(source);
 
             // Note: with_language() requires WhisperLanguage enum, not a string
             // For now, we'll skip this and let the model auto-detect

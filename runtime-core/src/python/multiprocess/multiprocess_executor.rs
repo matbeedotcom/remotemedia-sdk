@@ -2191,12 +2191,13 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
                 .as_ref()
                 .ok_or_else(|| Error::Execution("Node not initialized".to_string()))?;
 
-            let session_id = ctx
+            let _session_id = ctx
                 .session_id
                 .clone()
                 .unwrap_or_else(|| format!("default_{}", ctx.node_id));
 
             // Send input to node process via IPC
+            // TODO: Use session_id for IPC channel routing
             // This is a placeholder - actual IPC implementation will be in ipc_channel.rs
             tracing::debug!("Processing input in multiprocess node: {}", ctx.node_id);
 

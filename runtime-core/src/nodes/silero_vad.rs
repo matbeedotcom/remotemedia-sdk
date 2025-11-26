@@ -54,10 +54,12 @@ pub struct SileroVADNode {
     /// Expected sample rate (8000 or 16000)
     sampling_rate: u32,
     /// Minimum speech duration in ms to trigger
+    #[allow(dead_code)]  // Reserved for speech duration filtering
     min_speech_duration_ms: u32,
     /// Minimum silence duration in ms to end speech
     min_silence_duration_ms: u32,
     /// Padding before/after speech in ms
+    #[allow(dead_code)]  // Reserved for audio padding implementation
     speech_pad_ms: u32,
 
     #[cfg(feature = "silero-vad")]
@@ -214,8 +216,8 @@ impl AsyncStreamingNode for SileroVADNode {
         "SileroVADNode"
     }
 
-    async fn process(&self, data: RuntimeData) -> Result<RuntimeData> {
-        // Default implementation for non-streaming usage - just returns VAD event
+    async fn process(&self, _data: RuntimeData) -> Result<RuntimeData> {
+        // Default implementation for non-streaming usage - not supported
         #[cfg(not(feature = "silero-vad"))]
         {
             return Err(Error::Execution(
