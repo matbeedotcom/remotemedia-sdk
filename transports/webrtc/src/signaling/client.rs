@@ -276,6 +276,7 @@ impl SignalingClient {
     ///
     /// * `to` - Target peer ID
     /// * `candidate` - ICE candidate string
+    #[allow(dead_code)] // Phase 4 (US2) ICE candidate exchange
     pub async fn send_ice_candidate(&self, to: String, candidate: String) -> Result<()> {
         let from = self.peer_id.read().await.clone().ok_or_else(|| {
             Error::InvalidData("Peer ID not set, call announce_peer first".to_string())
@@ -328,6 +329,7 @@ impl SignalingClient {
     }
 
     /// Set callback for peer announced events
+    #[allow(dead_code)] // Phase 4 (US2) peer discovery
     pub async fn on_peer_announced<F>(&self, callback: F)
     where
         F: Fn(String, Vec<String>) + Send + Sync + 'static,
@@ -360,6 +362,7 @@ impl SignalingClient {
     }
 
     /// Set callback for peer disconnected events
+    #[allow(dead_code)] // Phase 4 (US2) peer lifecycle management
     pub async fn on_peer_disconnected<F>(&self, callback: F)
     where
         F: Fn(String) + Send + Sync + 'static,

@@ -11,6 +11,9 @@
 //! - Frames are routed to appropriate tracks based on stream_id field
 //! - Backward compatible: frames without stream_id use default track
 
+// Phase 4 (US2) server peer infrastructure
+#![allow(dead_code)]
+
 use crate::{config::WebRtcTransportConfig, peer::PeerConnection, Error, Result};
 use crate::media::{
     TrackRegistry, FrameRouter, DEFAULT_STREAM_ID,
@@ -421,6 +424,13 @@ impl ServerPeer {
                         }
                     }
                 }
+            }
+
+            // CRITICAL: Explicitly close the session to terminate the pipeline and cleanup resources
+            // This ensures any background processing tasks know to stop and prevents stale data
+            info!("Closing pipeline session for peer {}", peer_id);
+            if let Err(e) = session_handle.close().await {
+                warn!("Error closing pipeline session for peer {}: {}", peer_id, e);
             }
 
             info!("Media routing task ended for peer {}", peer_id);

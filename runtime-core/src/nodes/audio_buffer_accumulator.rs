@@ -115,6 +115,7 @@ impl AudioBufferAccumulatorNode {
         }
     }
 
+    #[allow(dead_code)]  // Reserved for byte-format audio output support
     fn convert_f32_to_bytes(&self, samples: &[f32]) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(samples.len() * 4);
         for &sample in samples {
@@ -340,7 +341,7 @@ impl AsyncStreamingNode for AudioBufferAccumulatorNode {
         "AudioBufferAccumulatorNode"
     }
 
-    async fn process(&self, data: RuntimeData) -> Result<RuntimeData> {
+    async fn process(&self, _data: RuntimeData) -> Result<RuntimeData> {
         // Simplified non-streaming version - not recommended
         // Use process_streaming for full buffering functionality
         Err(Error::Execution(

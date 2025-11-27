@@ -24,14 +24,18 @@
 //!
 //! # Usage (Future)
 //!
-//! ```ignore
+//! ```no_run
 //! use remotemedia_webrtc::client::WebRtcPipelineClient;
 //!
+//! # async fn example() -> remotemedia_webrtc::Result<()> {
 //! let client = WebRtcPipelineClient::new(
 //!     "wss://signaling.example.com",
-//!     Some("stun:stun.example.com:3478"),
+//!     vec!["stun:stun.example.com:3478".to_string()],
+//!     None,
 //! ).await?;
-//! let result = client.execute_unary(manifest, input).await?;
+//! // let result = client.execute_unary(manifest, input).await?;
+//! # Ok(())
+//! # }
 //! ```
 
 use async_trait::async_trait;
@@ -54,9 +58,11 @@ pub struct WebRtcPipelineClient {
     signaling_url: String,
 
     /// STUN/TURN server URLs (e.g., "stun:stun.example.com:3478")
+    #[allow(dead_code)] // Planned for full WebRTC implementation
     ice_servers: Vec<String>,
 
     /// Optional authentication token
+    #[allow(dead_code)] // Planned for authenticated connections
     auth_token: Option<String>,
 }
 
@@ -76,12 +82,17 @@ impl WebRtcPipelineClient {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
+    /// use remotemedia_webrtc::client::WebRtcPipelineClient;
+    ///
+    /// # async fn example() -> remotemedia_webrtc::Result<()> {
     /// let client = WebRtcPipelineClient::new(
     ///     "wss://signaling.example.com",
     ///     vec!["stun:stun.example.com:3478".to_string()],
     ///     None,
     /// ).await?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn new(
         signaling_url: impl Into<String>,

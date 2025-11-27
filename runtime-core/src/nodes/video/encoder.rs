@@ -82,9 +82,8 @@ impl Default for VideoEncoderConfig {
 ///
 /// # Example
 ///
-/// ```ignore
-/// use remotemedia_runtime_core::nodes::video::encoder::{VideoEncoderNode, VideoEncoderConfig};
-/// use remotemedia_runtime_core::data::RuntimeData;
+/// ```
+/// use remotemedia_runtime_core::nodes::video::encoder::VideoEncoderConfig;
 /// use remotemedia_runtime_core::data::VideoCodec;
 ///
 /// let config = VideoEncoderConfig {
@@ -93,10 +92,6 @@ impl Default for VideoEncoderConfig {
 ///     framerate: 30,
 ///     ..Default::default()
 /// };
-///
-/// let encoder = VideoEncoderNode::new(config)?;
-/// let raw_frame = RuntimeData::Video { /* ... */ };
-/// let encoded = encoder.encode_frame(raw_frame).await?;
 /// ```
 pub struct VideoEncoderNode {
     /// Mutex-wrapped encoder backend for thread-safe encoding

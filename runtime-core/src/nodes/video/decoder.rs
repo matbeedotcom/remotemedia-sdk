@@ -151,7 +151,7 @@ impl AsyncStreamingNode for VideoDecoderNode {
 
     async fn process_multi(
         &self,
-        mut inputs: std::collections::HashMap<String, RuntimeData>,
+        inputs: std::collections::HashMap<String, RuntimeData>,
     ) -> Result<RuntimeData, Error> {
         // Extract first input and process
         if let Some((_name, data)) = inputs.into_iter().next() {

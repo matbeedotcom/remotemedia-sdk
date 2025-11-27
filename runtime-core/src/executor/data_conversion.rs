@@ -10,6 +10,7 @@ use std::sync::Arc;
 #[cfg(feature = "multiprocess")]
 pub struct IPCDataConverter {
     /// Session ID for this converter
+    #[allow(dead_code)]  // Will be used for channel naming in Phase 4 (US2)
     session_id: String,
     // Note: Channel registry integration to be added in Phase 4 (US2)
 }
@@ -42,12 +43,15 @@ impl IPCDataConverter {
 #[cfg(feature = "multiprocess")]
 pub struct DataBridge {
     /// Source executor type
+    #[allow(dead_code)]  // Will be used for executor routing in Phase 4 (US2)
     source_executor_type: String,
 
     /// Target executor type
+    #[allow(dead_code)]  // Will be used for executor routing in Phase 4 (US2)
     target_executor_type: String,
 
     /// Data converter
+    #[allow(dead_code)]  // Will be used for data conversion in Phase 4 (US2)
     converter: Arc<IPCDataConverter>,
 }
 

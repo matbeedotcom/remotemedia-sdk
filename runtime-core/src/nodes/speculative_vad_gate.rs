@@ -69,6 +69,7 @@ struct SessionState {
     buffer_capacity: usize,
 
     /// Current speculative segments being tracked
+    #[allow(dead_code)]  // Reserved for speculative segment tracking (spec 007)
     segments: Vec<SpeculativeSegment>,
 
     /// Total samples processed in this session
@@ -78,9 +79,11 @@ struct SessionState {
     segment_counter: u64,
 
     /// Is speech currently active
+    #[allow(dead_code)]  // Reserved for speech state tracking (spec 007)
     speech_active: bool,
 
     /// Samples of silence accumulated
+    #[allow(dead_code)]  // Reserved for silence detection (spec 007)
     silence_samples: usize,
 
     /// Speculation metrics

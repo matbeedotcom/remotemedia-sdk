@@ -76,7 +76,7 @@ impl FastAudioNode for FastVADNode {
             }
         }
 
-        let is_speech = speech_frames > 0;
+        let _is_speech = speech_frames > 0;  // TODO: Attach as metadata to output
 
         // Pass through original audio with metadata
         // Store VAD results in a way that can be retrieved (we'll use a simple approach)

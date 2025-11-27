@@ -20,16 +20,12 @@ use std::collections::HashMap;
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
 /// use remotemedia_runtime_core::transport::TransportData;
 /// use remotemedia_runtime_core::data::RuntimeData;
 ///
 /// // Simple usage
 /// let data = TransportData::new(RuntimeData::Text("hello".into()));
-///
-/// // With sequence number
-/// let data = TransportData::new(RuntimeData::Audio { ... })
-///     .with_sequence(42);
 ///
 /// // With metadata
 /// let data = TransportData::new(RuntimeData::Text("hello".into()))
@@ -64,7 +60,10 @@ impl TransportData {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
+    /// use remotemedia_runtime_core::transport::TransportData;
+    /// use remotemedia_runtime_core::data::RuntimeData;
+    ///
     /// let data = TransportData::new(RuntimeData::Text("hello".into()));
     /// assert!(data.sequence.is_none());
     /// assert!(data.metadata.is_empty());
@@ -85,8 +84,11 @@ impl TransportData {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// let data = TransportData::new(audio_data)
+    /// ```
+    /// use remotemedia_runtime_core::transport::TransportData;
+    /// use remotemedia_runtime_core::data::RuntimeData;
+    ///
+    /// let data = TransportData::new(RuntimeData::Text("hello".into()))
     ///     .with_sequence(1);
     /// assert_eq!(data.sequence, Some(1));
     /// ```
@@ -104,8 +106,11 @@ impl TransportData {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// let data = TransportData::new(audio_data)
+    /// ```
+    /// use remotemedia_runtime_core::transport::TransportData;
+    /// use remotemedia_runtime_core::data::RuntimeData;
+    ///
+    /// let data = TransportData::new(RuntimeData::Text("hello".into()))
     ///     .with_metadata("client_id".into(), "user123".into())
     ///     .with_metadata("request_id".into(), "req456".into());
     /// assert_eq!(data.metadata.get("client_id"), Some(&"user123".to_string()));

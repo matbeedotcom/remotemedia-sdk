@@ -15,8 +15,10 @@
 
 use remotemedia_runtime_core::data::video::{PixelFormat, VideoCodec};
 use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::nodes::video::{VideoDecoderConfig, VideoDecoderNode, VideoEncoderConfig, VideoEncoderNode};
 use remotemedia_runtime_core::nodes::streaming_node::AsyncStreamingNode;
+use remotemedia_runtime_core::nodes::video::{
+    VideoDecoderConfig, VideoDecoderNode, VideoEncoderConfig, VideoEncoderNode,
+};
 use remotemedia_webrtc::{VideoCodec as WebRtcVideoCodec, VideoResolution, WebRtcTransportConfig};
 
 #[tokio::test]
@@ -75,7 +77,10 @@ async fn test_vp8_encoder_for_webrtc() {
     };
 
     // Encode
-    let encoded = encoder.process(raw_frame).await.expect("VP8 encoding failed");
+    let encoded = encoder
+        .process(raw_frame)
+        .await
+        .expect("VP8 encoding failed");
 
     // Verify encoded frame
     match &encoded {

@@ -22,6 +22,9 @@
 //! - Bounded buffer to prevent memory bloat
 //! - Backpressure via STREAM_ERROR_BUFFER_OVERFLOW
 
+// Internal infrastructure - some fields/methods for future use
+#![allow(dead_code)]
+
 use crate::generated::{
     stream_control::Command, stream_request::Request as StreamRequestType,
     stream_response::Response as StreamResponseType, AudioBuffer as ProtoAudioBuffer, AudioChunk,
@@ -30,7 +33,7 @@ use crate::generated::{
 };
 use crate::metrics::ServiceMetrics;
 use crate::session_router::{DataPacket, SessionRouter};
-use crate::{ServiceConfig, ServiceError};
+use crate::ServiceError;
 use remotemedia_runtime_core::{
     audio::AudioBuffer as RuntimeAudioBuffer,
     data::RuntimeData,
@@ -44,7 +47,7 @@ use std::time::Instant;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tonic::{Request, Response, Status, Streaming};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// Maximum number of chunks buffered before backpressure
@@ -965,7 +968,7 @@ async fn handle_data_chunk_multi(
     };
 
     // Get or create node from cache (global cache with TTL)
-    let (node, py_streaming_node): (
+    let (node, _py_streaming_node): (
         Arc<Box<dyn StreamingNode>>,
         Option<Arc<PythonStreamingNode>>,
     ) = {
@@ -1168,8 +1171,6 @@ async fn handle_data_chunk_multi(
             node_type
         );
 
-        use crate::adapters::runtime_data_to_data_buffer;
-
         // USE THE CACHED NODE instead of creating a new one!
         // The 'node' variable already contains our globally cached instance
         // which preserves the Python object and the loaded Kokoro model
@@ -1183,7 +1184,7 @@ async fn handle_data_chunk_multi(
         let streaming_registry_clone = streaming_registry.clone();
         let chunk_node_id = chunk.node_id.clone();
         let base_sequence = chunk.sequence;
-        let data_type_clone = data_type.clone();
+        let _data_type_clone = data_type.clone();
         let session_id_clone = session_id.clone();
 
         let send_task = tokio::spawn(async move {

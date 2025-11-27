@@ -17,14 +17,13 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use remotemedia_runtime_core::transport::client::{PipelineClient, TransportType};
+//! ```
+//! use remotemedia_runtime_core::transport::client::TransportType;
 //!
-//! // Create a gRPC client
-//! let client = create_client(TransportType::Grpc, "localhost:50051").await?;
-//!
-//! // Execute remote pipeline
-//! let result = client.execute_unary(manifest, input).await?;
+//! // Transport types for client configuration
+//! let grpc = TransportType::Grpc;
+//! let webrtc = TransportType::Webrtc;
+//! let http = TransportType::Http;
 //! ```
 
 use crate::manifest::Manifest;
@@ -156,20 +155,8 @@ pub trait PipelineClient: Send + Sync {
 ///
 /// # Example
 ///
-/// ```ignore
-/// let mut session = client.create_stream_session(manifest).await?;
-///
-/// // Send audio chunks
-/// session.send(audio_chunk1).await?;
-/// session.send(audio_chunk2).await?;
-///
-/// // Receive processed outputs
-/// while let Some(output) = session.receive().await? {
-///     process_output(output);
-/// }
-///
-/// session.close().await?;
-/// ```
+/// See `tests/fixtures/mock_transport_plugin.rs` for a complete example of
+/// implementing a streaming session.
 #[async_trait]
 pub trait ClientStreamSession: Send + Sync {
     /// Get unique session identifier
@@ -250,20 +237,16 @@ pub struct TransportConfig {
 ///
 /// # Example
 ///
-/// ```ignore
-/// // Old approach (deprecated):
+/// ```
+/// use remotemedia_runtime_core::transport::client::{TransportConfig, TransportType};
+///
+/// // Create transport configuration
 /// let config = TransportConfig {
 ///     transport_type: TransportType::Http,
 ///     endpoint: "http://localhost:8080".to_string(),
 ///     auth_token: None,
 ///     extra_config: None,
 /// };
-/// let client = create_transport_client(config).await?;
-///
-/// // New approach (recommended):
-/// use crate::transport::plugin_registry::global_registry;
-/// let plugin = global_registry().get("http").expect("http transport not registered");
-/// let client = plugin.create_client(&config).await?;
 /// ```
 #[deprecated(
     since = "0.5.0",

@@ -6,6 +6,9 @@
 //! - Handles backpressure gracefully via ring buffer
 //! - Uses a dedicated OS thread for precise timing
 
+// Phase 4 (US2) audio transmission infrastructure
+#![allow(dead_code)]
+
 use crate::{Error, Result};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -14,7 +17,6 @@ use tokio::sync::Mutex;
 use tracing::{debug, warn};
 use webrtc::media::Sample;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
-use webrtc::track::track_local::TrackLocalWriter;
 
 /// Audio frame ready for transmission
 #[derive(Clone)]

@@ -3,6 +3,11 @@
 //! This module implements a persistent router that runs for the entire session,
 //! continuously processing chunks from the client and routing them through the pipeline.
 
+// Internal infrastructure - some methods reserved for future use
+#![allow(dead_code)]
+// StreamSession is intentionally kept private for internal use
+#![allow(private_interfaces)]
+
 use crate::adapters::runtime_data_to_data_buffer;
 use crate::generated::{
     stream_response::Response as StreamResponseType, ChunkResult, StreamResponse,
@@ -15,7 +20,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
 use tonic::Status;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 #[cfg(feature = "multiprocess")]
 use remotemedia_runtime_core::python::multiprocess::MultiprocessExecutor;

@@ -230,6 +230,7 @@ impl VideoScalerBackend for FFmpegScaler {
 /// Video scaler node for pipeline integration
 pub struct VideoScalerNode {
     scaler: Arc<Mutex<Box<dyn VideoScalerBackend>>>,
+    #[allow(dead_code)]  // Reserved for runtime reconfiguration (spec 012)
     config: VideoScalerConfig,
 }
 
@@ -277,7 +278,7 @@ impl AsyncStreamingNode for VideoScalerNode {
 
     async fn process_multi(
         &self,
-        mut inputs: std::collections::HashMap<String, RuntimeData>,
+        inputs: std::collections::HashMap<String, RuntimeData>,
     ) -> Result<RuntimeData, Error> {
         if let Some((_name, data)) = inputs.into_iter().next() {
             self.process(data).await

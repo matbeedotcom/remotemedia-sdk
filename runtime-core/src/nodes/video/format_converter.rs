@@ -197,6 +197,7 @@ impl VideoFormatConverterBackend for FFmpegFormatConverter {
 /// Video format converter node for pipeline integration
 pub struct VideoFormatConverterNode {
     converter: Arc<Mutex<Box<dyn VideoFormatConverterBackend>>>,
+    #[allow(dead_code)]  // Reserved for runtime reconfiguration (spec 012)
     config: VideoFormatConverterConfig,
 }
 
@@ -244,7 +245,7 @@ impl AsyncStreamingNode for VideoFormatConverterNode {
 
     async fn process_multi(
         &self,
-        mut inputs: std::collections::HashMap<String, RuntimeData>,
+        inputs: std::collections::HashMap<String, RuntimeData>,
     ) -> Result<RuntimeData, Error> {
         if let Some((_name, data)) = inputs.into_iter().next() {
             self.process(data).await

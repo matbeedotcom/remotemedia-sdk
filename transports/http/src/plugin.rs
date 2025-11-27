@@ -6,7 +6,7 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```
 //! use remotemedia_http::HttpTransportPlugin;
 //! use remotemedia_runtime_core::transport::TransportPluginRegistry;
 //!
