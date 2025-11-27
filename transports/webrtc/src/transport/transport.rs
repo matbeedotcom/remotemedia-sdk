@@ -13,7 +13,7 @@ use remotemedia_runtime_core::data::RuntimeData;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn};
 
 /// Statistics from broadcasting data to multiple peers (T071)
 #[derive(Debug, Clone)]
@@ -86,6 +86,7 @@ impl WebRtcTransport {
     /// Start the transport
     ///
     /// Connects to the signaling server and announces this peer.
+    #[instrument(skip(self), fields(signaling_url = %self.config.signaling_url))]
     pub async fn start(&self) -> Result<()> {
         info!("Starting WebRTC transport");
 
@@ -271,6 +272,7 @@ impl WebRtcTransport {
     /// # Arguments
     ///
     /// * `peer_id` - Identifier of the remote peer to connect to
+    #[instrument(skip(self), fields(peer_id = %peer_id))]
     pub async fn connect_peer(&self, peer_id: String) -> Result<String> {
         info!("Connecting to peer: {}", peer_id);
 
@@ -305,6 +307,7 @@ impl WebRtcTransport {
     /// # Arguments
     ///
     /// * `peer_id` - Identifier of the peer to disconnect from
+    #[instrument(skip(self), fields(peer_id = %peer_id))]
     pub async fn disconnect_peer(&self, peer_id: &str) -> Result<()> {
         info!("Disconnecting from peer: {}", peer_id);
 
@@ -584,6 +587,7 @@ impl WebRtcTransport {
     ///
     /// This method encodes the RuntimeData to the appropriate codec format (Opus for audio, VP9 for video)
     /// and sends it via RTP to the specified peer.
+    #[instrument(skip(self, data), fields(peer_id = %peer_id))]
     pub async fn send_to_peer(&self, peer_id: &str, data: &RuntimeData) -> Result<()> {
         debug!("Sending RuntimeData to peer: {}", peer_id);
 
@@ -639,6 +643,7 @@ impl WebRtcTransport {
     ///
     /// This method sends data to all connected peers in parallel, collecting statistics
     /// about successful and failed transmissions.
+    #[instrument(skip(self, data))]
     pub async fn broadcast(&self, data: &RuntimeData) -> Result<BroadcastStats> {
         let start = Instant::now();
         let peers = self.peer_manager.list_connected_peers().await;

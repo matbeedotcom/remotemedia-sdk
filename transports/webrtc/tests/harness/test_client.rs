@@ -2,6 +2,11 @@
 //!
 //! Implements a full WebRTC client using gRPC signaling to connect to the test server.
 //! Supports sending and receiving audio/video with proper encoding/decoding.
+//!
+//! # Features
+//! - **JitterBuffer integration**: Proper packet reordering using BTreeMap-based jitter buffer
+//! - **Quality metrics tracking**: Packet counts, loss rates, latency statistics
+//! - **Reconnection support**: Clean disconnect/reconnect cycles
 
 use super::{HarnessError, HarnessResult};
 use remotemedia_webrtc::generated::webrtc::{
@@ -9,10 +14,11 @@ use remotemedia_webrtc::generated::webrtc::{
     web_rtc_signaling_client::WebRtcSignalingClient, AnnounceRequest, IceCandidateRequest,
     OfferRequest, PeerCapabilities, SignalingRequest,
 };
+use remotemedia_webrtc::sync::{BufferStats, JitterBuffer, JitterBufferFrame};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
@@ -57,11 +63,87 @@ pub struct ReceivedAudioChunk {
     pub timestamp_us: u64,
 }
 
+/// Audio frame for jitter buffer integration
+#[derive(Clone)]
+pub struct AudioRtpFrame {
+    /// RTP sequence number
+    pub seq: u16,
+    /// RTP timestamp
+    pub rtp_ts: u32,
+    /// Time when frame was received
+    pub received: Instant,
+    /// Payload data
+    pub payload: Arc<Vec<u8>>,
+}
+
+impl JitterBufferFrame for AudioRtpFrame {
+    fn sequence_number(&self) -> u16 {
+        self.seq
+    }
+    fn rtp_timestamp(&self) -> u32 {
+        self.rtp_ts
+    }
+    fn received_at(&self) -> Instant {
+        self.received
+    }
+}
+
+/// Video frame for jitter buffer integration
+#[derive(Clone)]
+pub struct VideoRtpFrame {
+    /// RTP sequence number
+    pub seq: u16,
+    /// RTP timestamp
+    pub rtp_ts: u32,
+    /// Time when frame was received
+    pub received: Instant,
+    /// Payload data
+    pub payload: Arc<Vec<u8>>,
+}
+
+impl JitterBufferFrame for VideoRtpFrame {
+    fn sequence_number(&self) -> u16 {
+        self.seq
+    }
+    fn rtp_timestamp(&self) -> u32 {
+        self.rtp_ts
+    }
+    fn received_at(&self) -> Instant {
+        self.received
+    }
+}
+
+/// Quality metrics for the test client
+#[derive(Debug, Clone, Default)]
+pub struct ClientQualityMetrics {
+    /// Audio jitter buffer statistics
+    pub audio_buffer_stats: Option<BufferStats>,
+    /// Video jitter buffer statistics
+    pub video_buffer_stats: Option<BufferStats>,
+    /// Total audio packets received
+    pub audio_packets_received: u32,
+    /// Total video packets received
+    pub video_packets_received: u32,
+    /// Total audio bytes received
+    pub audio_bytes_received: u64,
+    /// Total video bytes received
+    pub video_bytes_received: u64,
+    /// Connection time in milliseconds
+    pub connection_time_ms: u64,
+    /// First packet latency (time to first packet after connect)
+    pub first_packet_latency_ms: Option<u64>,
+}
+
 /// Test client for WebRTC E2E testing
 ///
 /// Connects to the signaling server, establishes WebRTC peer connection,
 /// and provides methods for sending/receiving media.
-#[derive(Debug)]
+///
+/// # Jitter Buffer Integration
+///
+/// This client uses the production JitterBuffer implementation for proper
+/// packet reordering. Audio and video frames are inserted into their respective
+/// jitter buffers and can be popped in sequence order.
 pub struct TestClient {
     /// Unique peer identifier
     peer_id: String,
@@ -107,6 +189,48 @@ pub struct TestClient {
 
     /// Track receiver task handles
     track_handles: Arc<RwLock<Vec<tokio::task::JoinHandle<()>>>>,
+
+    // ========================================================================
+    // Jitter Buffer Integration (uses production sync components)
+    // ========================================================================
+
+    /// Audio jitter buffer for packet reordering (50ms buffer, 200ms max)
+    audio_jitter_buffer: Arc<RwLock<JitterBuffer<AudioRtpFrame>>>,
+
+    /// Video jitter buffer for packet reordering (100ms buffer, 500ms max)
+    video_jitter_buffer: Arc<RwLock<JitterBuffer<VideoRtpFrame>>>,
+
+    // ========================================================================
+    // Quality Metrics
+    // ========================================================================
+
+    /// Audio bytes received (for bandwidth calculation)
+    audio_bytes_received: Arc<AtomicU64>,
+
+    /// Video bytes received (for bandwidth calculation)
+    video_bytes_received: Arc<AtomicU64>,
+
+    /// Connection start time (for latency measurements)
+    connection_start: Arc<RwLock<Option<Instant>>>,
+
+    /// First audio packet time (for first-packet latency)
+    first_audio_packet_time: Arc<RwLock<Option<Instant>>>,
+
+    /// First video packet time (for first-packet latency)
+    first_video_packet_time: Arc<RwLock<Option<Instant>>>,
+}
+
+// Manual Debug implementation since JitterBuffer doesn't implement Debug
+impl std::fmt::Debug for TestClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TestClient")
+            .field("peer_id", &self.peer_id)
+            .field("server_port", &self.server_port)
+            .field("connected", &self.connected.load(Ordering::SeqCst))
+            .field("audio_packets", &self.received_audio_packets.load(Ordering::SeqCst))
+            .field("video_packets", &self.received_video_packets.load(Ordering::SeqCst))
+            .finish()
+    }
 }
 
 impl TestClient {
@@ -121,6 +245,12 @@ impl TestClient {
             "Creating test client: {} (server port: {})",
             peer_id, server_port
         );
+
+        // Create jitter buffers with production-like settings
+        // Audio: 50ms buffer delay, 200ms max (matches low-latency preset)
+        let audio_jitter_buffer = JitterBuffer::new(50, 200);
+        // Video: 100ms buffer delay, 500ms max (for frame reordering)
+        let video_jitter_buffer = JitterBuffer::new(100, 500);
 
         Ok(Self {
             peer_id,
@@ -138,6 +268,15 @@ impl TestClient {
             connected: Arc::new(AtomicBool::new(false)),
             stream_handle: Arc::new(RwLock::new(None)),
             track_handles: Arc::new(RwLock::new(Vec::new())),
+            // Jitter buffers (production sync components)
+            audio_jitter_buffer: Arc::new(RwLock::new(audio_jitter_buffer)),
+            video_jitter_buffer: Arc::new(RwLock::new(video_jitter_buffer)),
+            // Quality metrics
+            audio_bytes_received: Arc::new(AtomicU64::new(0)),
+            video_bytes_received: Arc::new(AtomicU64::new(0)),
+            connection_start: Arc::new(RwLock::new(None)),
+            first_audio_packet_time: Arc::new(RwLock::new(None)),
+            first_video_packet_time: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -161,6 +300,72 @@ impl TestClient {
         self.received_video_packets.load(Ordering::SeqCst)
     }
 
+    // ========================================================================
+    // Quality Metrics & Jitter Buffer Access
+    // ========================================================================
+
+    /// Get comprehensive quality metrics for this client
+    pub async fn get_quality_metrics(&self) -> ClientQualityMetrics {
+        let audio_stats = self.audio_jitter_buffer.read().await.get_statistics();
+        let video_stats = self.video_jitter_buffer.read().await.get_statistics();
+
+        let connection_time_ms = if let Some(start) = *self.connection_start.read().await {
+            start.elapsed().as_millis() as u64
+        } else {
+            0
+        };
+
+        let first_packet_latency_ms = if let (Some(start), Some(first)) = (
+            *self.connection_start.read().await,
+            *self.first_audio_packet_time.read().await,
+        ) {
+            Some(first.duration_since(start).as_millis() as u64)
+        } else {
+            None
+        };
+
+        ClientQualityMetrics {
+            audio_buffer_stats: Some(audio_stats),
+            video_buffer_stats: Some(video_stats),
+            audio_packets_received: self.received_audio_packets.load(Ordering::SeqCst),
+            video_packets_received: self.received_video_packets.load(Ordering::SeqCst),
+            audio_bytes_received: self.audio_bytes_received.load(Ordering::SeqCst),
+            video_bytes_received: self.video_bytes_received.load(Ordering::SeqCst),
+            connection_time_ms,
+            first_packet_latency_ms,
+        }
+    }
+
+    /// Get audio jitter buffer statistics
+    pub async fn get_audio_buffer_stats(&self) -> BufferStats {
+        self.audio_jitter_buffer.read().await.get_statistics()
+    }
+
+    /// Get video jitter buffer statistics
+    pub async fn get_video_buffer_stats(&self) -> BufferStats {
+        self.video_jitter_buffer.read().await.get_statistics()
+    }
+
+    /// Get estimated packet loss rate for audio (0.0 to 1.0)
+    pub async fn audio_packet_loss_rate(&self) -> f32 {
+        self.audio_jitter_buffer.read().await.get_statistics().estimated_loss_rate
+    }
+
+    /// Get estimated packet loss rate for video (0.0 to 1.0)
+    pub async fn video_packet_loss_rate(&self) -> f32 {
+        self.video_jitter_buffer.read().await.get_statistics().estimated_loss_rate
+    }
+
+    /// Get late packet count for audio
+    pub async fn audio_late_packets(&self) -> u64 {
+        self.audio_jitter_buffer.read().await.get_statistics().late_packet_count
+    }
+
+    /// Get late packet count for video
+    pub async fn video_late_packets(&self) -> u64 {
+        self.video_jitter_buffer.read().await.get_statistics().late_packet_count
+    }
+
     /// Generate next request ID
     fn next_request_id(&self) -> String {
         let id = self.request_counter.fetch_add(1, Ordering::SeqCst);
@@ -168,6 +373,8 @@ impl TestClient {
     }
 
     /// Create a WebRTC peer connection with audio and video transceivers
+    ///
+    /// Now includes jitter buffer integration for proper packet reordering.
     async fn create_peer_connection(
         &self,
         received_audio: Arc<RwLock<Vec<ReceivedAudioChunk>>>,
@@ -175,6 +382,14 @@ impl TestClient {
         received_audio_packets: Arc<AtomicU32>,
         received_video_packets: Arc<AtomicU32>,
         track_handles: Arc<RwLock<Vec<tokio::task::JoinHandle<()>>>>,
+        // Jitter buffers for packet reordering
+        audio_jitter_buffer: Arc<RwLock<JitterBuffer<AudioRtpFrame>>>,
+        video_jitter_buffer: Arc<RwLock<JitterBuffer<VideoRtpFrame>>>,
+        // Quality metrics
+        audio_bytes_received: Arc<AtomicU64>,
+        video_bytes_received: Arc<AtomicU64>,
+        first_audio_packet_time: Arc<RwLock<Option<Instant>>>,
+        first_video_packet_time: Arc<RwLock<Option<Instant>>>,
     ) -> HarnessResult<Arc<RTCPeerConnection>> {
         // Create media engine with default codecs
         let mut media_engine = MediaEngine::default();
@@ -215,6 +430,14 @@ impl TestClient {
         let received_audio_packets_clone = Arc::clone(&received_audio_packets);
         let received_video_packets_clone = Arc::clone(&received_video_packets);
         let track_handles_clone = Arc::clone(&track_handles);
+        // Jitter buffer clones
+        let audio_jitter_buffer_clone = Arc::clone(&audio_jitter_buffer);
+        let video_jitter_buffer_clone = Arc::clone(&video_jitter_buffer);
+        // Quality metrics clones
+        let audio_bytes_clone = Arc::clone(&audio_bytes_received);
+        let video_bytes_clone = Arc::clone(&video_bytes_received);
+        let first_audio_clone = Arc::clone(&first_audio_packet_time);
+        let first_video_clone = Arc::clone(&first_video_packet_time);
 
         peer_connection.on_track(Box::new(move |track, _receiver, _transceiver| {
             let peer_id = peer_id.clone();
@@ -224,6 +447,12 @@ impl TestClient {
             let received_audio_packets = Arc::clone(&received_audio_packets_clone);
             let received_video_packets = Arc::clone(&received_video_packets_clone);
             let track_handles = Arc::clone(&track_handles_clone);
+            let audio_jitter_buffer = Arc::clone(&audio_jitter_buffer_clone);
+            let video_jitter_buffer = Arc::clone(&video_jitter_buffer_clone);
+            let audio_bytes = Arc::clone(&audio_bytes_clone);
+            let video_bytes = Arc::clone(&video_bytes_clone);
+            let first_audio = Arc::clone(&first_audio_clone);
+            let first_video = Arc::clone(&first_video_clone);
 
             Box::pin(async move {
                 let codec = track.codec();
@@ -234,14 +463,20 @@ impl TestClient {
                     codec.capability.mime_type
                 );
 
-                // Spawn a task to read from this track
-                let handle = tokio::spawn(Self::handle_incoming_track(
+                // Spawn a task to read from this track (with jitter buffer)
+                let handle = tokio::spawn(Self::handle_incoming_track_with_jitter_buffer(
                     peer_id,
                     track,
                     received_audio,
                     received_video,
                     received_audio_packets,
                     received_video_packets,
+                    audio_jitter_buffer,
+                    video_jitter_buffer,
+                    audio_bytes,
+                    video_bytes,
+                    first_audio,
+                    first_video,
                 ));
 
                 track_handles.write().await.push(handle);
@@ -338,6 +573,166 @@ impl TestClient {
         info!("TestClient {}: Track receiver ended", peer_id);
     }
 
+    /// Handle incoming RTP packets with jitter buffer integration
+    ///
+    /// This method uses the production JitterBuffer for packet reordering,
+    /// tracks quality metrics, and provides zero-copy payload handling.
+    async fn handle_incoming_track_with_jitter_buffer(
+        peer_id: String,
+        track: Arc<TrackRemote>,
+        received_audio: Arc<RwLock<Vec<ReceivedAudioChunk>>>,
+        received_video: Arc<RwLock<Vec<ReceivedVideoFrame>>>,
+        received_audio_packets: Arc<AtomicU32>,
+        received_video_packets: Arc<AtomicU32>,
+        audio_jitter_buffer: Arc<RwLock<JitterBuffer<AudioRtpFrame>>>,
+        video_jitter_buffer: Arc<RwLock<JitterBuffer<VideoRtpFrame>>>,
+        audio_bytes_received: Arc<AtomicU64>,
+        video_bytes_received: Arc<AtomicU64>,
+        first_audio_packet_time: Arc<RwLock<Option<Instant>>>,
+        first_video_packet_time: Arc<RwLock<Option<Instant>>>,
+    ) {
+        let codec = track.codec();
+        let mime_type = codec.capability.mime_type.to_lowercase();
+        let is_audio = mime_type.starts_with("audio/");
+        let is_video = mime_type.starts_with("video/");
+
+        info!(
+            "TestClient {}: Starting track receiver with jitter buffer for {} ({})",
+            peer_id,
+            track.kind(),
+            mime_type
+        );
+
+        // Read RTP packets from the track
+        loop {
+            match track.read_rtp().await {
+                Ok((rtp_packet, _attributes)) => {
+                    let payload = rtp_packet.payload.to_vec();
+                    if payload.is_empty() {
+                        continue;
+                    }
+
+                    let payload_len = payload.len() as u64;
+                    let received_at = Instant::now();
+                    let seq = rtp_packet.header.sequence_number;
+                    let rtp_ts = rtp_packet.header.timestamp;
+
+                    let timestamp_us = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_micros() as u64;
+
+                    if is_audio {
+                        // Track first packet time
+                        {
+                            let mut first = first_audio_packet_time.write().await;
+                            if first.is_none() {
+                                *first = Some(received_at);
+                                info!("TestClient {}: First audio packet received", peer_id);
+                            }
+                        }
+
+                        // Update byte counter
+                        audio_bytes_received.fetch_add(payload_len, Ordering::SeqCst);
+
+                        let count = received_audio_packets.fetch_add(1, Ordering::SeqCst) + 1;
+                        debug!(
+                            "TestClient {}: Received audio RTP packet #{} seq={} ts={} ({} bytes)",
+                            peer_id, count, seq, rtp_ts, payload_len
+                        );
+
+                        // Insert into jitter buffer (uses Arc for zero-copy)
+                        let frame = AudioRtpFrame {
+                            seq,
+                            rtp_ts,
+                            received: received_at,
+                            payload: Arc::new(payload.clone()),
+                        };
+
+                        let mut jb = audio_jitter_buffer.write().await;
+                        if let Err(e) = jb.insert(frame) {
+                            debug!("TestClient {}: Audio jitter buffer insert error: {}", peer_id, e);
+                        }
+                        drop(jb);
+
+                        // Also store in received_audio for compatibility with existing tests
+                        let chunk = ReceivedAudioChunk {
+                            data: payload,
+                            sample_rate: 48000,
+                            channels: 1,
+                            timestamp_us,
+                        };
+                        received_audio.write().await.push(chunk);
+                    } else if is_video {
+                        // Track first packet time
+                        {
+                            let mut first = first_video_packet_time.write().await;
+                            if first.is_none() {
+                                *first = Some(received_at);
+                                info!("TestClient {}: First video packet received", peer_id);
+                            }
+                        }
+
+                        // Update byte counter
+                        video_bytes_received.fetch_add(payload_len, Ordering::SeqCst);
+
+                        let count = received_video_packets.fetch_add(1, Ordering::SeqCst) + 1;
+                        debug!(
+                            "TestClient {}: Received video RTP packet #{} seq={} ts={} ({} bytes)",
+                            peer_id, count, seq, rtp_ts, payload_len
+                        );
+
+                        // Insert into jitter buffer (uses Arc for zero-copy)
+                        let frame = VideoRtpFrame {
+                            seq,
+                            rtp_ts,
+                            received: received_at,
+                            payload: Arc::new(payload.clone()),
+                        };
+
+                        let mut jb = video_jitter_buffer.write().await;
+                        if let Err(e) = jb.insert(frame) {
+                            debug!("TestClient {}: Video jitter buffer insert error: {}", peer_id, e);
+                        }
+                        drop(jb);
+
+                        // Also store in received_video for compatibility
+                        let frame = ReceivedVideoFrame {
+                            data: payload,
+                            width: 0,
+                            height: 0,
+                            timestamp_us,
+                        };
+                        received_video.write().await.push(frame);
+                    }
+                }
+                Err(e) => {
+                    let err_str = e.to_string();
+                    if err_str.contains("closed") || err_str.contains("EOF") {
+                        info!("TestClient {}: Track closed normally", peer_id);
+                    } else {
+                        warn!("TestClient {}: Track read error: {}", peer_id, e);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Log final jitter buffer stats
+        let audio_stats = audio_jitter_buffer.read().await.get_statistics();
+        let video_stats = video_jitter_buffer.read().await.get_statistics();
+        info!(
+            "TestClient {}: Track receiver ended. Audio buffer: peak={} dropped={} late={}. Video buffer: peak={} dropped={} late={}",
+            peer_id,
+            audio_stats.peak_frames,
+            audio_stats.dropped_frames,
+            audio_stats.late_packet_count,
+            video_stats.peak_frames,
+            video_stats.dropped_frames,
+            video_stats.late_packet_count
+        );
+    }
+
     /// Connect to the signaling server and establish WebRTC connection
     pub async fn connect(&self) -> HarnessResult<()> {
         info!("Connecting test client: {}", self.peer_id);
@@ -365,7 +760,10 @@ impl TestClient {
         *self.signaling_client.write().await = Some(grpc_client);
         *self.request_tx.write().await = Some(request_tx.clone());
 
-        // Create WebRTC peer connection with track handlers
+        // Record connection start time for metrics
+        *self.connection_start.write().await = Some(Instant::now());
+
+        // Create WebRTC peer connection with track handlers and jitter buffers
         let peer_connection = self
             .create_peer_connection(
                 Arc::clone(&self.received_audio),
@@ -373,6 +771,14 @@ impl TestClient {
                 Arc::clone(&self.received_audio_packets),
                 Arc::clone(&self.received_video_packets),
                 Arc::clone(&self.track_handles),
+                // Jitter buffers for packet reordering
+                Arc::clone(&self.audio_jitter_buffer),
+                Arc::clone(&self.video_jitter_buffer),
+                // Quality metrics tracking
+                Arc::clone(&self.audio_bytes_received),
+                Arc::clone(&self.video_bytes_received),
+                Arc::clone(&self.first_audio_packet_time),
+                Arc::clone(&self.first_video_packet_time),
             )
             .await?;
 

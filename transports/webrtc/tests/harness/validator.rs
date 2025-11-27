@@ -2,9 +2,10 @@
 //!
 //! Provides assertion helpers for validating pipeline outputs.
 
-use super::test_client::{ReceivedAudioChunk, ReceivedVideoFrame, TestClient};
+use super::test_client::{ClientQualityMetrics, ReceivedAudioChunk, ReceivedVideoFrame, TestClient};
 use super::{HarnessError, HarnessResult};
 use std::time::Duration;
+use tracing::info;
 
 /// Output validator for test assertions
 pub struct OutputValidator;
@@ -421,6 +422,293 @@ impl OutputValidator {
             self.assert_connected(*client).await?;
         }
         Ok(())
+    }
+
+    // ========================================================================
+    // Quality Metrics Assertions
+    // ========================================================================
+
+    /// Assert packet loss rate is below threshold
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - Test client to check
+    /// * `max_loss_rate` - Maximum acceptable loss rate (0.0 to 1.0)
+    pub async fn assert_audio_loss_rate_below(
+        &self,
+        client: &TestClient,
+        max_loss_rate: f32,
+    ) -> HarnessResult<()> {
+        let loss_rate = client.audio_packet_loss_rate().await;
+        if loss_rate > max_loss_rate {
+            return Err(HarnessError::ValidationError(format!(
+                "Audio packet loss rate {:.2}% exceeds maximum {:.2}%",
+                loss_rate * 100.0,
+                max_loss_rate * 100.0
+            )));
+        }
+        info!(
+            "Audio loss rate {:.2}% is within acceptable range (max: {:.2}%)",
+            loss_rate * 100.0,
+            max_loss_rate * 100.0
+        );
+        Ok(())
+    }
+
+    /// Assert video packet loss rate is below threshold
+    pub async fn assert_video_loss_rate_below(
+        &self,
+        client: &TestClient,
+        max_loss_rate: f32,
+    ) -> HarnessResult<()> {
+        let loss_rate = client.video_packet_loss_rate().await;
+        if loss_rate > max_loss_rate {
+            return Err(HarnessError::ValidationError(format!(
+                "Video packet loss rate {:.2}% exceeds maximum {:.2}%",
+                loss_rate * 100.0,
+                max_loss_rate * 100.0
+            )));
+        }
+        info!(
+            "Video loss rate {:.2}% is within acceptable range (max: {:.2}%)",
+            loss_rate * 100.0,
+            max_loss_rate * 100.0
+        );
+        Ok(())
+    }
+
+    /// Assert late packet count is below threshold
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - Test client to check
+    /// * `max_late_packets` - Maximum acceptable late packet count
+    pub async fn assert_late_packets_below(
+        &self,
+        client: &TestClient,
+        max_late_audio: u64,
+        max_late_video: u64,
+    ) -> HarnessResult<()> {
+        let audio_late = client.audio_late_packets().await;
+        let video_late = client.video_late_packets().await;
+
+        if audio_late > max_late_audio {
+            return Err(HarnessError::ValidationError(format!(
+                "Audio late packets {} exceeds maximum {}",
+                audio_late, max_late_audio
+            )));
+        }
+
+        if video_late > max_late_video {
+            return Err(HarnessError::ValidationError(format!(
+                "Video late packets {} exceeds maximum {}",
+                video_late, max_late_video
+            )));
+        }
+
+        info!(
+            "Late packets within range - audio: {}/{}, video: {}/{}",
+            audio_late, max_late_audio, video_late, max_late_video
+        );
+        Ok(())
+    }
+
+    /// Assert connection time is established
+    pub async fn assert_connection_established(
+        &self,
+        client: &TestClient,
+    ) -> HarnessResult<()> {
+        let metrics = client.get_quality_metrics().await;
+
+        if metrics.connection_time_ms == 0 {
+            return Err(HarnessError::ValidationError(
+                "Connection time not tracked (still 0ms)".to_string(),
+            ));
+        }
+
+        info!("Connection time: {}ms", metrics.connection_time_ms);
+        Ok(())
+    }
+
+    /// Assert first packet latency is below threshold
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - Test client to check
+    /// * `max_latency_ms` - Maximum acceptable first packet latency in milliseconds
+    pub async fn assert_first_packet_latency_below(
+        &self,
+        client: &TestClient,
+        max_latency_ms: u64,
+    ) -> HarnessResult<()> {
+        let metrics = client.get_quality_metrics().await;
+
+        match metrics.first_packet_latency_ms {
+            Some(latency) => {
+                if latency > max_latency_ms {
+                    return Err(HarnessError::ValidationError(format!(
+                        "First packet latency {}ms exceeds maximum {}ms",
+                        latency, max_latency_ms
+                    )));
+                }
+                info!(
+                    "First packet latency {}ms is within acceptable range (max: {}ms)",
+                    latency, max_latency_ms
+                );
+                Ok(())
+            }
+            None => Err(HarnessError::ValidationError(
+                "No packets received - cannot measure first packet latency".to_string(),
+            )),
+        }
+    }
+
+    /// Assert jitter buffer health is good
+    ///
+    /// Checks that buffer statistics indicate healthy operation:
+    /// - No buffer overruns
+    /// - Dropped frames below threshold
+    /// - Late packets below threshold
+    pub async fn assert_jitter_buffer_healthy(
+        &self,
+        client: &TestClient,
+        max_dropped_frames: u64,
+        max_late_packets: u64,
+    ) -> HarnessResult<()> {
+        let audio_stats = client.get_audio_buffer_stats().await;
+        let video_stats = client.get_video_buffer_stats().await;
+
+        // Check audio buffer
+        if audio_stats.buffer_overrun_count > 0 {
+            return Err(HarnessError::ValidationError(format!(
+                "Audio jitter buffer experienced {} overruns",
+                audio_stats.buffer_overrun_count
+            )));
+        }
+
+        if audio_stats.dropped_frames > max_dropped_frames {
+            return Err(HarnessError::ValidationError(format!(
+                "Audio dropped frames {} exceeds maximum {}",
+                audio_stats.dropped_frames, max_dropped_frames
+            )));
+        }
+
+        if audio_stats.late_packet_count > max_late_packets {
+            return Err(HarnessError::ValidationError(format!(
+                "Audio late packets {} exceeds maximum {}",
+                audio_stats.late_packet_count, max_late_packets
+            )));
+        }
+
+        // Check video buffer
+        if video_stats.buffer_overrun_count > 0 {
+            return Err(HarnessError::ValidationError(format!(
+                "Video jitter buffer experienced {} overruns",
+                video_stats.buffer_overrun_count
+            )));
+        }
+
+        if video_stats.dropped_frames > max_dropped_frames {
+            return Err(HarnessError::ValidationError(format!(
+                "Video dropped frames {} exceeds maximum {}",
+                video_stats.dropped_frames, max_dropped_frames
+            )));
+        }
+
+        if video_stats.late_packet_count > max_late_packets {
+            return Err(HarnessError::ValidationError(format!(
+                "Video late packets {} exceeds maximum {}",
+                video_stats.late_packet_count, max_late_packets
+            )));
+        }
+
+        info!(
+            "Jitter buffers healthy - audio: {} frames, {} dropped; video: {} frames, {} dropped",
+            audio_stats.current_frames,
+            audio_stats.dropped_frames,
+            video_stats.current_frames,
+            video_stats.dropped_frames
+        );
+        Ok(())
+    }
+
+    /// Assert quality metrics meet minimum thresholds
+    ///
+    /// Comprehensive check for overall connection quality
+    pub async fn assert_quality_metrics(
+        &self,
+        client: &TestClient,
+        max_loss_rate: f32,
+        max_late_packets: u64,
+        max_first_packet_latency_ms: Option<u64>,
+    ) -> HarnessResult<()> {
+        let metrics = client.get_quality_metrics().await;
+
+        // Check connection time
+        if metrics.connection_time_ms == 0 {
+            return Err(HarnessError::ValidationError(
+                "Connection time not tracked".to_string(),
+            ));
+        }
+
+        // Check loss rates
+        let audio_loss = client.audio_packet_loss_rate().await;
+        let video_loss = client.video_packet_loss_rate().await;
+
+        if audio_loss > max_loss_rate {
+            return Err(HarnessError::ValidationError(format!(
+                "Audio loss rate {:.2}% exceeds maximum {:.2}%",
+                audio_loss * 100.0,
+                max_loss_rate * 100.0
+            )));
+        }
+
+        if video_loss > max_loss_rate {
+            return Err(HarnessError::ValidationError(format!(
+                "Video loss rate {:.2}% exceeds maximum {:.2}%",
+                video_loss * 100.0,
+                max_loss_rate * 100.0
+            )));
+        }
+
+        // Check late packets
+        let audio_late = client.audio_late_packets().await;
+        let video_late = client.video_late_packets().await;
+
+        if audio_late > max_late_packets || video_late > max_late_packets {
+            return Err(HarnessError::ValidationError(format!(
+                "Late packets exceed threshold: audio={}, video={}, max={}",
+                audio_late, video_late, max_late_packets
+            )));
+        }
+
+        // Check first packet latency if specified
+        if let Some(max_latency) = max_first_packet_latency_ms {
+            if let Some(latency) = metrics.first_packet_latency_ms {
+                if latency > max_latency {
+                    return Err(HarnessError::ValidationError(format!(
+                        "First packet latency {}ms exceeds maximum {}ms",
+                        latency, max_latency
+                    )));
+                }
+            }
+        }
+
+        info!(
+            "Quality metrics validated - connection: {}ms, audio: {:.2}% loss/{} late, video: {:.2}% loss/{} late",
+            metrics.connection_time_ms,
+            audio_loss * 100.0,
+            audio_late,
+            video_loss * 100.0,
+            video_late
+        );
+
+        Ok(())
+    }
+
+    /// Get quality metrics summary for logging
+    pub async fn quality_metrics_summary(&self, client: &TestClient) -> ClientQualityMetrics {
+        client.get_quality_metrics().await
     }
 }
 

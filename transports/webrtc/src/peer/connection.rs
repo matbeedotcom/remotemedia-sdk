@@ -20,7 +20,7 @@ use crate::{Error, Result};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn};
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
@@ -112,6 +112,7 @@ impl PeerConnection {
     ///
     /// * `peer_id` - Unique identifier for the remote peer
     /// * `config` - Configuration for STUN/TURN servers and codec preferences
+    #[instrument(skip(config), fields(peer_id = %peer_id))]
     pub async fn new(
         peer_id: String,
         config: &crate::config::WebRtcTransportConfig,
@@ -983,6 +984,44 @@ impl PeerConnection {
     /// Check if bitrate can be increased based on quality metrics
     pub async fn can_increase_bitrate(&self) -> bool {
         self.quality_metrics.read().await.can_increase_bitrate()
+    }
+
+    /// Log connection quality metrics (T201)
+    ///
+    /// Call this periodically (e.g., every 10 seconds) to log connection health.
+    pub async fn log_quality_metrics(&self) {
+        let metrics = self.quality_metrics.read().await;
+        let score = metrics.quality_score();
+        let state = self.state.read().await;
+
+        info!(
+            peer_id = %self.peer_id,
+            state = ?*state,
+            quality_score = score,
+            latency_ms = metrics.latency_ms,
+            packet_loss_percent = metrics.packet_loss_rate * 100.0,
+            jitter_ms = metrics.jitter_ms,
+            video_resolution = format!("{}x{}", metrics.video_width, metrics.video_height),
+            video_fps = metrics.video_framerate,
+            video_bitrate_kbps = metrics.video_bitrate_kbps,
+            audio_bitrate_kbps = metrics.audio_bitrate_kbps,
+            "Connection quality report"
+        );
+
+        // Log warnings for degraded quality
+        if score < 50 {
+            warn!(
+                peer_id = %self.peer_id,
+                quality_score = score,
+                "Connection quality is poor"
+            );
+        } else if score < 70 {
+            debug!(
+                peer_id = %self.peer_id,
+                quality_score = score,
+                "Connection quality is fair"
+            );
+        }
     }
 }
 

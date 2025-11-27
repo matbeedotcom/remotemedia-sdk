@@ -74,10 +74,14 @@ bollard = { workspace = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
-criterion = "0.5"
+criterion = { version = "0.5", features = ["async_tokio"] }
 
 [build-dependencies]
 tonic-prost-build = { workspace = true }
+
+[[bench]]
+name = "webrtc_benchmarks"
+harness = false
 
 [features]
 default = []

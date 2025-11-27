@@ -84,7 +84,7 @@ pub mod channels;
 mod media;
 mod peer;
 mod session;
-mod sync;
+pub mod sync;
 mod transport;
 
 // Protobuf adapters (only with grpc-signaling)
@@ -110,9 +110,16 @@ pub use config::{
     WebRtcTransportConfig,
 };
 pub use error::{Error, Result};
-pub use peer::{ConnectionState, PeerInfo};
+pub use peer::{
+    CircuitBreaker, CircuitState, ConnectionQualityMetrics as PeerConnectionQualityMetrics,
+    ConnectionState, PeerInfo, ReconnectionManager, ReconnectionPolicy, ReconnectionState,
+};
 pub use plugin::WebRtcTransportPlugin;
 pub use session::{Session, SessionId, SessionManager, SessionState};
+pub use sync::{
+    AudioFrame, BufferStats, JitterBuffer, JitterBufferFrame, RtcpSenderReport, SyncConfig,
+    SyncManager, SyncState, SyncedAudioFrame, SyncedVideoFrame, VideoFrame,
+};
 pub use transport::WebRtcTransport;
 
 /// Get the version of this crate
