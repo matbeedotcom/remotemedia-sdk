@@ -217,7 +217,7 @@ impl ControlMessage {
         if pos + session_len > bytes.len() {
             return Err("Invalid session length".to_string());
         }
-        let session_id = String::from_utf8_lossy(&bytes[pos..pos + session_len]).to_string();
+        let _session_id = String::from_utf8_lossy(&bytes[pos..pos + session_len]).to_string();  // TODO: Use for session validation
         pos += session_len;
 
         // Timestamp

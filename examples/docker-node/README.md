@@ -144,7 +144,7 @@ Multiprocess Python Postprocessing
 
 ```bash
 # Terminal 1: Start gRPC server
-cd transports/remotemedia-grpc
+cd transports/grpc
 cargo run --bin grpc_server --release
 
 # Terminal 2: Run client with Docker manifest

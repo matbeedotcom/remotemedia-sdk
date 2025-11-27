@@ -53,7 +53,7 @@ impl AudioBuffer {
     ///
     /// # Example
     /// ```
-    /// use remotemedia_runtime::audio::{AudioBuffer, AudioFormat};
+    /// use remotemedia_runtime_core::audio::{AudioBuffer, AudioFormat};
     /// use std::sync::Arc;
     ///
     /// let samples = vec![0.0, 0.5, 1.0, 0.5];

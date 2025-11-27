@@ -495,10 +495,12 @@ pub async fn load_manifest_from_source(source: &ManifestSource) -> Result<Manife
 ///
 /// # Example
 ///
-/// ```ignore
-/// let token = "${API_TOKEN}";
-/// let resolved = substitute_env_vars(token)?;
-/// // resolved = actual value of API_TOKEN environment variable
+/// ```
+/// use remotemedia_runtime_core::nodes::remote_pipeline::substitute_env_vars;
+///
+/// // When value has no env vars, returns as-is
+/// let simple = substitute_env_vars("simple_token").unwrap();
+/// assert_eq!(simple, "simple_token");
 /// ```
 pub fn substitute_env_vars(value: &str) -> Result<String> {
     if !value.contains('$') {
@@ -671,13 +673,15 @@ impl RemotePipelineNode {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// use remotemedia_runtime_core::nodes::remote_pipeline::RemotePipelineNode;
+    ///
     /// let params = serde_json::json!({
     ///     "transport": "grpc",
     ///     "endpoint": "localhost:50051",
     ///     "manifest": { "version": "v1", "nodes": [] }
     /// });
-    /// let node = RemotePipelineNode::new("remote1".into(), params)?;
+    /// let node = RemotePipelineNode::new("remote1".into(), params).unwrap();
     /// ```
     pub fn new(node_id: String, params: serde_json::Value) -> crate::Result<Self> {
         // Parse configuration
@@ -800,6 +804,7 @@ impl RemotePipelineNode {
     }
 
     /// Execute with retry logic
+    #[cfg_attr(not(feature = "grpc-client"), allow(unused_variables))]
     async fn execute_with_retry(
         &self,
         manifest: std::sync::Arc<Manifest>,
@@ -845,12 +850,12 @@ impl RemotePipelineNode {
                 ));
             }
 
-            // Execute with timeout
-            let timeout_ms = self.config.timeout_ms;
-            let timeout_duration = std::time::Duration::from_millis(timeout_ms);
-
             #[cfg(feature = "grpc-client")]
             {
+                // Execute with timeout
+                let timeout_ms = self.config.timeout_ms;
+                let timeout_duration = std::time::Duration::from_millis(timeout_ms);
+
                 let result = tokio::time::timeout(
                     timeout_duration,
                     client.execute_unary(manifest.clone(), input.clone()),
@@ -1290,10 +1295,20 @@ const MAX_RECURSION_DEPTH: usize = 10;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use remotemedia_runtime_core::nodes::remote_pipeline::detect_circular_dependencies;
+/// use remotemedia_runtime_core::manifest::{Manifest, ManifestMetadata};
+/// use std::collections::HashSet;
+///
+/// let manifest = Manifest {
+///     version: "v1".into(),
+///     metadata: ManifestMetadata { name: "test".into(), description: None, created_at: None },
+///     nodes: vec![],
+///     connections: vec![],
+/// };
 /// let mut visited = HashSet::new();
 /// let mut path = Vec::new();
-/// detect_circular_dependencies(&manifest, &mut visited, &mut path, 0)?;
+/// detect_circular_dependencies(&manifest, &mut visited, &mut path, 0).unwrap();
 /// ```
 pub fn detect_circular_dependencies(
     manifest: &Manifest,

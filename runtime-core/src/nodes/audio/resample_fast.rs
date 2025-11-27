@@ -37,6 +37,7 @@ impl ResampleQuality {
 pub struct FastResampleNode {
     resampler: SincFixedOut<f32>,
     target_rate: u32,
+    #[allow(dead_code)]  // Used for initialization, runtime channels derived from input data
     channels: usize,
     // Ring buffer to accumulate input samples across calls (per channel)
     // Using Vec for simplicity - drain from front as we consume

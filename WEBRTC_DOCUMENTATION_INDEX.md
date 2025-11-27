@@ -61,7 +61,7 @@ Topics covered:
 
 ## Source Files Analyzed
 
-All source files are located in: `transports/remotemedia-webrtc/src/`
+All source files are located in: `transports/webrtc/src/`
 
 ### Entry Point
 ```

@@ -35,6 +35,16 @@ bytemuck = { workspace = true }
 ort = { workspace = true, optional = true }
 ndarray = { workspace = true }
 
+# Whisper transcription support
+rwhisper = "0.4"
+rodio = "0.20"  # Match rwhisper's rodio version
+base64 = "0.22"
+
+# Video codec support (spec 012)
+ac-ffmpeg = { version = "0.19", optional = true }
+rav1e = { version = "0.8", optional = true }
+dav1d = { version = "0.10", optional = true }
+
 # IPC for multiprocess
 iceoryx2 = { workspace = true, optional = true }
 iceoryx2-bb-log = { workspace = true, optional = true }
@@ -114,17 +124,20 @@ rand = { workspace = true }
 chrono = { workspace = true }
 hound = { workspace = true }
 anyhow = { workspace = true }
-remotemedia-grpc = { path = "../transports/remotemedia-grpc" }
+remotemedia-grpc = { path = "../transports/grpc" }
 axum = { workspace = true }
 tokio-stream = { workspace = true }
 
 [features]
-default = ["multiprocess", "silero-vad", "docker"]
+default = ["multiprocess", "silero-vad", "docker", "video"]
 multiprocess = ["iceoryx2", "iceoryx2-bb-log", "iceoryx2-bb-container", "iceoryx2-bb-elementary"]
 silero-vad = ["ort"]
 grpc-client = ["tonic", "prost", "prost-types"]
 # Docker support integrated into multiprocess system
 docker = ["dep:bollard", "dep:tar", "dep:chrono", "dep:bytes", "dep:hyper", "dep:http-body-util", "dep:glob", "dep:rusqlite"]
+# Video codec support (spec 012)
+video = ["dep:ac-ffmpeg"]
+video-pure-rust = ["video", "dep:rav1e", "dep:dav1d"]
 
 # NOTE: grpc-client is for RemotePipelineNode client functionality only
 # Full transport implementations belong in separate transport crates

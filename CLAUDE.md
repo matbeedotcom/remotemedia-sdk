@@ -97,7 +97,7 @@ cd python-client
 pip install -e . --no-deps
 
 # Build and link Rust runtime (for remotemedia.runtime)
-cd ../transports/remotemedia-ffi
+cd ../transports/ffi
 ./dev-install.sh
 
 # Run tests

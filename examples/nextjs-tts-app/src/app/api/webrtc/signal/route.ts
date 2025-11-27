@@ -69,7 +69,7 @@ async function initializeGrpcClient(): Promise<void> {
     // Load protobuf definition
     const PROTO_PATH = path.resolve(
       process.cwd(),
-      '../../transports/remotemedia-grpc/protos/webrtc_signaling.proto'
+      '../../transports/grpc/protos/webrtc_signaling.proto'
     );
 
     const packageDefinition = protoLoader.loadSync(PROTO_PATH, {

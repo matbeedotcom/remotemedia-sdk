@@ -59,6 +59,7 @@ impl AudioChunkerNode {
     }
 
     /// Convert ProtoAudioBuffer samples to f32 vector
+    #[allow(dead_code)]  // Reserved for audio format conversion utilities
     fn samples_to_f32(&self, audio_buf: &ProtoAudioBuffer) -> Result<Vec<f32>> {
         match audio_buf.format {
             1 => {
@@ -84,6 +85,7 @@ impl AudioChunkerNode {
     }
 
     /// Convert f32 samples back to ProtoAudioBuffer
+    #[allow(dead_code)]  // Reserved for audio format conversion utilities
     fn f32_to_audio_buffer(&self, samples: &[f32], state: &ChunkerState) -> ProtoAudioBuffer {
         let mut sample_bytes = Vec::with_capacity(samples.len() * 4);
         for &sample in samples {

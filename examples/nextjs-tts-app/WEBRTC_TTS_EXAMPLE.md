@@ -92,11 +92,11 @@ Browser                    WebRTC Connection         RemoteMedia Server
 1. **Running Services**:
    ```bash
    # 1. Start RemoteMedia gRPC server with WebRTC signaling
-   cd transports/remotemedia-grpc
+   cd transports/grpc
    cargo run --bin grpc-server --release
 
    # 2. Ensure WebRTC transport is available
-   cd transports/remotemedia-webrtc
+   cd transports/webrtc
    cargo run --bin webrtc_server --release
 
    # 3. Kokoro TTS service must be running
@@ -269,7 +269,7 @@ export async function POST(request: NextRequest) {
 **RemoteMedia Server with WebRTC Transport**
 
 ```rust
-// transports/remotemedia-webrtc/src/bin/webrtc_server.rs
+// transports/webrtc/src/bin/webrtc_server.rs
 
 use remotemedia_webrtc::{WebRtcTransport, WebRtcTransportConfig};
 use remotemedia_runtime_core::PipelineRunner;
@@ -611,9 +611,9 @@ NEXT_PUBLIC_TURN_SERVERS=turn:turn.example.com:3478
 
 ## Related Documentation
 
-- [RemoteMedia gRPC Signaling](../../transports/remotemedia-grpc/WEBRTC_SIGNALING.md)
-- [WebRTC Transport README](../../transports/remotemedia-webrtc/README.md)
-- [WebSocket Signaling Server](../../transports/remotemedia-webrtc/examples/signaling_server/README.md)
+- [RemoteMedia gRPC Signaling](../../transports/grpc/WEBRTC_SIGNALING.md)
+- [WebRTC Transport README](../../transports/webrtc/README.md)
+- [WebSocket Signaling Server](../../transports/webrtc/examples/signaling_server/README.md)
 - [Next.js TTS App Main README](README.md)
 
 ## License

@@ -378,6 +378,14 @@ def parse_arguments() -> argparse.Namespace:
         help="IPC channel configuration (JSON)"
     )
 
+    parser.add_argument(
+        "--register-module",
+        action="append",
+        dest="register_modules",
+        default=[],
+        help="Python module to import that registers custom nodes (can be specified multiple times)"
+    )
+
     return parser.parse_args()
 
 
@@ -388,6 +396,21 @@ async def main() -> None:
 
     # Configure logging
     logging.getLogger().setLevel(getattr(logging, args.log_level))
+
+    # Import custom node registration modules BEFORE looking up node types
+    # This allows tests and custom applications to register nodes dynamically
+    for module_name in args.register_modules:
+        try:
+            import importlib
+            logger.info(f"Importing custom node module: {module_name}")
+            importlib.import_module(module_name)
+            logger.info(f"Successfully imported: {module_name}")
+        except ImportError as e:
+            logger.error(f"Failed to import custom node module '{module_name}': {e}")
+            sys.exit(1)
+        except Exception as e:
+            logger.error(f"Error loading custom node module '{module_name}': {e}")
+            sys.exit(1)
 
     # Read params from stdin if requested
     if args.params_stdin:

@@ -397,8 +397,8 @@ cargo tree | grep -E '(tonic|prost|pyo3|numpy)'
 ## Reference Implementations
 
 For production examples, see:
-- `transports/remotemedia-grpc/` - gRPC transport (tonic/prost)
-- `transports/remotemedia-ffi/` - Python FFI transport (pyo3)
+- `transports/grpc/` - gRPC transport (tonic/prost)
+- `transports/ffi/` - Python FFI transport (pyo3)
 
 ## Support
 

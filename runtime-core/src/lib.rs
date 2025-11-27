@@ -18,23 +18,18 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use remotemedia_runtime_core::transport::PipelineRunner;
 //! use remotemedia_runtime_core::transport::TransportData;
 //! use remotemedia_runtime_core::data::RuntimeData;
-//! use std::sync::Arc;
 //!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let runner = PipelineRunner::new()?;
+//! // Create the pipeline runner
+//! let runner = PipelineRunner::new().unwrap();
 //!
-//!     let manifest = Arc::new(load_manifest()?);
-//!     let input = TransportData::new(RuntimeData::Text("hello".into()));
+//! // Create transport data
+//! let input = TransportData::new(RuntimeData::Text("hello".into()));
 //!
-//!     let output = runner.execute_unary(manifest, input).await?;
-//!     println!("Result: {:?}", output.data);
-//!     Ok(())
-//! }
+//! // Use runner.execute_unary(manifest, input).await for execution
 //! ```
 
 #![warn(clippy::all)]
@@ -45,6 +40,12 @@ pub mod audio;
 pub mod executor;
 pub mod nodes;
 pub mod python;
+/// Public entrypoint for ergonomic registration macros.
+pub mod registration_macros {
+    pub use crate::{
+        register_python_node, register_python_nodes, register_rust_node, register_rust_node_default,
+    };
+}
 
 // Manifest
 pub use manifest::Manifest;
@@ -75,6 +76,10 @@ pub mod data {
     pub use control_message::{ControlMessage, ControlMessageType};
     pub use ring_buffer::RingBuffer;
     pub use speculative_segment::{SegmentStatus, SpeculativeSegment};
+
+    // Video codec support (spec 012)
+    pub mod video;
+    pub use video::{PixelFormat, VideoCodec};
 
     /// Audio format enumeration
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,18 +113,7 @@ pub mod data {
         Any = 7,
     }
 
-    /// Pixel format for video frames
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-    pub enum PixelFormat {
-        /// Unknown format
-        Unspecified = 0,
-        /// RGB24 (packed)
-        Rgb24 = 1,
-        /// RGBA32 (packed)
-        Rgba32 = 2,
-        /// YUV420P (planar)
-        Yuv420p = 3,
-    }
+    // Note: PixelFormat moved to data::video module (spec 012)
 
     /// Runtime data representation matching DataBuffer oneof types
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -135,18 +129,24 @@ pub mod data {
         },
         /// Video frame
         Video {
-            /// Pixel data
+            /// Pixel data (raw or encoded)
+            /// - Raw: Depends on PixelFormat (e.g., YUV420P planar, RGB24 packed)
+            /// - Encoded: Codec bitstream (VP8/AV1/H.264)
             pixel_data: Vec<u8>,
-            /// Frame width
+            /// Frame width in pixels
             width: u32,
-            /// Frame height
+            /// Frame height in pixels
             height: u32,
-            /// Pixel format (0=unspecified, 1=RGB24, 2=RGBA32, 3=YUV420P)
-            format: i32,
-            /// Frame number/sequence
+            /// Pixel format (Yuv420p, RGB24, etc., or Encoded for compressed)
+            format: PixelFormat,
+            /// Codec used (None for raw frames, Some(codec) for encoded)
+            codec: Option<VideoCodec>,
+            /// Sequential frame number (monotonic counter)
             frame_number: u64,
-            /// Timestamp in microseconds
+            /// Presentation timestamp in microseconds
             timestamp_us: u64,
+            /// Keyframe indicator (true for I-frames, false for P/B-frames)
+            is_keyframe: bool,
         },
     /// Tensor data
     Tensor {
@@ -257,6 +257,51 @@ pub mod data {
                 }
             }
         }
+
+        /// Validate video frame structure (spec 012)
+        ///
+        /// Checks that video frame dimensions and buffer sizes are consistent
+        ///
+        /// # Errors
+        ///
+        /// Returns error if:
+        /// - Width or height is 0
+        /// - YUV format has odd dimensions
+        /// - Buffer size doesn't match expected size for pixel format
+        pub fn validate_video_frame(&self) -> Result<(), String> {
+            match self {
+                RuntimeData::Video {
+                    width,
+                    height,
+                    format,
+                    pixel_data,
+                    ..
+                } => {
+                    // Check dimensions
+                    if *width == 0 || *height == 0 {
+                        return Err("Invalid dimensions: width and height must be > 0".to_string());
+                    }
+
+                    // Check even dimensions for YUV formats
+                    if format.requires_even_dimensions() && (*width % 2 != 0 || *height % 2 != 0) {
+                        return Err("YUV formats require even dimensions".to_string());
+                    }
+
+                    // Check buffer size (skip for encoded frames with variable size)
+                    let expected_size = format.buffer_size(*width, *height);
+                    if expected_size > 0 && pixel_data.len() != expected_size {
+                        return Err(format!(
+                            "Buffer size mismatch: expected {}, got {}",
+                            expected_size,
+                            pixel_data.len()
+                        ));
+                    }
+
+                    Ok(())
+                }
+                _ => Err("Not a video frame".to_string()),
+            }
+        }
     }
 
     /// Audio buffer (standalone struct for nodes)
@@ -277,18 +322,22 @@ pub mod data {
     /// Video frame (standalone struct for nodes)
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct VideoFrame {
-        /// Pixel data
+        /// Pixel data (raw or encoded)
         pub pixel_data: Vec<u8>,
-        /// Frame width
+        /// Frame width in pixels
         pub width: u32,
-        /// Frame height
+        /// Frame height in pixels
         pub height: u32,
         /// Pixel format
-        pub format: i32,
-        /// Frame number
+        pub format: PixelFormat,
+        /// Codec used (None for raw frames)
+        pub codec: Option<VideoCodec>,
+        /// Sequential frame number
         pub frame_number: u64,
-        /// Timestamp in microseconds
+        /// Presentation timestamp in microseconds
         pub timestamp_us: u64,
+        /// Keyframe indicator
+        pub is_keyframe: bool,
     }
 
     /// Tensor buffer (standalone struct for nodes)
@@ -386,10 +435,119 @@ pub mod nodes_compat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use data::video::{PixelFormat, VideoCodec};
 
     #[test]
     fn test_init() {
         // Should not panic
         init().ok();
+    }
+
+    // T041: Unit tests for RuntimeData::Video validation
+    #[test]
+    fn test_video_frame_validation_valid() {
+        // Valid 720p YUV420P frame
+        let frame = data::RuntimeData::Video {
+            pixel_data: vec![128u8; 1_382_400],  // 1280*720*1.5
+            width: 1280,
+            height: 720,
+            format: PixelFormat::Yuv420p,
+            codec: None,
+            frame_number: 0,
+            timestamp_us: 0,
+            is_keyframe: false,
+        };
+
+        assert!(frame.validate_video_frame().is_ok());
+    }
+
+    #[test]
+    fn test_video_frame_validation_zero_dimensions() {
+        let frame = data::RuntimeData::Video {
+            pixel_data: vec![],
+            width: 0,  // Invalid
+            height: 720,
+            format: PixelFormat::Yuv420p,
+            codec: None,
+            frame_number: 0,
+            timestamp_us: 0,
+            is_keyframe: false,
+        };
+
+        let result = frame.validate_video_frame();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("width and height must be > 0"));
+    }
+
+    #[test]
+    fn test_video_frame_validation_odd_dimensions_yuv() {
+        // YUV formats require even dimensions
+        let frame = data::RuntimeData::Video {
+            pixel_data: vec![128u8; 100],
+            width: 1281,  // Odd width
+            height: 720,
+            format: PixelFormat::Yuv420p,
+            codec: None,
+            frame_number: 0,
+            timestamp_us: 0,
+            is_keyframe: false,
+        };
+
+        let result = frame.validate_video_frame();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("even dimensions"));
+    }
+
+    #[test]
+    fn test_video_frame_validation_buffer_size_mismatch() {
+        // Buffer size doesn't match format
+        let frame = data::RuntimeData::Video {
+            pixel_data: vec![128u8; 1000],  // Wrong size for 1280x720 YUV420P
+            width: 1280,
+            height: 720,
+            format: PixelFormat::Yuv420p,
+            codec: None,
+            frame_number: 0,
+            timestamp_us: 0,
+            is_keyframe: false,
+        };
+
+        let result = frame.validate_video_frame();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Buffer size mismatch"));
+    }
+
+    #[test]
+    fn test_video_frame_validation_rgb24() {
+        // Valid RGB24 frame (odd dimensions OK)
+        let frame = data::RuntimeData::Video {
+            pixel_data: vec![0u8; 1920 * 1081 * 3],  // Odd height OK for RGB
+            width: 1920,
+            height: 1081,  // Odd height
+            format: PixelFormat::Rgb24,
+            codec: None,
+            frame_number: 0,
+            timestamp_us: 0,
+            is_keyframe: false,
+        };
+
+        assert!(frame.validate_video_frame().is_ok());
+    }
+
+    #[test]
+    fn test_video_frame_validation_encoded_variable_size() {
+        // Encoded frames have variable size (validation skipped)
+        let frame = data::RuntimeData::Video {
+            pixel_data: vec![0u8; 5000],  // Variable encoded size
+            width: 1280,
+            height: 720,
+            format: PixelFormat::Encoded,
+            codec: Some(VideoCodec::Vp8),
+            frame_number: 0,
+            timestamp_us: 0,
+            is_keyframe: true,
+        };
+
+        assert!(frame.validate_video_frame().is_ok());
     }
 }
