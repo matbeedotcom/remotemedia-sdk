@@ -126,6 +126,10 @@ pub mod data {
             sample_rate: u32,
             /// Number of channels (1=mono, 2=stereo)
             channels: u32,
+            /// Optional stream identifier for multi-track routing (spec 013)
+            /// When None, uses default track for backward compatibility
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            stream_id: Option<String>,
         },
         /// Video frame
         Video {
@@ -147,6 +151,10 @@ pub mod data {
             timestamp_us: u64,
             /// Keyframe indicator (true for I-frames, false for P/B-frames)
             is_keyframe: bool,
+            /// Optional stream identifier for multi-track routing (spec 013)
+            /// When None, uses default track for backward compatibility
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            stream_id: Option<String>,
         },
     /// Tensor data
     Tensor {
@@ -456,6 +464,7 @@ mod tests {
             frame_number: 0,
             timestamp_us: 0,
             is_keyframe: false,
+            stream_id: None,
         };
 
         assert!(frame.validate_video_frame().is_ok());
@@ -472,6 +481,7 @@ mod tests {
             frame_number: 0,
             timestamp_us: 0,
             is_keyframe: false,
+            stream_id: None,
         };
 
         let result = frame.validate_video_frame();
@@ -491,6 +501,7 @@ mod tests {
             frame_number: 0,
             timestamp_us: 0,
             is_keyframe: false,
+            stream_id: None,
         };
 
         let result = frame.validate_video_frame();
@@ -510,6 +521,7 @@ mod tests {
             frame_number: 0,
             timestamp_us: 0,
             is_keyframe: false,
+            stream_id: None,
         };
 
         let result = frame.validate_video_frame();
@@ -529,6 +541,7 @@ mod tests {
             frame_number: 0,
             timestamp_us: 0,
             is_keyframe: false,
+            stream_id: None,
         };
 
         assert!(frame.validate_video_frame().is_ok());
@@ -546,6 +559,7 @@ mod tests {
             frame_number: 0,
             timestamp_us: 0,
             is_keyframe: true,
+            stream_id: None,
         };
 
         assert!(frame.validate_video_frame().is_ok());

@@ -71,6 +71,7 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             samples,
             sample_rate,
             channels,
+            stream_id: _, // stream_id not included in protobuf (yet)
         } => DataType::Audio(AudioBuffer {
             samples: samples.iter().flat_map(|f| f.to_le_bytes()).collect(),
             sample_rate: *sample_rate,
@@ -87,6 +88,7 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             timestamp_us,
             codec,
             is_keyframe,
+            stream_id: _, // stream_id not included in protobuf (yet)
         } => DataType::Video(VideoFrame {
             pixel_data: pixel_data.clone(),
             width: *width,
@@ -193,6 +195,7 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
                 samples,
                 sample_rate: audio.sample_rate,
                 channels: audio.channels,
+                stream_id: None, // stream_id not in protobuf (yet)
             })
         }
         Some(DataType::Video(video)) => Some(RuntimeData::Video {
@@ -204,6 +207,7 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
             timestamp_us: video.timestamp_us,
             codec: proto_to_video_codec(video.codec),
             is_keyframe: video.is_keyframe,
+            stream_id: None, // stream_id not in protobuf (yet)
         }),
         Some(DataType::Tensor(tensor)) => Some(RuntimeData::Tensor {
             data: tensor.data.clone(),

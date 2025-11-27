@@ -80,8 +80,8 @@ mod signaling;
 #[cfg(feature = "grpc-signaling")]
 pub mod signaling;
 
+pub mod media;
 pub mod channels;
-mod media;
 mod peer;
 mod session;
 mod sync;

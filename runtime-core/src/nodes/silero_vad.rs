@@ -258,6 +258,7 @@ impl AsyncStreamingNode for SileroVADNode {
                     samples,
                     sample_rate,
                     channels,
+                    stream_id: _,
                 } => (samples.clone(), *sample_rate, *channels),
                 _ => {
                     return Err(Error::Execution(

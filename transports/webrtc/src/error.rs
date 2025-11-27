@@ -70,6 +70,18 @@ pub enum Error {
     #[error("Pipeline error: {0}")]
     PipelineError(String),
 
+    /// Invalid stream_id (Spec 013: Dynamic Multi-Track Streaming)
+    #[error("Invalid stream_id: {0}")]
+    InvalidStreamId(String),
+
+    /// Track limit exceeded (Spec 013: FR-018, FR-019)
+    #[error("Track limit exceeded: {0}")]
+    TrackLimitExceeded(String),
+
+    /// Track not found (Spec 013)
+    #[error("Track not found: {0}")]
+    TrackNotFound(String),
+
     /// WebSocket error
     #[error("WebSocket error: {0}")]
     WebSocketError(String),
@@ -237,6 +249,26 @@ impl Error {
                  3. Node connections form a valid graph\n\
                  Use manifest.validate() to check pipeline before execution."
             }
+            Error::InvalidStreamId(_) => {
+                "Invalid stream_id format. Stream IDs must:\n\
+                 1. Be non-empty and max 64 characters\n\
+                 2. Contain only alphanumeric, underscore, and hyphen characters\n\
+                 3. Start with a letter or underscore\n\
+                 Use validate_stream_id() to check IDs before use."
+            }
+            Error::TrackLimitExceeded(_) => {
+                "Maximum number of tracks exceeded. Current limits:\n\
+                 1. Max 8 video tracks per peer\n\
+                 2. Max 8 audio tracks per peer\n\
+                 3. Max 16 total tracks per peer\n\
+                 Consider removing unused tracks before adding new ones."
+            }
+            Error::TrackNotFound(_) => {
+                "The requested track was not found. Verify that:\n\
+                 1. The stream_id matches an existing track\n\
+                 2. The track hasn't been removed\n\
+                 3. Use get_video_streams() or get_audio_streams() to list available tracks."
+            }
             Error::WebSocketError(_) => {
                 "WebSocket connection failed. Check that:\n\
                  1. Signaling server URL is correct (ws:// or wss://)\n\
@@ -289,6 +321,9 @@ impl Error {
             Error::MediaTrackError(_) => "MEDIA_TRACK_ERROR",
             Error::SyncError(_) => "SYNC_ERROR",
             Error::PipelineError(_) => "PIPELINE_ERROR",
+            Error::InvalidStreamId(_) => "INVALID_STREAM_ID",
+            Error::TrackLimitExceeded(_) => "TRACK_LIMIT_EXCEEDED",
+            Error::TrackNotFound(_) => "TRACK_NOT_FOUND",
             Error::WebSocketError(_) => "WEBSOCKET_ERROR",
             Error::SerializationError(_) => "SERIALIZATION_ERROR",
             Error::InternalError(_) => "INTERNAL_ERROR",
@@ -396,6 +431,9 @@ mod tests {
             Error::MediaTrackError("test".to_string()),
             Error::SyncError("test".to_string()),
             Error::PipelineError("test".to_string()),
+            Error::InvalidStreamId("test".to_string()),
+            Error::TrackLimitExceeded("test".to_string()),
+            Error::TrackNotFound("test".to_string()),
             Error::WebSocketError("test".to_string()),
             Error::SerializationError("test".to_string()),
             Error::InternalError("test".to_string()),

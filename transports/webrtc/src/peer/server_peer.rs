@@ -3,11 +3,23 @@
 //! ServerPeer represents a server-side WebRTC peer connection that automatically
 //! routes media through a RemoteMedia pipeline. Created when clients announce
 //! via gRPC signaling.
+//!
+//! ## Multi-Track Streaming (Spec 013)
+//!
+//! ServerPeer supports dynamic multi-track streaming via TrackRegistry and FrameRouter:
+//! - Tracks are created lazily when first frame with new stream_id arrives
+//! - Frames are routed to appropriate tracks based on stream_id field
+//! - Backward compatible: frames without stream_id use default track
 
 // Phase 4 (US2) server peer infrastructure
 #![allow(dead_code)]
 
 use crate::{config::WebRtcTransportConfig, peer::PeerConnection, Error, Result};
+use crate::media::{
+    TrackRegistry, FrameRouter, DEFAULT_STREAM_ID,
+    tracks::{AudioTrack, VideoTrack},
+    extract_stream_id,
+};
 use prost::Message;
 use remotemedia_runtime_core::{
     data::RuntimeData,
@@ -23,6 +35,14 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 ///
 /// Automatically created when a client announces via gRPC signaling.
 /// Handles bidirectional media routing: client ↔ WebRTC ↔ pipeline ↔ WebRTC ↔ client
+///
+/// ## Multi-Track Support (Spec 013)
+///
+/// The ServerPeer now supports dynamic multi-track streaming:
+/// - Uses `TrackRegistry` to manage multiple audio/video tracks per peer
+/// - Routes frames based on `stream_id` field in RuntimeData
+/// - Auto-creates tracks on first frame with new stream_id
+/// - Maintains backward compatibility via DEFAULT_STREAM_ID fallback
 pub struct ServerPeer {
     /// Unique identifier for the remote client
     peer_id: String,
@@ -35,6 +55,9 @@ pub struct ServerPeer {
 
     /// Pipeline manifest
     manifest: Arc<Manifest>,
+
+    /// Track registry for multi-track support (Spec 013)
+    track_registry: Arc<TrackRegistry<AudioTrack, VideoTrack>>,
 
     /// Shutdown signal
     shutdown_tx: mpsc::Sender<()>,
@@ -65,6 +88,9 @@ impl ServerPeer {
         // Create WebRTC peer connection
         let peer_connection = Arc::new(PeerConnection::new(peer_id.clone(), config).await?);
 
+        // Create track registry for multi-track support (Spec 013)
+        let track_registry = Arc::new(TrackRegistry::new(peer_id.clone()));
+
         // Create shutdown channel
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
@@ -73,6 +99,7 @@ impl ServerPeer {
             peer_connection,
             runner,
             manifest,
+            track_registry,
             shutdown_tx,
             shutdown_rx: Arc::new(RwLock::new(Some(shutdown_rx))),
         })
@@ -119,7 +146,39 @@ impl ServerPeer {
             .await
             .map_err(|e| Error::InternalError(format!("Failed to add audio track: {}", e)))?;
 
+        // Register default audio track in registry (Spec 013: backward compatibility)
+        if let Some(audio_track) = self.peer_connection.audio_track().await {
+            self.track_registry
+                .register_audio_track(DEFAULT_STREAM_ID, audio_track)
+                .await
+                .map_err(|e| Error::InternalError(format!("Failed to register default audio track: {}", e)))?;
+        }
+
         info!("Added audio track to peer connection for {}", self.peer_id);
+
+        // Add video track for sending pipeline video output to client
+        let video_config = crate::media::video::VideoEncoderConfig {
+            width: 1280,
+            height: 720,
+            framerate: 30,
+            bitrate: 2_000_000,
+            keyframe_interval: 60,
+        };
+
+        self.peer_connection
+            .add_video_track(video_config)
+            .await
+            .map_err(|e| Error::InternalError(format!("Failed to add video track: {}", e)))?;
+
+        // Register default video track in registry (Spec 013: backward compatibility)
+        if let Some(video_track) = self.peer_connection.video_track().await {
+            self.track_registry
+                .register_video_track(DEFAULT_STREAM_ID, video_track)
+                .await
+                .map_err(|e| Error::InternalError(format!("Failed to register default video track: {}", e)))?;
+        }
+
+        info!("Added video track to peer connection for {}", self.peer_id);
 
         // Set up bidirectional media routing and data channel (this will set up the data channel handler)
         self.setup_media_routing_and_data_channel(session_handle)
@@ -280,6 +339,7 @@ impl ServerPeer {
                                             samples,
                                             sample_rate: 48000, // Opus always decodes to 48kHz
                                             channels: 1,
+                                            stream_id: None, // From client, uses default track
                                         },
                                         sequence: None,
                                         metadata: std::collections::HashMap::new(),
@@ -305,6 +365,7 @@ impl ServerPeer {
         // Spawn task to handle bidirectional routing
         let peer_id = self.peer_id.clone();
         let peer_connection = Arc::clone(&self.peer_connection);
+        let track_registry = Arc::clone(&self.track_registry);
         let mut shutdown_rx =
             self.shutdown_rx.write().await.take().ok_or_else(|| {
                 Error::InternalError("Shutdown receiver already taken".to_string())
@@ -340,7 +401,7 @@ impl ServerPeer {
                         match output_result {
                             Ok(Ok(Some(transport_data))) => {
                                 debug!("Received output from pipeline for peer {}", peer_id);
-                                if let Err(e) = Self::send_to_webrtc(&peer_connection, transport_data).await {
+                                if let Err(e) = Self::send_to_webrtc_multitrack(&track_registry, transport_data).await {
                                     error!("Failed to send output to WebRTC for peer {}: {}", peer_id, e);
                                 }
                             }
@@ -378,43 +439,77 @@ impl ServerPeer {
         Ok(())
     }
 
-    /// Send TransportData to WebRTC peer connection
+    /// Send TransportData to WebRTC peer connection using multi-track routing (Spec 013)
     ///
-    /// Converts RuntimeData to RTP packets and sends via WebRTC tracks
-    async fn send_to_webrtc(
-        peer_connection: &Arc<PeerConnection>,
+    /// Routes RuntimeData to appropriate tracks based on stream_id field.
+    /// Falls back to DEFAULT_STREAM_ID for backward compatibility.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_registry` - Registry of audio/video tracks keyed by stream_id
+    /// * `transport_data` - Data to send, containing RuntimeData with optional stream_id
+    async fn send_to_webrtc_multitrack(
+        track_registry: &Arc<TrackRegistry<AudioTrack, VideoTrack>>,
         transport_data: TransportData,
     ) -> Result<()> {
-        // Get RuntimeData reference from TransportData
-        let runtime_data = &transport_data.data;
+        // Get RuntimeData and extract stream_id
+        let runtime_data = transport_data.data;
+        let stream_id = extract_stream_id(&runtime_data)
+            .unwrap_or(DEFAULT_STREAM_ID);
 
-        match runtime_data {
+        match &runtime_data {
             RuntimeData::Audio {
                 samples,
                 sample_rate,
                 channels,
+                ..
             } => {
                 debug!(
-                    "Sending audio: {} samples, {}Hz, {} channels",
+                    "Sending audio to stream '{}': {} samples, {}Hz, {} channels",
+                    stream_id,
                     samples.len(),
                     sample_rate,
                     channels
                 );
 
-                // Get the audio track
-                if let Some(audio_track) = peer_connection.audio_track().await {
+                // Get the audio track from registry
+                if let Some(audio_track) = track_registry.get_audio_track(stream_id).await {
                     // Send audio samples through the track with dynamic sample rate
                     audio_track
                         .send_audio(Arc::new(samples.clone()), *sample_rate)
                         .await?;
-                    debug!("Audio sent successfully");
+
+                    // Record frame for activity tracking
+                    track_registry.record_audio_frame(stream_id).await;
+                    debug!("Audio sent successfully to stream '{}'", stream_id);
                 } else {
-                    warn!("No audio track configured for peer, cannot send audio");
+                    warn!(
+                        "No audio track for stream_id '{}', cannot send audio (registered tracks: {:?})",
+                        stream_id,
+                        track_registry.audio_stream_ids().await
+                    );
                 }
             }
             RuntimeData::Video { .. } => {
-                debug!("Video output not yet implemented");
-                // TODO: Implement video transmission when needed
+                debug!("Sending video frame to stream '{}' via WebRTC", stream_id);
+
+                // Get the video track from registry
+                if let Some(video_track) = track_registry.get_video_track(stream_id).await {
+                    // Send video using VideoTrack's send_video_runtime_data method
+                    video_track
+                        .send_video_runtime_data(runtime_data.clone())
+                        .await?;
+
+                    // Record frame for activity tracking
+                    track_registry.record_video_frame(stream_id).await;
+                    debug!("Video sent successfully to stream '{}'", stream_id);
+                } else {
+                    warn!(
+                        "No video track for stream_id '{}', cannot send video (registered tracks: {:?})",
+                        stream_id,
+                        track_registry.video_stream_ids().await
+                    );
+                }
             }
             _ => {
                 debug!("Unsupported RuntimeData type for WebRTC output");
@@ -468,6 +563,36 @@ impl ServerPeer {
     /// Get the underlying peer connection
     pub fn peer_connection(&self) -> &Arc<PeerConnection> {
         &self.peer_connection
+    }
+
+    /// Get the track registry for multi-track management (Spec 013)
+    ///
+    /// The registry allows external code to:
+    /// - Query registered tracks by stream_id
+    /// - Register new tracks dynamically
+    /// - Monitor track activity
+    pub fn track_registry(&self) -> &Arc<TrackRegistry<AudioTrack, VideoTrack>> {
+        &self.track_registry
+    }
+
+    /// Get the number of registered audio tracks
+    pub async fn audio_track_count(&self) -> usize {
+        self.track_registry.audio_track_count().await
+    }
+
+    /// Get the number of registered video tracks
+    pub async fn video_track_count(&self) -> usize {
+        self.track_registry.video_track_count().await
+    }
+
+    /// Get all registered audio stream IDs
+    pub async fn audio_stream_ids(&self) -> Vec<String> {
+        self.track_registry.audio_stream_ids().await
+    }
+
+    /// Get all registered video stream IDs
+    pub async fn video_stream_ids(&self) -> Vec<String> {
+        self.track_registry.video_stream_ids().await
     }
 
     /// Shutdown the server peer

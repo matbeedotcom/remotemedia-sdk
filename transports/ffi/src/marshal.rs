@@ -388,6 +388,7 @@ pub fn runtime_data_to_python(py: Python<'_>, data: &RuntimeData) -> PyResult<Py
             samples,
             sample_rate,
             channels,
+            stream_id: _,
         } => {
             let dict = PyDict::new(py);
             dict.set_item("type", "audio")?;
@@ -564,6 +565,7 @@ pub fn python_to_runtime_data(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResul
                         samples,
                         sample_rate,
                         channels,
+                        stream_id: None,
                     });
                 }
                 "text" => {

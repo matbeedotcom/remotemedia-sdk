@@ -142,6 +142,7 @@ impl AsyncStreamingNode for VideoDecoderNode {
                     frame_number: 0,
                     timestamp_us: 0,
                     is_keyframe: false,
+                    stream_id: None,
                 })
             }
             Err(e) => Err(Error::Execution(format!("Decoding failed: {}", e))),

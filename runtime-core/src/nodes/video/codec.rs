@@ -136,6 +136,7 @@ impl VideoEncoderBackend for FFmpegEncoder {
                 codec: None,
                 frame_number,
                 timestamp_us,
+                stream_id: _,
                 ..
             } => (pixel_data, width, height, format, frame_number, timestamp_us),
             RuntimeData::Video { codec: Some(_), .. } => {
@@ -246,6 +247,7 @@ impl VideoEncoderBackend for FFmpegEncoder {
             frame_number,
             timestamp_us,
             is_keyframe,
+            stream_id: None,
         })
     }
 
@@ -294,6 +296,7 @@ impl VideoDecoderBackend for FFmpegDecoder {
                 codec: Some(codec),
                 frame_number,
                 timestamp_us,
+                stream_id: _,
                 ..
             } => (pixel_data, width, height, codec, frame_number, timestamp_us),
             RuntimeData::Video { codec: None, .. } => {
@@ -373,6 +376,7 @@ impl VideoDecoderBackend for FFmpegDecoder {
                 frame_number,
                 timestamp_us,
                 is_keyframe: false,
+                stream_id: None,
             })
         } else {
             // No frame available yet (decoder may need more packets)
@@ -386,6 +390,7 @@ impl VideoDecoderBackend for FFmpegDecoder {
                 frame_number: 0,
                 timestamp_us: 0,
                 is_keyframe: false,
+                stream_id: None,
             })
         }
     }

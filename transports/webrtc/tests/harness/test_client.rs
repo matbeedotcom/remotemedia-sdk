@@ -57,6 +57,21 @@ pub struct ReceivedAudioChunk {
     pub timestamp_us: u64,
 }
 
+/// Received track info with stream_id for multi-track support
+#[derive(Debug, Clone)]
+pub struct ReceivedTrackInfo {
+    /// Track ID from SDP
+    pub track_id: String,
+    /// Stream ID (extracted from track ID if using generate_track_id format)
+    pub stream_id: Option<String>,
+    /// Media kind (audio or video)
+    pub kind: String,
+    /// MIME type (e.g., "video/VP8", "audio/opus")
+    pub mime_type: String,
+    /// Packet count for this track
+    pub packet_count: u32,
+}
+
 /// Test client for WebRTC E2E testing
 ///
 /// Connects to the signaling server, establishes WebRTC peer connection,
@@ -84,11 +99,26 @@ pub struct TestClient {
     /// Video track for sending
     video_track: Arc<RwLock<Option<Arc<TrackLocalStaticSample>>>>,
 
+    /// Multiple video tracks by stream_id (for multi-track testing)
+    video_tracks: Arc<RwLock<HashMap<String, Arc<TrackLocalStaticSample>>>>,
+
+    /// Multiple audio tracks by stream_id (for multi-track testing)
+    audio_tracks: Arc<RwLock<HashMap<String, Arc<TrackLocalStaticSample>>>>,
+
     /// Received audio output (accumulated from pipeline)
     received_audio: Arc<RwLock<Vec<ReceivedAudioChunk>>>,
 
     /// Received video frames (accumulated from pipeline)
     received_video: Arc<RwLock<Vec<ReceivedVideoFrame>>>,
+
+    /// Received audio per stream_id (for multi-track testing)
+    received_audio_by_stream: Arc<RwLock<HashMap<String, Vec<ReceivedAudioChunk>>>>,
+
+    /// Received video per stream_id (for multi-track testing)
+    received_video_by_stream: Arc<RwLock<HashMap<String, Vec<ReceivedVideoFrame>>>>,
+
+    /// Track info for received tracks (track_id -> info)
+    received_track_info: Arc<RwLock<HashMap<String, ReceivedTrackInfo>>>,
 
     /// Received RTP packet count (audio)
     received_audio_packets: Arc<AtomicU32>,
@@ -130,8 +160,13 @@ impl TestClient {
             peer_connection: Arc::new(RwLock::new(None)),
             audio_track: Arc::new(RwLock::new(None)),
             video_track: Arc::new(RwLock::new(None)),
+            video_tracks: Arc::new(RwLock::new(HashMap::new())),
+            audio_tracks: Arc::new(RwLock::new(HashMap::new())),
             received_audio: Arc::new(RwLock::new(Vec::new())),
             received_video: Arc::new(RwLock::new(Vec::new())),
+            received_audio_by_stream: Arc::new(RwLock::new(HashMap::new())),
+            received_video_by_stream: Arc::new(RwLock::new(HashMap::new())),
+            received_track_info: Arc::new(RwLock::new(HashMap::new())),
             received_audio_packets: Arc::new(AtomicU32::new(0)),
             received_video_packets: Arc::new(AtomicU32::new(0)),
             request_counter: AtomicU64::new(0),
@@ -178,9 +213,9 @@ impl TestClient {
     ) -> HarnessResult<Arc<RTCPeerConnection>> {
         // Create media engine with default codecs
         let mut media_engine = MediaEngine::default();
-        media_engine.register_default_codecs().map_err(|e| {
-            HarnessError::ConnectionError(format!("Failed to register codecs: {}", e))
-        })?;
+        media_engine
+            .register_default_codecs()
+            .map_err(|e| HarnessError::ConnectionError(format!("Failed to register codecs: {}", e)))?;
 
         // Create interceptor registry
         let interceptor_registry =
@@ -449,8 +484,11 @@ impl TestClient {
 
             Box::pin(async move {
                 if let Some(candidate) = candidate {
-                    let request_id =
-                        format!("{}-ice-{}", peer_id, counter.fetch_add(1, Ordering::SeqCst));
+                    let request_id = format!(
+                        "{}-ice-{}",
+                        peer_id,
+                        counter.fetch_add(1, Ordering::SeqCst)
+                    );
 
                     if let Ok(json) = candidate.to_json() {
                         let ice_request = SignalingRequest {
@@ -505,9 +543,10 @@ impl TestClient {
             })),
         };
 
-        request_tx.send(announce).await.map_err(|e| {
-            HarnessError::ConnectionError(format!("Failed to send announce: {}", e))
-        })?;
+        request_tx
+            .send(announce)
+            .await
+            .map_err(|e| HarnessError::ConnectionError(format!("Failed to send announce: {}", e)))?;
 
         // Wait briefly for announce to be processed
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -574,17 +613,18 @@ impl TestClient {
                                     );
 
                                     // Set remote description
-                                    let answer_desc =
-                                        match RTCSessionDescription::answer(answer.sdp) {
-                                            Ok(desc) => desc,
-                                            Err(e) => {
-                                                error!("Invalid answer SDP: {}", e);
-                                                continue;
-                                            }
-                                        };
+                                    let answer_desc = match RTCSessionDescription::answer(answer.sdp)
+                                    {
+                                        Ok(desc) => desc,
+                                        Err(e) => {
+                                            error!("Invalid answer SDP: {}", e);
+                                            continue;
+                                        }
+                                    };
 
-                                    if let Err(e) =
-                                        peer_connection.set_remote_description(answer_desc).await
+                                    if let Err(e) = peer_connection
+                                        .set_remote_description(answer_desc)
+                                        .await
                                     {
                                         error!("Failed to set remote description: {}", e);
                                     } else {
@@ -651,10 +691,12 @@ impl TestClient {
     /// * `samples` - Audio samples (f32, -1.0 to 1.0)
     /// * `sample_rate` - Sample rate in Hz
     pub async fn send_audio(&self, samples: &[f32], _sample_rate: u32) -> HarnessResult<()> {
-        let audio_track =
-            self.audio_track.read().await.clone().ok_or_else(|| {
-                HarnessError::ClientError("Audio track not configured".to_string())
-            })?;
+        let audio_track = self
+            .audio_track
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| HarnessError::ClientError("Audio track not configured".to_string()))?;
 
         // Convert f32 samples to bytes (for Opus, we'd encode here)
         // For now, send as raw PCM bytes which the server will need to handle
@@ -687,18 +729,25 @@ impl TestClient {
     /// * `frame` - Raw video frame data (I420/YUV420P)
     /// * `width` - Frame width
     /// * `height` - Frame height
-    pub async fn send_video(&self, _frame: &[u8], _width: u32, _height: u32) -> HarnessResult<()> {
-        let video_track =
-            self.video_track.read().await.clone().ok_or_else(|| {
-                HarnessError::ClientError("Video track not configured".to_string())
-            })?;
+    pub async fn send_video(
+        &self,
+        _frame: &[u8],
+        _width: u32,
+        _height: u32,
+    ) -> HarnessResult<()> {
+        let video_track = self
+            .video_track
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| HarnessError::ClientError("Video track not configured".to_string()))?;
 
         debug!("Sending video frame (encoding simplified for test)");
 
         // Create sample data - in real implementation this would be VP8-encoded
         // For testing, we'll send placeholder VP8 keyframe
         let sample = webrtc::media::Sample {
-            data: vec![0u8; 100].into(),         // Minimal VP8 frame placeholder
+            data: vec![0u8; 100].into(), // Minimal VP8 frame placeholder
             duration: Duration::from_millis(33), // ~30fps
             timestamp: std::time::SystemTime::now(),
             ..Default::default()
@@ -709,6 +758,275 @@ impl TestClient {
         })?;
 
         Ok(())
+    }
+
+    // ========================================================================
+    // Multi-Track Support Methods (Spec 013)
+    // ========================================================================
+
+    /// Add a video track with a specific stream_id
+    ///
+    /// This creates a new video track that will appear in SDP negotiation.
+    /// Use this to test multi-track scenarios.
+    ///
+    /// # Arguments
+    ///
+    /// * `stream_id` - Unique identifier for this stream (e.g., "camera", "screen")
+    pub async fn add_video_track_with_stream_id(
+        &self,
+        stream_id: &str,
+    ) -> HarnessResult<Arc<TrackLocalStaticSample>> {
+        let peer_connection = self
+            .peer_connection
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| HarnessError::ClientError("Not connected".to_string()))?;
+
+        // Create track with stream_id in the track ID (matching generate_track_id format)
+        let track_id = format!("video_{}", stream_id);
+        let stream_label = format!("stream-{}-{}", self.peer_id, stream_id);
+
+        let video_track = Arc::new(TrackLocalStaticSample::new(
+            RTCRtpCodecCapability {
+                mime_type: "video/vp8".to_string(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line: String::new(),
+                rtcp_feedback: vec![],
+            },
+            track_id.clone(),
+            stream_label,
+        ));
+
+        // Add track to peer connection
+        peer_connection
+            .add_track(video_track.clone() as Arc<dyn TrackLocal + Send + Sync>)
+            .await
+            .map_err(|e| {
+                HarnessError::ConnectionError(format!("Failed to add video track: {}", e))
+            })?;
+
+        // Store in multi-track map
+        self.video_tracks
+            .write()
+            .await
+            .insert(stream_id.to_string(), Arc::clone(&video_track));
+
+        info!(
+            "TestClient {}: Added video track with stream_id '{}'",
+            self.peer_id, stream_id
+        );
+
+        Ok(video_track)
+    }
+
+    /// Add an audio track with a specific stream_id
+    ///
+    /// # Arguments
+    ///
+    /// * `stream_id` - Unique identifier for this stream (e.g., "voice", "music")
+    pub async fn add_audio_track_with_stream_id(
+        &self,
+        stream_id: &str,
+    ) -> HarnessResult<Arc<TrackLocalStaticSample>> {
+        let peer_connection = self
+            .peer_connection
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| HarnessError::ClientError("Not connected".to_string()))?;
+
+        // Create track with stream_id in the track ID
+        let track_id = format!("audio_{}", stream_id);
+        let stream_label = format!("stream-{}-{}", self.peer_id, stream_id);
+
+        let audio_track = Arc::new(TrackLocalStaticSample::new(
+            RTCRtpCodecCapability {
+                mime_type: "audio/opus".to_string(),
+                clock_rate: 48000,
+                channels: 1,
+                sdp_fmtp_line: String::new(),
+                rtcp_feedback: vec![],
+            },
+            track_id.clone(),
+            stream_label,
+        ));
+
+        // Add track to peer connection
+        peer_connection
+            .add_track(audio_track.clone() as Arc<dyn TrackLocal + Send + Sync>)
+            .await
+            .map_err(|e| {
+                HarnessError::ConnectionError(format!("Failed to add audio track: {}", e))
+            })?;
+
+        // Store in multi-track map
+        self.audio_tracks
+            .write()
+            .await
+            .insert(stream_id.to_string(), Arc::clone(&audio_track));
+
+        info!(
+            "TestClient {}: Added audio track with stream_id '{}'",
+            self.peer_id, stream_id
+        );
+
+        Ok(audio_track)
+    }
+
+    /// Send video frame on a specific stream
+    ///
+    /// # Arguments
+    ///
+    /// * `stream_id` - Stream identifier to send on
+    /// * `frame` - Raw video frame data (I420/YUV420P)
+    /// * `width` - Frame width
+    /// * `height` - Frame height
+    pub async fn send_video_on_stream(
+        &self,
+        stream_id: &str,
+        _frame: &[u8],
+        _width: u32,
+        _height: u32,
+    ) -> HarnessResult<()> {
+        let tracks = self.video_tracks.read().await;
+        let track = tracks.get(stream_id).ok_or_else(|| {
+            HarnessError::ClientError(format!("Video track '{}' not found", stream_id))
+        })?;
+
+        debug!(
+            "Sending video frame on stream '{}' (encoding simplified for test)",
+            stream_id
+        );
+
+        let sample = webrtc::media::Sample {
+            data: vec![0u8; 100].into(),
+            duration: Duration::from_millis(33),
+            timestamp: std::time::SystemTime::now(),
+            ..Default::default()
+        };
+
+        track.write_sample(&sample).await.map_err(|e| {
+            HarnessError::MediaError(format!("Failed to write video sample: {}", e))
+        })?;
+
+        Ok(())
+    }
+
+    /// Send audio on a specific stream
+    ///
+    /// # Arguments
+    ///
+    /// * `stream_id` - Stream identifier to send on
+    /// * `samples` - Audio samples (f32, -1.0 to 1.0)
+    /// * `sample_rate` - Sample rate in Hz
+    pub async fn send_audio_on_stream(
+        &self,
+        stream_id: &str,
+        _samples: &[f32],
+        _sample_rate: u32,
+    ) -> HarnessResult<()> {
+        let tracks = self.audio_tracks.read().await;
+        let track = tracks.get(stream_id).ok_or_else(|| {
+            HarnessError::ClientError(format!("Audio track '{}' not found", stream_id))
+        })?;
+
+        debug!(
+            "Sending audio on stream '{}' (encoding simplified for test)",
+            stream_id
+        );
+
+        let sample = webrtc::media::Sample {
+            data: vec![0u8; 160].into(),
+            duration: Duration::from_millis(20),
+            timestamp: std::time::SystemTime::now(),
+            ..Default::default()
+        };
+
+        track.write_sample(&sample).await.map_err(|e| {
+            HarnessError::MediaError(format!("Failed to write audio sample: {}", e))
+        })?;
+
+        Ok(())
+    }
+
+    /// Get the number of video tracks added with stream_id
+    pub async fn video_track_count(&self) -> usize {
+        self.video_tracks.read().await.len()
+    }
+
+    /// Get the number of audio tracks added with stream_id
+    pub async fn audio_track_count(&self) -> usize {
+        self.audio_tracks.read().await.len()
+    }
+
+    /// Get all video stream IDs
+    pub async fn video_stream_ids(&self) -> Vec<String> {
+        self.video_tracks.read().await.keys().cloned().collect()
+    }
+
+    /// Get all audio stream IDs
+    pub async fn audio_stream_ids(&self) -> Vec<String> {
+        self.audio_tracks.read().await.keys().cloned().collect()
+    }
+
+    /// Get received video frames for a specific stream
+    pub async fn get_received_video_for_stream(&self, stream_id: &str) -> Vec<ReceivedVideoFrame> {
+        self.received_video_by_stream
+            .read()
+            .await
+            .get(stream_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Get received audio chunks for a specific stream
+    pub async fn get_received_audio_for_stream(&self, stream_id: &str) -> Vec<ReceivedAudioChunk> {
+        self.received_audio_by_stream
+            .read()
+            .await
+            .get(stream_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Get info about all received tracks
+    pub async fn get_received_track_info(&self) -> HashMap<String, ReceivedTrackInfo> {
+        self.received_track_info.read().await.clone()
+    }
+
+    /// Get the number of distinct video tracks received
+    pub async fn received_video_track_count(&self) -> usize {
+        self.received_track_info
+            .read()
+            .await
+            .values()
+            .filter(|info| info.kind == "video")
+            .count()
+    }
+
+    /// Get the number of distinct audio tracks received
+    pub async fn received_audio_track_count(&self) -> usize {
+        self.received_track_info
+            .read()
+            .await
+            .values()
+            .filter(|info| info.kind == "audio")
+            .count()
+    }
+
+    /// Extract stream_id from a track_id (inverse of generate_track_id)
+    ///
+    /// Expected format: "video_camera" -> "camera", "audio_voice" -> "voice"
+    fn extract_stream_id_from_track_id(track_id: &str) -> Option<String> {
+        if let Some(suffix) = track_id.strip_prefix("video_") {
+            Some(suffix.to_string())
+        } else if let Some(suffix) = track_id.strip_prefix("audio_") {
+            Some(suffix.to_string())
+        } else {
+            None
+        }
     }
 
     /// Get accumulated received audio chunks

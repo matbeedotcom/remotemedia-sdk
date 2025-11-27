@@ -330,6 +330,7 @@ impl AudioBufferAccumulatorNode {
             samples,
             sample_rate,
             channels,
+            stream_id: None,
         }))
     }
 }
@@ -368,6 +369,7 @@ impl AsyncStreamingNode for AudioBufferAccumulatorNode {
                 samples,
                 sample_rate,
                 channels,
+                stream_id: _,
             } => {
                 // Handle audio chunk - convert to buffer format expected by handler
                 let audio_buf = crate::data::AudioBuffer {

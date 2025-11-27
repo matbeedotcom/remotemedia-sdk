@@ -116,7 +116,12 @@ impl OutputValidator {
     /// * `a` - First audio signal
     /// * `b` - Second audio signal
     /// * `tolerance` - Maximum allowed NMSE (e.g., 0.01 for 1% error)
-    pub fn assert_audio_similar(&self, a: &[f32], b: &[f32], tolerance: f32) -> HarnessResult<()> {
+    pub fn assert_audio_similar(
+        &self,
+        a: &[f32],
+        b: &[f32],
+        tolerance: f32,
+    ) -> HarnessResult<()> {
         // Allow length difference up to 10%
         let len_diff = (a.len() as f32 - b.len() as f32).abs() / a.len().max(1) as f32;
         if len_diff > 0.1 {
@@ -333,7 +338,12 @@ impl OutputValidator {
     }
 
     /// Assert two frames are similar
-    pub fn assert_frames_similar(&self, a: &[u8], b: &[u8], tolerance: f32) -> HarnessResult<()> {
+    pub fn assert_frames_similar(
+        &self,
+        a: &[u8],
+        b: &[u8],
+        tolerance: f32,
+    ) -> HarnessResult<()> {
         if a.len() != b.len() {
             return Err(HarnessError::ValidationError(format!(
                 "Frame size mismatch: {} vs {} bytes",
@@ -498,7 +508,9 @@ mod tests {
         let validator = OutputValidator::new();
 
         // Full scale sine wave has RMS = 1/sqrt(2) ≈ 0.707
-        let sine: Vec<f32> = (0..1000).map(|i| (i as f32 * 0.01).sin()).collect();
+        let sine: Vec<f32> = (0..1000)
+            .map(|i| (i as f32 * 0.01).sin())
+            .collect();
         let rms = validator.calculate_rms(&sine);
         assert!((rms - 0.707).abs() < 0.1);
 

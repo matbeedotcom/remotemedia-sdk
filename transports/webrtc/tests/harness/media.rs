@@ -143,7 +143,11 @@ impl MediaGenerator {
     /// Generate audio with speech-like characteristics (for VAD testing)
     ///
     /// Generates bursts of tone with gaps to simulate speech patterns
-    pub fn generate_speech_like(&self, duration_secs: f32, sample_rate: u32) -> Vec<f32> {
+    pub fn generate_speech_like(
+        &self,
+        duration_secs: f32,
+        sample_rate: u32,
+    ) -> Vec<f32> {
         let num_samples = (duration_secs * sample_rate as f32) as usize;
         let mut samples = vec![0.0; num_samples];
 
@@ -183,7 +187,14 @@ impl MediaGenerator {
     /// # Returns
     ///
     /// Raw YUV420P frame data
-    pub fn generate_solid_frame(&self, width: u32, height: u32, y: u8, u: u8, v: u8) -> Vec<u8> {
+    pub fn generate_solid_frame(
+        &self,
+        width: u32,
+        height: u32,
+        y: u8,
+        u: u8,
+        v: u8,
+    ) -> Vec<u8> {
         let y_size = (width * height) as usize;
         let uv_size = y_size / 4; // 4:2:0 subsampling
 
@@ -401,3 +412,4 @@ mod tests {
         assert!(max > 0.4);
     }
 }
+

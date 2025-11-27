@@ -538,6 +538,137 @@ impl PeerConnection {
         Ok(video_track)
     }
 
+    /// Add a video track with a specific stream_id (Spec 013: US2 - Multiple Video Streams)
+    ///
+    /// Creates a new video track with a unique stream_id for multi-track support.
+    /// Each call adds a new m=video section to the SDP when renegotiation occurs.
+    ///
+    /// # Arguments
+    ///
+    /// * `stream_id` - Unique identifier for this video stream (e.g., "camera", "screen")
+    /// * `config` - Video encoder configuration (resolution, framerate, bitrate)
+    ///
+    /// # Returns
+    ///
+    /// Returns the created VideoTrack wrapped in Arc for shared ownership.
+    /// The track should be registered in a TrackRegistry for routing.
+    ///
+    /// # Note
+    ///
+    /// Unlike `add_video_track()`, this method does NOT store the track internally.
+    /// The caller (ServerPeer/TrackRegistry) is responsible for track management.
+    pub async fn add_video_track_with_stream_id(
+        &self,
+        stream_id: &str,
+        config: VideoEncoderConfig,
+    ) -> Result<Arc<VideoTrack>> {
+        use crate::media::generate_track_id;
+
+        info!(
+            "Adding video track '{}' to peer {} (multi-track)",
+            stream_id, self.peer_id
+        );
+
+        // Generate deterministic track ID from stream_id
+        let track_id = generate_track_id("video", stream_id);
+
+        // Create TrackLocalStaticSample with VP8 codec
+        let track = Arc::new(TrackLocalStaticSample::new(
+            RTCRtpCodecCapability {
+                mime_type: "video/VP8".to_string(),
+                clock_rate: 90000, // Standard 90kHz clock for video
+                channels: 0,       // Not used for video
+                sdp_fmtp_line: String::new(),
+                rtcp_feedback: vec![],
+            },
+            track_id,
+            format!("stream-{}-{}", self.connection_id, stream_id),
+        ));
+
+        // Add track to peer connection (creates new m=video in SDP)
+        let _sender = self
+            .peer_connection
+            .add_track(track.clone() as Arc<dyn TrackLocal + Send + Sync>)
+            .await
+            .map_err(|e| Error::MediaTrackError(format!("Failed to add video track '{}': {}", stream_id, e)))?;
+
+        // Create VideoTrack wrapper with runtime-core encoder/decoder
+        let video_track = Arc::new(VideoTrack::new(
+            track,
+            remotemedia_runtime_core::data::video::VideoCodec::Vp8,
+            config.width,
+            config.height,
+            config.bitrate,
+            config.framerate,
+        )?);
+
+        debug!(
+            "Video track '{}' added to peer {} (will appear as separate m=video in SDP)",
+            stream_id, self.peer_id
+        );
+
+        Ok(video_track)
+    }
+
+    /// Add an audio track with a specific stream_id (Spec 013: US3 - Multiple Audio Streams)
+    ///
+    /// Creates a new audio track with a unique stream_id for multi-track support.
+    /// Each call adds a new m=audio section to the SDP when renegotiation occurs.
+    ///
+    /// # Arguments
+    ///
+    /// * `stream_id` - Unique identifier for this audio stream (e.g., "voice", "music")
+    /// * `config` - Audio encoder configuration
+    ///
+    /// # Returns
+    ///
+    /// Returns the created AudioTrack wrapped in Arc for shared ownership.
+    pub async fn add_audio_track_with_stream_id(
+        &self,
+        stream_id: &str,
+        config: AudioEncoderConfig,
+    ) -> Result<Arc<AudioTrack>> {
+        use crate::media::generate_track_id;
+
+        info!(
+            "Adding audio track '{}' to peer {} (multi-track)",
+            stream_id, self.peer_id
+        );
+
+        // Generate deterministic track ID from stream_id
+        let track_id = generate_track_id("audio", stream_id);
+
+        // Create TrackLocalStaticSample with Opus codec
+        let track = Arc::new(TrackLocalStaticSample::new(
+            RTCRtpCodecCapability {
+                mime_type: "audio/opus".to_string(),
+                clock_rate: config.sample_rate,
+                channels: config.channels,
+                sdp_fmtp_line: String::new(),
+                rtcp_feedback: vec![],
+            },
+            track_id,
+            format!("stream-{}-{}", self.connection_id, stream_id),
+        ));
+
+        // Add track to peer connection (creates new m=audio in SDP)
+        let _sender = self
+            .peer_connection
+            .add_track(track.clone() as Arc<dyn TrackLocal + Send + Sync>)
+            .await
+            .map_err(|e| Error::MediaTrackError(format!("Failed to add audio track '{}': {}", stream_id, e)))?;
+
+        // Create AudioTrack wrapper
+        let audio_track = Arc::new(AudioTrack::new(track, config)?);
+
+        debug!(
+            "Audio track '{}' added to peer {} (will appear as separate m=audio in SDP)",
+            stream_id, self.peer_id
+        );
+
+        Ok(audio_track)
+    }
+
     /// Get the audio track (if configured)
     pub async fn audio_track(&self) -> Option<Arc<AudioTrack>> {
         self.audio_track.read().await.clone()
