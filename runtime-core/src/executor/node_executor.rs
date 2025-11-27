@@ -105,6 +105,7 @@ impl NodeExecutor for RustNodeExecutor {
 ///
 /// Delegates to MultiprocessExecutor from the python module.
 pub struct PythonNodeExecutor {
+    #[allow(dead_code)]  // Reserved for node identification/logging
     node_type: String,
     #[cfg(feature = "multiprocess")]
     inner: Option<crate::python::multiprocess::MultiprocessExecutor>,

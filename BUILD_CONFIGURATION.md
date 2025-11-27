@@ -65,7 +65,7 @@ cargo build -p remotemedia-runtime-core --no-default-features --features silero-
 
 ### 2. remotemedia-grpc (gRPC Transport)
 
-**Location**: `transports/remotemedia-grpc/Cargo.toml`
+**Location**: `transports/grpc/Cargo.toml`
 
 **Features**:
 ```toml
@@ -109,7 +109,7 @@ cargo run --bin grpc-server --release
 
 ### 3. remotemedia-ffi (Python FFI Transport)
 
-**Location**: `transports/remotemedia-ffi/Cargo.toml`
+**Location**: `transports/ffi/Cargo.toml`
 
 **Features**:
 ```toml
@@ -143,7 +143,7 @@ cargo build -p remotemedia-ffi --features python-bindings
 
 ### 4. remotemedia-webrtc (WebRTC Transport)
 
-**Location**: `transports/remotemedia-webrtc/Cargo.toml`
+**Location**: `transports/webrtc/Cargo.toml`
 
 **Status**: In development (see `specs/001-webrtc-multi-peer-transport/`)
 
@@ -261,7 +261,7 @@ GRPC_BIND_ADDRESS="0.0.0.0:50051" ./target/release/grpc-server
 
 ```bash
 # Build Python extension module
-cd transports/remotemedia-ffi
+cd transports/ffi
 cargo build --release --features extension-module
 
 # Install in Python environment
@@ -580,6 +580,6 @@ cargo build -p remotemedia-grpc --features webrtc-signaling
 
 For more information:
 - [Project README](../README.md)
-- [gRPC Transport](../transports/remotemedia-grpc/README.md)
+- [gRPC Transport](../transports/grpc/README.md)
 - [WebRTC Transport Spec](../specs/001-webrtc-multi-peer-transport/spec.md)
-- [FFI Transport](../transports/remotemedia-ffi/README.md)
+- [FFI Transport](../transports/ffi/README.md)

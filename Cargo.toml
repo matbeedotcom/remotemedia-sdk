@@ -1,10 +1,10 @@
 [workspace]
 members = [
     "runtime-core",  # Core abstractions
-    "transports/remotemedia-grpc",  # gRPC transport
-    "transports/remotemedia-ffi",   # Python FFI transport
-    "transports/remotemedia-webrtc", # WebRTC transport
-    "transports/remotemedia-http",  # HTTP/REST transport with SSE
+    "transports/grpc",  # gRPC transport
+    "transports/ffi",   # Python FFI transport
+    "transports/webrtc", # WebRTC transport
+    "transports/http",  # HTTP/REST transport with SSE
 ]
 exclude = [
     "examples/*",  # Examples are independent projects demonstrating usage

@@ -9,7 +9,7 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use remotemedia_runtime_core::{
-    executor::execution_context::ExecutionContext,
+    executor::scheduler::ExecutionContext,
     python::multiprocess::{
         data_transfer::RuntimeData, docker_support::DockerSupport,
         multiprocess_executor::MultiprocessExecutor,

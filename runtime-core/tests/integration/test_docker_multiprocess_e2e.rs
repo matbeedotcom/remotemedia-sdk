@@ -79,9 +79,10 @@ async fn test_e2e_complete_docker_pipeline() {
     info!("Session ID: {}", session_id);
 
     // Create execution context for Docker node
-    let ctx = remotemedia_runtime_core::executor::execution_context::ExecutionContext {
+    let ctx = remotemedia_runtime_core::executor::scheduler::ExecutionContext {
+        pipeline_id: session_id.clone(),
         node_id: node_id.to_string(),
-        session_id: Some(session_id.clone()),
+        input_data: serde_json::Value::Null,
         metadata: {
             let mut meta = HashMap::new();
             meta.insert("use_docker".to_string(), serde_json::Value::Bool(true));
@@ -101,7 +102,7 @@ async fn test_e2e_complete_docker_pipeline() {
             meta.insert("docker_config".to_string(), docker_config);
             meta
         },
-        trace_id: Some(format!("trace_{}", uuid::Uuid::new_v4())),
+        timeout: Some(Duration::from_secs(60)),
     };
 
     // Phase 1: Initialize Docker container
@@ -316,9 +317,10 @@ async fn test_e2e_docker_error_handling() {
 
     // Test 1: Invalid Docker configuration
     info!("Test 1: Invalid memory limit");
-    let ctx = remotemedia_runtime_core::executor::execution_context::ExecutionContext {
+    let ctx = remotemedia_runtime_core::executor::scheduler::ExecutionContext {
+        pipeline_id: session_id.to_string(),
         node_id: "error_node".to_string(),
-        session_id: Some(session_id.to_string()),
+        input_data: serde_json::Value::Null,
         metadata: {
             let mut meta = HashMap::new();
             meta.insert("use_docker".to_string(), serde_json::Value::Bool(true));
@@ -330,7 +332,7 @@ async fn test_e2e_docker_error_handling() {
             meta.insert("docker_config".to_string(), docker_config);
             meta
         },
-        trace_id: None,
+        timeout: Some(Duration::from_secs(60)),
     };
 
     match executor.initialize(&ctx, session_id).await {
@@ -364,9 +366,10 @@ async fn test_e2e_docker_resource_limits() {
     let node_id = "resource_limited_node";
 
     // Create context with specific resource limits
-    let ctx = remotemedia_runtime_core::executor::execution_context::ExecutionContext {
+    let ctx = remotemedia_runtime_core::executor::scheduler::ExecutionContext {
+        pipeline_id: session_id.to_string(),
         node_id: node_id.to_string(),
-        session_id: Some(session_id.to_string()),
+        input_data: serde_json::Value::Null,
         metadata: {
             let mut meta = HashMap::new();
             meta.insert("use_docker".to_string(), serde_json::Value::Bool(true));
@@ -380,7 +383,7 @@ async fn test_e2e_docker_resource_limits() {
             meta.insert("docker_config".to_string(), docker_config);
             meta
         },
-        trace_id: None,
+        timeout: Some(Duration::from_secs(60)),
     };
 
     // Initialize with resource limits
@@ -443,9 +446,10 @@ async fn test_e2e_docker_concurrent_sessions() {
         let node_id = format!("concurrent_node_{}", i);
 
         let handle = tokio::spawn(async move {
-            let ctx = remotemedia_runtime_core::executor::execution_context::ExecutionContext {
+            let ctx = remotemedia_runtime_core::executor::scheduler::ExecutionContext {
+                pipeline_id: session_id.clone(),
                 node_id: node_id.clone(),
-                session_id: Some(session_id.clone()),
+                input_data: serde_json::Value::Null,
                 metadata: {
                     let mut meta = HashMap::new();
                     meta.insert("use_docker".to_string(), serde_json::Value::Bool(true));
@@ -458,7 +462,7 @@ async fn test_e2e_docker_concurrent_sessions() {
                     meta.insert("docker_config".to_string(), docker_config);
                     meta
                 },
-                trace_id: None,
+                timeout: Some(Duration::from_secs(60)),
             };
 
             // Initialize container

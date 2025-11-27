@@ -285,7 +285,7 @@ cd examples/docker-node
 export MANIFEST=gpu_accelerated_pipeline.json
 
 # 3. Run via gRPC transport (recommended)
-cd ../../transports/remotemedia-grpc
+cd ../../transports/grpc
 cargo run --bin grpc_server --release -- --manifest ../../examples/docker-node/$MANIFEST
 ```
 

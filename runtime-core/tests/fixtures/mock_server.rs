@@ -12,7 +12,7 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```
 //! let server = MockGrpcServer::start().await?;
 //! let endpoint = server.endpoint();
 //!

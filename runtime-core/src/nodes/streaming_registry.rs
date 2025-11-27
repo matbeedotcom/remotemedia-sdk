@@ -8,6 +8,8 @@ use crate::nodes::remote_pipeline::RemotePipelineNodeFactory;
 // use crate::nodes::sync_av::SynchronizedAudioVideoNode;
 use crate::nodes::video_flip::VideoFlipNode;
 // use crate::nodes::video_processor::VideoProcessorNode;
+#[cfg(feature = "video")]
+use crate::nodes::video::{VideoEncoderNode, VideoEncoderConfig, VideoDecoderNode, VideoDecoderConfig};
 use crate::nodes::{
     AsyncNodeWrapper, StreamingNode, StreamingNodeFactory, StreamingNodeRegistry, SyncNodeWrapper,
 };
@@ -76,6 +78,126 @@ impl StreamingNodeFactory for VideoFlipNodeFactory {
 
     fn node_type(&self) -> &str {
         "VideoFlip"
+    }
+}
+
+#[cfg(feature = "video")]
+struct VideoEncoderNodeFactory;
+
+#[cfg(feature = "video")]
+impl StreamingNodeFactory for VideoEncoderNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        let config = if params.is_null() {
+            VideoEncoderConfig::default()
+        } else {
+            serde_json::from_value(params.clone())
+                .map_err(|e| Error::Execution(format!("Invalid VideoEncoder config: {}", e)))?
+        };
+
+        let node = VideoEncoderNode::new(config)
+            .map_err(|e| Error::Execution(format!("Failed to create VideoEncoder: {}", e)))?;
+
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "VideoEncoder"
+    }
+}
+
+#[cfg(feature = "video")]
+struct VideoDecoderNodeFactory;
+
+#[cfg(feature = "video")]
+impl StreamingNodeFactory for VideoDecoderNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        let config = if params.is_null() {
+            VideoDecoderConfig::default()
+        } else {
+            serde_json::from_value(params.clone())
+                .map_err(|e| Error::Execution(format!("Invalid VideoDecoder config: {}", e)))?
+        };
+
+        let node = VideoDecoderNode::new(config)
+            .map_err(|e| Error::Execution(format!("Failed to create VideoDecoder: {}", e)))?;
+
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "VideoDecoder"
+    }
+}
+
+#[cfg(feature = "video")]
+struct VideoScalerNodeFactory;
+
+#[cfg(feature = "video")]
+impl StreamingNodeFactory for VideoScalerNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::video::{VideoScalerNode, VideoScalerConfig};
+
+        let config = if params.is_null() {
+            VideoScalerConfig::default()
+        } else {
+            serde_json::from_value(params.clone())
+                .map_err(|e| Error::Execution(format!("Invalid VideoScaler config: {}", e)))?
+        };
+
+        let node = VideoScalerNode::new(config)
+            .map_err(|e| Error::Execution(format!("Failed to create VideoScaler: {}", e)))?;
+
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "VideoScaler"
+    }
+}
+
+#[cfg(feature = "video")]
+struct VideoFormatConverterNodeFactory;
+
+#[cfg(feature = "video")]
+impl StreamingNodeFactory for VideoFormatConverterNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::video::{VideoFormatConverterNode, VideoFormatConverterConfig};
+
+        let config = if params.is_null() {
+            VideoFormatConverterConfig::default()
+        } else {
+            serde_json::from_value(params.clone())
+                .map_err(|e| Error::Execution(format!("Invalid VideoFormatConverter config: {}", e)))?
+        };
+
+        let node = VideoFormatConverterNode::new(config)
+            .map_err(|e| Error::Execution(format!("Failed to create VideoFormatConverter: {}", e)))?;
+
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "VideoFormatConverter"
     }
 }
 
@@ -205,7 +327,7 @@ struct AudioBufferAccumulatorNodeFactory;
 impl StreamingNodeFactory for AudioBufferAccumulatorNodeFactory {
     fn create(
         &self,
-        node_id: String,
+        _node_id: String,  // Reserved for future node identification/logging
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
@@ -280,7 +402,7 @@ struct SileroVADNodeFactory;
 impl StreamingNodeFactory for SileroVADNodeFactory {
     fn create(
         &self,
-        node_id: String,
+        _node_id: String,  // Reserved for future node identification/logging
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
@@ -453,7 +575,7 @@ struct AudioChunkerNodeFactory;
 impl StreamingNodeFactory for AudioChunkerNodeFactory {
     fn create(
         &self,
-        node_id: String,
+        _node_id: String,  // Reserved for future node identification/logging
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
@@ -721,6 +843,16 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
     // Temporarily disabled - incomplete implementations
     // registry.register(Arc::new(VideoProcessorNodeFactory));
     registry.register(Arc::new(VideoFlipNodeFactory));
+
+    // Register video codec nodes (Spec 012: Video Codec Support)
+    #[cfg(feature = "video")]
+    {
+        registry.register(Arc::new(VideoEncoderNodeFactory));
+        registry.register(Arc::new(VideoDecoderNodeFactory));
+        registry.register(Arc::new(VideoScalerNodeFactory));
+        registry.register(Arc::new(VideoFormatConverterNodeFactory));
+    }
+
     // registry.register(Arc::new(SynchronizedAudioVideoNodeFactory));
     registry.register(Arc::new(PassThroughNodeFactory));
 

@@ -22,16 +22,17 @@ pub use crate::nodes::remote_pipeline::RetryConfig;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use remotemedia_runtime_core::transport::client::RetryConfig;
+/// use remotemedia_runtime_core::transport::client::retry::RetryExecutor;
+///
 /// let config = RetryConfig {
 ///     max_retries: 3,
 ///     backoff_ms: 1000,
 /// };
 ///
-/// let result = retry_with_backoff(config, || async {
-///     // Operation that might fail transiently
-///     client.execute(request).await
-/// }).await?;
+/// let executor = RetryExecutor::new(config);
+/// // Use executor.execute(|| async { ... }).await for retryable operations
 /// ```
 pub struct RetryExecutor {
     config: RetryConfig,

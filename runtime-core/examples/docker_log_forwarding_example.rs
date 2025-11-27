@@ -133,13 +133,15 @@ print("INFO: Test script completed", flush=True)
         };
 
         use futures::StreamExt;
-        let mut stream = docker_support
+        let stream = docker_support
             .docker_client()
-            .start_exec(&exec_id, Some(start_config));
+            .start_exec(&exec_id, Some(start_config))
+            .await;
 
         println!("=== Container Output (will be forwarded to tracing) ===\n");
 
-        while let Some(output) = stream.next().await {
+        if let Ok(mut stream) = stream {
+            while let Some(output) = stream.next().await {
             if let Ok(msg) = output {
                 // The logs will be automatically forwarded to tracing by our forwarding task
                 // We can also print them here for demonstration

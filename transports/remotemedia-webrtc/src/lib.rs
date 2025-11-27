@@ -31,7 +31,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use remotemedia_webrtc::{WebRtcTransport, WebRtcTransportConfig};
 //! use remotemedia_runtime_core::PipelineRunner;
 //!

@@ -224,6 +224,7 @@ impl PipelineGraph {
 /// Pipeline executor
 pub struct Executor {
     /// Execution configuration
+    #[allow(dead_code)]  // Reserved for future execution policies
     config: ExecutorConfig,
 
     /// Composite node registry (multi-tier: user, audio, system)
@@ -233,6 +234,7 @@ pub struct Executor {
     builtin_nodes: NodeRegistry,
 
     /// Runtime selector for Python nodes (Phase 1.10.6)
+    #[allow(dead_code)]  // Reserved for automatic Python/Rust runtime selection
     runtime_selector: RuntimeSelector,
 
     // NOTE: py_cache removed - Python FFI belongs in FFI transport crate
@@ -1530,11 +1532,13 @@ impl Executor {
     /// Check if output is from a streaming node (async generator that returned multiple items)
     ///
     /// Phase 1.11.2: Heuristic to detect streaming output
+    #[allow(dead_code)]  // Reserved for streaming output detection heuristic
     fn is_streaming_output(&self, value: &Value) -> bool {
         // If it's an array and seems like streamed chunks, flatten it
         // This is a heuristic - in the future we could use metadata
-        if let Some(arr) = value.as_array() {
+        if value.as_array().is_some() {
             // If array has uniform structure, it's likely streaming output
+            // TODO: Analyze array structure to detect streaming patterns
             // For now, we'll be conservative and not flatten
             false
         } else {
@@ -1858,7 +1862,7 @@ mod tests {
             nodes: vec![
                 crate::manifest::NodeManifest {
                     id: "input_0".to_string(),
-                    node_type: "DataSource".to_string(),
+                    node_type: "PassThrough".to_string(),
                     params: serde_json::json!({}),
                     capabilities: None,
                     host: None,
@@ -1869,8 +1873,8 @@ mod tests {
                 },
                 crate::manifest::NodeManifest {
                     id: "process_1".to_string(),
-                    node_type: "Transform".to_string(),
-                    params: serde_json::json!({"operation": "add"}),
+                    node_type: "Echo".to_string(),
+                    params: serde_json::json!({}),
                     capabilities: None,
                     host: None,
                     runtime_hint: None,
@@ -1885,8 +1889,16 @@ mod tests {
             }],
         };
 
-        let executor = Executor::new();
-        let result = executor.execute(&manifest).await.unwrap();
+        // Create executor with built-in nodes registered
+        let mut executor = Executor::new();
+        executor.add_system_registry(std::sync::Arc::new(crate::nodes::create_builtin_registry()));
+
+        // Use execute_with_input with a single input to avoid blocking
+        let input_data = vec![serde_json::json!("test")];
+        let result = executor
+            .execute_with_input(&manifest, input_data)
+            .await
+            .unwrap();
 
         assert_eq!(result.status, "success");
         assert!(result.graph_info.is_some());
@@ -1938,7 +1950,9 @@ mod tests {
             }],
         };
 
-        let executor = Executor::new();
+        // Create executor with built-in nodes registered
+        let mut executor = Executor::new();
+        executor.add_system_registry(std::sync::Arc::new(crate::nodes::create_builtin_registry()));
         let input_data = vec![
             serde_json::json!("test1"),
             serde_json::json!("test2"),
