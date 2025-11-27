@@ -94,10 +94,10 @@ impl ExecutionTarget {
                 docker_client,
             } => {
                 // Stop container with timeout
-                use bollard::container::StopContainerOptions;
-                let options = StopContainerOptions {
-                    t: timeout.as_secs() as i64,
-                };
+                use bollard::query_parameters::StopContainerOptionsBuilder;
+                let options = StopContainerOptionsBuilder::default()
+                    .t(timeout.as_secs() as i32)
+                    .build();
                 docker_client
                     .stop_container(container_id, Some(options))
                     .await

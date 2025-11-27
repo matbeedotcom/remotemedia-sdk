@@ -1874,8 +1874,8 @@ impl DockerSupport {
         session_id: &str,
         config: &DockerNodeConfig,
     ) -> Result<String> {
-        use bollard::container::{Config, CreateContainerOptions};
-        use bollard::models::{DeviceRequest, HostConfig};
+        use bollard::query_parameters::CreateContainerOptionsBuilder;
+        use bollard::models::{ContainerCreateBody, DeviceRequest, HostConfig};
 
         info!(
             node_id = %node_id,
@@ -2075,7 +2075,7 @@ impl DockerSupport {
             "Configuring container to run as non-root user"
         );
 
-        let container_config = Config {
+        let container_config = ContainerCreateBody {
             image: Some(image.clone()),
             env: Some(env),
             host_config: Some(host_config),
@@ -2084,10 +2084,9 @@ impl DockerSupport {
             ..Default::default()
         };
 
-        let options = CreateContainerOptions {
-            name: container_name.clone(),
-            platform: None,
-        };
+        let options = CreateContainerOptionsBuilder::default()
+            .name(&container_name)
+            .build();
 
         // Create the container
         match self
@@ -2313,7 +2312,7 @@ impl DockerSupport {
         container_id: &str,
         tail: Option<usize>,
     ) -> Result<String> {
-        use bollard::container::LogsOptions;
+        use bollard::query_parameters::LogsOptionsBuilder;
         use futures::StreamExt;
 
         debug!(
@@ -2322,15 +2321,15 @@ impl DockerSupport {
             "Retrieving container logs"
         );
 
-        let options = LogsOptions::<String> {
-            stdout: true,
-            stderr: true,
-            tail: tail
-                .map(|n| n.to_string())
-                .unwrap_or_else(|| "all".to_string()),
-            follow: false,
-            ..Default::default()
-        };
+        let tail_str = tail
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "all".to_string());
+        let options = LogsOptionsBuilder::default()
+            .stdout(true)
+            .stderr(true)
+            .tail(&tail_str)
+            .follow(false)
+            .build();
 
         let mut logs_stream = self.docker.logs(container_id, Some(options));
         let mut logs = String::new();
@@ -2520,11 +2519,10 @@ impl DockerSupport {
             vec![format!("remotemedia.session_id={}", session_id)],
         )]);
 
-        let options = bollard::container::ListContainersOptions::<String> {
-            all: true,
-            filters,
-            ..Default::default()
-        };
+        let options = bollard::query_parameters::ListContainersOptionsBuilder::default()
+            .all(true)
+            .filters(&filters)
+            .build();
 
         let containers = self
             .docker
@@ -2627,17 +2625,16 @@ impl DockerSupport {
             "Starting container log forwarding"
         );
 
-        use bollard::container::LogsOptions;
+        use bollard::query_parameters::LogsOptionsBuilder;
         use futures::StreamExt;
 
-        let options = LogsOptions::<String> {
-            stdout: true,
-            stderr: true,
-            follow: true,          // Stream logs in real-time
-            tail: "0".to_string(), // Start from now (don't retrieve historical logs)
-            timestamps: config.include_timestamps,
-            ..Default::default()
-        };
+        let options = LogsOptionsBuilder::default()
+            .stdout(true)
+            .stderr(true)
+            .follow(true)          // Stream logs in real-time
+            .tail("0")             // Start from now (don't retrieve historical logs)
+            .timestamps(config.include_timestamps)
+            .build();
 
         let logs_stream = self.docker.logs(container_id, Some(options));
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
@@ -2730,7 +2727,7 @@ impl DockerSupport {
         container_id: &str,
         node_id: Option<&str>,
         config: &LogForwardingConfig,
-        buffer: &mut String,
+        _buffer: &mut String,  // Reserved for buffered log output
     ) {
         let log_line = log_line.trim();
         if log_line.is_empty() {
