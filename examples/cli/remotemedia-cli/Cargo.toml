@@ -1,0 +1,59 @@
+[package]
+name = "remotemedia-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Command-line interface for RemoteMedia SDK pipeline execution"
+license.workspace = true
+
+[[bin]]
+name = "remotemedia"
+path = "src/main.rs"
+
+[dependencies]
+# SDK dependencies
+remotemedia-runtime-core = { workspace = true }
+remotemedia-grpc = { workspace = true }
+remotemedia-http = { workspace = true }
+remotemedia-webrtc = { workspace = true }
+
+# CLI framework
+clap = { workspace = true }
+
+# Audio I/O
+cpal = { workspace = true }
+
+# Progress and output
+indicatif = { workspace = true }
+console = { workspace = true }
+comfy-table = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+futures = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+toml = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+directories = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.8"
+assert_cmd = "2.0"
+predicates = "3.0"

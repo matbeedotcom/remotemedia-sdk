@@ -1,0 +1,21 @@
+# Transcription Pipeline
+# Audio/Video → Whisper STT → Text output
+# Runs locally with configurable model size
+
+version: "v1"
+metadata:
+  name: "transcribe"
+  description: "Audio transcription using Whisper"
+  category: "asr"
+
+nodes:
+  - id: stt
+    node_type: WhisperNode
+    params:
+      model: "base"
+      language: "auto"
+      task: "transcribe"
+      word_timestamps: true
+      initial_prompt: ""
+
+connections: []

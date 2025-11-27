@@ -1,0 +1,33 @@
+# Text-to-Speech Pipeline
+# Usage: remotemedia run tts.yaml --input "Hello, world!"
+
+name: tts
+version: "1.0"
+description: Text-to-speech synthesis using Kokoro
+
+nodes:
+  - id: input
+    node_type: TextInput
+    config:
+      encoding: utf-8
+
+  - id: kokoro
+    node_type: KokoroTTS
+    executor: multiprocess
+    config:
+      voice: af_bella
+      speed: 1.0
+      sample_rate: 24000
+
+  - id: output
+    node_type: AudioOutput
+    config:
+      sample_rate: 24000
+      channels: 1
+      format: f32
+
+connections:
+  - from: input
+    to: kokoro
+  - from: kokoro
+    to: output

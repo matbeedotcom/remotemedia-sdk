@@ -1,0 +1,63 @@
+# Workspace for Rust-based examples
+# NOTE: This is separate from the main SDK workspace to allow independent versioning
+
+[workspace]
+members = [
+    "cli/remotemedia-cli",
+    # Future Rust examples can be added here
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["RemoteMedia SDK Contributors"]
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# SDK dependencies (path-based during development)
+remotemedia-runtime-core = { path = "../runtime-core" }
+remotemedia-grpc = { path = "../transports/grpc" }
+remotemedia-http = { path = "../transports/http" }
+remotemedia-webrtc = { path = "../transports/webrtc" }
+
+# CLI framework
+clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
+
+# Audio I/O
+cpal = "0.15"
+
+# Progress and output
+indicatif = "0.17"
+console = "0.15"
+comfy-table = "7.1"
+
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+tokio-stream = "0.1"
+futures = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+toml = "0.8"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+uuid = { version = "1.6", features = ["v4"] }
+directories = "5.0"
+url = "2.5"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

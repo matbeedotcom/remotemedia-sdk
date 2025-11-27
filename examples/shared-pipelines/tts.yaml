@@ -1,0 +1,19 @@
+# Text-to-Speech Pipeline
+# Text → Kokoro TTS → Audio output
+# Runs locally with voice selection
+
+version: "v1"
+metadata:
+  name: "tts"
+  description: "Text-to-speech synthesis using Kokoro"
+  category: "tts"
+
+nodes:
+  - id: tts
+    node_type: KokoroTTSNode
+    params:
+      voice: "af_bella"
+      speed: 1.0
+      sample_rate: 24000
+
+connections: []
