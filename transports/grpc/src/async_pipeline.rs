@@ -6,7 +6,7 @@
 //! without blocking other nodes.
 
 use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::nodes::{AsyncStreamingNode, StreamingNode};
+use remotemedia_runtime_core::nodes::StreamingNode;
 use remotemedia_runtime_core::{Error, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -220,15 +220,16 @@ impl AsyncPipelineBuilder {
     pub fn build(self) -> AsyncPipeline {
         let mut node_inputs: HashMap<String, UnboundedReceiver<PipelineItem>> = HashMap::new();
         let mut node_outputs: HashMap<String, Vec<UnboundedSender<PipelineItem>>> = HashMap::new();
+        #[allow(unused_assignments)]
         let mut client_output_rx = None;
 
         // Create channels for all nodes
         for (node_id, _) in &self.nodes {
-            let (tx, rx) = unbounded_channel();
+            let (_tx, rx) = unbounded_channel();
             node_inputs.insert(node_id.clone(), rx);
 
             // Store the sender for upstream nodes to use
-            if let Some(upstream_nodes) = self
+            if let Some(_upstream_nodes) = self
                 .connections
                 .iter()
                 .filter(|(_, downstream)| downstream.contains(node_id))
@@ -250,7 +251,7 @@ impl AsyncPipelineBuilder {
         for (from_node, to_nodes) in &self.connections {
             let mut outputs = Vec::new();
             for to_node in to_nodes {
-                if let Some(rx) = node_inputs.remove(to_node) {
+                if let Some(_rx) = node_inputs.remove(to_node) {
                     let (tx, new_rx) = unbounded_channel();
                     outputs.push(tx);
                     node_inputs.insert(to_node.clone(), new_rx);

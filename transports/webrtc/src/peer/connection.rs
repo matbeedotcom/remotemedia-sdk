@@ -1,5 +1,8 @@
 //! WebRTC peer connection management
 
+// Phase 4 (US2) peer connection infrastructure
+#![allow(dead_code)]
+
 use crate::media::audio::AudioEncoderConfig;
 use crate::media::tracks::AudioTrack;
 use crate::media::tracks::VideoTrack;

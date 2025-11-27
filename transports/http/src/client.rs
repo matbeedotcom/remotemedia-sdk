@@ -139,6 +139,7 @@ struct StreamInputRequest {
 
 /// SSE event data
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // Fields used during deserialization
 struct SseEvent {
     /// Output data
     data: TransportData,

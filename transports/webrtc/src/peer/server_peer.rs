@@ -4,6 +4,9 @@
 //! routes media through a RemoteMedia pipeline. Created when clients announce
 //! via gRPC signaling.
 
+// Phase 4 (US2) server peer infrastructure
+#![allow(dead_code)]
+
 use crate::{config::WebRtcTransportConfig, peer::PeerConnection, Error, Result};
 use prost::Message;
 use remotemedia_runtime_core::{

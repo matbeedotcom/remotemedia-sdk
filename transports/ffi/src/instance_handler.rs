@@ -99,7 +99,7 @@ impl InstanceExecutor {
     pub fn new(node_instance: Py<PyAny>, node_id: String) -> PyResult<Self> {
         // T005: PyO3 Py<PyAny> storage pattern - node_instance stored directly
         // T009: Validate required methods exist
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let node_ref = node_instance.bind(py);
 
             // Check for process method
@@ -177,8 +177,8 @@ impl InstanceExecutor {
     ///
     /// Returns PyErr if Python process() method raises an exception
     pub fn process(&self, input: RuntimeData) -> PyResult<Vec<RuntimeData>> {
-        // T006, T016: Python::with_gil() method calling pattern for process()
-        Python::with_gil(|py| {
+        // T006, T016: Python::attach() method calling pattern for process()
+        Python::attach(|py| {
             // Convert RuntimeData to Python object (requires T007)
             let py_input = super::marshal::runtime_data_to_python(py, &input)?;
 
@@ -216,8 +216,8 @@ impl InstanceExecutor {
     ///
     /// Returns PyErr if Python cleanup() method raises an exception
     pub fn cleanup(&self) -> PyResult<()> {
-        // T006, T017: Python::with_gil() method calling pattern for cleanup()
-        Python::with_gil(|py| {
+        // T006, T017: Python::attach() method calling pattern for cleanup()
+        Python::attach(|py| {
             self.node_instance
                 .call_method0(py, "cleanup")
                 .map_err(|e| {

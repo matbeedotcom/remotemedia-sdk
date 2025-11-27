@@ -46,5 +46,6 @@ anyhow = { workspace = true }
 base64 = "0.22"
 
 [features]
-default = []  # No default features - use extension-module explicitly for .so builds
+default = ["native-numpy"]  # Enable numpy by default since numpy dep is always present
 extension-module = ["pyo3/extension-module"]
+native-numpy = []  # Native numpy array support (always available, cfg guard for future conditional compilation)

@@ -15,6 +15,9 @@
 //! - float32, float64
 //! - bool
 
+// Phase 1.7.3 numpy bridge infrastructure - some functions reserved for future use
+#![allow(dead_code)]
+
 use numpy::{PyArray, PyArrayDyn, PyArrayMethods};
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -52,7 +55,7 @@ pub struct NumpyArrayData {
 }
 
 /// Check if a Python object is a numpy array
-pub fn is_numpy_array(py: Python, obj: &Bound<'_, PyAny>) -> bool {
+pub fn is_numpy_array(_py: Python, obj: &Bound<'_, PyAny>) -> bool {
     // Check if object has numpy array attributes instead of trying to downcast
     // This is more robust and works for all numpy dtypes
     obj.hasattr("shape").unwrap_or(false)
@@ -186,8 +189,10 @@ pub fn vec_to_numpy_f64<'py>(
     shape: &[usize],
 ) -> PyResult<Bound<'py, PyAny>> {
     let array = PyArray::from_slice(py, data);
-    let reshaped = array.reshape(shape)?;
-    Ok(reshaped.into_any())
+    // Use Python's reshape method via call_method
+    let shape_tuple: Vec<_> = shape.iter().map(|&s| s).collect();
+    let reshaped = array.call_method1("reshape", (shape_tuple,))?;
+    Ok(reshaped)
 }
 
 /// Convert numpy array to AudioBuffer with zero-copy (Phase 4: T049-T053)
@@ -262,6 +267,7 @@ pub fn numpy_to_audio_buffer_ffi<'py>(
 /// ```
 #[pyfunction]
 #[pyo3(signature = (arr))]
+#[allow(unused_variables)]
 pub fn numpy_to_runtime_data(
     py: Python<'_>,
     arr: Bound<'_, PyAny>,
@@ -302,8 +308,9 @@ pub fn audio_buffer_to_numpy_ffi<'py>(
     if buffer.channels() > 1 {
         let frames = buffer.len_frames();
         let channels = buffer.channels() as usize;
-        let reshaped = array.reshape([frames, channels])?;
-        Ok(reshaped.into_any())
+        // Use Python's reshape method via call_method
+        let reshaped = array.call_method1("reshape", ((frames, channels),))?;
+        Ok(reshaped)
     } else {
         Ok(array.into_any())
     }
@@ -347,8 +354,9 @@ pub fn audio_buffer_to_numpy_ffi<'py>(
 /// ```
 #[pyfunction]
 #[pyo3(signature = (arr, channel_name, session_id, sample_rate, channels))]
+#[allow(unused_variables)]
 pub fn publish_audio_to_ipc(
-    _py: Python<'_>,
+    py: Python<'_>,
     arr: Bound<'_, PyAny>,
     channel_name: String,
     session_id: String,
@@ -392,8 +400,9 @@ pub fn publish_audio_to_ipc(
 /// ```
 #[pyfunction]
 #[pyo3(signature = (channel_name, timeout_ms=None))]
+#[allow(unused_variables)]
 pub fn subscribe_audio_from_ipc<'py>(
-    _py: Python<'py>,
+    py: Python<'py>,
     channel_name: String,
     timeout_ms: Option<u64>,
 ) -> PyResult<Option<Bound<'py, PyAny>>> {

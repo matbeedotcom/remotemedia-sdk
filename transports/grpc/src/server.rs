@@ -22,7 +22,7 @@ use remotemedia_runtime_core::transport::{
 };
 use std::sync::Arc;
 use tonic::{service::LayerExt as _, transport::Server};
-use tracing::{info, warn};
+use tracing::info;
 
 /// gRPC server builder with middleware
 pub struct GrpcServer {

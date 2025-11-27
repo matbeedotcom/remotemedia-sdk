@@ -3,6 +3,11 @@
 //! This module replaces the blocking route_to_downstream with a truly
 //! asynchronous implementation that processes each yielded item immediately.
 
+// Internal infrastructure - some fields reserved for future use
+#![allow(dead_code)]
+// StreamSession is intentionally kept private for internal use
+#![allow(private_interfaces)]
+
 use crate::adapters::runtime_data_to_data_buffer;
 use crate::generated::{
     stream_response::Response as StreamResponseType, ChunkResult, StreamResponse,

@@ -3,7 +3,8 @@
 //! Parses manifest.v1.json format and extracts multiprocess-specific configuration
 //! from manifest metadata for per-pipeline executor configuration.
 
-#![cfg(feature = "grpc-transport")]
+// Phase 5 (US3) manifest configuration - stub module
+#![allow(dead_code)]
 
 /// Manifest configuration for multiprocess execution
 pub struct ManifestConfiguration {

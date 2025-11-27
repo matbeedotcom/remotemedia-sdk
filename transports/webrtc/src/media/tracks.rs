@@ -2,9 +2,12 @@
 //!
 //! Handles RTP track management, encoding, and decoding.
 
+// Phase 4 (US2) media track infrastructure
+#![allow(dead_code)]
+
 use super::audio::{AudioEncoder, AudioEncoderConfig};
 use super::audio_sender::AudioSender;
-use super::video::{VideoEncoderConfig as WebRtcVideoConfig, VideoFormat, VideoFrame};
+use super::video::{VideoFormat, VideoFrame};
 use crate::{Error, Result};
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::data::video::{PixelFormat, VideoCodec};
@@ -14,7 +17,6 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use webrtc::media::Sample;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
-use webrtc::track::track_local::TrackLocalWriter;
 
 /// Audio track for WebRTC
 ///
@@ -247,8 +249,8 @@ impl VideoTrack {
     pub fn new(
         track: Arc<TrackLocalStaticSample>,
         codec: VideoCodec,
-        width: u32,
-        height: u32,
+        _width: u32,
+        _height: u32,
         bitrate: u32,
         framerate: u32,
     ) -> Result<Self> {

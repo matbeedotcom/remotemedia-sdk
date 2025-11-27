@@ -2,6 +2,9 @@
 //
 // Provides gRPC bidirectional streaming for WebRTC peer signaling
 
+// Phase 4 (US2) signaling infrastructure
+#![allow(dead_code)]
+
 use crate::config::WebRtcTransportConfig;
 use crate::generated::webrtc::{
     web_rtc_signaling_server::{WebRtcSignaling, WebRtcSignalingServer},

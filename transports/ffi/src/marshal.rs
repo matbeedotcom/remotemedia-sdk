@@ -5,6 +5,7 @@
 //! - Rust serde_json::Value → Python objects
 //! - RuntimeData ↔ Python objects (Feature 011)
 
+use base64::Engine;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 use pyo3::IntoPyObjectExt;
@@ -154,9 +155,9 @@ fn python_to_json_impl(
     // Numpy array - serialize with metadata for cross-language support (only with native-numpy feature)
     #[cfg(feature = "native-numpy")]
     {
-        if is_numpy_array(py, obj) {
+        if crate::numpy_bridge::is_numpy_array(py, obj) {
             tracing::info!("Converting numpy array to JSON with metadata");
-            return numpy_to_json(py, obj);
+            return crate::numpy_bridge::numpy_to_json(py, obj);
         }
     }
 
@@ -217,7 +218,7 @@ fn python_to_json_impl(
     let bytes: &[u8] = pickled_bytes.extract()?;
 
     // Base64 encode the pickled bytes
-    let base64_encoded = base64::encode(bytes);
+    let base64_encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
 
     // Store as a special JSON object that signals this is pickled data
     let mut map = serde_json::Map::new();
@@ -285,9 +286,9 @@ pub fn json_to_python_with_cache<'py>(
             // Check if this is a numpy array (Phase 1.7.3) - only with native-numpy feature
             #[cfg(feature = "native-numpy")]
             {
-                if is_numpy_json(value) {
+                if crate::numpy_bridge::is_numpy_json(value) {
                     tracing::info!("Converting JSON back to numpy array");
-                    return json_to_numpy(py, value);
+                    return crate::numpy_bridge::json_to_numpy(py, value);
                 }
             }
 
@@ -329,7 +330,7 @@ pub fn json_to_python_with_cache<'py>(
                     );
 
                     // Base64 decode
-                    let pickled_bytes = base64::decode(base64_data).map_err(|e| {
+                    let pickled_bytes = base64::engine::general_purpose::STANDARD.decode(base64_data).map_err(|e| {
                         PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                             "Failed to decode base64: {}",
                             e
@@ -374,13 +375,13 @@ pub fn json_to_python_with_cache<'py>(
 /// use remotemedia_runtime_core::data::RuntimeData;
 /// use remotemedia_ffi::marshal::runtime_data_to_python;
 ///
-/// Python::with_gil(|py| {
+/// Python::attach(|py| {
 ///     let text_data = RuntimeData::Text("hello".into());
 ///     let py_obj = runtime_data_to_python(py, &text_data).unwrap();
 ///     // py_obj is now a Python string "hello"
 /// });
 /// ```
-pub fn runtime_data_to_python(py: Python<'_>, data: &RuntimeData) -> PyResult<PyObject> {
+pub fn runtime_data_to_python(py: Python<'_>, data: &RuntimeData) -> PyResult<Py<PyAny>> {
     // T007: Convert RuntimeData to Python objects
     match data {
         RuntimeData::Audio {
@@ -416,9 +417,9 @@ pub fn runtime_data_to_python(py: Python<'_>, data: &RuntimeData) -> PyResult<Py
             data,
             shape,
             dtype,
-            strides,
-            c_contiguous,
-            f_contiguous,
+            strides: _strides,
+            c_contiguous: _c_contiguous,
+            f_contiguous: _f_contiguous,
         } => {
             // Convert numpy array back to Python numpy array using numpy_bridge
             use crate::numpy_bridge::vec_to_numpy_f64;
@@ -507,8 +508,7 @@ pub fn python_to_runtime_data(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResul
     // Check if it's a numpy array first (zero-copy passthrough)
     if crate::numpy_bridge::is_numpy_array(py, obj) {
         use crate::numpy_bridge::extract_numpy_metadata;
-        use numpy::{PyArrayDyn, PyArrayMethods};
-        
+
         // Extract metadata
         let meta = extract_numpy_metadata(py, obj)?;
         

@@ -13,6 +13,9 @@
 //! The webrtc-rs library handles RTP packetization, codec negotiation in SDP,
 //! and built-in VP8/H.264 MediaEngine registration via `register_default_codecs()`.
 
+// Phase 4/5 video codec infrastructure
+#![allow(dead_code)]
+
 use crate::{Error, Result};
 
 /// Video frame format

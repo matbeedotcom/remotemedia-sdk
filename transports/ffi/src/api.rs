@@ -5,7 +5,7 @@
 //!
 //! Uses PipelineRunner from runtime-core for transport-agnostic execution.
 
-use super::marshal::{json_to_python, python_to_json, python_to_runtime_data, runtime_data_to_python};
+use super::marshal::{python_to_runtime_data, runtime_data_to_python};
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 use remotemedia_runtime_core::{

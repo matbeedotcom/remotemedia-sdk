@@ -40,6 +40,7 @@ struct ServerState {
 }
 
 /// Handle to a streaming session
+#[allow(dead_code)] // Fields used internally
 struct SessionHandle {
     /// Session ID
     session_id: String,

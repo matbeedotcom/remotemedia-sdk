@@ -2,6 +2,9 @@
 //!
 //! Routes data between WebRTC peers and pipeline execution.
 
+// Phase 4/5 session routing infrastructure
+#![allow(dead_code)]
+
 use crate::media::tracks::rtp_to_runtime_data;
 use crate::peer::PeerManager;
 use crate::session::{Session, SessionId};
