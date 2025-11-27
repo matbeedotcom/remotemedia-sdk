@@ -1,0 +1,159 @@
+.TH REMOTEMEDIA 1 "2024" "RemoteMedia CLI" "User Commands"
+.SH NAME
+remotemedia \- command-line tool for AI/ML pipeline execution
+.SH SYNOPSIS
+.B remotemedia
+[\fIOPTIONS\fR] \fICOMMAND\fR [\fIARGS\fR]
+.SH DESCRIPTION
+.B remotemedia
+is a command-line tool for running AI/ML pipelines locally or on remote servers.
+It supports audio transcription, text-to-speech, voice assistants, and custom pipelines.
+.SH GLOBAL OPTIONS
+.TP
+.BR \-v ", " \-\-verbose
+Increase verbosity level. Can be specified multiple times (-v, -vv, -vvv).
+.TP
+.BR \-q ", " \-\-quiet
+Suppress non-error output.
+.TP
+.BR \-c ", " \-\-config " " \fIFILE\fR
+Path to configuration file. Default: ~/.remotemedia/config.toml
+.TP
+.BR \-o ", " \-\-output\-format " " \fIFORMAT\fR
+Output format: text, json, or table. Default: text
+.SH COMMANDS
+.SS run
+Execute a pipeline with file input/output.
+.PP
+.B remotemedia run
+\fIMANIFEST\fR \fB\-\-input\fR \fIFILE\fR [\fB\-\-output\fR \fIFILE\fR]
+.TP
+.BR \-i ", " \-\-input " " \fIFILE\fR
+Input file path (required)
+.TP
+.BR \-o ", " \-\-output " " \fIFILE\fR
+Output file path. If not specified, output goes to stdout.
+.TP
+.BR \-\-timeout " " \fISECONDS\fR
+Execution timeout in seconds
+.SS stream
+Run a pipeline in streaming mode with optional microphone/speaker.
+.PP
+.B remotemedia stream
+\fIMANIFEST\fR [\fIOPTIONS\fR]
+.TP
+.BR \-\-mic
+Use microphone as input source
+.TP
+.BR \-\-speaker
+Use speaker as output destination
+.TP
+.BR \-i ", " \-\-input " " \fIFILE\fR
+Input file for streaming
+.TP
+.BR \-o ", " \-\-output " " \fIFILE\fR
+Output file for streaming
+.SS validate
+Check a pipeline manifest for errors.
+.PP
+.B remotemedia validate
+\fIMANIFEST\fR
+.PP
+Performs syntax validation, node type checking, connection validation,
+cycle detection, and duplicate ID detection.
+.SS serve
+Start a local server for pipeline execution.
+.PP
+.B remotemedia serve
+[\fIOPTIONS\fR]
+.TP
+.BR \-p ", " \-\-port " " \fIPORT\fR
+Server port. Default: 8080
+.TP
+.BR \-\-host " " \fIADDRESS\fR
+Bind address. Default: 0.0.0.0
+.TP
+.BR \-\-manifest " " \fIFILE\fR
+Default pipeline manifest
+.SS nodes
+Node management commands.
+.PP
+.B remotemedia nodes list
+[\fB\-\-format\fR \fIFORMAT\fR]
+.PP
+List all available node types.
+.PP
+.B remotemedia nodes info
+\fINODE_TYPE\fR
+.PP
+Show detailed information about a specific node type.
+.SS remote
+Remote server execution commands.
+.PP
+.B remotemedia remote run
+\fB\-\-server\fR \fIURL\fR \fIMANIFEST\fR \fB\-\-input\fR \fIFILE\fR
+.PP
+Execute a pipeline on a remote server.
+.PP
+.B remotemedia remote stream
+\fB\-\-server\fR \fIURL\fR \fIMANIFEST\fR [\fIOPTIONS\fR]
+.PP
+Stream pipeline execution on a remote server.
+.SS servers
+Server configuration management.
+.PP
+.B remotemedia servers list
+.PP
+List saved server configurations.
+.PP
+.B remotemedia servers add
+\fINAME\fR \fIURL\fR [\fB\-\-default\fR]
+.PP
+Add a server configuration.
+.PP
+.B remotemedia servers remove
+\fINAME\fR
+.PP
+Remove a server configuration.
+.SH FILES
+.TP
+.I ~/.remotemedia/config.toml
+User configuration file
+.TP
+.I ~/.remotemedia/servers.toml
+Saved server configurations
+.SH ENVIRONMENT
+.TP
+.B REMOTEMEDIA_CONFIG
+Path to configuration file
+.TP
+.B REMOTEMEDIA_DEFAULT_SERVER
+Default server URL
+.TP
+.B REMOTEMEDIA_LOG
+Log level (error, warn, info, debug, trace)
+.SH EXAMPLES
+.PP
+Transcribe an audio file:
+.PP
+.RS
+remotemedia run transcribe.yaml --input audio.wav
+.RE
+.PP
+Run voice assistant with microphone and speaker:
+.PP
+.RS
+remotemedia stream voice-assistant.yaml --mic --speaker
+.RE
+.PP
+Execute pipeline on remote server:
+.PP
+.RS
+remotemedia remote run --server grpc://host:50051 pipeline.yaml --input data.wav
+.RE
+.SH SEE ALSO
+.BR remotemedia-runtime (7)
+.SH AUTHORS
+RemoteMedia SDK Contributors
+.SH BUGS
+Report bugs at: https://github.com/remotemedia/sdk/issues

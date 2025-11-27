@@ -1,0 +1,48 @@
+# Voice Assistant Pipeline
+# VAD → STT → LLM → TTS
+# All processing runs locally by default
+
+version: "v1"
+metadata:
+  name: "voice-assistant"
+  description: "Complete voice assistant pipeline with speech recognition, LLM response, and synthesis"
+  category: "assistant"
+
+nodes:
+  - id: vad
+    node_type: SileroVADNode
+    params:
+      threshold: 0.5
+      min_speech_duration_ms: 250
+      max_speech_duration_s: 30
+      min_silence_duration_ms: 100
+      speech_pad_ms: 30
+
+  - id: stt
+    node_type: WhisperNode
+    params:
+      model: "base"
+      language: "en"
+      task: "transcribe"
+
+  - id: llm
+    node_type: LLMNode
+    params:
+      model: "phi-3-mini"
+      system_prompt: "You are a helpful voice assistant. Respond concisely."
+      max_tokens: 150
+      temperature: 0.7
+
+  - id: tts
+    node_type: KokoroTTSNode
+    params:
+      voice: "af_bella"
+      speed: 1.0
+
+connections:
+  - from: vad
+    to: stt
+  - from: stt
+    to: llm
+  - from: llm
+    to: tts

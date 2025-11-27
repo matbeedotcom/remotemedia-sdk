@@ -1,0 +1,39 @@
+# Remote Mode Pipeline
+# All processing happens on a remote server
+# Only audio I/O is local
+
+name: voice-assistant-remote
+version: "1.0"
+description: Voice assistant with remote processing
+
+nodes:
+  - id: mic_input
+    node_type: AudioInput
+    config:
+      sample_rate: 16000
+      channels: 1
+      format: f32
+      source: microphone
+
+  # All processing happens remotely
+  - id: remote_pipeline
+    node_type: RemotePipelineNode
+    config:
+      server_url: "${REMOTE_SERVER_URL}"
+      pipeline: voice-assistant
+      transport: grpc
+      timeout_ms: 30000
+
+  - id: speaker_output
+    node_type: AudioOutput
+    config:
+      sample_rate: 48000
+      channels: 1
+      format: f32
+      destination: speaker
+
+connections:
+  - from: mic_input
+    to: remote_pipeline
+  - from: remote_pipeline
+    to: speaker_output

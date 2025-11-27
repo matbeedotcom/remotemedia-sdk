@@ -1,0 +1,35 @@
+# Whisper Transcription Pipeline
+# Input: Audio (WAV, MP3, etc.)
+# Output: Text (transcription)
+
+name: whisper-transcribe
+version: "1.0"
+description: Audio transcription using Whisper
+
+nodes:
+  - id: input
+    node_type: AudioInput
+    config:
+      sample_rate: 16000
+      channels: 1
+      format: f32
+
+  - id: whisper
+    node_type: WhisperSTT
+    executor: multiprocess
+    config:
+      model: base.en
+      language: en
+      task: transcribe
+      beam_size: 5
+
+  - id: output
+    node_type: TextOutput
+    config:
+      format: plain
+
+connections:
+  - from: input
+    to: whisper
+  - from: whisper
+    to: output

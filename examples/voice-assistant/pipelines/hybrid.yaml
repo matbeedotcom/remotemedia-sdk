@@ -1,0 +1,71 @@
+# Hybrid Mode Pipeline
+# Local VAD for responsive speech detection
+# Remote inference for faster processing
+# Automatic local fallback when remote unavailable
+
+name: voice-assistant-hybrid
+version: "1.0"
+description: Voice assistant with local VAD and remote inference
+
+nodes:
+  - id: mic_input
+    node_type: AudioInput
+    config:
+      sample_rate: 16000
+      channels: 1
+      format: f32
+      source: microphone
+
+  # Local VAD for instant speech detection
+  - id: vad
+    node_type: SileroVAD
+    config:
+      threshold: 0.5
+      min_speech_duration_ms: 250
+      min_silence_duration_ms: 500
+      pre_speech_pad_ms: 300
+
+  # Remote inference with local fallback
+  - id: remote_inference
+    node_type: RemotePipelineNode
+    config:
+      server_url: "${REMOTE_SERVER_URL}"
+      pipeline: inference
+      timeout_ms: 5000
+      retry_count: 2
+      fallback_enabled: true
+
+  # Local TTS for consistent output
+  - id: tts
+    node_type: KokoroTTS
+    executor: multiprocess
+    config:
+      voice: af_bella
+      speed: 1.0
+      sample_rate: 24000
+
+  - id: resample
+    node_type: AudioResample
+    config:
+      target_sample_rate: 48000
+      quality: high
+
+  - id: speaker_output
+    node_type: AudioOutput
+    config:
+      sample_rate: 48000
+      channels: 1
+      format: f32
+      destination: speaker
+
+connections:
+  - from: mic_input
+    to: vad
+  - from: vad
+    to: remote_inference
+  - from: remote_inference
+    to: tts
+  - from: tts
+    to: resample
+  - from: resample
+    to: speaker_output
