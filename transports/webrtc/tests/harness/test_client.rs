@@ -167,8 +167,6 @@ impl TestClient {
             received_audio_by_stream: Arc::new(RwLock::new(HashMap::new())),
             received_video_by_stream: Arc::new(RwLock::new(HashMap::new())),
             received_track_info: Arc::new(RwLock::new(HashMap::new())),
-            received_audio: Arc::new(RwLock::new(Vec::new())),
-            received_video: Arc::new(RwLock::new(Vec::new())),
             received_audio_packets: Arc::new(AtomicU32::new(0)),
             received_video_packets: Arc::new(AtomicU32::new(0)),
             request_counter: AtomicU64::new(0),
