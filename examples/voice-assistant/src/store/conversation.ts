@@ -15,7 +15,7 @@ interface ConversationState {
   clearMessages: () => void;
 }
 
-export const useConversationStore = create<ConversationState>((set, get) => ({
+export const useConversationStore = create<ConversationState>((set, _get) => ({
   messages: [],
 
   addMessage: (message) => {
