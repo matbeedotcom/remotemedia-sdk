@@ -16,7 +16,7 @@ function App() {
   const [isListening, setIsListening] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
 
-  const { messages, addMessage } = useConversationStore();
+  const { messages } = useConversationStore();
   const { settings, mode, setMode } = useSettingsStore();
 
   // Set up Tauri event listeners
