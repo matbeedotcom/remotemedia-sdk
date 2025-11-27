@@ -327,7 +327,7 @@ struct AudioBufferAccumulatorNodeFactory;
 impl StreamingNodeFactory for AudioBufferAccumulatorNodeFactory {
     fn create(
         &self,
-        node_id: String,
+        _node_id: String,  // Reserved for future node identification/logging
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
@@ -402,7 +402,7 @@ struct SileroVADNodeFactory;
 impl StreamingNodeFactory for SileroVADNodeFactory {
     fn create(
         &self,
-        node_id: String,
+        _node_id: String,  // Reserved for future node identification/logging
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
@@ -575,7 +575,7 @@ struct AudioChunkerNodeFactory;
 impl StreamingNodeFactory for AudioChunkerNodeFactory {
     fn create(
         &self,
-        node_id: String,
+        _node_id: String,  // Reserved for future node identification/logging
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {

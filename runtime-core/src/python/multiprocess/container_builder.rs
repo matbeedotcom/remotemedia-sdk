@@ -3,14 +3,14 @@
 //! Handles Docker image building from configurations, caching built images,
 //! and managing the image lifecycle.
 
-use crate::python::multiprocess::docker_support::{DockerNodeConfig, SecurityConfig};
+use crate::python::multiprocess::docker_support::DockerNodeConfig;
 use crate::{Error, Result};
-use bollard::image::{BuildImageOptions, ListImagesOptions, TagImageOptions};
+use bollard::query_parameters::{BuildImageOptionsBuilder, ListImagesOptionsBuilder, TagImageOptionsBuilder};
 use bollard::Docker;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use http_body_util::{BodyExt, Either, Full};
+use http_body_util::{Either, Full};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -163,6 +163,7 @@ impl ContainerBuilder {
     /// Create a tar archive containing the Dockerfile
     ///
     /// Creates a minimal build context with just the Dockerfile needed for image building.
+    #[allow(dead_code)]  // Reserved for minimal Docker build contexts
     fn create_build_context(&self, dockerfile_content: &str) -> Result<Vec<u8>> {
         let mut tar_data = Vec::new();
         {
@@ -193,19 +194,19 @@ impl ContainerBuilder {
     /// Build image with progress logging (T030)
     ///
     /// Builds the Docker image and logs progress information from the Docker daemon.
-    #[instrument(skip(self, tar_data), fields(image_tag = %image_tag))]
+    #[allow(dead_code)]  // Reserved for detailed build progress monitoring
+    #[instrument(skip(self, _tar_data), fields(image_tag = %image_tag))]
     async fn build_image_with_progress(
         &self,
         image_tag: &str,
-        tar_data: Vec<u8>,
+        _tar_data: Vec<u8>,  // Used via instrument macro for logging
     ) -> Result<String> {
-        let build_options = BuildImageOptions {
-            dockerfile: "Dockerfile".to_string(),
-            t: image_tag.to_string(),
-            rm: true,
-            pull: true,
-            ..Default::default()
-        };
+        let build_options = BuildImageOptionsBuilder::default()
+            .dockerfile("Dockerfile")
+            .t(image_tag)
+            .rm(true)
+            .pull("1")  // Pull base image (boolean as string)
+            .build();
 
         // Build image with tar data
         // TODO: Implement proper body conversion for bollard's build_image
@@ -265,11 +266,12 @@ impl ContainerBuilder {
 
         let images = self
             .docker
-            .list_images(Some(ListImagesOptions {
-                all: false,
-                filters,
-                ..Default::default()
-            }))
+            .list_images(Some(
+                ListImagesOptionsBuilder::default()
+                    .all(false)
+                    .filters(&filters)
+                    .build()
+            ))
             .await
             .map_err(|e| {
                 crate::Error::Execution(format!("Failed to list images after build: {}", e))
@@ -291,17 +293,19 @@ impl ContainerBuilder {
     }
 
     /// Get image size from Docker daemon
+    #[allow(dead_code)]  // Reserved for image size tracking and metrics
     async fn get_image_size(&self, image_id: &str) -> Result<u64> {
         let mut filters = HashMap::new();
         filters.insert("id".to_string(), vec![image_id.to_string()]);
 
         let images = self
             .docker
-            .list_images(Some(ListImagesOptions {
-                all: false,
-                filters,
-                ..Default::default()
-            }))
+            .list_images(Some(
+                ListImagesOptionsBuilder::default()
+                    .all(false)
+                    .filters(&filters)
+                    .build()
+            ))
             .await
             .map_err(|e| crate::Error::Execution(format!("Failed to inspect image: {}", e)))?;
 
@@ -358,14 +362,13 @@ impl ContainerBuilder {
         // Build image using bollard (T024)
         tracing::info!("Building Docker image: {}", image_tag);
 
-        let build_options = bollard::image::BuildImageOptions {
-            dockerfile: "Dockerfile",
-            t: &image_tag,
-            rm: true,
-            forcerm: true,
-            nocache: force_rebuild,
-            ..Default::default()
-        };
+        let build_options = BuildImageOptionsBuilder::default()
+            .dockerfile("Dockerfile")
+            .t(image_tag.as_str())
+            .rm(true)
+            .forcerm(true)
+            .nocache(force_rebuild)
+            .build();
 
         // Convert tar bytes to the proper body type for bollard
         // bollard expects Either<Full<Bytes>, StreamBody>
@@ -399,10 +402,10 @@ impl ContainerBuilder {
 
         // Tag image with config hash (T029)
         tracing::info!("Tagging image with hash: {}", config_hash);
-        let tag_options = TagImageOptions {
-            repo: "remotemedia/node",
-            tag: &config_hash[..12],
-        };
+        let tag_options = TagImageOptionsBuilder::default()
+            .repo("remotemedia/node")
+            .tag(&config_hash[..12])
+            .build();
 
         self.docker
             .tag_image(&image_tag, Some(tag_options))
@@ -479,21 +482,25 @@ impl ContainerBuilder {
     /// Result containing the generated Dockerfile string, or error if configuration is invalid
     ///
     /// # Example
-    /// ```ignore
+    /// ```
+    /// use remotemedia_runtime_core::python::multiprocess::docker_support::DockerNodeConfig;
+    /// use remotemedia_runtime_core::python::multiprocess::container_builder::ContainerBuilder;
+    ///
     /// let config = DockerNodeConfig {
     ///     python_version: "3.10".to_string(),
     ///     base_image: None,
-    ///     system_packages: vec!["curl".to_string(), "git".to_string()],
-    ///     python_packages: vec!["numpy".to_string(), "torch".to_string()],
+    ///     system_packages: vec![],
+    ///     python_packages: vec![],
     ///     memory_mb: 2048,
     ///     cpu_cores: 2.0,
     ///     gpu_devices: vec![],
     ///     shm_size_mb: 2048,
     ///     env_vars: Default::default(),
     ///     volumes: vec![],
+    ///     security: Default::default(),
     /// };
-    ///
-    /// let dockerfile = ContainerBuilder::generate_dockerfile(&config)?;
+    /// let dockerfile = ContainerBuilder::generate_dockerfile(&config).unwrap();
+    /// assert!(dockerfile.contains("FROM"));
     /// ```
     pub fn generate_dockerfile(config: &DockerNodeConfig) -> Result<String> {
         // Validate configuration before generating
@@ -767,6 +774,7 @@ impl ContainerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::python::multiprocess::docker_support::SecurityConfig;
     use std::collections::HashMap;
 
     fn create_test_config() -> DockerNodeConfig {

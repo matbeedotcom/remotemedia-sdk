@@ -52,6 +52,10 @@ uuid = { workspace = true }
 ctrlc = { version = "3.4", optional = true }  # Only needed for server binary
 num_cpus = { version = "1.16", optional = true }  # Only needed for server binary
 chrono.workspace = true
+regex = "1.10"  # For executor_registry pattern matching
+
+[dev-dependencies]
+tokio-test = "0.4"
 
 [build-dependencies]
 tonic-build = { workspace = true }
@@ -64,6 +68,12 @@ default = ["server"]
 
 # Server feature: includes dependencies needed to run grpc-server binary
 server = ["ctrlc", "num_cpus"]
+
+# Forward executor features from runtime-core
+multiprocess = ["remotemedia-runtime-core/multiprocess"]
+
+# Placeholder for future wasmtime support (not yet in runtime-core)
+wasmtime-runtime = []
 
 [[bin]]
 name = "grpc-server"

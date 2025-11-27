@@ -11,29 +11,13 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use remotemedia_runtime_core::transport::{PipelineTransport, TransportData};
-//! use async_trait::async_trait;
+//! ```
+//! use remotemedia_runtime_core::transport::{PipelineRunner, TransportData};
+//! use remotemedia_runtime_core::data::RuntimeData;
 //!
-//! struct MyCustomTransport {
-//!     runner: PipelineRunner,
-//! }
-//!
-//! #[async_trait]
-//! impl PipelineTransport for MyCustomTransport {
-//!     async fn execute(&self, manifest: Arc<Manifest>, input: TransportData)
-//!         -> Result<TransportData>
-//!     {
-//!         self.runner.execute_unary(manifest, input).await
-//!     }
-//!
-//!     async fn stream(&self, manifest: Arc<Manifest>)
-//!         -> Result<Box<dyn StreamSession>>
-//!     {
-//!         let session = self.runner.create_stream_session(manifest).await?;
-//!         Ok(Box::new(session))
-//!     }
-//! }
+//! let runner = PipelineRunner::new().unwrap();
+//! let input = TransportData::new(RuntimeData::Text("hello".into()));
+//! // Use runner.execute_unary(manifest, input).await for execution
 //! ```
 
 use crate::Result;

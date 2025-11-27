@@ -35,8 +35,8 @@ pub use vad_fast::FastVADNode;
 ///
 /// # Example
 ///
-/// ```rust
-/// use remotemedia_runtime::nodes::audio::create_audio_registry;
+/// ```
+/// use remotemedia_runtime_core::nodes::audio::create_audio_registry;
 ///
 /// let audio_registry = create_audio_registry();
 /// // Use in CompositeRegistry or standalone

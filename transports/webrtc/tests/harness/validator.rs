@@ -288,7 +288,12 @@ impl OutputValidator {
     }
 
     /// Assert frame is not completely black
-    pub fn assert_frame_not_black(&self, frame: &[u8], width: u32, height: u32) -> HarnessResult<()> {
+    pub fn assert_frame_not_black(
+        &self,
+        frame: &[u8],
+        width: u32,
+        height: u32,
+    ) -> HarnessResult<()> {
         let y_size = (width * height) as usize;
         let y_plane = &frame[..y_size.min(frame.len())];
 
@@ -493,7 +498,9 @@ mod tests {
 
         // Wrong size
         let wrong_frame = vec![128u8; 1000];
-        assert!(validator.assert_frame_dimensions(&wrong_frame, 640, 480).is_err());
+        assert!(validator
+            .assert_frame_dimensions(&wrong_frame, 640, 480)
+            .is_err());
     }
 
     #[test]

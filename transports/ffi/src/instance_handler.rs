@@ -13,24 +13,24 @@
 //!
 //! # Usage
 //!
-//! ```rust
+//! ```
 //! use pyo3::prelude::*;
-//! use instance_handler::InstanceExecutor;
+//! use pyo3::ffi::c_str;
+//! use remotemedia_ffi::instance_handler::InstanceExecutor;
 //!
 //! Python::with_gil(|py| {
-//!     // Get Python Node instance
-//!     let node_instance: Py<PyAny> = /* ... */;
-//!
-//!     // Create executor
-//!     let executor = InstanceExecutor::new(node_instance, "node_id".to_string())?;
-//!
-//!     // Execute lifecycle
-//!     executor.initialize()?;
-//!     let output = executor.process(input_data)?;
-//!     executor.cleanup()?;
-//!
-//!     Ok(())
-//! })
+//!     // InstanceExecutor wraps a Python Node instance for lifecycle management
+//!     // Create a node class and instance:
+//!     let code = c_str!(r#"
+//! class TestNode:
+//!     def initialize(self): pass
+//!     def process(self, data): return data
+//!     def cleanup(self): pass
+//! "#);
+//!     py.run(code, None, None).unwrap();
+//!     let node = py.eval(c_str!("TestNode()"), None, None).unwrap();
+//!     let executor = InstanceExecutor::new(node.unbind(), "test_node".to_string()).unwrap();
+//! });
 //! ```
 
 use pyo3::prelude::*;
@@ -79,20 +79,27 @@ impl InstanceExecutor {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```
+    /// use pyo3::prelude::*;
+    /// use pyo3::ffi::c_str;
+    /// use remotemedia_ffi::instance_handler::InstanceExecutor;
+    ///
     /// Python::with_gil(|py| {
-    ///     let node_py = py.eval("MyNode()", None, None)?;
-    ///     let executor = InstanceExecutor::new(
-    ///         node_py.unbind(),
-    ///         "my_node".to_string()
-    ///     )?;
-    ///     Ok(())
-    /// })
+    ///     // Create a Python node with required methods
+    ///     let code = c_str!(r#"
+    /// class TestNode:
+    ///     def initialize(self): pass
+    ///     def process(self, data): return data
+    /// "#);
+    ///     py.run(code, None, None).unwrap();
+    ///     let node = py.eval(c_str!("TestNode()"), None, None).unwrap();
+    ///     let executor = InstanceExecutor::new(node.unbind(), "test".to_string()).unwrap();
+    /// });
     /// ```
     pub fn new(node_instance: Py<PyAny>, node_id: String) -> PyResult<Self> {
         // T005: PyO3 Py<PyAny> storage pattern - node_instance stored directly
         // T009: Validate required methods exist
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let node_ref = node_instance.bind(py);
 
             // Check for process method
@@ -170,8 +177,8 @@ impl InstanceExecutor {
     ///
     /// Returns PyErr if Python process() method raises an exception
     pub fn process(&self, input: RuntimeData) -> PyResult<Vec<RuntimeData>> {
-        // T006, T016: Python::with_gil() method calling pattern for process()
-        Python::with_gil(|py| {
+        // T006, T016: Python::attach() method calling pattern for process()
+        Python::attach(|py| {
             // Convert RuntimeData to Python object (requires T007)
             let py_input = super::marshal::runtime_data_to_python(py, &input)?;
 
@@ -209,8 +216,8 @@ impl InstanceExecutor {
     ///
     /// Returns PyErr if Python cleanup() method raises an exception
     pub fn cleanup(&self) -> PyResult<()> {
-        // T006, T017: Python::with_gil() method calling pattern for cleanup()
-        Python::with_gil(|py| {
+        // T006, T017: Python::attach() method calling pattern for cleanup()
+        Python::attach(|py| {
             self.node_instance
                 .call_method0(py, "cleanup")
                 .map_err(|e| {

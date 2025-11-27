@@ -209,7 +209,7 @@ impl ServiceMetrics {
     }
 
     /// Record RPC request start (returns start time for duration calculation)
-    pub fn record_request_start(&self, method: &str) -> std::time::Instant {
+    pub fn record_request_start(&self, _method: &str) -> std::time::Instant {
         self.active_executions.inc();
         std::time::Instant::now()
     }

@@ -3,6 +3,9 @@
 //! Implements PipelineExecutionService trait for ExecutePipeline RPC.
 //! Provides manifest-to-runtime conversion and result serialization using PipelineRunner.
 
+// Internal infrastructure - some fields reserved for future use
+#![allow(dead_code)]
+
 use crate::{
     adapters::{data_buffer_to_runtime_data, runtime_data_to_data_buffer},
     auth::{check_auth, AuthConfig},

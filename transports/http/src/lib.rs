@@ -15,7 +15,7 @@
 //!
 //! ## Client
 //!
-//! ```ignore
+//! ```
 //! use remotemedia_http::HttpPipelineClient;
 //! use remotemedia_runtime_core::transport::PipelineClient;
 //!
@@ -35,7 +35,7 @@
 //!
 //! ## Server
 //!
-//! ```ignore
+//! ```
 //! use remotemedia_http::HttpServer;
 //! use remotemedia_runtime_core::transport::PipelineRunner;
 //!
@@ -46,7 +46,7 @@
 //!
 //! ## Plugin Registration
 //!
-//! ```ignore
+//! ```
 //! use remotemedia_http::HttpTransportPlugin;
 //! use remotemedia_runtime_core::transport::TransportPluginRegistry;
 //!

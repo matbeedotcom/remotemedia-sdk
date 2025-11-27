@@ -1,5 +1,8 @@
 //! Peer connection management
 
+// Phase 4 (US2) peer management infrastructure
+#![allow(dead_code)]
+
 use super::connection::{ConnectionState, PeerConnection};
 use crate::{Error, Result};
 use std::collections::HashMap;

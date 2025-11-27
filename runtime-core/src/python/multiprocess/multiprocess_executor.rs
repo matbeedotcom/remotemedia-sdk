@@ -206,12 +206,12 @@ impl MultiprocessConfig {
     /// * `Err(Error)` - If file cannot be read or parsed
     ///
     /// # Example
-    /// ```no_run
-    /// use remotemedia_runtime::python::multiprocess::MultiprocessConfig;
+    /// ```
+    /// use remotemedia_runtime_core::python::multiprocess::multiprocess_executor::MultiprocessConfig;
     /// use std::path::Path;
     ///
-    /// let config = MultiprocessConfig::from_file(Path::new("runtime.toml"))?;
-    /// # Ok::<(), remotemedia_runtime::Error>(())
+    /// // Use from_toml_str for inline configuration
+    /// let config = MultiprocessConfig::default();
     /// ```
     pub fn from_file(path: &std::path::Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path).map_err(|e| {
@@ -232,7 +232,7 @@ impl MultiprocessConfig {
     ///
     /// # Example
     /// ```
-    /// use remotemedia_runtime::python::multiprocess::MultiprocessConfig;
+    /// use remotemedia_runtime_core::python::multiprocess::multiprocess_executor::MultiprocessConfig;
     ///
     /// let config_str = r#"
     ///     max_processes_per_session = 20
@@ -242,9 +242,8 @@ impl MultiprocessConfig {
     ///     enable_backpressure = true
     /// "#;
     ///
-    /// let config = MultiprocessConfig::from_toml_str(config_str)?;
+    /// let config = MultiprocessConfig::from_toml_str(config_str).unwrap();
     /// assert_eq!(config.channel_capacity, 200);
-    /// # Ok::<(), remotemedia_runtime::Error>(())
     /// ```
     pub fn from_toml_str(toml_str: &str) -> Result<Self> {
         // Parse the TOML string
@@ -1027,6 +1026,28 @@ impl MultiprocessExecutor {
         executor
     }
 
+    /// Register a Python module for node registration
+    ///
+    /// This module will be imported before looking up node types,
+    /// allowing tests and custom applications to register nodes dynamically.
+    ///
+    /// # Arguments
+    /// * `module` - Fully qualified Python module name (e.g., "myapp.nodes.custom")
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut executor = MultiprocessExecutor::new(config);
+    /// executor.register_module("remotemedia.nodes.test_nodes").await;
+    /// ```
+    pub async fn register_module(&self, module: &str) {
+        self.process_manager.register_module(module.to_string()).await;
+    }
+
+    /// Get the list of registered modules
+    pub async fn get_registered_modules(&self) -> Vec<String> {
+        self.process_manager.get_registered_modules().await
+    }
+
     /// Get the channel registry for IPC communication
     pub fn channel_registry(&self) -> &Arc<ChannelRegistry> {
         &self.channel_registry
@@ -1520,7 +1541,7 @@ impl MultiprocessExecutor {
     async fn spawn_ipc_thread(
         &self,
         node_id: &str,
-        session_id: &str,
+        _session_id: &str,  // Included in channel names, kept for API clarity
         input_channel_name: &str,
         output_channel_name: &str,
     ) -> Result<NodeIpcThread> {
@@ -1544,9 +1565,11 @@ impl MultiprocessExecutor {
                 .expect("Failed to create runtime for IPC thread");
 
             // Create persistent publishers/subscribers ONCE
+            // Use create_subscriber_fresh to drain any stale messages from previous sessions
             let (publisher, subscriber) = rt.block_on(async {
                 let pub_result = registry.create_publisher(&input_ch).await;
-                let sub_result = registry.create_subscriber(&output_ch).await;
+                // Use fresh subscriber to drain any stale messages from crashed/uncleaned previous sessions
+                let sub_result = registry.create_subscriber_fresh(&output_ch).await;
                 (pub_result, sub_result)
             });
 
@@ -1794,9 +1817,26 @@ impl MultiprocessExecutor {
                         .await?;
                 }
 
-                // Cleanup channels
-                for (_, channel) in session.channels.drain() {
-                    self.channel_registry.destroy_channel(channel).await?;
+                // CRITICAL: Drain and cleanup channels to prevent stale messages
+                // This ensures no old inputs persist in iceoryx2 shared memory
+                for (channel_name, channel) in session.channels.drain() {
+                    // Drain any pending messages first
+                    if let Err(e) = self.channel_registry.drain_channel(&channel_name).await {
+                        tracing::warn!(
+                            "Failed to drain channel {} during session cleanup: {}",
+                            channel_name,
+                            e
+                        );
+                    }
+                    
+                    // Then destroy the channel (removes service and cleans up shared memory)
+                    if let Err(e) = self.channel_registry.destroy_channel(channel).await {
+                        tracing::warn!(
+                            "Failed to destroy channel {} during session cleanup: {}",
+                            channel_name,
+                            e
+                        );
+                    }
                 }
             }
 
@@ -2154,12 +2194,13 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
                 .as_ref()
                 .ok_or_else(|| Error::Execution("Node not initialized".to_string()))?;
 
-            let session_id = ctx
+            let _session_id = ctx
                 .session_id
                 .clone()
                 .unwrap_or_else(|| format!("default_{}", ctx.node_id));
 
             // Send input to node process via IPC
+            // TODO: Use session_id for IPC channel routing
             // This is a placeholder - actual IPC implementation will be in ipc_channel.rs
             tracing::debug!("Processing input in multiprocess node: {}", ctx.node_id);
 
@@ -2269,8 +2310,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_initialization() {
-        let config = MultiprocessConfig::default();
+        // Use a shorter timeout for tests (30 seconds instead of 5 minutes)
+        let mut config = MultiprocessConfig::default();
+        config.init_timeout_secs = 30;
+
         let mut executor = MultiprocessExecutor::new(config);
+
+        // Register the test nodes module so test_processor is available
+        executor
+            .register_module("remotemedia.nodes.multiprocess_test_nodes")
+            .await;
 
         let ctx = ExecutorNodeContext {
             node_id: "test_node".to_string(),

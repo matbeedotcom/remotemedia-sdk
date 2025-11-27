@@ -182,7 +182,7 @@ where
         return operation().await;
     }
 
-    let mut last_error: Option<Error> = None;
+    let mut last_error;
     let mut attempt = 0;
 
     loop {
@@ -194,7 +194,7 @@ where
                     return Err(err);
                 }
 
-                last_error = Some(err);
+                last_error = err;
                 attempt += 1;
 
                 // Check if we should retry
@@ -218,9 +218,7 @@ where
     Err(Error::execution(format!(
         "Retry exhausted after {} attempts: {}",
         attempt,
-        last_error
-            .map(|e| e.to_string())
-            .unwrap_or_else(|| "Unknown error".to_string())
+        last_error.to_string()
     )))
 }
 
@@ -235,7 +233,7 @@ where
         return operation();
     }
 
-    let mut last_error: Option<Error> = None;
+    let mut last_error;
     let mut attempt = 0;
 
     loop {
@@ -246,7 +244,7 @@ where
                     return Err(err);
                 }
 
-                last_error = Some(err);
+                last_error = err;
                 attempt += 1;
 
                 if let Some(delay) = policy.delay_for_attempt(attempt - 1) {
@@ -267,9 +265,7 @@ where
     Err(Error::execution(format!(
         "Retry exhausted after {} attempts: {}",
         attempt,
-        last_error
-            .map(|e| e.to_string())
-            .unwrap_or_else(|| "Unknown error".to_string())
+        last_error.to_string()
     )))
 }
 

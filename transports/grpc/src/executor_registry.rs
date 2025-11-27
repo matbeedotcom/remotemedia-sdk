@@ -3,8 +3,6 @@
 //! Provides pattern-based routing to determine which executor (Native, Multiprocess, WASM)
 //! should handle a given node type based on manifest node_type field.
 
-#![cfg(feature = "grpc-transport")]
-
 use regex::Regex;
 use std::collections::HashMap;
 

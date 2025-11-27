@@ -167,6 +167,8 @@ impl TestClient {
             received_audio_by_stream: Arc::new(RwLock::new(HashMap::new())),
             received_video_by_stream: Arc::new(RwLock::new(HashMap::new())),
             received_track_info: Arc::new(RwLock::new(HashMap::new())),
+            received_audio: Arc::new(RwLock::new(Vec::new())),
+            received_video: Arc::new(RwLock::new(Vec::new())),
             received_audio_packets: Arc::new(AtomicU32::new(0)),
             received_video_packets: Arc::new(AtomicU32::new(0)),
             request_counter: AtomicU64::new(0),
@@ -517,8 +519,13 @@ impl TestClient {
         let peer_connection_clone = Arc::clone(&peer_connection);
 
         let stream_handle = tokio::spawn(async move {
-            Self::handle_signaling_stream(response_stream, peer_connection_clone, connected, peer_id)
-                .await;
+            Self::handle_signaling_stream(
+                response_stream,
+                peer_connection_clone,
+                connected,
+                peer_id,
+            )
+            .await;
         });
 
         *self.stream_handle.write().await = Some(stream_handle);
@@ -547,9 +554,10 @@ impl TestClient {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Create and send offer to remotemedia-server
-        let offer = peer_connection.create_offer(None).await.map_err(|e| {
-            HarnessError::ConnectionError(format!("Failed to create offer: {}", e))
-        })?;
+        let offer = peer_connection
+            .create_offer(None)
+            .await
+            .map_err(|e| HarnessError::ConnectionError(format!("Failed to create offer: {}", e)))?;
 
         peer_connection
             .set_local_description(offer.clone())

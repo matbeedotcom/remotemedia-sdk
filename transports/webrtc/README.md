@@ -1,47 +1,72 @@
 # RemoteMedia WebRTC Transport
 
-**Status**: ✅ Foundation Complete (Phases 1-5) - 68 tests passing
+**Status**: ✅ Feature Complete (Phases 1-8) - 145 tests passing
 
 A WebRTC-based real-time media streaming transport for RemoteMedia pipelines with multi-peer mesh networking support.
 
 ## Current Status
 
-**Phases 1-5 Complete** (v0.4.0):
+**Phases 1-8 Complete** (v0.4.0):
 - ✅ Configuration and error handling
 - ✅ JSON-RPC 2.0 signaling protocol (WebSocket)
 - ✅ WebRTC peer connection management (webrtc-rs v0.14.0)
 - ✅ Media track support (Opus audio, VP9 video)
 - ✅ Session management and peer associations
 - ✅ Send/broadcast API for audio/video
+- ✅ A/V synchronization with jitter buffers and clock drift estimation
+- ✅ Data channel communication (reliable/unreliable modes)
+- ✅ Automatic reconnection with circuit breaker and quality monitoring
 
 **What's Working**:
 - Real WebRTC peer connections (not placeholders)
 - Multi-peer mesh topology (configurable max peers)
 - Audio/video track creation and RTP transmission
-- Session lifecycle management
-- Comprehensive test coverage (68 tests)
+- Session lifecycle management with state snapshots
+- Data channels with JSON/Binary/Text message types
+- Automatic reconnection with exponential backoff and jitter
+- Circuit breaker pattern for connection quality management
+- Connection quality metrics (latency, packet loss, jitter)
+- Configuration presets (low latency, high quality, mobile network)
+- Comprehensive test coverage (145 tests)
 
 **What's Next**:
-- Incoming media receive handlers
-- RemoteMedia pipeline integration
-- Data channel support
 - Production deployment examples
+- Performance optimization
+- Additional example applications
 
 ## Features
 
 ### Core Capabilities
 - **Multi-peer mesh topology**: Configurable max peers (default: 10)
 - **Real WebRTC**: Uses webrtc-rs v0.14.0 (Pure Rust implementation)
-- **Media codecs**: Opus audio (48kHz), VP9 video (feature-gated)
+- **Media codecs**: Opus audio (48kHz), VP9/VP8/H.264 video
 - **Session management**: Track streaming sessions with peer associations
 - **JSON-RPC 2.0 signaling**: WebSocket-based peer discovery and SDP exchange
 - **Async/await**: Built on Tokio runtime
 
-### Planned Features
-- **Audio/Video synchronization**: Per-peer sync managers with jitter buffers
-- **Data channels**: Reliable/unreliable messaging modes
-- **Pipeline integration**: Route media through RemoteMedia pipelines
-- **Low latency**: <50ms audio, <100ms video targets
+### Audio/Video Synchronization
+- **Per-peer sync managers**: Each peer has dedicated sync state
+- **Jitter buffers**: Configurable 50-200ms for audio and video
+- **Clock drift estimation**: Linear regression-based drift detection
+- **RTCP Sender Reports**: NTP-to-RTP timestamp correlation
+
+### Data Channels
+- **Reliable mode**: Ordered, guaranteed delivery (TCP-like)
+- **Unreliable mode**: Unordered, no retransmits (UDP-like)
+- **Message types**: JSON, Binary (base64), Text
+- **Control messages**: Pipeline start/stop/pause via data channel
+
+### Reconnection & Quality
+- **Automatic reconnection**: Exponential backoff with jitter
+- **Circuit breaker pattern**: Closed/Open/HalfOpen states
+- **Connection quality metrics**: Latency, packet loss, jitter, bandwidth
+- **Adaptive bitrate**: Quality-based bitrate adjustment
+- **Session state snapshots**: Persist and restore sessions
+
+### Configuration Presets
+- **Low latency preset**: 50ms jitter buffer, 2s RTCP, unreliable data channel
+- **High quality preset**: 100ms jitter buffer, 4Mbps bitrate, 1080p video
+- **Mobile network preset**: 150ms jitter buffer, 800kbps bitrate, TURN servers
 
 ## Architecture
 
@@ -54,11 +79,19 @@ A WebRTC-based real-time media streaming transport for RemoteMedia pipelines wit
 │  ├─ PeerManager (manages peer connections)            │
 │  │   └─ PeerConnection (webrtc-rs)                    │
 │  │       ├─ AudioTrack (Opus encoding)                │
-│  │       └─ VideoTrack (VP9 encoding)                 │
+│  │       ├─ VideoTrack (VP9/VP8/H.264 encoding)       │
+│  │       ├─ DataChannel (reliable/unreliable)         │
+│  │       ├─ ReconnectionManager (circuit breaker)     │
+│  │       └─ ConnectionQualityMetrics                  │
 │  ├─ SessionManager (pipeline session lifecycle)       │
-│  └─ [Future] SessionRouter (peers ↔ pipeline)        │
+│  │   └─ SessionStateSnapshot (persistence)            │
+│  └─ SessionRouter (peers ↔ pipeline data routing)    │
+│     ├─ SyncManager (per-peer A/V sync)               │
+│     │   ├─ JitterBuffer (audio + video)              │
+│     │   └─ ClockDriftEstimator                       │
+│     └─ ReconnectionEventHandler                       │
 │     ↓                                                   │
-│  [Future] remotemedia-runtime-core::PipelineRunner     │
+│  remotemedia-runtime-core::PipelineRunner              │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -259,6 +292,114 @@ let frame = VideoFrame {
 transport.send_video(&peer_id, &frame).await?;
 ```
 
+### Configuration Presets
+
+```rust
+use remotemedia_webrtc::{WebRtcTransportConfig, TurnServerConfig};
+
+// Low latency preset (real-time audio/video)
+let config = WebRtcTransportConfig::low_latency_preset("ws://localhost:8080")
+    .with_peer_id("my-peer")
+    .with_max_peers(5);
+
+// High quality preset (recording/broadcasting)
+let config = WebRtcTransportConfig::high_quality_preset("ws://localhost:8080");
+
+// Mobile network preset (unreliable connections)
+let config = WebRtcTransportConfig::mobile_network_preset("ws://localhost:8080")
+    .with_turn_servers(vec![
+        TurnServerConfig {
+            url: "turn:turn.example.com:3478".to_string(),
+            username: "user".to_string(),
+            credential: "pass".to_string(),
+        }
+    ]);
+```
+
+### Data Channels
+
+```rust
+use remotemedia_webrtc::channels::{DataChannel, DataChannelMessage, ControlMessage};
+use serde_json::json;
+
+// Create data channel on peer connection
+let channel = peer.create_data_channel("control", DataChannelMode::Reliable).await?;
+
+// Send JSON message
+let msg = DataChannelMessage::Json(json!({ "type": "ping", "timestamp": 12345 }));
+channel.send(&msg).await?;
+
+// Send binary message
+let binary = DataChannelMessage::Binary(vec![0x01, 0x02, 0x03]);
+channel.send(&binary).await?;
+
+// Send control message (pipeline control)
+let control = ControlMessage::PipelineStart {
+    session_id: "session-1".to_string(),
+    manifest: None,
+};
+channel.send_control(&control).await?;
+
+// Receive messages (with callback)
+channel.on_message(|msg| async move {
+    match msg {
+        DataChannelMessage::Json(value) => println!("JSON: {}", value),
+        DataChannelMessage::Binary(data) => println!("Binary: {} bytes", data.len()),
+        DataChannelMessage::Text(text) => println!("Text: {}", text),
+    }
+}).await;
+```
+
+### Reconnection & Quality Monitoring
+
+```rust
+use remotemedia_webrtc::peer::lifecycle::{ReconnectionPolicy, ConnectionQualityMetrics};
+
+// Configure reconnection policy
+let policy = ReconnectionPolicy {
+    max_retries: 5,
+    backoff_initial_ms: 1000,
+    backoff_max_ms: 30000,
+    backoff_multiplier: 2.0,
+    jitter_enabled: true,
+};
+
+// Get connection quality metrics
+let metrics: ConnectionQualityMetrics = peer.get_metrics().await;
+println!("Latency: {}ms", metrics.latency_ms);
+println!("Packet loss: {:.2}%", metrics.packet_loss_rate * 100.0);
+println!("Jitter: {}ms", metrics.jitter_ms);
+println!("Quality score: {}/100", metrics.quality_score);
+
+// Manual reconnection (ICE restart)
+peer.reconnect().await?;
+
+// Handle reconnection events in session router
+router.on_reconnection(|event| async move {
+    println!("Peer {} reconnected (full: {})",
+             event.peer_id, event.is_full_reconnect);
+    if let Some(duration) = event.previous_duration {
+        println!("Previous connection lasted: {:?}", duration);
+    }
+}).await;
+```
+
+### Session State Snapshots
+
+```rust
+use remotemedia_webrtc::session::SessionStateSnapshot;
+
+// Create snapshot for persistence
+let snapshot: SessionStateSnapshot = router.create_snapshot().await;
+
+// Store snapshot (e.g., in Redis/database)
+let json = serde_json::to_string(&snapshot)?;
+
+// Later: restore from snapshot
+let restored: SessionStateSnapshot = serde_json::from_str(&json)?;
+router.restore_from_snapshot(restored).await?;
+```
+
 ## Testing
 
 ```bash
@@ -277,15 +418,18 @@ cargo test -- --nocapture
 cargo test --features codecs
 ```
 
-**Test Coverage**: 68 tests passing
-- Config validation: 6 tests
+**Test Coverage**: 145 tests passing
+- Config validation: 11 tests (includes presets)
 - Error handling: 5 tests
 - Media codecs: 11 tests
 - Peer management: 8 tests
 - Session management: 11 tests
 - Signaling protocol: 6 tests
 - Transport integration: 10 tests
-- Core functionality: 11 tests
+- A/V synchronization: 35 tests (jitter buffer, clock drift, sync manager)
+- Data channels: 15 tests (messages, send/receive, modes)
+- Reconnection: 18 tests (policy, circuit breaker, quality metrics)
+- Core functionality: 15 tests
 
 ## Implementation Status
 
@@ -296,9 +440,10 @@ cargo test --features codecs
 | **Phase 3** | ✅ Complete | Media tracks, codecs (Opus/VP9) | 51 |
 | **Phase 4** | ✅ Complete | Session management | 62 |
 | **Phase 5** | ✅ Complete | Transport-session integration | 68 |
-| **Phase 6** | 📋 Planned | Incoming media handlers | - |
-| **Phase 7** | 📋 Planned | Pipeline integration | - |
-| **Phase 8** | 📋 Planned | Data channels | - |
+| **Phase 6** | ✅ Complete | A/V sync, jitter buffers, clock drift | 126 |
+| **Phase 7** | ✅ Complete | Data channel communication | 134 |
+| **Phase 8** | ✅ Complete | Reconnection & failover | 145 |
+| **Phase 9** | 🚧 In Progress | Documentation, examples, polish | - |
 
 See [DESIGN.md](DESIGN.md) for detailed design documentation and [specs/](../../specs/001-webrtc-multi-peer-transport/) for implementation specifications.
 

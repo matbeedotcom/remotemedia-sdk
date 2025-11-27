@@ -10,9 +10,8 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-#[cfg(feature = "whisper")]
+// Whisper dependencies (optional - stub implementations provided when unavailable)
 use rodio;
-#[cfg(feature = "whisper")]
 use rwhisper::{WhisperBuilder, WhisperSource};
 
 /// Whisper transcription node using rwhisper
@@ -28,7 +27,6 @@ use rwhisper::{WhisperBuilder, WhisperSource};
 /// - `translate`: Whether to translate to English (default: false)
 /// - `accumulate_chunks`: Whether to accumulate chunks and transcribe all at once (default: true)
 pub struct RustWhisperNode {
-    #[cfg(feature = "whisper")]
     context: Option<Arc<Mutex<rwhisper::Whisper>>>,
     model_path: Option<String>,
     model_source: Option<String>,
@@ -42,7 +40,6 @@ pub struct RustWhisperNode {
 impl RustWhisperNode {
     pub fn new() -> Self {
         Self {
-            #[cfg(feature = "whisper")]
             context: None,
             model_path: None,
             model_source: None,
@@ -54,7 +51,6 @@ impl RustWhisperNode {
         }
     }
 
-    #[cfg(feature = "whisper")]
     fn extract_audio_data(&self, input: &Value) -> Result<Vec<f32>> {
         tracing::info!("extract_audio_data: input = {:?}", input);
 
@@ -219,7 +215,6 @@ impl RustWhisperNode {
         ))
     }
 
-    #[cfg(feature = "whisper")]
     fn extract_from_numpy_format(&self, numpy_obj: &Value) -> Result<Vec<f32>> {
         // Extract the array metadata and data
         let array_data = numpy_obj.get("array").ok_or_else(|| {
@@ -373,7 +368,6 @@ impl RustWhisperNode {
         }
     }
 
-    #[cfg(feature = "whisper")]
     async fn transcribe_audio(&self, audio: Vec<f32>) -> Result<Value> {
         use futures::StreamExt;
 
@@ -484,13 +478,6 @@ impl RustWhisperNode {
             "audio_duration": audio_len as f64 / 16000.0,
         }))
     }
-
-    #[cfg(not(feature = "whisper"))]
-    async fn transcribe_audio(&self, _audio: Vec<f32>) -> Result<Value> {
-        Err(Error::Execution(
-            "Whisper feature not enabled. Build with --features whisper".to_string(),
-        ))
-    }
 }
 
 impl Default for RustWhisperNode {
@@ -523,129 +510,116 @@ impl NodeExecutor for RustWhisperNode {
             self.translate = translate;
         }
 
-        #[cfg(feature = "whisper")]
-        {
-            // Require either model_path or model_source
-            if self.model_path.is_none() && self.model_source.is_none() {
-                return Err(Error::Manifest(
-                    "Either model_path or model_source is required for RustWhisperNode".to_string(),
-                ));
+        // Require either model_path or model_source
+        if self.model_path.is_none() && self.model_source.is_none() {
+        return Err(Error::Manifest(
+            "Either model_path or model_source is required for RustWhisperNode".to_string(),
+        ));
             }
 
             // Note: For now we only support model_source with WhisperBuilder
             // model_path support requires different rwhisper API
             let source_str = self
-                .model_source
-                .as_ref()
-                .or(self.model_path.as_ref())
-                .ok_or_else(|| {
-                    Error::Manifest("model_source or model_path required".to_string())
-                })?;
+        .model_source
+        .as_ref()
+        .or(self.model_path.as_ref())
+        .ok_or_else(|| {
+            Error::Manifest("model_source or model_path required".to_string())
+        })?;
 
             tracing::info!("Loading Whisper model from source: {}", source_str);
 
             let source = match source_str.as_str() {
-                "tiny" => WhisperSource::Tiny,
-                "tiny.en" => WhisperSource::TinyEn,
-                "base" => WhisperSource::Base,
-                "base.en" => WhisperSource::BaseEn,
-                "small" => WhisperSource::Small,
-                "small.en" => WhisperSource::SmallEn,
-                "medium" => WhisperSource::Medium,
-                "medium.en" => WhisperSource::MediumEn,
-                "large-v2" | "large" => WhisperSource::LargeV2,  // rwhisper only has LargeV2
-                _ => return Err(Error::Manifest(
-                    format!("Unknown model source: {}. Valid options: tiny, tiny.en, base, base.en, small, small.en, medium, medium.en, large, large-v2", source_str)
-                )),
+        "tiny" => WhisperSource::Tiny,
+        "tiny.en" => WhisperSource::TinyEn,
+        "base" => WhisperSource::Base,
+        "base.en" => WhisperSource::BaseEn,
+        "small" => WhisperSource::Small,
+        "small.en" => WhisperSource::SmallEn,
+        "medium" => WhisperSource::Medium,
+        "medium.en" => WhisperSource::MediumEn,
+        "large-v2" | "large" => WhisperSource::LargeV2,  // rwhisper only has LargeV2
+        _ => return Err(Error::Manifest(
+            format!("Unknown model source: {}. Valid options: tiny, tiny.en, base, base.en, small, small.en, medium, medium.en, large, large-v2", source_str)
+        )),
             };
 
-            let mut builder = WhisperBuilder::default().with_source(source);
+            let builder = WhisperBuilder::default().with_source(source);
 
             // Note: with_language() requires WhisperLanguage enum, not a string
             // For now, we'll skip this and let the model auto-detect
             // TODO: Map language strings to WhisperLanguage enum
             if self.language.is_some() {
-                tracing::info!("Language parameter '{}' provided but not yet implemented (requires WhisperLanguage enum mapping)",
-                             self.language.as_ref().unwrap());
+        tracing::info!("Language parameter '{}' provided but not yet implemented (requires WhisperLanguage enum mapping)",
+                     self.language.as_ref().unwrap());
             }
 
             let ctx = builder
-                .build_with_loading_handler(|progress| {
-                    use rwhisper::ModelLoadingProgress;
-                    match progress {
-                        ModelLoadingProgress::Downloading { source, progress } => {
-                            let pct = (progress.progress as f64 / progress.size as f64) * 100.0;
-                            tracing::info!("Downloading model from {}: {:.1}%", source, pct);
-                        }
-                        ModelLoadingProgress::Loading { progress } => {
-                            let pct = progress * 100.0;
-                            tracing::info!("Loading model: {:.1}%", pct);
-                        }
-                    }
-                })
-                .await
-                .map_err(|e| Error::Execution(format!("Failed to build Whisper model: {}", e)))?;
+        .build_with_loading_handler(|progress| {
+            use rwhisper::ModelLoadingProgress;
+            match progress {
+                ModelLoadingProgress::Downloading { source, progress } => {
+                    let pct = (progress.progress as f64 / progress.size as f64) * 100.0;
+                    tracing::info!("Downloading model from {}: {:.1}%", source, pct);
+                }
+                ModelLoadingProgress::Loading { progress } => {
+                    let pct = progress * 100.0;
+                    tracing::info!("Loading model: {:.1}%", pct);
+                }
+            }
+        })
+        .await
+        .map_err(|e| Error::Execution(format!("Failed to build Whisper model: {}", e)))?;
 
-            self.context = Some(Arc::new(Mutex::new(ctx)));
-            tracing::info!("Whisper model loaded successfully");
-        }
+        self.context = Some(Arc::new(Mutex::new(ctx)));
+        tracing::info!("Whisper model loaded successfully");
 
         Ok(())
     }
 
     async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
-        #[cfg(feature = "whisper")]
-        {
-            tracing::info!("RustWhisperNode::process called");
+        tracing::info!("RustWhisperNode::process called");
 
-            // Extract audio data
-            tracing::info!("Extracting audio data from input");
-            let audio = self.extract_audio_data(&input)?;
+        // Extract audio data
+        tracing::info!("Extracting audio data from input");
+        let audio = self.extract_audio_data(&input)?;
 
             // Skip empty audio
             if audio.is_empty() {
                 tracing::warn!("Empty audio data, skipping transcription");
-                return Ok(vec![]);
-            }
-
-            tracing::info!("Extracted {} audio samples", audio.len());
-
-            if self.accumulate_chunks {
-                // Accumulate audio chunks - don't transcribe yet
-                tracing::info!(
-                    "Accumulating {} samples (total accumulated: {})",
-                    audio.len(),
-                    self.accumulated_audio.len()
-                );
-                self.accumulated_audio.extend(audio);
-                tracing::info!(
-                    "Total accumulated audio: {} samples ({:.2}s at 16kHz)",
-                    self.accumulated_audio.len(),
-                    self.accumulated_audio.len() as f32 / 16000.0
-                );
-                Ok(vec![])
-            } else {
-                // Transcribe immediately (old behavior)
-                let non_zero_count = audio.iter().filter(|&&s| s.abs() > 0.0001).count();
-                let max_amplitude = audio.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                tracing::info!(
-                    "Audio stats: non_zero={}/{}, max_amplitude={:.6}",
-                    non_zero_count,
-                    audio.len(),
-                    max_amplitude
-                );
-
-                let result = self.transcribe_audio(audio).await?;
-                tracing::info!("Transcription result ready, returning");
-                Ok(vec![result])
-            }
+            return Ok(vec![]);
         }
 
-        #[cfg(not(feature = "whisper"))]
-        {
-            Err(Error::Execution(
-                "Whisper feature not enabled. Build with --features whisper".to_string(),
-            ))
+        tracing::info!("Extracted {} audio samples", audio.len());
+
+        if self.accumulate_chunks {
+            // Accumulate audio chunks - don't transcribe yet
+            tracing::info!(
+                "Accumulating {} samples (total accumulated: {})",
+                audio.len(),
+                self.accumulated_audio.len()
+            );
+            self.accumulated_audio.extend(audio);
+            tracing::info!(
+                "Total accumulated audio: {} samples ({:.2}s at 16kHz)",
+                self.accumulated_audio.len(),
+                self.accumulated_audio.len() as f32 / 16000.0
+            );
+            Ok(vec![])
+        } else {
+            // Transcribe immediately (old behavior)
+            let non_zero_count = audio.iter().filter(|&&s| s.abs() > 0.0001).count();
+            let max_amplitude = audio.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+            tracing::info!(
+                "Audio stats: non_zero={}/{}, max_amplitude={:.6}",
+                non_zero_count,
+                audio.len(),
+                max_amplitude
+            );
+
+            let result = self.transcribe_audio(audio).await?;
+            tracing::info!("Transcription result ready, returning");
+            Ok(vec![result])
         }
     }
 
@@ -654,40 +628,33 @@ impl NodeExecutor for RustWhisperNode {
     }
 
     async fn finish_streaming(&mut self) -> Result<Vec<Value>> {
-        #[cfg(feature = "whisper")]
-        {
-            if self.accumulated_audio.is_empty() {
-                tracing::info!("No accumulated audio to transcribe");
-                return Ok(vec![]);
-            }
+        if self.accumulated_audio.is_empty() {
+            tracing::info!("No accumulated audio to transcribe");
+            return Ok(vec![]);
+        }
 
             tracing::info!(
                 "Transcribing accumulated audio: {} samples ({:.2}s at 16kHz)",
                 self.accumulated_audio.len(),
-                self.accumulated_audio.len() as f32 / 16000.0
-            );
+            self.accumulated_audio.len() as f32 / 16000.0
+        );
 
-            // Take ownership of accumulated audio and clear the buffer
-            let audio = std::mem::take(&mut self.accumulated_audio);
-            let result = self.transcribe_audio(audio).await?;
+        // Take ownership of accumulated audio and clear the buffer
+        let audio = std::mem::take(&mut self.accumulated_audio);
+        let result = self.transcribe_audio(audio).await?;
 
-            tracing::info!("Final transcription result: {:?}", result);
-            Ok(vec![result])
-        }
-
-        #[cfg(not(feature = "whisper"))]
-        {
-            Ok(vec![])
-        }
+        tracing::info!("Final transcription result: {:?}", result);
+        Ok(vec![result])
     }
 
     async fn cleanup(&mut self) -> Result<()> {
-        #[cfg(feature = "whisper")]
-        {
-            self.context = None;
-            self.accumulated_audio.clear();
-        }
+        self.context = None;
+        self.accumulated_audio.clear();
         Ok(())
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 
     fn info(&self) -> NodeInfo {

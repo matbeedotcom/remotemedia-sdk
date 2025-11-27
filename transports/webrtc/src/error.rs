@@ -135,6 +135,180 @@ impl Error {
                 | Error::SdpError(_)
         )
     }
+
+    /// Get a suggested recovery action for this error
+    ///
+    /// Returns a human-readable suggestion for how to recover from or
+    /// prevent this error.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use remotemedia_webrtc::Error;
+    ///
+    /// let err = Error::NatTraversalFailed("ICE timeout".to_string());
+    /// println!("Error: {}", err);
+    /// println!("Suggestion: {}", err.recovery_suggestion());
+    /// ```
+    pub fn recovery_suggestion(&self) -> &'static str {
+        match self {
+            Error::InvalidConfig(_) => {
+                "Check your configuration parameters. Use WebRtcTransportConfig::validate() \
+                 to catch configuration errors early. Consider using a preset like \
+                 WebRtcTransportConfig::low_latency_preset() for common use cases."
+            }
+            Error::SignalingError(_) => {
+                "Ensure the signaling server is running and accessible. Check the \
+                 signaling_url in your configuration. Verify network connectivity \
+                 and firewall rules allow WebSocket connections."
+            }
+            Error::PeerNotFound(_) => {
+                "The peer may have disconnected or never connected. Use \
+                 transport.list_peers() to see available peers before attempting \
+                 operations."
+            }
+            Error::NatTraversalFailed(_) => {
+                "ICE connection failed. This usually indicates NAT/firewall issues. \
+                 Try these solutions:\n\
+                 1. Configure TURN servers for relay fallback\n\
+                 2. Verify STUN server is accessible\n\
+                 3. Check firewall allows UDP traffic on ports 49152-65535\n\
+                 4. Use WebRtcTransportConfig::mobile_network_preset() with TURN servers"
+            }
+            Error::EncodingError(_) => {
+                "Media encoding/decoding failed. Ensure the 'codecs' feature is enabled \
+                 and codec libraries are installed. Check that input data format matches \
+                 expected format (e.g., f32 samples for audio, I420/NV12 for video)."
+            }
+            Error::SessionNotFound(_) => {
+                "The session may have been removed or never created. Use \
+                 transport.has_session(id) to check if a session exists before \
+                 accessing it."
+            }
+            Error::SessionError(_) => {
+                "Session operation failed. Check that peers are properly associated \
+                 with the session using add_peer_to_session(). Verify the session \
+                 state using get_session()."
+            }
+            Error::InvalidData(_) => {
+                "Data format is invalid. Check that:\n\
+                 1. Audio samples are f32 arrays at the expected sample rate\n\
+                 2. Video frames use a supported pixel format (I420, NV12)\n\
+                 3. Data channel messages are within size limits (16 MB max)"
+            }
+            Error::OperationTimeout(_) => {
+                "Operation timed out. This may indicate network issues or a busy \
+                 server. Try increasing timeout values or check network connectivity. \
+                 For ICE timeouts, consider adding more STUN/TURN servers."
+            }
+            Error::PeerConnectionError(_) => {
+                "WebRTC peer connection failed. Check that:\n\
+                 1. Both peers have compatible codecs enabled\n\
+                 2. ICE candidates are being exchanged properly\n\
+                 3. Network allows peer-to-peer connections\n\
+                 Consider using peer.reconnect() to re-establish the connection."
+            }
+            Error::IceCandidateError(_) => {
+                "ICE candidate processing failed. Verify that:\n\
+                 1. STUN servers are accessible\n\
+                 2. Candidate format is valid\n\
+                 3. Candidates are being exchanged via signaling\n\
+                 Try collecting more candidates by adding multiple STUN servers."
+            }
+            Error::SdpError(_) => {
+                "SDP negotiation failed. This may indicate:\n\
+                 1. Incompatible codec support between peers\n\
+                 2. Invalid SDP format from signaling\n\
+                 3. Mismatched offer/answer sequence\n\
+                 Ensure both peers are using compatible WebRTC configurations."
+            }
+            Error::DataChannelError(_) => {
+                "Data channel operation failed. Check that:\n\
+                 1. Data channels are enabled in configuration\n\
+                 2. The peer connection is in 'connected' state\n\
+                 3. Message size is within limits (16 MB max)\n\
+                 For reliability, use DataChannelMode::Reliable."
+            }
+            Error::MediaTrackError(_) => {
+                "Media track operation failed. Verify that:\n\
+                 1. The track type (audio/video) is supported\n\
+                 2. Codec is enabled for the track type\n\
+                 3. Track hasn't been removed from the peer connection"
+            }
+            Error::SyncError(_) => {
+                "Audio/video synchronization failed. Check that:\n\
+                 1. RTCP sender reports are being received\n\
+                 2. Jitter buffer size is appropriate for network conditions\n\
+                 3. Both audio and video tracks are active\n\
+                 Consider increasing jitter_buffer_size_ms for unstable networks."
+            }
+            Error::PipelineError(_) => {
+                "Pipeline integration failed. Verify that:\n\
+                 1. Pipeline manifest is valid YAML/JSON\n\
+                 2. All referenced node types exist\n\
+                 3. Node connections form a valid graph\n\
+                 Use manifest.validate() to check pipeline before execution."
+            }
+            Error::WebSocketError(_) => {
+                "WebSocket connection failed. Check that:\n\
+                 1. Signaling server URL is correct (ws:// or wss://)\n\
+                 2. Server is running and accepting connections\n\
+                 3. Network/firewall allows WebSocket traffic"
+            }
+            Error::SerializationError(_) => {
+                "Data serialization failed. Ensure that:\n\
+                 1. Data types implement Serialize/Deserialize\n\
+                 2. JSON/binary data is properly formatted\n\
+                 3. No circular references in data structures"
+            }
+            Error::InternalError(_) => {
+                "An internal error occurred. This is likely a bug. Please report this \
+                 issue with full error details and reproduction steps."
+            }
+            Error::WebRtcError(_) => {
+                "WebRTC library error. Check that:\n\
+                 1. All WebRTC dependencies are correctly installed\n\
+                 2. Platform-specific requirements are met\n\
+                 3. No conflicting WebRTC instances are running"
+            }
+            Error::IoError(_) => {
+                "I/O error occurred. Check file permissions, disk space, and that \
+                 required files/directories exist."
+            }
+            Error::Other(_) => {
+                "An unexpected error occurred. Check the error details for more \
+                 information and consider filing a bug report if the issue persists."
+            }
+        }
+    }
+
+    /// Get a brief error code for logging and metrics
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            Error::InvalidConfig(_) => "INVALID_CONFIG",
+            Error::SignalingError(_) => "SIGNALING_ERROR",
+            Error::PeerNotFound(_) => "PEER_NOT_FOUND",
+            Error::NatTraversalFailed(_) => "NAT_TRAVERSAL_FAILED",
+            Error::EncodingError(_) => "ENCODING_ERROR",
+            Error::SessionNotFound(_) => "SESSION_NOT_FOUND",
+            Error::SessionError(_) => "SESSION_ERROR",
+            Error::InvalidData(_) => "INVALID_DATA",
+            Error::OperationTimeout(_) => "OPERATION_TIMEOUT",
+            Error::PeerConnectionError(_) => "PEER_CONNECTION_ERROR",
+            Error::IceCandidateError(_) => "ICE_CANDIDATE_ERROR",
+            Error::SdpError(_) => "SDP_ERROR",
+            Error::DataChannelError(_) => "DATA_CHANNEL_ERROR",
+            Error::MediaTrackError(_) => "MEDIA_TRACK_ERROR",
+            Error::SyncError(_) => "SYNC_ERROR",
+            Error::PipelineError(_) => "PIPELINE_ERROR",
+            Error::WebSocketError(_) => "WEBSOCKET_ERROR",
+            Error::SerializationError(_) => "SERIALIZATION_ERROR",
+            Error::InternalError(_) => "INTERNAL_ERROR",
+            Error::WebRtcError(_) => "WEBRTC_ERROR",
+            Error::IoError(_) => "IO_ERROR",
+            Error::Other(_) => "OTHER_ERROR",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -172,5 +346,83 @@ mod tests {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
         let err = Error::from(io_err);
         assert!(matches!(err, Error::IoError(_)));
+    }
+
+    #[test]
+    fn test_recovery_suggestion_nat_traversal() {
+        let err = Error::NatTraversalFailed("ICE timeout".to_string());
+        let suggestion = err.recovery_suggestion();
+        assert!(suggestion.contains("TURN servers"));
+        assert!(suggestion.contains("NAT"));
+    }
+
+    #[test]
+    fn test_recovery_suggestion_config() {
+        let err = Error::InvalidConfig("bad value".to_string());
+        let suggestion = err.recovery_suggestion();
+        assert!(suggestion.contains("validate()"));
+        assert!(suggestion.contains("preset"));
+    }
+
+    #[test]
+    fn test_recovery_suggestion_signaling() {
+        let err = Error::SignalingError("connection refused".to_string());
+        let suggestion = err.recovery_suggestion();
+        assert!(suggestion.contains("signaling server"));
+        assert!(suggestion.contains("WebSocket"));
+    }
+
+    #[test]
+    fn test_error_code() {
+        assert_eq!(
+            Error::InvalidConfig("test".to_string()).error_code(),
+            "INVALID_CONFIG"
+        );
+        assert_eq!(
+            Error::NatTraversalFailed("test".to_string()).error_code(),
+            "NAT_TRAVERSAL_FAILED"
+        );
+        assert_eq!(
+            Error::DataChannelError("test".to_string()).error_code(),
+            "DATA_CHANNEL_ERROR"
+        );
+    }
+
+    #[test]
+    fn test_all_errors_have_recovery_suggestions() {
+        // Ensure all error variants have non-empty recovery suggestions
+        let errors = vec![
+            Error::InvalidConfig("test".to_string()),
+            Error::SignalingError("test".to_string()),
+            Error::PeerNotFound("test".to_string()),
+            Error::NatTraversalFailed("test".to_string()),
+            Error::EncodingError("test".to_string()),
+            Error::SessionNotFound("test".to_string()),
+            Error::SessionError("test".to_string()),
+            Error::InvalidData("test".to_string()),
+            Error::OperationTimeout("test".to_string()),
+            Error::PeerConnectionError("test".to_string()),
+            Error::IceCandidateError("test".to_string()),
+            Error::SdpError("test".to_string()),
+            Error::DataChannelError("test".to_string()),
+            Error::MediaTrackError("test".to_string()),
+            Error::SyncError("test".to_string()),
+            Error::PipelineError("test".to_string()),
+            Error::WebSocketError("test".to_string()),
+            Error::SerializationError("test".to_string()),
+            Error::InternalError("test".to_string()),
+            Error::WebRtcError("test".to_string()),
+        ];
+
+        for err in errors {
+            let suggestion = err.recovery_suggestion();
+            assert!(
+                !suggestion.is_empty(),
+                "Error {:?} has empty recovery suggestion",
+                err
+            );
+            let code = err.error_code();
+            assert!(!code.is_empty(), "Error {:?} has empty error code", err);
+        }
     }
 }

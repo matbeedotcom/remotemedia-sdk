@@ -31,9 +31,8 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use remotemedia_webrtc::{WebRtcTransport, WebRtcTransportConfig};
-//! use remotemedia_runtime_core::PipelineRunner;
+//! ```
+//! use remotemedia_webrtc::WebRtcTransportConfig;
 //!
 //! // Configure transport
 //! let config = WebRtcTransportConfig {
@@ -43,15 +42,27 @@
 //!     ..Default::default()
 //! };
 //!
-//! // Create transport
-//! let runner = PipelineRunner::new()?;
-//! let transport = WebRtcTransport::new(config, runner).await?;
+//! // Validate configuration
+//! assert!(config.validate().is_ok());
+//! assert_eq!(config.max_peers, 10);
+//! ```
+//!
+//! ## Async Usage
+//!
+//! ```no_run
+//! use remotemedia_webrtc::{WebRtcTransport, WebRtcTransportConfig};
+//!
+//! # async fn example() -> remotemedia_webrtc::Result<()> {
+//! let config = WebRtcTransportConfig::default();
+//! let transport = WebRtcTransport::new(config)?;
+//!
+//! // Start transport
+//! transport.start().await?;
 //!
 //! // Connect to peer
-//! let peer_id = transport.connect_peer("peer-abc123").await?;
-//!
-//! // Start streaming session with pipeline
-//! let session = transport.stream(manifest).await?;
+//! let peer_id = transport.connect_peer("peer-abc123".to_string()).await?;
+//! # Ok(())
+//! # }
 //! ```
 
 #![warn(clippy::all)]
@@ -69,8 +80,8 @@ mod signaling;
 #[cfg(feature = "grpc-signaling")]
 pub mod signaling;
 
-mod channels;
 pub mod media;
+pub mod channels;
 mod peer;
 mod session;
 mod sync;

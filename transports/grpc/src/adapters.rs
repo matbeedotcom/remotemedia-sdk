@@ -6,8 +6,7 @@
 use crate::generated::data_buffer::DataType;
 use crate::generated::{
     AudioBuffer, AudioFormat, BatchHint, BinaryBuffer, CancelSpeculation, ControlMessage,
-    DataBuffer, DeadlineWarning, JsonData, NumpyBuffer, PixelFormat, TensorBuffer, TensorDtype,
-    TextBuffer, VideoFrame,
+    DataBuffer, DeadlineWarning, JsonData, NumpyBuffer, TensorBuffer, TextBuffer, VideoFrame,
 };
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::transport::TransportData;

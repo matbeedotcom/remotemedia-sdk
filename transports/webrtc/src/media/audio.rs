@@ -2,6 +2,9 @@
 //!
 //! Opus codec is always enabled for WebRTC audio support.
 
+// Phase 4 (US2) audio infrastructure - allow unused until multi-peer sync is implemented
+#![allow(dead_code)]
+
 use crate::{Error, Result};
 
 /// Audio frame duration in milliseconds (Opus standard)
