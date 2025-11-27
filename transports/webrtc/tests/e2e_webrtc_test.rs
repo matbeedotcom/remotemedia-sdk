@@ -103,7 +103,11 @@ async fn test_multiple_clients_connect() {
 
     // All clients should be connected
     for client in &clients {
-        assert!(client.is_connected().await, "Client {} not connected", client.peer_id());
+        assert!(
+            client.is_connected().await,
+            "Client {} not connected",
+            client.peer_id()
+        );
     }
 
     harness.shutdown().await;
@@ -150,7 +154,11 @@ async fn test_sine_wave_generation() {
 
     // Signal should not be silent
     let max_amplitude = samples.iter().fold(0.0f32, |max, &s| max.max(s.abs()));
-    assert!(max_amplitude > 0.9, "Sine wave amplitude too low: {}", max_amplitude);
+    assert!(
+        max_amplitude > 0.9,
+        "Sine wave amplitude too low: {}",
+        max_amplitude
+    );
 
     harness.shutdown().await;
 }
@@ -244,7 +252,10 @@ async fn test_audio_passthrough_pipeline() {
     let harness = WebRtcTestHarness::new(PASSTHROUGH_MANIFEST).await.unwrap();
 
     // Wait for server to be ready
-    harness.wait_for_server_ready(Duration::from_secs(5)).await.unwrap();
+    harness
+        .wait_for_server_ready(Duration::from_secs(5))
+        .await
+        .unwrap();
 
     // Create and connect client
     let client = harness.create_client("audio-test-client").await.unwrap();
@@ -254,7 +265,11 @@ async fn test_audio_passthrough_pipeline() {
 
     // Send audio through pipeline
     let send_result = client.send_audio(&input_audio, 48000).await;
-    assert!(send_result.is_ok(), "Failed to send audio: {:?}", send_result);
+    assert!(
+        send_result.is_ok(),
+        "Failed to send audio: {:?}",
+        send_result
+    );
 
     info!("Audio sent, waiting for pipeline processing...");
 
@@ -271,7 +286,10 @@ async fn test_video_passthrough_pipeline() {
 
     let harness = WebRtcTestHarness::new(PASSTHROUGH_MANIFEST).await.unwrap();
 
-    harness.wait_for_server_ready(Duration::from_secs(5)).await.unwrap();
+    harness
+        .wait_for_server_ready(Duration::from_secs(5))
+        .await
+        .unwrap();
 
     let client = harness.create_client("video-test-client").await.unwrap();
 
@@ -297,7 +315,10 @@ async fn test_multi_client_concurrent_audio() {
     init_logging();
 
     let harness = WebRtcTestHarness::new(PASSTHROUGH_MANIFEST).await.unwrap();
-    harness.wait_for_server_ready(Duration::from_secs(5)).await.unwrap();
+    harness
+        .wait_for_server_ready(Duration::from_secs(5))
+        .await
+        .unwrap();
 
     // Create multiple clients
     let clients = harness.create_clients(3).await.unwrap();
@@ -331,7 +352,10 @@ async fn test_client_scaling() {
     init_logging();
 
     let harness = WebRtcTestHarness::new(PASSTHROUGH_MANIFEST).await.unwrap();
-    harness.wait_for_server_ready(Duration::from_secs(5)).await.unwrap();
+    harness
+        .wait_for_server_ready(Duration::from_secs(5))
+        .await
+        .unwrap();
 
     // Test scaling up to 10 clients
     let client_counts = [1, 3, 5, 10];
@@ -343,7 +367,12 @@ async fn test_client_scaling() {
         for i in 0..count {
             let peer_id = format!("scale-test-{}-{}", count, i);
             let result = harness.create_client(&peer_id).await;
-            assert!(result.is_ok(), "Failed to create client {}: {:?}", peer_id, result);
+            assert!(
+                result.is_ok(),
+                "Failed to create client {}: {:?}",
+                peer_id,
+                result
+            );
         }
 
         // Verify all connected
@@ -388,7 +417,10 @@ async fn test_vad_pipeline_manifest() {
 
     // Verify VAD manifest can be loaded
     let harness = WebRtcTestHarness::new(VAD_MANIFEST).await.unwrap();
-    harness.wait_for_server_ready(Duration::from_secs(5)).await.unwrap();
+    harness
+        .wait_for_server_ready(Duration::from_secs(5))
+        .await
+        .unwrap();
 
     let client = harness.create_client("vad-test-client").await.unwrap();
 
@@ -412,7 +444,10 @@ async fn test_high_throughput_audio() {
     init_logging();
 
     let harness = WebRtcTestHarness::new(PASSTHROUGH_MANIFEST).await.unwrap();
-    harness.wait_for_server_ready(Duration::from_secs(5)).await.unwrap();
+    harness
+        .wait_for_server_ready(Duration::from_secs(5))
+        .await
+        .unwrap();
 
     let client = harness.create_client("throughput-test").await.unwrap();
 
@@ -446,7 +481,10 @@ async fn test_many_clients_stress() {
     init_logging();
 
     let harness = WebRtcTestHarness::new(PASSTHROUGH_MANIFEST).await.unwrap();
-    harness.wait_for_server_ready(Duration::from_secs(5)).await.unwrap();
+    harness
+        .wait_for_server_ready(Duration::from_secs(5))
+        .await
+        .unwrap();
 
     // Try to connect 50 clients
     let target_clients = 50;
@@ -481,10 +519,16 @@ async fn test_audio_roundtrip_receives_packets() {
     init_logging();
 
     let harness = WebRtcTestHarness::new(PASSTHROUGH_MANIFEST).await.unwrap();
-    harness.wait_for_server_ready(Duration::from_secs(5)).await.unwrap();
+    harness
+        .wait_for_server_ready(Duration::from_secs(5))
+        .await
+        .unwrap();
 
-    let client = harness.create_client("roundtrip-audio-client").await.unwrap();
-    
+    let client = harness
+        .create_client("roundtrip-audio-client")
+        .await
+        .unwrap();
+
     // Clear any buffered audio
     client.clear_received_audio().await;
 
@@ -493,7 +537,12 @@ async fn test_audio_roundtrip_receives_packets() {
     for i in 0..10 {
         let audio = harness.generate_sine_wave(440.0 + i as f32 * 50.0, 0.02, 48000);
         let result = client.send_audio(&audio, 48000).await;
-        assert!(result.is_ok(), "Failed to send audio chunk {}: {:?}", i, result);
+        assert!(
+            result.is_ok(),
+            "Failed to send audio chunk {}: {:?}",
+            i,
+            result
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 
@@ -506,18 +555,26 @@ async fn test_audio_roundtrip_receives_packets() {
 
     match result {
         Ok(count) => {
-            info!("Successfully received {} audio packets from pipeline", count);
+            info!(
+                "Successfully received {} audio packets from pipeline",
+                count
+            );
             assert!(count >= 1, "Expected at least 1 audio packet");
         }
         Err(e) => {
             // Log detailed info for debugging
             let received = client.received_audio_packet_count();
-            info!("Audio roundtrip result: received {} packets, error: {:?}", received, e);
-            
+            info!(
+                "Audio roundtrip result: received {} packets, error: {:?}",
+                received, e
+            );
+
             // For now, we accept that the passthrough manifest may not be configured
             // to send audio back. This test validates the receiving infrastructure works.
             if received == 0 {
-                info!("Note: No audio received. This may be expected if pipeline doesn't echo audio.");
+                info!(
+                    "Note: No audio received. This may be expected if pipeline doesn't echo audio."
+                );
             }
         }
     }
@@ -531,10 +588,16 @@ async fn test_video_roundtrip_receives_packets() {
     init_logging();
 
     let harness = WebRtcTestHarness::new(PASSTHROUGH_MANIFEST).await.unwrap();
-    harness.wait_for_server_ready(Duration::from_secs(5)).await.unwrap();
+    harness
+        .wait_for_server_ready(Duration::from_secs(5))
+        .await
+        .unwrap();
 
-    let client = harness.create_client("roundtrip-video-client").await.unwrap();
-    
+    let client = harness
+        .create_client("roundtrip-video-client")
+        .await
+        .unwrap();
+
     // Clear any buffered video
     client.clear_received_video().await;
 
@@ -543,7 +606,12 @@ async fn test_video_roundtrip_receives_packets() {
     let frame = harness.generate_solid_frame(640, 480, 128, 128, 128);
     for i in 0..5 {
         let result = client.send_video(&frame, 640, 480).await;
-        assert!(result.is_ok(), "Failed to send video frame {}: {:?}", i, result);
+        assert!(
+            result.is_ok(),
+            "Failed to send video frame {}: {:?}",
+            i,
+            result
+        );
         tokio::time::sleep(Duration::from_millis(33)).await; // ~30fps
     }
 
@@ -555,15 +623,23 @@ async fn test_video_roundtrip_receives_packets() {
 
     match result {
         Ok(count) => {
-            info!("Successfully received {} video packets from pipeline", count);
+            info!(
+                "Successfully received {} video packets from pipeline",
+                count
+            );
             assert!(count >= 1, "Expected at least 1 video packet");
         }
         Err(e) => {
             let received = client.received_video_packet_count();
-            info!("Video roundtrip result: received {} packets, error: {:?}", received, e);
-            
+            info!(
+                "Video roundtrip result: received {} packets, error: {:?}",
+                received, e
+            );
+
             if received == 0 {
-                info!("Note: No video received. This may be expected if pipeline doesn't echo video.");
+                info!(
+                    "Note: No video received. This may be expected if pipeline doesn't echo video."
+                );
             }
         }
     }
@@ -577,10 +653,16 @@ async fn test_client_receives_server_tracks() {
     init_logging();
 
     let harness = WebRtcTestHarness::new(PASSTHROUGH_MANIFEST).await.unwrap();
-    harness.wait_for_server_ready(Duration::from_secs(5)).await.unwrap();
+    harness
+        .wait_for_server_ready(Duration::from_secs(5))
+        .await
+        .unwrap();
 
-    let client = harness.create_client("track-receiver-client").await.unwrap();
-    
+    let client = harness
+        .create_client("track-receiver-client")
+        .await
+        .unwrap();
+
     // Verify connection is established
     assert!(client.is_connected().await, "Client should be connected");
 
@@ -605,7 +687,10 @@ async fn test_bidirectional_audio_flow() {
     init_logging();
 
     let harness = WebRtcTestHarness::new(PASSTHROUGH_MANIFEST).await.unwrap();
-    harness.wait_for_server_ready(Duration::from_secs(5)).await.unwrap();
+    harness
+        .wait_for_server_ready(Duration::from_secs(5))
+        .await
+        .unwrap();
 
     let client = harness.create_client("bidirectional-client").await.unwrap();
     client.clear_received_audio().await;
@@ -613,20 +698,24 @@ async fn test_bidirectional_audio_flow() {
     // Send a burst of audio
     let sample_rate = 48000u32;
     let chunk_duration = 0.02; // 20ms chunks like Opus
-    
+
     info!("Starting bidirectional audio test...");
 
     for i in 0..20 {
         let audio = harness.generate_sine_wave(440.0, chunk_duration, sample_rate);
         client.send_audio(&audio, sample_rate).await.unwrap();
-        
+
         // Small delay between sends
         tokio::time::sleep(Duration::from_millis(20)).await;
-        
+
         // Check if we've received anything yet
         let received = client.received_audio_packet_count();
         if received > 0 && i > 5 {
-            info!("Received {} audio packets after sending {} chunks", received, i + 1);
+            info!(
+                "Received {} audio packets after sending {} chunks",
+                received,
+                i + 1
+            );
             break;
         }
     }
@@ -644,4 +733,3 @@ async fn test_bidirectional_audio_flow() {
 
     harness.shutdown().await;
 }
-

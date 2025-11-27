@@ -233,18 +233,21 @@ impl WebRtcSignaling for WebRtcSignalingService {
             // Clean up when stream ends
             if let Some(peer_id) = peer_id {
                 info!("Peer disconnected: {}", peer_id);
-                
+
                 // CRITICAL: Clean up ServerPeer and its pipeline session FIRST
                 // This must happen before removing from peers to ensure proper shutdown
                 if let Some(server_peer) = server_peers.write().await.remove(&peer_id) {
-                    info!("Shutting down ServerPeer for disconnected peer: {}", peer_id);
+                    info!(
+                        "Shutting down ServerPeer for disconnected peer: {}",
+                        peer_id
+                    );
                     if let Err(e) = server_peer.shutdown().await {
                         error!("Failed to shutdown ServerPeer for {}: {}", peer_id, e);
                     } else {
                         info!("ServerPeer shutdown complete for: {}", peer_id);
                     }
                 }
-                
+
                 // Remove from signaling peers
                 service_peers.write().await.remove(&peer_id);
 
@@ -501,9 +504,15 @@ impl WebRtcSignalingService {
             // CRITICAL: Clean up any existing ServerPeer for this peer_id first
             // This prevents stale sessions from processing old data
             if let Some(old_server_peer) = server_peers.write().await.remove(from_peer_id) {
-                info!("Shutting down existing ServerPeer for peer {} before creating new one", from_peer_id);
+                info!(
+                    "Shutting down existing ServerPeer for peer {} before creating new one",
+                    from_peer_id
+                );
                 if let Err(e) = old_server_peer.shutdown().await {
-                    warn!("Failed to shutdown old ServerPeer for {}: {} (continuing with new peer)", from_peer_id, e);
+                    warn!(
+                        "Failed to shutdown old ServerPeer for {}: {} (continuing with new peer)",
+                        from_peer_id, e
+                    );
                 } else {
                     info!("Old ServerPeer shutdown complete for: {}", from_peer_id);
                 }

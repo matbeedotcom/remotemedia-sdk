@@ -24,14 +24,18 @@
 //!
 //! # Usage (Future)
 //!
-//! ```
+//! ```no_run
 //! use remotemedia_webrtc::client::WebRtcPipelineClient;
 //!
+//! # async fn example() -> remotemedia_webrtc::Result<()> {
 //! let client = WebRtcPipelineClient::new(
 //!     "wss://signaling.example.com",
-//!     Some("stun:stun.example.com:3478"),
+//!     vec!["stun:stun.example.com:3478".to_string()],
+//!     None,
 //! ).await?;
-//! let result = client.execute_unary(manifest, input).await?;
+//! // let result = client.execute_unary(manifest, input).await?;
+//! # Ok(())
+//! # }
 //! ```
 
 use async_trait::async_trait;
@@ -78,12 +82,17 @@ impl WebRtcPipelineClient {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
+    /// use remotemedia_webrtc::client::WebRtcPipelineClient;
+    ///
+    /// # async fn example() -> remotemedia_webrtc::Result<()> {
     /// let client = WebRtcPipelineClient::new(
     ///     "wss://signaling.example.com",
     ///     vec!["stun:stun.example.com:3478".to_string()],
     ///     None,
     /// ).await?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn new(
         signaling_url: impl Into<String>,

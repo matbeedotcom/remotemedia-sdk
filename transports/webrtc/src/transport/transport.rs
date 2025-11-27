@@ -6,6 +6,7 @@ use crate::{
     peer::{PeerConnection, PeerInfo, PeerManager},
     session::{Session, SessionId, SessionManager},
     signaling::{IceCandidateParams, SignalingClient},
+    sync::{SyncedAudioFrame, SyncedVideoFrame},
     Error, Result,
 };
 use remotemedia_runtime_core::data::RuntimeData;
@@ -670,6 +671,229 @@ impl WebRtcTransport {
             failed_peers,
             total_duration_ms: duration.as_millis() as u64,
         })
+    }
+
+    // ========== Phase 7 (US4) Data Channel Transport API ==========
+
+    /// Send a data channel message to a specific peer (T168)
+    ///
+    /// # Arguments
+    ///
+    /// * `peer_id` - Target peer identifier
+    /// * `msg` - Message to send
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Peer not found
+    /// - Peer has no data channel configured
+    /// - Data channel is not open
+    pub async fn send_data_channel_message(
+        &self,
+        peer_id: &str,
+        msg: &crate::channels::DataChannelMessage,
+    ) -> Result<()> {
+        debug!("Sending data channel message to peer: {}", peer_id);
+
+        let peer = self.peer_manager.get_peer(peer_id).await?;
+        peer.send_data_channel_message(msg).await
+    }
+
+    /// Broadcast a data channel message to all connected peers
+    ///
+    /// # Arguments
+    ///
+    /// * `msg` - Message to broadcast
+    /// * `exclude` - Optional list of peer IDs to exclude from broadcast
+    ///
+    /// # Returns
+    ///
+    /// BroadcastStats with success/failure counts
+    pub async fn broadcast_data_channel_message(
+        &self,
+        msg: &crate::channels::DataChannelMessage,
+        exclude: Option<Vec<String>>,
+    ) -> BroadcastStats {
+        let start = Instant::now();
+        let exclude_set: std::collections::HashSet<String> =
+            exclude.unwrap_or_default().into_iter().collect();
+
+        let peers = self.peer_manager.list_connected_peers().await;
+        let total_peers = peers.len();
+
+        debug!("Broadcasting data channel message to {} peers", total_peers);
+
+        let mut sent_count = 0;
+        let mut failed_count = 0;
+        let mut failed_peers = Vec::new();
+
+        for peer_info in peers {
+            if exclude_set.contains(&peer_info.peer_id) {
+                continue;
+            }
+
+            match self
+                .send_data_channel_message(&peer_info.peer_id, msg)
+                .await
+            {
+                Ok(_) => sent_count += 1,
+                Err(e) => {
+                    warn!(
+                        "Failed to send data channel message to peer {}: {}",
+                        peer_info.peer_id, e
+                    );
+                    failed_count += 1;
+                    failed_peers.push(peer_info.peer_id);
+                }
+            }
+        }
+
+        let duration = start.elapsed();
+
+        BroadcastStats {
+            total_peers,
+            sent_count,
+            failed_count,
+            failed_peers,
+            total_duration_ms: duration.as_millis() as u64,
+        }
+    }
+
+    /// Add a data channel to a specific peer
+    ///
+    /// # Arguments
+    ///
+    /// * `peer_id` - Target peer identifier
+    /// * `mode` - Delivery mode (Reliable or Unreliable)
+    pub async fn add_peer_data_channel(
+        &self,
+        peer_id: &str,
+        mode: crate::config::DataChannelMode,
+    ) -> Result<()> {
+        debug!(
+            "Adding data channel to peer {} with mode {:?}",
+            peer_id, mode
+        );
+
+        let peer = self.peer_manager.get_peer(peer_id).await?;
+        peer.add_data_channel(mode).await
+    }
+
+    /// Set data channel message handler for a specific peer (T169)
+    ///
+    /// # Arguments
+    ///
+    /// * `peer_id` - Target peer identifier
+    /// * `handler` - Async callback for incoming messages
+    pub async fn on_peer_data_channel_message<F, Fut>(
+        &self,
+        peer_id: &str,
+        handler: F,
+    ) -> Result<()>
+    where
+        F: Fn(crate::channels::DataChannelMessage) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        debug!("Setting data channel message handler for peer: {}", peer_id);
+
+        let peer = self.peer_manager.get_peer(peer_id).await?;
+        peer.on_data_channel_message(handler).await
+    }
+
+    /// Check if a peer has a data channel configured
+    pub async fn peer_has_data_channel(&self, peer_id: &str) -> Result<bool> {
+        let peer = self.peer_manager.get_peer(peer_id).await?;
+        Ok(peer.has_data_channel().await)
+    }
+
+    /// Check if a peer's data channel is open
+    pub async fn is_peer_data_channel_open(&self, peer_id: &str) -> Result<bool> {
+        let peer = self.peer_manager.get_peer(peer_id).await?;
+        Ok(peer.is_data_channel_open().await)
+    }
+
+    // ========== Phase 4 (US2) Multi-Peer Synchronization ==========
+
+    /// Collect synchronized audio frames from all peers, aligned by wall-clock time (T119)
+    ///
+    /// Pops frames from all peers' sync managers and aligns them by wall-clock timestamp
+    /// within a 100ms window for synchronized mixing/processing.
+    ///
+    /// # Returns
+    ///
+    /// Vector of (peer_id, synced_frame) tuples for all peers that have frames ready
+    pub async fn collect_aligned_frames(&self) -> Vec<(String, SyncedAudioFrame)> {
+        let peers = self.peer_manager.list_connected_peers().await;
+        let mut frames = Vec::new();
+
+        // Collect frames from all peers
+        for peer_info in &peers {
+            if let Ok(peer) = self.peer_manager.get_peer(&peer_info.peer_id).await {
+                if let Some(frame) = peer.pop_synced_audio_frame().await {
+                    frames.push((peer_info.peer_id.clone(), frame));
+                }
+            }
+        }
+
+        if frames.is_empty() {
+            return frames;
+        }
+
+        // Align frames by wall-clock timestamp within 100ms window
+        // Find the reference timestamp (earliest frame)
+        let reference_ts = frames
+            .iter()
+            .map(|(_, f)| f.wall_clock_timestamp_us)
+            .min()
+            .unwrap_or(0);
+
+        // Filter frames within 100ms of reference
+        const ALIGNMENT_WINDOW_US: u64 = 100_000; // 100ms
+        frames.retain(|(_, f)| {
+            let diff = f.wall_clock_timestamp_us.saturating_sub(reference_ts);
+            diff <= ALIGNMENT_WINDOW_US
+        });
+
+        frames
+    }
+
+    /// Collect synchronized video frames from all peers, aligned by wall-clock time
+    ///
+    /// Similar to `collect_aligned_frames` but for video frames.
+    ///
+    /// # Returns
+    ///
+    /// Vector of (peer_id, synced_frame) tuples for all peers that have frames ready
+    pub async fn collect_aligned_video_frames(&self) -> Vec<(String, SyncedVideoFrame)> {
+        let peers = self.peer_manager.list_connected_peers().await;
+        let mut frames = Vec::new();
+
+        for peer_info in &peers {
+            if let Ok(peer) = self.peer_manager.get_peer(&peer_info.peer_id).await {
+                if let Some(frame) = peer.pop_synced_video_frame().await {
+                    frames.push((peer_info.peer_id.clone(), frame));
+                }
+            }
+        }
+
+        if frames.is_empty() {
+            return frames;
+        }
+
+        // Align frames by wall-clock timestamp within 100ms window
+        let reference_ts = frames
+            .iter()
+            .map(|(_, f)| f.wall_clock_timestamp_us)
+            .min()
+            .unwrap_or(0);
+
+        const ALIGNMENT_WINDOW_US: u64 = 100_000;
+        frames.retain(|(_, f)| {
+            let diff = f.wall_clock_timestamp_us.saturating_sub(reference_ts);
+            diff <= ALIGNMENT_WINDOW_US
+        });
+
+        frames
     }
 
     /// Shutdown the transport

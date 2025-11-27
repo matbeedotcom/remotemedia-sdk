@@ -178,9 +178,9 @@ impl TestClient {
     ) -> HarnessResult<Arc<RTCPeerConnection>> {
         // Create media engine with default codecs
         let mut media_engine = MediaEngine::default();
-        media_engine
-            .register_default_codecs()
-            .map_err(|e| HarnessError::ConnectionError(format!("Failed to register codecs: {}", e)))?;
+        media_engine.register_default_codecs().map_err(|e| {
+            HarnessError::ConnectionError(format!("Failed to register codecs: {}", e))
+        })?;
 
         // Create interceptor registry
         let interceptor_registry =
@@ -449,11 +449,8 @@ impl TestClient {
 
             Box::pin(async move {
                 if let Some(candidate) = candidate {
-                    let request_id = format!(
-                        "{}-ice-{}",
-                        peer_id,
-                        counter.fetch_add(1, Ordering::SeqCst)
-                    );
+                    let request_id =
+                        format!("{}-ice-{}", peer_id, counter.fetch_add(1, Ordering::SeqCst));
 
                     if let Ok(json) = candidate.to_json() {
                         let ice_request = SignalingRequest {
@@ -482,8 +479,13 @@ impl TestClient {
         let peer_connection_clone = Arc::clone(&peer_connection);
 
         let stream_handle = tokio::spawn(async move {
-            Self::handle_signaling_stream(response_stream, peer_connection_clone, connected, peer_id)
-                .await;
+            Self::handle_signaling_stream(
+                response_stream,
+                peer_connection_clone,
+                connected,
+                peer_id,
+            )
+            .await;
         });
 
         *self.stream_handle.write().await = Some(stream_handle);
@@ -503,18 +505,18 @@ impl TestClient {
             })),
         };
 
-        request_tx
-            .send(announce)
-            .await
-            .map_err(|e| HarnessError::ConnectionError(format!("Failed to send announce: {}", e)))?;
+        request_tx.send(announce).await.map_err(|e| {
+            HarnessError::ConnectionError(format!("Failed to send announce: {}", e))
+        })?;
 
         // Wait briefly for announce to be processed
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Create and send offer to remotemedia-server
-        let offer = peer_connection.create_offer(None).await.map_err(|e| {
-            HarnessError::ConnectionError(format!("Failed to create offer: {}", e))
-        })?;
+        let offer = peer_connection
+            .create_offer(None)
+            .await
+            .map_err(|e| HarnessError::ConnectionError(format!("Failed to create offer: {}", e)))?;
 
         peer_connection
             .set_local_description(offer.clone())
@@ -572,18 +574,17 @@ impl TestClient {
                                     );
 
                                     // Set remote description
-                                    let answer_desc = match RTCSessionDescription::answer(answer.sdp)
-                                    {
-                                        Ok(desc) => desc,
-                                        Err(e) => {
-                                            error!("Invalid answer SDP: {}", e);
-                                            continue;
-                                        }
-                                    };
+                                    let answer_desc =
+                                        match RTCSessionDescription::answer(answer.sdp) {
+                                            Ok(desc) => desc,
+                                            Err(e) => {
+                                                error!("Invalid answer SDP: {}", e);
+                                                continue;
+                                            }
+                                        };
 
-                                    if let Err(e) = peer_connection
-                                        .set_remote_description(answer_desc)
-                                        .await
+                                    if let Err(e) =
+                                        peer_connection.set_remote_description(answer_desc).await
                                     {
                                         error!("Failed to set remote description: {}", e);
                                     } else {
@@ -650,12 +651,10 @@ impl TestClient {
     /// * `samples` - Audio samples (f32, -1.0 to 1.0)
     /// * `sample_rate` - Sample rate in Hz
     pub async fn send_audio(&self, samples: &[f32], _sample_rate: u32) -> HarnessResult<()> {
-        let audio_track = self
-            .audio_track
-            .read()
-            .await
-            .clone()
-            .ok_or_else(|| HarnessError::ClientError("Audio track not configured".to_string()))?;
+        let audio_track =
+            self.audio_track.read().await.clone().ok_or_else(|| {
+                HarnessError::ClientError("Audio track not configured".to_string())
+            })?;
 
         // Convert f32 samples to bytes (for Opus, we'd encode here)
         // For now, send as raw PCM bytes which the server will need to handle
@@ -688,25 +687,18 @@ impl TestClient {
     /// * `frame` - Raw video frame data (I420/YUV420P)
     /// * `width` - Frame width
     /// * `height` - Frame height
-    pub async fn send_video(
-        &self,
-        _frame: &[u8],
-        _width: u32,
-        _height: u32,
-    ) -> HarnessResult<()> {
-        let video_track = self
-            .video_track
-            .read()
-            .await
-            .clone()
-            .ok_or_else(|| HarnessError::ClientError("Video track not configured".to_string()))?;
+    pub async fn send_video(&self, _frame: &[u8], _width: u32, _height: u32) -> HarnessResult<()> {
+        let video_track =
+            self.video_track.read().await.clone().ok_or_else(|| {
+                HarnessError::ClientError("Video track not configured".to_string())
+            })?;
 
         debug!("Sending video frame (encoding simplified for test)");
 
         // Create sample data - in real implementation this would be VP8-encoded
         // For testing, we'll send placeholder VP8 keyframe
         let sample = webrtc::media::Sample {
-            data: vec![0u8; 100].into(), // Minimal VP8 frame placeholder
+            data: vec![0u8; 100].into(),         // Minimal VP8 frame placeholder
             duration: Duration::from_millis(33), // ~30fps
             timestamp: std::time::SystemTime::now(),
             ..Default::default()

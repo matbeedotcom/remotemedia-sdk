@@ -9,9 +9,11 @@ use super::audio::{AudioEncoder, AudioEncoderConfig};
 use super::audio_sender::AudioSender;
 use super::video::{VideoFormat, VideoFrame};
 use crate::{Error, Result};
-use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::data::video::{PixelFormat, VideoCodec};
-use remotemedia_runtime_core::nodes::video::{VideoEncoderNode, VideoDecoderNode, VideoEncoderConfig, VideoDecoderConfig};
+use remotemedia_runtime_core::data::RuntimeData;
+use remotemedia_runtime_core::nodes::video::{
+    VideoDecoderConfig, VideoDecoderNode, VideoEncoderConfig, VideoEncoderNode,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -334,7 +336,10 @@ impl VideoTrack {
         use remotemedia_runtime_core::nodes::streaming_node::AsyncStreamingNode;
 
         // Encode raw frame using runtime-core VideoEncoderNode
-        let encoded = self.encoder.process(runtime_data).await
+        let encoded = self
+            .encoder
+            .process(runtime_data)
+            .await
             .map_err(|e| Error::EncodingError(format!("Video encoding failed: {}", e)))?;
 
         // Extract encoded bitstream
@@ -344,7 +349,11 @@ impl VideoTrack {
                 codec: Some(_),
                 ..
             } => pixel_data.clone(),
-            _ => return Err(Error::EncodingError("Expected encoded video frame".to_string())),
+            _ => {
+                return Err(Error::EncodingError(
+                    "Expected encoded video frame".to_string(),
+                ))
+            }
         };
 
         // Update sequence number
@@ -409,7 +418,9 @@ impl VideoTrack {
         };
 
         // Decode using runtime-core VideoDecoderNode
-        self.decoder.process(encoded_data).await
+        self.decoder
+            .process(encoded_data)
+            .await
             .map_err(|e| Error::EncodingError(format!("Video decoding failed: {}", e)))
     }
 
@@ -503,14 +514,7 @@ mod tests {
             "stream".to_string(),
         ));
 
-        let video_track = VideoTrack::new(
-            track,
-            VideoCodec::Vp8,
-            1280,
-            720,
-            2_000_000,
-            30,
-        );
+        let video_track = VideoTrack::new(track, VideoCodec::Vp8, 1280, 720, 2_000_000, 30);
         assert!(video_track.is_ok());
     }
 }
@@ -598,9 +602,9 @@ pub async fn runtime_data_to_rtp(
             Ok(vec![]) // Return empty Vec since data is sent via track
         }
 
-        _ => Err(Error::MediaTrackError(format!(
-            "Unsupported RuntimeData type for RTP encoding"
-        ))),
+        _ => Err(Error::MediaTrackError(
+            "Unsupported RuntimeData type for RTP encoding".to_string(),
+        )),
     }
 }
 
@@ -659,7 +663,7 @@ pub async fn rtp_to_runtime_data(
             width: frame.width,
             height: frame.height,
             format,
-            codec: None, // Raw frame from WebRTC
+            codec: None,     // Raw frame from WebRTC
             frame_number: 0, // Will be set by caller if needed
             timestamp_us: frame.timestamp_us,
             is_keyframe: false, // Will be set by encoder

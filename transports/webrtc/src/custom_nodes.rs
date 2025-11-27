@@ -8,35 +8,31 @@
 //! ## Registering a Custom Python Node
 //!
 //! ```
-//! use remotemedia_webrtc::custom_nodes::{create_custom_registry, PythonNodeFactory};
-//! use remotemedia_runtime_core::transport::PipelineRunner;
+//! use remotemedia_webrtc::custom_nodes::create_custom_registry;
+//!
+//! // Create a registry with custom Python nodes
+//! let registry = create_custom_registry(&[
+//!     ("MyCustomASR", true),  // (name, is_multi_output)
+//!     ("MyCustomTTS", true),
+//! ]);
+//!
+//! // Verify nodes are registered
+//! assert!(registry.has_node_type("MyCustomASR"));
+//! assert!(registry.has_node_type("MyCustomTTS"));
+//! ```
+//!
+//! ## Registering a Custom Factory
+//!
+//! ```
+//! use remotemedia_webrtc::custom_nodes::{create_custom_registry_with_factories, PythonNodeFactory};
 //! use std::sync::Arc;
 //!
-//! let runner = PipelineRunner::with_custom_registry(|| {
-//!     create_custom_registry(&[
-//!         ("MyCustomASR", true),  // (name, is_multi_output)
-//!         ("MyCustomTTS", true),
-//!     ])
-//! })?;
-//! ```
+//! // Create registry with custom factories
+//! let registry = create_custom_registry_with_factories(vec![
+//!     Arc::new(PythonNodeFactory::new("MyPythonNode", true)),
+//! ]);
 //!
-//! ## Registering a Custom Rust Node
-//!
-//! ```
-//! use remotemedia_webrtc::custom_nodes::create_custom_registry_with_factories;
-//! use remotemedia_runtime_core::nodes::{StreamingNodeFactory, StreamingNode};
-//!
-//! struct MyRustNodeFactory;
-//! impl StreamingNodeFactory for MyRustNodeFactory {
-//!     // ... implementation
-//! }
-//!
-//! let runner = PipelineRunner::with_custom_registry(|| {
-//!     create_custom_registry_with_factories(vec![
-//!         Arc::new(MyRustNodeFactory),
-//!         Arc::new(PythonNodeFactory::new("MyPythonNode", true)),
-//!     ])
-//! })?;
+//! assert!(registry.has_node_type("MyPythonNode"));
 //! ```
 
 use remotemedia_runtime_core::nodes::python_streaming::PythonStreamingNode;
@@ -69,8 +65,13 @@ impl PythonNodeFactory {
     /// # Examples
     ///
     /// ```
+    /// use remotemedia_webrtc::custom_nodes::PythonNodeFactory;
+    /// use remotemedia_runtime_core::nodes::StreamingNodeFactory;
+    ///
     /// let factory = PythonNodeFactory::new("MyCustomASR", false);
-    /// registry.register(Arc::new(factory));
+    /// assert_eq!(factory.node_type(), "MyCustomASR");
+    /// assert!(factory.is_python_node());
+    /// assert!(!factory.is_multi_output_streaming());
     /// ```
     pub fn new(node_type_name: impl Into<String>, is_multi_output: bool) -> Self {
         Self {
@@ -131,12 +132,19 @@ impl StreamingNodeFactory for PythonNodeFactory {
 ///     ("GPT4TTS", true),
 ///     ("CustomFilter", false),
 /// ]);
+///
+/// assert!(registry.has_node_type("WhisperASR"));
+/// assert!(registry.has_node_type("GPT4TTS"));
+/// assert!(registry.has_node_type("CustomFilter"));
 /// ```
 pub fn create_custom_registry(python_nodes: &[(&str, bool)]) -> StreamingNodeRegistry {
     let mut registry = create_default_streaming_registry();
 
     for (node_type, is_multi_output) in python_nodes {
-        registry.register(Arc::new(PythonNodeFactory::new(*node_type, *is_multi_output)));
+        registry.register(Arc::new(PythonNodeFactory::new(
+            *node_type,
+            *is_multi_output,
+        )));
     }
 
     registry
@@ -163,8 +171,9 @@ pub fn create_custom_registry(python_nodes: &[(&str, bool)]) -> StreamingNodeReg
 ///
 /// let registry = create_custom_registry_with_factories(vec![
 ///     Arc::new(PythonNodeFactory::new("CustomNode1", false)),
-///     Arc::new(MyRustNodeFactory),
 /// ]);
+///
+/// assert!(registry.has_node_type("CustomNode1"));
 /// ```
 pub fn create_custom_registry_with_factories(
     factories: Vec<Arc<dyn StreamingNodeFactory>>,
@@ -192,10 +201,7 @@ mod tests {
 
     #[test]
     fn test_create_custom_registry() {
-        let registry = create_custom_registry(&[
-            ("Node1", false),
-            ("Node2", true),
-        ]);
+        let registry = create_custom_registry(&[("Node1", false), ("Node2", true)]);
 
         assert!(registry.has_node_type("Node1"));
         assert!(registry.has_node_type("Node2"));
@@ -210,9 +216,8 @@ mod tests {
         // Should include default nodes
         assert!(registry.has_node_type("PassThrough"));
         assert!(registry.has_node_type("AudioChunkerNode"));
-        
+
         // Should include custom node
         assert!(registry.has_node_type("CustomNode"));
     }
 }
-

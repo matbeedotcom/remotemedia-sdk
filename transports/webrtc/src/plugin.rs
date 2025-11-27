@@ -68,11 +68,10 @@ impl TransportPlugin for WebRtcTransportPlugin {
         let mut webrtc_config = WebRtcTransportConfig::default();
 
         // Use config.address as signaling_url if provided and valid
-        if !config.address.is_empty() {
-            if config.address.starts_with("ws://") || config.address.starts_with("wss://") {
-                webrtc_config.signaling_url = config.address.clone();
-            }
-            // Otherwise, use default signaling_url
+        if !config.address.is_empty()
+            && (config.address.starts_with("ws://") || config.address.starts_with("wss://"))
+        {
+            webrtc_config.signaling_url = config.address.clone();
         }
 
         // Create WebRTC transport (note: constructor is sync, not async)
