@@ -148,20 +148,18 @@ impl TestServer {
 
         while tokio::time::Instant::now() < deadline {
             match WebRtcSignalingClient::connect(addr.clone()).await {
-                Ok(mut client) => {
-                    match client.health_check(HealthCheckRequest {}).await {
-                        Ok(response) => {
-                            let health = response.into_inner();
-                            if health.status == "healthy" {
-                                info!("Test server is ready (uptime: {}s)", health.uptime_seconds);
-                                return Ok(());
-                            }
-                        }
-                        Err(e) => {
-                            tracing::debug!("Health check failed: {}, retrying...", e);
+                Ok(mut client) => match client.health_check(HealthCheckRequest {}).await {
+                    Ok(response) => {
+                        let health = response.into_inner();
+                        if health.status == "healthy" {
+                            info!("Test server is ready (uptime: {}s)", health.uptime_seconds);
+                            return Ok(());
                         }
                     }
-                }
+                    Err(e) => {
+                        tracing::debug!("Health check failed: {}, retrying...", e);
+                    }
+                },
                 Err(e) => {
                     tracing::debug!("Connection failed: {}, retrying...", e);
                 }
@@ -237,4 +235,3 @@ mod tests {
         server.shutdown().await.unwrap();
     }
 }
-

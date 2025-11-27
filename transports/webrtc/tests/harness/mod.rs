@@ -243,7 +243,12 @@ impl WebRtcTestHarness {
     // ========================================================================
 
     /// Generate a sine wave audio signal
-    pub fn generate_sine_wave(&self, frequency: f32, duration_secs: f32, sample_rate: u32) -> Vec<f32> {
+    pub fn generate_sine_wave(
+        &self,
+        frequency: f32,
+        duration_secs: f32,
+        sample_rate: u32,
+    ) -> Vec<f32> {
         self.media_generator
             .generate_sine_wave(frequency, duration_secs, sample_rate)
     }
@@ -256,7 +261,8 @@ impl WebRtcTestHarness {
 
     /// Generate a solid color video frame (YUV420P)
     pub fn generate_solid_frame(&self, width: u32, height: u32, y: u8, u: u8, v: u8) -> Vec<u8> {
-        self.media_generator.generate_solid_frame(width, height, y, u, v)
+        self.media_generator
+            .generate_solid_frame(width, height, y, u, v)
     }
 
     /// Generate a test pattern video frame
@@ -423,4 +429,3 @@ mod tests {
         assert_eq!(manifest.metadata.name, "vad-test");
     }
 }
-

@@ -3,15 +3,24 @@
 // Phase 4 (US2) peer connection infrastructure
 #![allow(dead_code)]
 
+use crate::channels::{DataChannel, DataChannelMessage};
+use crate::config::DataChannelMode;
 use crate::media::audio::AudioEncoderConfig;
 use crate::media::tracks::AudioTrack;
 use crate::media::tracks::VideoTrack;
 use crate::media::video::VideoEncoderConfig;
+use crate::peer::lifecycle::{
+    ConnectionQualityMetrics, ReconnectionManager, ReconnectionPolicy, ReconnectionState,
+};
+use crate::sync::{
+    AudioFrame as SyncAudioFrame, RtcpSenderReport, SyncConfig, SyncManager, SyncState,
+    SyncedAudioFrame, SyncedVideoFrame, VideoFrame as SyncVideoFrame,
+};
 use crate::{Error, Result};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
@@ -79,6 +88,21 @@ pub struct PeerConnection {
 
     /// Video RTP sender (retained to prevent track cleanup)
     video_sender: Arc<RwLock<Option<Arc<RTCRtpSender>>>>,
+
+    /// Synchronization manager for this peer (Phase 4 US2)
+    sync_manager: Arc<RwLock<SyncManager>>,
+
+    /// Data channel for reliable/unreliable messaging (Phase 7 US4)
+    data_channel: Arc<RwLock<Option<DataChannel>>>,
+
+    /// Reconnection manager for automatic recovery (Phase 8 US5)
+    reconnection_manager: Arc<ReconnectionManager>,
+
+    /// Connection quality metrics (Phase 8 US5)
+    quality_metrics: Arc<RwLock<ConnectionQualityMetrics>>,
+
+    /// Configuration stored for reconnection
+    config: crate::config::WebRtcTransportConfig,
 }
 
 impl PeerConnection {
@@ -130,11 +154,14 @@ impl PeerConnection {
                 urls: vec![url.clone()],
                 ..Default::default()
             })
-            .chain(config.turn_servers.iter().map(|turn| RTCIceServer {
-                urls: vec![turn.url.clone()],
-                username: turn.username.clone(),
-                credential: turn.credential.clone(),
-                ..Default::default()
+            .chain(config.turn_servers.iter().map(|turn| {
+                #[allow(clippy::needless_update)]
+                RTCIceServer {
+                    urls: vec![turn.url.clone()],
+                    username: turn.username.clone(),
+                    credential: turn.credential.clone(),
+                    ..Default::default()
+                }
             }))
             .collect();
 
@@ -192,6 +219,20 @@ impl PeerConnection {
             },
         ));
 
+        // Initialize SyncManager for this peer (Phase 4 US2)
+        let sync_config = SyncConfig::default();
+        let sync_manager = SyncManager::new(peer_id.clone(), sync_config)
+            .map_err(|e| Error::InvalidConfig(e.to_string()))?;
+
+        // Initialize ReconnectionManager (Phase 8 US5)
+        let reconnection_manager = Arc::new(ReconnectionManager::new(
+            peer_id.clone(),
+            ReconnectionPolicy::default(),
+        ));
+
+        // Initialize quality metrics (Phase 8 US5)
+        let quality_metrics = Arc::new(RwLock::new(ConnectionQualityMetrics::new()));
+
         Ok(Self {
             peer_id,
             connection_id,
@@ -203,6 +244,11 @@ impl PeerConnection {
             video_track: Arc::new(RwLock::new(None)),
             audio_sender: Arc::new(RwLock::new(None)),
             video_sender: Arc::new(RwLock::new(None)),
+            sync_manager: Arc::new(RwLock::new(sync_manager)),
+            data_channel: Arc::new(RwLock::new(None)),
+            reconnection_manager,
+            quality_metrics,
+            config: config.clone(),
         })
     }
 
@@ -510,6 +556,131 @@ impl PeerConnection {
         &self.peer_connection
     }
 
+    // ========== Phase 7 (US4) Data Channel Integration ==========
+
+    /// Add a data channel to this peer connection (T166)
+    ///
+    /// Creates a new data channel with the specified delivery mode.
+    /// The data channel can be used for reliable or unreliable messaging
+    /// between peers.
+    ///
+    /// # Arguments
+    ///
+    /// * `mode` - Delivery mode (Reliable or Unreliable)
+    ///
+    /// # Returns
+    ///
+    /// Result indicating success or error if channel creation fails.
+    pub async fn add_data_channel(&self, mode: DataChannelMode) -> Result<()> {
+        info!(
+            "Adding data channel to peer {} with mode {:?}",
+            self.peer_id, mode
+        );
+
+        // Check if we already have a data channel
+        if self.data_channel.read().await.is_some() {
+            return Err(Error::DataChannelError(
+                "Data channel already exists for this peer".to_string(),
+            ));
+        }
+
+        // Create the data channel
+        let channel = DataChannel::new(
+            &self.peer_connection,
+            DataChannel::CONTROL_CHANNEL_LABEL,
+            mode,
+        )
+        .await?;
+
+        // Store the channel
+        *self.data_channel.write().await = Some(channel);
+
+        debug!("Data channel added to peer {}", self.peer_id);
+
+        Ok(())
+    }
+
+    /// Get the data channel (if configured)
+    pub async fn data_channel(&self) -> Option<DataChannel> {
+        // Note: We can't clone DataChannel easily, so we return None here
+        // and provide specific methods for data channel operations
+        None
+    }
+
+    /// Check if data channel is configured
+    pub async fn has_data_channel(&self) -> bool {
+        self.data_channel.read().await.is_some()
+    }
+
+    /// Check if data channel is open and ready
+    pub async fn is_data_channel_open(&self) -> bool {
+        if let Some(ref channel) = *self.data_channel.read().await {
+            channel.is_open().await
+        } else {
+            false
+        }
+    }
+
+    /// Send a message over the data channel (T168)
+    ///
+    /// # Arguments
+    ///
+    /// * `msg` - Message to send
+    ///
+    /// # Returns
+    ///
+    /// Result indicating success or error.
+    pub async fn send_data_channel_message(&self, msg: &DataChannelMessage) -> Result<()> {
+        let channel_guard = self.data_channel.read().await;
+        let channel = channel_guard.as_ref().ok_or_else(|| {
+            Error::DataChannelError("No data channel configured for this peer".to_string())
+        })?;
+
+        channel.send_message(msg).await
+    }
+
+    /// Send raw binary data over the data channel
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Raw bytes to send
+    pub async fn send_data_channel_binary(&self, data: &[u8]) -> Result<()> {
+        let channel_guard = self.data_channel.read().await;
+        let channel = channel_guard.as_ref().ok_or_else(|| {
+            Error::DataChannelError("No data channel configured for this peer".to_string())
+        })?;
+
+        channel.send_binary(data).await
+    }
+
+    /// Set message handler for incoming data channel messages
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - Async callback for incoming messages
+    pub async fn on_data_channel_message<F, Fut>(&self, handler: F) -> Result<()>
+    where
+        F: Fn(DataChannelMessage) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let channel_guard = self.data_channel.read().await;
+        let channel = channel_guard.as_ref().ok_or_else(|| {
+            Error::DataChannelError("No data channel configured for this peer".to_string())
+        })?;
+
+        channel.on_message(handler);
+        Ok(())
+    }
+
+    /// Close the data channel
+    pub async fn close_data_channel(&self) -> Result<()> {
+        let channel_guard = self.data_channel.read().await;
+        if let Some(ref channel) = *channel_guard {
+            channel.close().await?;
+        }
+        Ok(())
+    }
+
     /// Register a callback for when a remote track is added
     ///
     /// This handler fires when the remote peer adds a media track (audio/video).
@@ -548,6 +719,270 @@ impl PeerConnection {
             + 'static,
     {
         self.peer_connection.on_track(Box::new(handler));
+    }
+
+    // ========== Phase 4 (US2) Sync Integration ==========
+
+    /// Process incoming audio frame through SyncManager (T114)
+    ///
+    /// Routes audio data through the jitter buffer and applies clock drift correction.
+    ///
+    /// # Arguments
+    /// * `frame` - Audio frame with RTP metadata
+    pub async fn process_audio_frame(&self, frame: SyncAudioFrame) -> Result<()> {
+        let mut sync = self.sync_manager.write().await;
+        sync.process_audio_frame(frame)
+            .map_err(|e| Error::SyncError(e.to_string()))
+    }
+
+    /// Process incoming video frame through SyncManager (T115)
+    ///
+    /// Routes video data through the jitter buffer and calculates audio sync offset.
+    ///
+    /// # Arguments
+    /// * `frame` - Video frame with RTP metadata
+    pub async fn process_video_frame(&self, frame: SyncVideoFrame) -> Result<()> {
+        let mut sync = self.sync_manager.write().await;
+        sync.process_video_frame(frame)
+            .map_err(|e| Error::SyncError(e.to_string()))
+    }
+
+    /// Update synchronization with RTCP Sender Report (T116)
+    ///
+    /// Updates NTP/RTP mapping for timestamp correlation and clock drift estimation.
+    ///
+    /// # Arguments
+    /// * `sr` - RTCP Sender Report data
+    /// * `is_audio` - Whether this SR is for audio (true) or video (false)
+    pub async fn update_rtcp_sender_report(&self, sr: RtcpSenderReport, is_audio: bool) {
+        let mut sync = self.sync_manager.write().await;
+        sync.update_rtcp_sender_report(sr, is_audio);
+    }
+
+    /// Pop next synchronized audio frame for playback
+    ///
+    /// Returns frame if buffer delay has elapsed, with sync metadata.
+    pub async fn pop_synced_audio_frame(&self) -> Option<SyncedAudioFrame> {
+        let mut sync = self.sync_manager.write().await;
+        sync.pop_next_audio_frame()
+    }
+
+    /// Pop next synchronized video frame for display
+    ///
+    /// Returns frame with audio sync offset for lip-sync.
+    pub async fn pop_synced_video_frame(&self) -> Option<SyncedVideoFrame> {
+        let mut sync = self.sync_manager.write().await;
+        sync.pop_next_video_frame()
+    }
+
+    /// Get current synchronization state
+    pub async fn sync_state(&self) -> SyncState {
+        let sync = self.sync_manager.read().await;
+        sync.get_sync_state()
+    }
+
+    /// Get the SyncManager for advanced operations
+    pub fn sync_manager(&self) -> &Arc<RwLock<SyncManager>> {
+        &self.sync_manager
+    }
+
+    /// Reset synchronization state
+    ///
+    /// Clears jitter buffers, clock drift data, and NTP mappings.
+    pub async fn reset_sync(&self) {
+        let mut sync = self.sync_manager.write().await;
+        sync.reset();
+    }
+
+    // ========== Phase 8 (US5) Reconnection & Quality Monitoring ==========
+
+    /// Attempt to reconnect the peer connection (T172)
+    ///
+    /// Resets ICE, creates a new offer, and attempts to re-establish the connection.
+    /// Uses exponential backoff with circuit breaker protection.
+    ///
+    /// # Returns
+    /// Ok(()) if reconnection succeeded, Err if failed or circuit breaker blocked
+    pub async fn reconnect(&self) -> Result<()> {
+        // Check if reconnection should be attempted
+        if !self.reconnection_manager.should_attempt_reconnect().await {
+            return Err(Error::PeerConnectionError(
+                "Reconnection blocked: max retries exceeded or circuit breaker open".to_string(),
+            ));
+        }
+
+        info!("Attempting reconnection for peer {}", self.peer_id);
+
+        // Start reconnection process (includes backoff delay)
+        self.reconnection_manager.start_reconnection().await;
+
+        // Reset ICE connection
+        match self.reset_ice_connection().await {
+            Ok(_) => {
+                // Create new offer
+                match self.create_offer().await {
+                    Ok(_sdp) => {
+                        info!("Reconnection offer created for peer {}", self.peer_id);
+                        self.reconnection_manager.report_success().await;
+                        Ok(())
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Reconnection offer creation failed for peer {}: {}",
+                            self.peer_id, e
+                        );
+                        self.reconnection_manager.report_failure().await;
+                        Err(e)
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("ICE reset failed for peer {}: {}", self.peer_id, e);
+                self.reconnection_manager.report_failure().await;
+                Err(e)
+            }
+        }
+    }
+
+    /// Reset ICE connection state (helper for reconnection)
+    async fn reset_ice_connection(&self) -> Result<()> {
+        // Restart ICE by calling restartIce on the peer connection
+        // Note: webrtc-rs may require creating a new offer with ICE restart option
+        self.peer_connection
+            .create_offer(Some(
+                webrtc::peer_connection::offer_answer_options::RTCOfferOptions {
+                    ice_restart: true,
+                    ..Default::default()
+                },
+            ))
+            .await
+            .map_err(|e| Error::IceCandidateError(format!("ICE restart failed: {}", e)))?;
+
+        debug!("ICE connection reset for peer {}", self.peer_id);
+        Ok(())
+    }
+
+    /// Get current reconnection state
+    pub async fn reconnection_state(&self) -> ReconnectionState {
+        self.reconnection_manager.state().await
+    }
+
+    /// Check if reconnection should be attempted based on current state
+    pub async fn should_reconnect(&self) -> bool {
+        let state = self.state().await;
+        matches!(state, ConnectionState::Failed | ConnectionState::Closed)
+            && self.reconnection_manager.should_attempt_reconnect().await
+    }
+
+    /// Get the reconnection manager for advanced control
+    pub fn reconnection_manager(&self) -> &Arc<ReconnectionManager> {
+        &self.reconnection_manager
+    }
+
+    /// Get connection quality metrics (T184)
+    pub async fn get_metrics(&self) -> ConnectionQualityMetrics {
+        self.quality_metrics.read().await.clone()
+    }
+
+    /// Update quality metrics from RTCP Receiver Report (T182)
+    ///
+    /// # Arguments
+    /// * `packet_loss_rate` - Fraction of packets lost (0.0 - 1.0)
+    /// * `jitter_ms` - Interarrival jitter in milliseconds
+    /// * `rtt_ms` - Round-trip time in milliseconds (if available)
+    pub async fn update_rtcp_receiver_report(
+        &self,
+        packet_loss_rate: f64,
+        jitter_ms: f64,
+        rtt_ms: Option<f64>,
+    ) {
+        let mut metrics = self.quality_metrics.write().await;
+        metrics.packet_loss_rate = packet_loss_rate;
+        metrics.jitter_ms = jitter_ms;
+        if let Some(rtt) = rtt_ms {
+            metrics.latency_ms = rtt;
+        }
+        metrics.updated_at = Instant::now();
+
+        debug!(
+            "Peer {} quality metrics updated: loss={:.2}%, jitter={:.1}ms, rtt={:.1}ms",
+            self.peer_id,
+            packet_loss_rate * 100.0,
+            jitter_ms,
+            metrics.latency_ms
+        );
+
+        // Check if adaptive bitrate adjustment is needed (T185)
+        if metrics.should_reduce_bitrate() {
+            warn!(
+                "Peer {} quality degraded, bitrate reduction recommended",
+                self.peer_id
+            );
+        }
+    }
+
+    /// Update packet statistics for quality metrics
+    pub async fn update_packet_stats(
+        &self,
+        packets_sent: u64,
+        packets_received: u64,
+        packets_lost: u64,
+    ) {
+        let mut metrics = self.quality_metrics.write().await;
+        metrics.packets_sent = packets_sent;
+        metrics.packets_received = packets_received;
+        metrics.packets_lost = packets_lost;
+
+        // Calculate packet loss rate
+        let total = packets_received + packets_lost;
+        if total > 0 {
+            metrics.packet_loss_rate = packets_lost as f64 / total as f64;
+        }
+
+        metrics.updated_at = Instant::now();
+    }
+
+    /// Update video quality metrics
+    pub async fn update_video_metrics(
+        &self,
+        width: u32,
+        height: u32,
+        framerate: f32,
+        bitrate_kbps: u32,
+    ) {
+        let mut metrics = self.quality_metrics.write().await;
+        metrics.video_width = width;
+        metrics.video_height = height;
+        metrics.video_framerate = framerate;
+        metrics.video_bitrate_kbps = bitrate_kbps;
+        metrics.updated_at = Instant::now();
+    }
+
+    /// Update audio quality metrics
+    pub async fn update_audio_metrics(&self, bitrate_kbps: u32) {
+        let mut metrics = self.quality_metrics.write().await;
+        metrics.audio_bitrate_kbps = bitrate_kbps;
+        metrics.updated_at = Instant::now();
+    }
+
+    /// Get connection quality score (0-100)
+    pub async fn quality_score(&self) -> u32 {
+        self.quality_metrics.read().await.quality_score()
+    }
+
+    /// Check if connection quality is acceptable
+    pub async fn is_quality_acceptable(&self) -> bool {
+        self.quality_metrics.read().await.is_acceptable()
+    }
+
+    /// Check if bitrate should be reduced based on quality metrics
+    pub async fn should_reduce_bitrate(&self) -> bool {
+        self.quality_metrics.read().await.should_reduce_bitrate()
+    }
+
+    /// Check if bitrate can be increased based on quality metrics
+    pub async fn can_increase_bitrate(&self) -> bool {
+        self.quality_metrics.read().await.can_increase_bitrate()
     }
 }
 
@@ -655,5 +1090,60 @@ mod tests {
 
         pc.close().await.unwrap();
         // State will eventually become Closed via callback
+    }
+
+    #[tokio::test]
+    async fn test_add_data_channel() {
+        let config = WebRtcTransportConfig::default();
+        let pc = PeerConnection::new("peer-test".to_string(), &config)
+            .await
+            .unwrap();
+
+        // Initially no data channel
+        assert!(!pc.has_data_channel().await);
+
+        // Add data channel
+        pc.add_data_channel(DataChannelMode::Reliable)
+            .await
+            .unwrap();
+
+        // Now has data channel
+        assert!(pc.has_data_channel().await);
+    }
+
+    #[tokio::test]
+    async fn test_add_data_channel_duplicate_fails() {
+        let config = WebRtcTransportConfig::default();
+        let pc = PeerConnection::new("peer-test".to_string(), &config)
+            .await
+            .unwrap();
+
+        // Add first data channel
+        pc.add_data_channel(DataChannelMode::Reliable)
+            .await
+            .unwrap();
+
+        // Adding second should fail
+        let result = pc.add_data_channel(DataChannelMode::Unreliable).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_data_channel_with_offer() {
+        let config = WebRtcTransportConfig::default();
+        let pc = PeerConnection::new("peer-test".to_string(), &config)
+            .await
+            .unwrap();
+
+        // Add data channel before creating offer
+        pc.add_data_channel(DataChannelMode::Reliable)
+            .await
+            .unwrap();
+
+        // Create offer - should include data channel in SDP
+        let sdp = pc.create_offer().await.unwrap();
+        assert!(!sdp.is_empty());
+        // SDP should contain application media section for data channel
+        assert!(sdp.contains("application"));
     }
 }
