@@ -3,11 +3,14 @@
 //! This module provides conversion functions between runtime-core's RuntimeData
 //! and the gRPC Protobuf DataBuffer types.
 
+// Phase 4/5 adapter infrastructure - some functions for future integration
+#![allow(dead_code)]
+
 use crate::generated::data_buffer::DataType;
 use crate::generated::{
     AudioBuffer, AudioFormat, BatchHint, BinaryBuffer, CancelSpeculation, ControlMessage,
     DataBuffer, DeadlineWarning, JsonData, NumpyBuffer, PixelFormat as ProtoPixelFormat,
-    TensorBuffer, TensorDtype, TextBuffer, VideoCodec as ProtoVideoCodec, VideoFrame,
+    TensorBuffer, TextBuffer, VideoCodec as ProtoVideoCodec, VideoFrame,
 };
 use remotemedia_runtime_core::data::{PixelFormat, RuntimeData, VideoCodec};
 use remotemedia_runtime_core::transport::TransportData;

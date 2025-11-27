@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// JSON-RPC 2.0 protocol version
+#[allow(dead_code)] // Used by JsonRpcRequest/Response constructors
 pub const JSONRPC_VERSION: &str = "2.0";
 
 /// JSON-RPC 2.0 request
@@ -64,6 +65,7 @@ pub struct ErrorObject {
 }
 
 /// Standard JSON-RPC 2.0 error codes
+#[allow(dead_code)] // Error codes for Phase 4 (US2) signaling error handling
 pub mod error_codes {
     /// Invalid JSON was received
     pub const PARSE_ERROR: i32 = -32700;
@@ -237,6 +239,7 @@ impl SignalingMessage {
     }
 
     /// Parse message from JSON string
+    #[allow(dead_code)] // Used in tests and Phase 4 (US2) signaling
     pub fn from_json(json: &str) -> crate::Result<Self> {
         serde_json::from_str(json).map_err(|e| {
             crate::Error::SerializationError(format!(
@@ -247,6 +250,7 @@ impl SignalingMessage {
     }
 
     /// Get the request ID if present
+    #[allow(dead_code)] // Phase 4 (US2) request/response correlation
     pub fn request_id(&self) -> Option<&str> {
         match self {
             SignalingMessage::PeerAnnounce { id, .. } => id.as_deref(),
@@ -258,6 +262,7 @@ impl SignalingMessage {
     }
 
     /// Get the method name
+    #[allow(dead_code)] // Phase 4 (US2) message routing
     pub fn method_name(&self) -> &str {
         match self {
             SignalingMessage::PeerAnnounce { .. } => "peer.announce",
@@ -269,6 +274,7 @@ impl SignalingMessage {
     }
 }
 
+#[allow(dead_code)] // Phase 4 (US2) signaling protocol implementation
 impl JsonRpcRequest {
     /// Create a new JSON-RPC request
     pub fn new(method: String, params: serde_json::Value, id: Option<serde_json::Value>) -> Self {
@@ -298,6 +304,7 @@ impl JsonRpcRequest {
     }
 }
 
+#[allow(dead_code)] // Phase 4 (US2) signaling protocol implementation
 impl JsonRpcResponse {
     /// Create a new JSON-RPC response
     pub fn new(result: serde_json::Value, id: serde_json::Value) -> Self {
@@ -319,6 +326,7 @@ impl JsonRpcResponse {
     }
 }
 
+#[allow(dead_code)] // Phase 4 (US2) signaling error handling
 impl JsonRpcError {
     /// Create a new JSON-RPC error
     pub fn new(code: i32, message: String, id: serde_json::Value) -> Self {

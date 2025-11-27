@@ -3,8 +3,6 @@
 //! Implements version checking and compatibility matrix.
 //! Ensures clients and server can communicate successfully.
 
-#![cfg(feature = "grpc-transport")]
-
 use std::collections::HashSet;
 
 /// Current protocol version

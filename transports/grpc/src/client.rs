@@ -23,6 +23,9 @@
 //! # });
 //! ```
 
+// Internal infrastructure - auth_token reserved for future use
+#![allow(dead_code)]
+
 use async_trait::async_trait;
 use remotemedia_runtime_core::manifest::Manifest;
 use remotemedia_runtime_core::transport::client::{ClientStreamSession, PipelineClient};

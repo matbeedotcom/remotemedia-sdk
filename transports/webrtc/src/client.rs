@@ -54,9 +54,11 @@ pub struct WebRtcPipelineClient {
     signaling_url: String,
 
     /// STUN/TURN server URLs (e.g., "stun:stun.example.com:3478")
+    #[allow(dead_code)] // Planned for full WebRTC implementation
     ice_servers: Vec<String>,
 
     /// Optional authentication token
+    #[allow(dead_code)] // Planned for authenticated connections
     auth_token: Option<String>,
 }
 
