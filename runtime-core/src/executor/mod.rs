@@ -1536,8 +1536,9 @@ impl Executor {
     fn is_streaming_output(&self, value: &Value) -> bool {
         // If it's an array and seems like streamed chunks, flatten it
         // This is a heuristic - in the future we could use metadata
-        if let Some(arr) = value.as_array() {
+        if value.as_array().is_some() {
             // If array has uniform structure, it's likely streaming output
+            // TODO: Analyze array structure to detect streaming patterns
             // For now, we'll be conservative and not flatten
             false
         } else {
