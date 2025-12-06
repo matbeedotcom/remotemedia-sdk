@@ -12,7 +12,9 @@
     "test:nodejs": "cd nodejs-client && npm test"
   },
   "devDependencies": {
-    "npm": "^10.0.0"
+    "@types/jest": "^30.0.0",
+    "npm": "^10.0.0",
+    "ts-jest": "^29.4.6"
   },
   "engines": {
     "node": ">=14.0.0"
