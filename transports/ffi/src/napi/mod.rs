@@ -45,6 +45,10 @@ pub mod session;
 pub mod subscriber;
 pub mod threadsafe;
 
+// WebRTC bindings (only compiled with `napi-webrtc` feature)
+#[cfg(feature = "napi-webrtc")]
+pub mod webrtc;
+
 // Re-export main types for convenient access
 pub use channel::*;
 pub use error::*;

@@ -8,6 +8,9 @@
 //!
 //! - `python` (default): Enable Python bindings via PyO3
 //! - `napi`: Enable Node.js bindings via napi-rs
+//! - `webrtc`: Enable WebRTC core types and signaling service wrapper
+//! - `napi-webrtc`: Enable Node.js WebRTC bindings (requires `napi` + `webrtc`)
+//! - `python-webrtc`: Enable Python WebRTC bindings (requires `python` + `webrtc`)
 //!
 //! # Architecture
 //!
@@ -18,12 +21,14 @@
 //! - **api.rs**: Python FFI functions
 //! - **numpy_bridge.rs**: Zero-copy numpy array integration
 //! - **instance_handler.rs**: Python Node instance execution
+//! - **python/webrtc/**: WebRTC server bindings (requires `python-webrtc`)
 //!
 //! ## Node.js-specific (`napi` feature)
 //! - **napi/mod.rs**: Node.js module entry point
 //! - **napi/subscriber.rs**: Zero-copy IPC subscriber
 //! - **napi/publisher.rs**: Zero-copy IPC publisher
 //! - **napi/sample.rs**: Sample lifecycle management
+//! - **napi/webrtc/**: WebRTC server bindings (requires `napi-webrtc`)
 //!
 //! # Usage (Python)
 //!
@@ -66,10 +71,16 @@ pub mod instance_handler;
 pub mod marshal;
 #[cfg(feature = "python")]
 mod numpy_bridge;
+#[cfg(feature = "python")]
+pub mod python;
 
 // Node.js-specific modules (only compiled with `napi` feature)
 #[cfg(feature = "napi")]
 pub mod napi;
+
+// WebRTC shared module (only compiled with `webrtc` feature)
+#[cfg(feature = "webrtc")]
+pub mod webrtc;
 
 // Python module entry point
 #[cfg(feature = "python")]
