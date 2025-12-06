@@ -7,76 +7,10 @@
  * - Nodes with is_streaming: true process data in real-time
  */
 
-interface NapiRuntimeData {
-  dataType: number;
-  getAudioSamples(): Buffer;
-  getAudioSampleRate(): number;
-  getAudioChannels(): number;
-  getAudioNumSamples(): number;
-  getVideoPixels(): Buffer;
-  getVideoWidth(): number;
-  getVideoHeight(): number;
-  getText(): string;
-  getBinary(): Buffer;
-}
+import { NativeModule, NapiRuntimeData, PipelineOutput, loadNativeModule } from './types';
 
-interface PipelineOutput {
-  size: number;
-  getNodeIds(): string[];
-  get(nodeId: string): NapiRuntimeData | null;
-  has(nodeId: string): boolean;
-}
-
-interface StreamSession {
-  readonly sessionId: string;
-  readonly isActive: boolean;
-  sendInput(data: NapiRuntimeData): Promise<void>;
-  recvOutput(): Promise<NapiRuntimeData | null>;
-  close(): Promise<void>;
-}
-
-interface NativeModule {
-  NapiRuntimeData: {
-    audio(samplesBuffer: Buffer, sampleRate: number, channels: number): NapiRuntimeData;
-    video(
-      pixelData: Buffer,
-      width: number,
-      height: number,
-      format: number,
-      codec: number | undefined,
-      frameNumber: number,
-      isKeyframe: boolean
-    ): NapiRuntimeData;
-    text(text: string): NapiRuntimeData;
-    binary(data: Buffer): NapiRuntimeData;
-  };
-
-  executePipeline(
-    manifestJson: string,
-    inputs: Record<string, NapiRuntimeData>
-  ): Promise<PipelineOutput>;
-
-  executePipelineWithSession(
-    manifestJson: string,
-    inputs: Record<string, NapiRuntimeData>,
-    sessionId: string
-  ): Promise<PipelineOutput>;
-
-  // Streaming API (may not exist yet)
-  createStreamSession?(manifestJson: string): Promise<StreamSession>;
-
-  isNativeLoaded(): boolean;
-  getLoadError(): Error | null;
-}
-
-let native: NativeModule | null = null;
-let loadError: Error | null = null;
-
-try {
-  native = require('../../nodejs') as NativeModule;
-} catch (e) {
-  loadError = e as Error;
-}
+// Attempt to load the native module
+const { native, loadError } = loadNativeModule();
 
 function createAudioSamplesBuffer(numSamples: number, frequency: number = 440): Buffer {
   const buffer = Buffer.alloc(numSamples * 4);
