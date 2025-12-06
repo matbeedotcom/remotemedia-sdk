@@ -5,75 +5,10 @@
  * Uses NapiRuntimeData for zero-copy data transfer (no JSON serialization).
  */
 
-// Type imports from the native module
-interface NativeModule {
-  // Zero-copy runtime data
-  NapiRuntimeData: {
-    audio(samplesBuffer: Buffer, sampleRate: number, channels: number): NapiRuntimeData;
-    video(
-      pixelData: Buffer,
-      width: number,
-      height: number,
-      format: number,
-      codec: number | undefined,
-      frameNumber: number,
-      isKeyframe: boolean
-    ): NapiRuntimeData;
-    text(text: string): NapiRuntimeData;
-    binary(data: Buffer): NapiRuntimeData;
-    tensor(data: Buffer, shape: number[], dtype: number): NapiRuntimeData;
-    json(jsonString: string): NapiRuntimeData;
-  };
-
-  // Pipeline execution
-  executePipeline(
-    manifestJson: string,
-    inputs: Record<string, NapiRuntimeData>
-  ): Promise<PipelineOutput>;
-  executePipelineWithSession(
-    manifestJson: string,
-    inputs: Record<string, NapiRuntimeData>,
-    sessionId: string
-  ): Promise<PipelineOutput>;
-
-  // Runtime info
-  getRuntimeVersion(): string;
-  isRuntimeAvailable(): boolean;
-  isNativeLoaded(): boolean;
-  getLoadError(): Error | null;
-}
-
-interface NapiRuntimeData {
-  dataType: number;
-  getAudioSamples(): Buffer;
-  getAudioSampleRate(): number;
-  getAudioChannels(): number;
-  getVideoPixels(): Buffer;
-  getVideoWidth(): number;
-  getVideoHeight(): number;
-  getText(): string;
-  getBinary(): Buffer;
-  getTensorData(): Buffer;
-  getTensorShape(): number[];
-  getJson(): string;
-}
-
-interface PipelineOutput {
-  size: number;
-  getNodeIds(): string[];
-  get(nodeId: string): NapiRuntimeData | null;
-  has(nodeId: string): boolean;
-}
+import { NativeModule, NapiRuntimeData, PipelineOutput, loadNativeModule } from './types';
 
 // Attempt to load the native module
-let native: NativeModule | null = null;
-let loadError: Error | null = null;
-
-try {
-  native = require('../../nodejs') as NativeModule;
-} catch (e) {
-  loadError = e as Error;
-}
+const { native, loadError } = loadNativeModule();
 
 /**
  * Helper to create f32 samples buffer from array
