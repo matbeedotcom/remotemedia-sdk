@@ -1,0 +1,22 @@
+{
+  "name": "@remotemedia/native-tests",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tests for RemoteMedia native Node.js bindings",
+  "scripts": {
+    "test": "jest --config jest.config.js",
+    "test:subscriber": "jest --config jest.config.js subscriber.test.ts",
+    "test:publisher": "jest --config jest.config.js publisher.test.ts",
+    "test:session": "jest --config jest.config.js session.test.ts"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@remotemedia/native": "file:../../nodejs"
+  }
+}

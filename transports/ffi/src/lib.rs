@@ -1,15 +1,29 @@
-//! Python FFI transport for RemoteMedia pipelines
+//! FFI bindings for RemoteMedia pipelines (Python and Node.js)
 //!
-//! This crate provides Python bindings for the RemoteMedia runtime-core,
-//! enabling Python applications to execute media processing pipelines
-//! with Rust acceleration.
+//! This crate provides language bindings for the RemoteMedia runtime-core,
+//! enabling both Python and Node.js applications to execute media processing
+//! pipelines with Rust acceleration.
+//!
+//! # Features
+//!
+//! - `python` (default): Enable Python bindings via PyO3
+//! - `napi`: Enable Node.js bindings via napi-rs
 //!
 //! # Architecture
 //!
-//! - **api.rs**: Main FFI functions (execute_pipeline, etc.)
-//! - **marshal.rs**: Python ↔ JSON conversion
+//! ## Shared modules
+//! - **marshal.rs**: Data serialization (requires `python` feature)
+//!
+//! ## Python-specific (`python` feature)
+//! - **api.rs**: Python FFI functions
 //! - **numpy_bridge.rs**: Zero-copy numpy array integration
-//! - **instance_handler.rs**: Python Node instance execution support
+//! - **instance_handler.rs**: Python Node instance execution
+//!
+//! ## Node.js-specific (`napi` feature)
+//! - **napi/mod.rs**: Node.js module entry point
+//! - **napi/subscriber.rs**: Zero-copy IPC subscriber
+//! - **napi/publisher.rs**: Zero-copy IPC publisher
+//! - **napi/sample.rs**: Sample lifecycle management
 //!
 //! # Usage (Python)
 //!
@@ -24,20 +38,48 @@
 //!
 //! asyncio.run(main())
 //! ```
+//!
+//! # Usage (Node.js)
+//!
+//! ```javascript
+//! const { createSession } = require('@remotemedia/native');
+//!
+//! const session = createSession({ id: 'my-session' });
+//! const channel = session.channel('audio_input');
+//! const subscriber = channel.createSubscriber();
+//!
+//! subscriber.onData((sample) => {
+//!     const data = sample.toRuntimeData();
+//!     console.log('Received:', data.type);
+//!     sample.release();
+//! });
+//! ```
 
 #![warn(clippy::all)]
 
+// Python-specific modules (only compiled with `python` feature)
+#[cfg(feature = "python")]
 mod api;
+#[cfg(feature = "python")]
 pub mod instance_handler;
+#[cfg(feature = "python")]
 pub mod marshal;
+#[cfg(feature = "python")]
 mod numpy_bridge;
 
+// Node.js-specific modules (only compiled with `napi` feature)
+#[cfg(feature = "napi")]
+pub mod napi;
+
+// Python module entry point
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
 
 /// Python module for RemoteMedia Rust Runtime
 ///
 /// Provides async pipeline execution with Rust acceleration
 /// Installed as remotemedia.runtime
+#[cfg(feature = "python")]
 #[pymodule]
 #[pyo3(name = "runtime")]
 fn remotemedia_ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -52,13 +94,9 @@ fn remotemedia_ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add FFI functions from api module
     m.add_function(wrap_pyfunction!(api::execute_pipeline, m)?)?;
     m.add_function(wrap_pyfunction!(api::execute_pipeline_with_input, m)?)?;
-    m.add_function(wrap_pyfunction!(api::execute_pipeline_with_instances, m)?)?; // Feature 011
+    m.add_function(wrap_pyfunction!(api::execute_pipeline_with_instances, m)?)?;
     m.add_function(wrap_pyfunction!(api::get_runtime_version, m)?)?;
     m.add_function(wrap_pyfunction!(api::is_available, m)?)?;
-
-    // Note: numpy arrays are automatically converted to/from RuntimeData::Numpy
-    // via python_to_runtime_data and runtime_data_to_python in marshal.rs
-    // No explicit conversion functions needed!
 
     // Add version as module constant
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

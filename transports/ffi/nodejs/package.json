@@ -1,0 +1,55 @@
+{
+  "name": "@remotemedia/native",
+  "version": "0.1.0",
+  "description": "Native Node.js bindings for RemoteMedia zero-copy IPC",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/remotemedia/remotemedia-sdk.git",
+    "directory": "transports/ffi/nodejs"
+  },
+  "license": "MIT",
+  "keywords": [
+    "remotemedia",
+    "ipc",
+    "zero-copy",
+    "shared-memory",
+    "iceoryx2",
+    "napi-rs"
+  ],
+  "engines": {
+    "node": ">= 18"
+  },
+  "napi": {
+    "name": "remotemedia-native",
+    "triples": {
+      "additional": [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "cd ../../.. && cargo build --release --features napi --no-default-features -p remotemedia-ffi && cp target/release/libremotemedia_ffi.so target/release/remotemedia_native.node || cp target/release/libremotemedia_ffi.dylib target/release/remotemedia_native.node 2>/dev/null || true",
+    "build:debug": "cd ../../.. && rm -f target/release/remotemedia_native.node && cargo build --features napi --no-default-features -p remotemedia-ffi && cp target/debug/libremotemedia_ffi.so target/debug/remotemedia_native.node || cp target/debug/libremotemedia_ffi.dylib target/debug/remotemedia_native.node 2>/dev/null || true",
+    "build:napi": "napi build --platform --release",
+    "build:napi:debug": "napi build --platform",
+    "prepublishOnly": "napi prepublish -t npm",
+    "test": "jest",
+    "benchmark": "node benchmark-zero-copy.js"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.4",
+    "@types/node": "^20.0.0",
+    "jest": "^29.5.0",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "*.node"
+  ]
+}
