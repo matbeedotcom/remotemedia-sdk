@@ -16,14 +16,126 @@
 //! 4. The thread processes publish requests and sends data via iceoryx2
 
 use super::error::IpcError;
+use super::pipeline::NapiRuntimeData;
 use super::sample::LoanedSample;
 use iceoryx2::prelude::*;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use remotemedia_runtime_core::data_compat::RuntimeData;
+use remotemedia_runtime_core::python::multiprocess::data_transfer::{
+    DataType as IpcDataType, RuntimeData as IpcRuntimeData,
+};
 use remotemedia_runtime_core::python::multiprocess::ipc_channel::ChannelRegistry;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
+use std::time::SystemTime;
+
+/// Convert pipeline RuntimeData to IPC RuntimeData format
+fn convert_to_ipc_runtime_data(data: &RuntimeData) -> napi::Result<IpcRuntimeData> {
+    let timestamp = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_micros() as u64;
+
+    match data {
+        RuntimeData::Audio {
+            samples,
+            sample_rate: _,
+            channels: _,
+            stream_id: _,
+        } => {
+            // Convert f32 samples to bytes
+            let payload = unsafe {
+                std::slice::from_raw_parts(
+                    samples.as_ptr() as *const u8,
+                    samples.len() * std::mem::size_of::<f32>(),
+                )
+            }
+            .to_vec();
+
+            Ok(IpcRuntimeData {
+                data_type: IpcDataType::Audio,
+                session_id: String::new(), // Session is managed at higher level
+                timestamp,
+                payload,
+            })
+        }
+        RuntimeData::Text(text) => Ok(IpcRuntimeData {
+            data_type: IpcDataType::Text,
+            session_id: String::new(),
+            timestamp,
+            payload: text.as_bytes().to_vec(),
+        }),
+        RuntimeData::Video {
+            pixel_data,
+            width,
+            height,
+            format,
+            codec,
+            frame_number,
+            is_keyframe,
+            ..
+        } => {
+            // Serialize video with metadata (matching data_transfer.rs format)
+            let format_byte = match format {
+                remotemedia_runtime_core::data::video::PixelFormat::Unspecified => 0,
+                remotemedia_runtime_core::data::video::PixelFormat::Yuv420p => 1,
+                remotemedia_runtime_core::data::video::PixelFormat::I420 => 2,
+                remotemedia_runtime_core::data::video::PixelFormat::NV12 => 3,
+                remotemedia_runtime_core::data::video::PixelFormat::Rgb24 => 4,
+                remotemedia_runtime_core::data::video::PixelFormat::Rgba32 => 5,
+                remotemedia_runtime_core::data::video::PixelFormat::Encoded => 255,
+            };
+            let codec_byte = match codec {
+                None => 0,
+                Some(remotemedia_runtime_core::data::video::VideoCodec::Vp8) => 1,
+                Some(remotemedia_runtime_core::data::video::VideoCodec::H264) => 2,
+                Some(remotemedia_runtime_core::data::video::VideoCodec::Av1) => 3,
+            };
+
+            let mut payload = Vec::with_capacity(19 + pixel_data.len());
+            payload.extend_from_slice(&width.to_le_bytes());
+            payload.extend_from_slice(&height.to_le_bytes());
+            payload.push(format_byte);
+            payload.push(codec_byte);
+            payload.extend_from_slice(&frame_number.to_le_bytes());
+            payload.push(if *is_keyframe { 1 } else { 0 });
+            payload.extend_from_slice(pixel_data);
+
+            Ok(IpcRuntimeData {
+                data_type: IpcDataType::Video,
+                session_id: String::new(),
+                timestamp,
+                payload,
+            })
+        }
+        RuntimeData::Binary(_) => Err(napi::Error::from_reason(
+            "Binary data type not supported for IPC. Use Text or Tensor instead.",
+        )),
+        RuntimeData::Tensor { data, shape, dtype } => {
+            // Serialize tensor with shape metadata
+            let mut payload = Vec::new();
+            payload.extend_from_slice(&(*dtype as u32).to_le_bytes());
+            payload.extend_from_slice(&(shape.len() as u32).to_le_bytes());
+            for dim in shape {
+                payload.extend_from_slice(&(*dim as u32).to_le_bytes());
+            }
+            payload.extend_from_slice(data);
+
+            Ok(IpcRuntimeData {
+                data_type: IpcDataType::Tensor,
+                session_id: String::new(),
+                timestamp,
+                payload,
+            })
+        }
+        _ => Err(napi::Error::from_reason(format!(
+            "Unsupported RuntimeData type for IPC: {:?}",
+            data.data_type()
+        ))),
+    }
+}
 
 /// Commands sent to the IPC publisher thread
 enum PublishCommand {
@@ -376,12 +488,44 @@ impl NapiPublisher {
         Ok(Some(LoanedSample::new(self.channel_name.clone(), size)))
     }
 
-    /// Convenience method: serialize and publish RuntimeData
+    /// Publish RuntimeData to the channel
     ///
-    /// This method handles serialization internally.
-    /// For maximum performance, use loan() + manual serialization.
+    /// This method handles serialization internally, converting the RuntimeData
+    /// to IPC format for zero-copy transfer.
     #[napi]
-    pub fn publish(&mut self, data: Buffer) -> napi::Result<()> {
+    pub fn publish(&mut self, data: &NapiRuntimeData) -> napi::Result<()> {
+        if !self.is_valid() {
+            return Err(IpcError::PublisherError("Publisher is closed".to_string()).into());
+        }
+
+        // Convert RuntimeData to IPC format and serialize
+        let ipc_data = convert_to_ipc_runtime_data(data.get_inner())?;
+        let data_bytes = ipc_data.to_bytes();
+
+        if data_bytes.len() > self.max_payload_size {
+            return Err(IpcError::PublisherError(format!(
+                "Data size {} exceeds max payload size {}",
+                data_bytes.len(),
+                self.max_payload_size
+            ))
+            .into());
+        }
+
+        // Ensure thread is running and get command channel
+        let tx = self.ensure_thread()?;
+
+        // Send publish command to the dedicated thread
+        tx.send(PublishCommand::Publish(data_bytes))
+            .map_err(|e| {
+                IpcError::PublisherError(format!("Failed to send publish command: {}", e))
+            })?;
+
+        Ok(())
+    }
+
+    /// Publish raw bytes to the channel (for advanced use cases)
+    #[napi]
+    pub fn publish_raw(&mut self, data: Buffer) -> napi::Result<()> {
         if !self.is_valid() {
             return Err(IpcError::PublisherError("Publisher is closed".to_string()).into());
         }

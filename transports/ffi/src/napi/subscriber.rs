@@ -127,12 +127,13 @@ impl NapiSubscriber {
     /// The callback is invoked on the main thread for each received sample.
     /// This is the recommended pattern for streaming data.
     ///
-    /// Returns true if callback was registered successfully.
-    #[napi]
+    /// Returns an unsubscribe function that stops the callback when called.
+    #[napi(ts_return_type = "() => void")]
     pub fn on_data(
         &mut self,
+        env: Env,
         #[napi(ts_arg_type = "(sample: ReceivedSample) => void")] callback: JsFunction,
-    ) -> napi::Result<bool> {
+    ) -> napi::Result<JsFunction> {
         if !self.is_valid() {
             return Err(IpcError::SubscriberError("Subscriber is closed".to_string()).into());
         }
@@ -296,9 +297,18 @@ impl NapiSubscriber {
             tracing::debug!("IPC polling thread for '{}' shutting down", channel_name);
         });
 
+        // Store the shutdown signal so we can trigger it from the unsubscribe function
+        let shutdown_for_unsubscribe = shutdown.clone();
+
         self.callback_handle = Some(CallbackHandle::new(shutdown, thread_handle));
 
-        Ok(true)
+        // Create unsubscribe function that sets the shutdown flag
+        let unsubscribe_fn = env.create_function_from_closure("unsubscribe", move |_ctx| {
+            shutdown_for_unsubscribe.store(true, Ordering::SeqCst);
+            Ok(())
+        })?;
+
+        Ok(unsubscribe_fn)
     }
 
     /// Unsubscribe from data callbacks
