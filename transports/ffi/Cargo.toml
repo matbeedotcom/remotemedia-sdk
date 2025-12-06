@@ -19,6 +19,9 @@ crate-type = ["cdylib", "rlib"]
 # Enable multiprocess for ChannelRegistry access from napi bindings
 remotemedia-runtime-core = { path = "../../runtime-core", default-features = true, features = ["multiprocess"] }
 
+# WebRTC transport (optional - enabled with webrtc feature)
+remotemedia-webrtc = { path = "../webrtc", features = ["grpc-signaling"], optional = true }
+
 # Python FFI (optional - enabled with python feature)
 pyo3 = { version = "0.26", features = ["abi3-py310", "auto-initialize"], default-features = false, optional = true }
 pyo3-async-runtimes = { version = "0.26", features = ["tokio-runtime"], optional = true }
@@ -30,6 +33,9 @@ napi-derive = { version = "2", optional = true }
 
 # IPC (required for both Python and Node.js IPC)
 iceoryx2 = { workspace = true }
+
+# UUID for server/peer IDs (required for webrtc)
+uuid = { version = "1.6", features = ["v4"], optional = true }
 
 # Async runtime
 tokio = { workspace = true }
@@ -64,3 +70,9 @@ extension-module = ["pyo3/extension-module", "python"]
 native-numpy = ["python"]
 # Node.js bindings (napi-rs)
 napi = ["dep:napi", "dep:napi-derive", "dep:napi-build"]
+# WebRTC core (shared types and signaling service wrapper)
+webrtc = ["dep:remotemedia-webrtc", "dep:uuid"]
+# Node.js WebRTC bindings (requires both napi and webrtc)
+napi-webrtc = ["napi", "webrtc"]
+# Python WebRTC bindings (requires both python and webrtc)
+python-webrtc = ["python", "webrtc"]

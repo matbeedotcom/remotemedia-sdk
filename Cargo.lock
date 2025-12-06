@@ -5425,12 +5425,14 @@ dependencies = [
  "pyo3",
  "pyo3-async-runtimes",
  "remotemedia-runtime-core",
+ "remotemedia-webrtc",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
