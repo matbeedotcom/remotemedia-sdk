@@ -249,7 +249,14 @@ impl VideoFrame {
 /// RuntimeData wrapper for Node.js with zero-copy access
 #[napi]
 pub struct NapiRuntimeData {
-    inner: RuntimeData,
+    pub(crate) inner: RuntimeData,
+}
+
+impl NapiRuntimeData {
+    /// Get a reference to the inner RuntimeData (for Rust-side access)
+    pub fn get_inner(&self) -> &RuntimeData {
+        &self.inner
+    }
 }
 
 #[napi]
