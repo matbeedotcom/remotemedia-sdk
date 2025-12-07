@@ -46,6 +46,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 base64 = "0.22"
 
+# Data types
+bytes = "1.5"
+
 # Async trait support
 async-trait = { workspace = true }
 

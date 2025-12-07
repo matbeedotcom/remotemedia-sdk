@@ -96,8 +96,17 @@ pub mod error_codes {
     /// Invalid ICE candidate
     pub const ICE_CANDIDATE_INVALID: i32 = -32004;
 
+    /// Negotiation already in progress (spec 017)
+    pub const NEGOTIATION_IN_PROGRESS: i32 = -32005;
+
+    /// ICE connection timeout (spec 017)
+    pub const CONNECTION_TIMEOUT: i32 = -32006;
+
+    /// No compatible codecs (spec 017)
+    pub const CODEC_MISMATCH: i32 = -32007;
+
     /// Session limit exceeded
-    pub const SESSION_LIMIT_EXCEEDED: i32 = -32005;
+    pub const SESSION_LIMIT_EXCEEDED: i32 = -32001;
 }
 
 /// Signaling message types
@@ -225,6 +234,31 @@ pub struct PeerDisconnectParams {
     /// Optional disconnection reason
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+/// Parameters for peer.state_change notification (spec 017)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PeerStateChangeParams {
+    /// Peer ID whose state changed
+    pub peer_id: String,
+
+    /// Connection state (new, connecting, connected, disconnected, failed, closed)
+    pub connection_state: String,
+
+    /// ICE connection state
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ice_connection_state: Option<String>,
+
+    /// ICE gathering state
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ice_gathering_state: Option<String>,
+
+    /// Previous connection state
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_state: Option<String>,
+
+    /// Timestamp of state change (epoch ms)
+    pub timestamp: u64,
 }
 
 impl SignalingMessage {

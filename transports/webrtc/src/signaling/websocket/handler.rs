@@ -7,6 +7,7 @@ use crate::peer::ServerPeer;
 use crate::signaling::protocol::{
     error_codes, IceCandidateParams, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
     PeerAnnounceParams, PeerAnswerParams, PeerDisconnectParams, PeerOfferParams,
+    PeerStateChangeParams,
 };
 use futures_util::{SinkExt, StreamExt};
 use remotemedia_runtime_core::{manifest::Manifest, transport::PipelineRunner};
@@ -293,6 +294,29 @@ async fn handle_offer(
     // Check if target is remotemedia-server
     if params.to == "remotemedia-server" {
         info!("Creating ServerPeer for offer from {}", from_peer_id);
+        debug!("Offer SDP from {}: {} bytes", from_peer_id, params.sdp.len());
+
+        // Basic SDP validation (T011)
+        if !params.sdp.starts_with("v=0") {
+            let error = JsonRpcError::with_data(
+                error_codes::OFFER_INVALID,
+                "Invalid SDP offer: must start with v=0".to_string(),
+                json!({"reason": "Missing SDP version line"}),
+                request_id,
+            );
+            tx.send(error.to_json()?).await?;
+            return Ok(());
+        }
+        if !params.sdp.contains("m=") {
+            let error = JsonRpcError::with_data(
+                error_codes::OFFER_INVALID,
+                "Invalid SDP offer: no media sections".to_string(),
+                json!({"reason": "Missing m= line"}),
+                request_id,
+            );
+            tx.send(error.to_json()?).await?;
+            return Ok(());
+        }
 
         // Clean up any existing ServerPeer
         if let Some(old_server_peer) = state.server_peers.write().await.remove(&from_peer_id) {
@@ -329,9 +353,10 @@ async fn handle_offer(
             Ok(sdp) => sdp,
             Err(e) => {
                 error!("ServerPeer failed to handle offer: {}", e);
-                let error = JsonRpcError::new(
+                let error = JsonRpcError::with_data(
                     error_codes::OFFER_INVALID,
                     format!("Failed to handle offer: {}", e),
+                    json!({"reason": e.to_string(), "peer_id": from_peer_id}),
                     request_id,
                 );
                 tx.send(error.to_json()?).await?;
@@ -340,28 +365,112 @@ async fn handle_offer(
         };
 
         info!("ServerPeer generated answer for {}", from_peer_id);
+        debug!("Answer SDP: {} bytes", answer_sdp.len());
 
         // Store server peer
         state.server_peers.write().await.insert(from_peer_id.clone(), Arc::clone(&server_peer));
 
-        // Send answer notification
-        let answer_notification = json!({
-            "jsonrpc": "2.0",
-            "method": "peer.answer",
-            "params": {
-                "from": "remotemedia-server",
-                "to": from_peer_id,
-                "sdp": answer_sdp
-            }
-        });
-        tx.send(serde_json::to_string(&answer_notification)?).await?;
+        // Set up ICE candidate callback to forward server candidates to client (T014)
+        let tx_clone = tx.clone();
+        let from_peer_id_clone = from_peer_id.clone();
+        server_peer.peer_connection().peer_connection().on_ice_candidate(Box::new(
+            move |candidate| {
+                let tx = tx_clone.clone();
+                let peer_id = from_peer_id_clone.clone();
+                Box::pin(async move {
+                    if let Some(candidate) = candidate {
+                        // Convert RTCIceCandidate to RTCIceCandidateInit for JSON serialization
+                        match candidate.to_json() {
+                            Ok(candidate_init) => {
+                                debug!("Server ICE candidate for {}: {}", peer_id, candidate_init.candidate);
+                                // Send ICE candidate notification to client (T015)
+                                let notification = json!({
+                                    "jsonrpc": "2.0",
+                                    "method": "peer.ice_candidate",
+                                    "params": {
+                                        "from": "remotemedia-server",
+                                        "to": peer_id,
+                                        "candidate": candidate_init.candidate,
+                                        "sdp_mid": candidate_init.sdp_mid,
+                                        "sdp_m_line_index": candidate_init.sdp_mline_index
+                                    }
+                                });
+                                if let Err(e) = tx.send(serde_json::to_string(&notification).unwrap_or_default()).await {
+                                    warn!("Failed to send ICE candidate to client: {}", e);
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Failed to convert ICE candidate to JSON: {}", e);
+                            }
+                        }
+                    } else {
+                        // ICE gathering complete (T016: empty candidate signals end)
+                        debug!("ICE gathering complete for peer {}", peer_id);
+                        let notification = json!({
+                            "jsonrpc": "2.0",
+                            "method": "peer.ice_candidate",
+                            "params": {
+                                "from": "remotemedia-server",
+                                "to": peer_id,
+                                "candidate": "",
+                                "sdp_mid": null,
+                                "sdp_m_line_index": null
+                            }
+                        });
+                        if let Err(e) = tx.send(serde_json::to_string(&notification).unwrap_or_default()).await {
+                            warn!("Failed to send ICE gathering complete to client: {}", e);
+                        }
+                    }
+                })
+            },
+        ));
 
-        // Send success response
+        // Set up connection state change callback (T017-T018)
+        let tx_clone = tx.clone();
+        let from_peer_id_clone = from_peer_id.clone();
+        server_peer.peer_connection().peer_connection().on_peer_connection_state_change(Box::new(
+            move |conn_state| {
+                let tx = tx_clone.clone();
+                let peer_id = from_peer_id_clone.clone();
+                Box::pin(async move {
+                    let state_str = match conn_state {
+                        webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::New => "new",
+                        webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connecting => "connecting",
+                        webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected => "connected",
+                        webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Disconnected => "disconnected",
+                        webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Failed => "failed",
+                        webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Closed => "closed",
+                        _ => "unknown",
+                    };
+                    info!("Connection state change for peer {}: {}", peer_id, state_str);
+
+                    // Send state change notification
+                    let notification = json!({
+                        "jsonrpc": "2.0",
+                        "method": "peer.state_change",
+                        "params": {
+                            "peer_id": peer_id,
+                            "connection_state": state_str,
+                            "timestamp": std::time::SystemTime::now()
+                                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as u64
+                        }
+                    });
+                    if let Err(e) = tx.send(serde_json::to_string(&notification).unwrap_or_default()).await {
+                        warn!("Failed to send state change to client: {}", e);
+                    }
+                })
+            },
+        ));
+
+        // Send JSON-RPC response with answer (T009-T010: per contract, answer in result)
         let response = JsonRpcResponse::new(
             json!({
-                "success": true,
-                "to_peer_id": params.to,
-                "answer_sent": true
+                "type": "answer",
+                "sdp": answer_sdp,
+                "from": "remotemedia-server",
+                "to": from_peer_id
             }),
             request_id,
         );

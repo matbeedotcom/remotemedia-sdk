@@ -29,6 +29,7 @@ use remotemedia_runtime_core::{
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
+use webrtc::data_channel::RTCDataChannel;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 /// Server-side WebRTC peer with pipeline integration
@@ -217,7 +218,7 @@ impl ServerPeer {
     /// Set up bidirectional media routing and data channel
     ///
     /// - Incoming: WebRTC tracks + data channel → RuntimeData → pipeline input
-    /// - Outgoing: pipeline output → RuntimeData → WebRTC tracks
+    /// - Outgoing: pipeline output → RuntimeData → WebRTC tracks + data channel
     async fn setup_media_routing_and_data_channel(
         &self,
         mut session_handle: StreamSessionHandle,
@@ -234,6 +235,11 @@ impl ServerPeer {
         let dc_input_tx_for_dc = dc_input_tx.clone();
         let dc_input_tx_for_track = dc_input_tx.clone();
 
+        // Create shared data channel reference for output routing
+        let data_channel_ref: Arc<RwLock<Option<Arc<RTCDataChannel>>>> =
+            Arc::new(RwLock::new(None));
+        let data_channel_ref_for_dc = Arc::clone(&data_channel_ref);
+
         // Set up data channel handler
         let peer_id_for_dc = self.peer_id.clone();
         self.peer_connection
@@ -241,13 +247,25 @@ impl ServerPeer {
             .on_data_channel(Box::new(move |data_channel| {
                 let peer_id = peer_id_for_dc.clone();
                 let dc_input_tx = dc_input_tx_for_dc.clone();
+                let data_channel_ref = Arc::clone(&data_channel_ref_for_dc);
+                let data_channel = Arc::new(data_channel);
 
                 Box::pin(async move {
                     info!("Data channel opened: label={}, id={:?} for peer {}",
                         data_channel.label(), data_channel.id(), peer_id);
 
+                    // Store data channel reference for output routing
+                    {
+                        let mut dc_ref = data_channel_ref.write().await;
+                        *dc_ref = Some(Arc::clone(&data_channel));
+                        info!("Stored data channel reference for output routing (peer {})", peer_id);
+                    }
+
+                    // Clone data_channel for the message handler
+                    let dc_for_handler = Arc::clone(&data_channel);
+
                     // Set up message handler - expects Protobuf-encoded DataBuffer
-                    data_channel.on_message(Box::new(move |msg| {
+                    dc_for_handler.on_message(Box::new(move |msg| {
                         let peer_id = peer_id.clone();
                         let dc_input_tx = dc_input_tx.clone();
 
@@ -364,8 +382,9 @@ impl ServerPeer {
 
         // Spawn task to handle bidirectional routing
         let peer_id = self.peer_id.clone();
-        let peer_connection = Arc::clone(&self.peer_connection);
+        let _peer_connection = Arc::clone(&self.peer_connection);
         let track_registry = Arc::clone(&self.track_registry);
+        let data_channel_for_output = Arc::clone(&data_channel_ref);
         let mut shutdown_rx =
             self.shutdown_rx.write().await.take().ok_or_else(|| {
                 Error::InternalError("Shutdown receiver already taken".to_string())
@@ -401,7 +420,7 @@ impl ServerPeer {
                         match output_result {
                             Ok(Ok(Some(transport_data))) => {
                                 debug!("Received output from pipeline for peer {}", peer_id);
-                                if let Err(e) = Self::send_to_webrtc_multitrack(&track_registry, transport_data).await {
+                                if let Err(e) = Self::send_to_webrtc_multitrack(&track_registry, &data_channel_for_output, transport_data).await {
                                     error!("Failed to send output to WebRTC for peer {}: {}", peer_id, e);
                                 }
                             }
@@ -443,13 +462,16 @@ impl ServerPeer {
     ///
     /// Routes RuntimeData to appropriate tracks based on stream_id field.
     /// Falls back to DEFAULT_STREAM_ID for backward compatibility.
+    /// Json and Text data are sent through the data channel.
     ///
     /// # Arguments
     ///
     /// * `track_registry` - Registry of audio/video tracks keyed by stream_id
+    /// * `data_channel` - Optional data channel for Json/Text output
     /// * `transport_data` - Data to send, containing RuntimeData with optional stream_id
     async fn send_to_webrtc_multitrack(
         track_registry: &Arc<TrackRegistry<AudioTrack, VideoTrack>>,
+        data_channel: &Arc<RwLock<Option<Arc<RTCDataChannel>>>>,
         transport_data: TransportData,
     ) -> Result<()> {
         // Get RuntimeData and extract stream_id
@@ -511,8 +533,39 @@ impl ServerPeer {
                     );
                 }
             }
+            RuntimeData::Json(_) | RuntimeData::Text(_) => {
+                // Send Json/Text data through data channel
+                let dc_guard = data_channel.read().await;
+                if let Some(dc) = dc_guard.as_ref() {
+                    // Convert RuntimeData to Protobuf DataBuffer
+                    let data_buffer = crate::adapters::runtime_data_to_data_buffer(&runtime_data);
+                    let encoded = data_buffer.encode_to_vec();
+
+                    debug!(
+                        "Sending {} data ({} bytes) through data channel",
+                        runtime_data.data_type(),
+                        encoded.len()
+                    );
+
+                    // Send through data channel
+                    if let Err(e) = dc.send(&bytes::Bytes::from(encoded)).await {
+                        error!("Failed to send data through data channel: {}", e);
+                        return Err(Error::WebRtcError(format!(
+                            "Data channel send failed: {}",
+                            e
+                        )));
+                    }
+
+                    debug!("Successfully sent {} data through data channel", runtime_data.data_type());
+                } else {
+                    warn!(
+                        "No data channel available to send {} output",
+                        runtime_data.data_type()
+                    );
+                }
+            }
             _ => {
-                debug!("Unsupported RuntimeData type for WebRTC output");
+                debug!("Unsupported RuntimeData type for WebRTC output: {}", runtime_data.data_type());
             }
         }
 
