@@ -6,7 +6,7 @@ pub mod connection;
 pub mod lifecycle;
 pub mod manager;
 
-#[cfg(feature = "grpc-signaling")]
+#[cfg(any(feature = "grpc-signaling", feature = "ws-signaling"))]
 pub mod server_peer;
 
 pub use connection::{ConnectionState, PeerConnection};
@@ -18,5 +18,5 @@ pub use lifecycle::{
 };
 pub use manager::{PeerInfo, PeerManager};
 
-#[cfg(feature = "grpc-signaling")]
+#[cfg(any(feature = "grpc-signaling", feature = "ws-signaling"))]
 pub use server_peer::ServerPeer;

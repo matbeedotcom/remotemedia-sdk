@@ -97,6 +97,11 @@ impl WebRtcError {
     pub fn invalid_state(msg: impl Into<String>) -> Self {
         WebRtcError::InvalidState(msg.into())
     }
+
+    /// Create a configuration error (wraps as Internal since Config requires ConfigValidationError)
+    pub fn config(msg: impl Into<String>) -> Self {
+        WebRtcError::Internal(format!("Configuration: {}", msg.into()))
+    }
 }
 
 /// Result type for WebRTC operations

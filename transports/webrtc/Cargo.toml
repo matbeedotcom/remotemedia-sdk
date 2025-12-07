@@ -39,6 +39,7 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
 futures = { workspace = true }
+futures-util = "0.3"
 
 # Serialization (JSON-RPC 2.0)
 serde = { workspace = true }
@@ -58,11 +59,13 @@ anyhow = { workspace = true }
 
 # gRPC signaling (optional)
 tonic = { workspace = true, optional = true }
+tonic-web = { workspace = true, optional = true }
 tonic-prost = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
 tokio-stream = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { version = "0.6", features = ["cors"], optional = true }
+http = { version = "1.0", optional = true }
 
 # Server utilities
 ctrlc = "3.4"
@@ -87,12 +90,16 @@ tonic-prost-build = { workspace = true }
 default = []
 codecs = ["dep:media-codec-vpx"]
 h264 = ["dep:openh264"]
+# WebSocket signaling requires grpc-signaling because ServerPeer uses generated protobufs
+ws-signaling = ["grpc-signaling"]
 grpc-signaling = [
     "dep:tonic",
+    "dep:tonic-web",
     "dep:tonic-prost",
     "dep:prost",
     "dep:tokio-stream",
     "dep:tower",
     "dep:tower-http",
+    "dep:http",
 ]
-full = ["codecs", "h264", "grpc-signaling"]
+full = ["codecs", "h264", "grpc-signaling", "ws-signaling"]

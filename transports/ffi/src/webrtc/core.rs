@@ -4,12 +4,16 @@
 //! between Node.js and Python bindings. It wraps the `remotemedia-webrtc`
 //! crate's signaling service and provides event forwarding.
 
-use super::config::{PeerCapabilities, PeerInfo, PeerState, ServerState, WebRtcServerConfig};
+use super::config::{PeerInfo, PeerState, ServerState, WebRtcServerConfig};
 use super::error::{WebRtcError, WebRtcResult};
 use super::events::{
-    DataReceivedEvent, ErrorCode, ErrorEvent, PeerConnectedEvent, PeerDisconnectedEvent,
+    DataReceivedEvent, ErrorEvent, PeerConnectedEvent, PeerDisconnectedEvent,
     PipelineOutputEvent, SessionEvent, WebRtcEvent,
 };
+use remotemedia_runtime_core::manifest::Manifest;
+use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_webrtc::signaling::WebSocketSignalingServer;
+use remotemedia_webrtc::signaling::websocket::WebSocketServerHandle;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -50,6 +54,9 @@ pub struct WebRtcServerCore {
 
     /// Tokio runtime handle for async operations
     runtime_handle: Option<tokio::runtime::Handle>,
+
+    /// WebSocket signaling server handle
+    ws_server_handle: Arc<RwLock<Option<WebSocketServerHandle>>>,
 }
 
 /// Session information for room/group management
@@ -83,6 +90,7 @@ impl WebRtcServerCore {
             event_rx: Arc::new(RwLock::new(Some(event_rx))),
             shutdown: Arc::new(AtomicBool::new(false)),
             runtime_handle: tokio::runtime::Handle::try_current().ok(),
+            ws_server_handle: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -125,7 +133,7 @@ impl WebRtcServerCore {
 
     /// Start the server
     ///
-    /// For embedded mode: binds to the configured port
+    /// For embedded mode: binds to the configured port and starts WebSocket signaling server
     /// For external mode: connects to the signaling server
     pub async fn start(&self) -> WebRtcResult<()> {
         let mut state = self.state.write().await;
@@ -140,19 +148,60 @@ impl WebRtcServerCore {
         *state = ServerState::Starting;
         drop(state);
 
-        // TODO: Implement actual WebRTC signaling service startup
-        // For now, transition to Running state for FFI layer development
         tracing::info!(
             server_id = %self.id,
             port = ?self.config.port,
             signaling_url = ?self.config.signaling_url,
-            "Starting WebRTC server"
+            "Starting WebRTC server with WebSocket JSON-RPC 2.0 signaling"
         );
+
+        // Get the port to bind to
+        let port = self.config.port.ok_or_else(|| {
+            WebRtcError::config("Port is required for embedded signaling mode")
+        })?;
+
+        // Parse the pipeline manifest
+        let manifest: Manifest = serde_json::from_value(self.config.manifest.clone())
+            .map_err(|e| WebRtcError::config(format!("Invalid manifest: {}", e)))?;
+        let manifest = Arc::new(manifest);
+
+        // Create PipelineRunner
+        let runner = Arc::new(
+            PipelineRunner::new()
+                .map_err(|e| WebRtcError::Internal(format!("Failed to create PipelineRunner: {}", e)))?,
+        );
+
+        // Build WebRTC transport configuration using the conversion helper
+        let transport_config = Arc::new(self.config.to_webrtc_config());
+
+        // Create WebSocket signaling server
+        let ws_server = WebSocketSignalingServer::new(
+            port as u16,
+            Arc::clone(&transport_config),
+            Arc::clone(&runner),
+            Arc::clone(&manifest),
+        );
+
+        tracing::info!(
+            "WebSocket signaling server listening on ws://0.0.0.0:{}/ws",
+            port
+        );
+
+        // Start the WebSocket server
+        let ws_handle = ws_server.start().await
+            .map_err(|e| WebRtcError::Internal(format!("Failed to start WebSocket server: {}", e)))?;
+
+        // Store the server handle
+        *self.ws_server_handle.write().await = Some(ws_handle);
 
         let mut state = self.state.write().await;
         *state = ServerState::Running;
 
-        tracing::info!(server_id = %self.id, "WebRTC server started");
+        tracing::info!(
+            server_id = %self.id,
+            port = port,
+            "WebRTC server started with WebSocket JSON-RPC 2.0 signaling"
+        );
 
         Ok(())
     }
@@ -187,6 +236,13 @@ impl WebRtcServerCore {
         drop(state);
 
         tracing::info!(server_id = %self.id, "Shutting down WebRTC server");
+
+        // Shutdown WebSocket server
+        if let Some(handle) = self.ws_server_handle.write().await.take() {
+            tracing::info!("Shutting down WebSocket signaling server...");
+            handle.shutdown().await;
+            tracing::info!("WebSocket signaling server shut down complete");
+        }
 
         // Disconnect all peers
         let peers = self.peers.read().await.keys().cloned().collect::<Vec<_>>();

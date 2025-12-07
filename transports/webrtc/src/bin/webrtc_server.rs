@@ -174,18 +174,20 @@ async fn run_grpc_signaling_server(
     args: Args,
     shutdown_flag: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
     use remotemedia_runtime_core::manifest::Manifest;
     use remotemedia_runtime_core::transport::PipelineRunner;
     use remotemedia_webrtc::signaling::grpc::WebRtcSignalingService;
     use std::sync::Arc;
     use tonic::transport::Server;
+    use tower_http::cors::{Any, CorsLayer};
 
     info!(
         grpc_address = %args.grpc_address,
         manifest_path = ?args.manifest,
         stun_servers = ?args.stun_servers,
         max_peers = args.max_peers,
-        "gRPC signaling server configuration"
+        "gRPC signaling server configuration (with gRPC-Web support)"
     );
 
     // Load pipeline manifest from file
@@ -224,9 +226,17 @@ async fn run_grpc_signaling_server(
     let signaling_server = signaling_service.into_server();
 
     info!("gRPC signaling server listening on {}", args.grpc_address);
+    info!("gRPC-Web enabled for browser clients");
 
     // Parse address
     let addr: std::net::SocketAddr = args.grpc_address.parse()?;
+
+    // Configure CORS for gRPC-Web browser clients
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE, "x-grpc-web".parse().unwrap(), "grpc-timeout".parse().unwrap()])
+        .allow_methods(Any)
+        .expose_headers(["grpc-status".parse().unwrap(), "grpc-message".parse().unwrap()]);
 
     // Start gRPC server with shutdown
     let shutdown_future = async move {
@@ -236,7 +246,11 @@ async fn run_grpc_signaling_server(
         info!("Shutdown signal received, stopping gRPC server...");
     };
 
+    // Build server with gRPC-Web layer and CORS
     Server::builder()
+        .accept_http1(true) // Required for gRPC-Web
+        .layer(cors)
+        .layer(tonic_web::GrpcWebLayer::new())
         .add_service(signaling_server)
         .serve_with_shutdown(addr, shutdown_future)
         .await?;

@@ -13,6 +13,10 @@ use crate::webrtc::events::WebRtcEvent;
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
+use remotemedia_runtime_core::manifest::Manifest;
+use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_webrtc::signaling::WebSocketSignalingServer;
+use remotemedia_webrtc::signaling::websocket::WebSocketServerHandle;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -54,6 +58,9 @@ pub struct WebRtcServer {
 
     /// Event loop task handle
     event_loop_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+
+    /// WebSocket signaling server handle (for explicit startSignalingServer)
+    ws_server_handle: Arc<Mutex<Option<WebSocketServerHandle>>>,
 }
 
 #[napi]
@@ -84,6 +91,7 @@ impl WebRtcServer {
             on_error: Arc::new(Mutex::new(Vec::new())),
             event_loop_running: Arc::new(AtomicBool::new(false)),
             event_loop_handle: Arc::new(Mutex::new(None)),
+            ws_server_handle: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -113,6 +121,7 @@ impl WebRtcServer {
             on_error: Arc::new(Mutex::new(Vec::new())),
             event_loop_running: Arc::new(AtomicBool::new(false)),
             event_loop_handle: Arc::new(Mutex::new(None)),
+            ws_server_handle: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -244,6 +253,64 @@ impl WebRtcServer {
         Ok(())
     }
 
+    /// Start the WebSocket signaling server explicitly
+    ///
+    /// This method starts the WebSocket JSON-RPC 2.0 signaling server on a
+    /// dedicated thread with its own tokio runtime. It blocks until the server
+    /// is confirmed to be listening on the port.
+    ///
+    /// @param port - Port number to listen on (e.g., 50100)
+    /// @returns Promise that resolves when the server is ready to accept connections
+    #[napi]
+    pub async fn start_signaling_server(&self, port: u32) -> Result<()> {
+        eprintln!("[NAPI] startSignalingServer called with port {}", port);
+
+        // Check if already running
+        if self.ws_server_handle.lock().await.is_some() {
+            return Err(Error::from_reason("Signaling server already started"));
+        }
+
+        // Get the config from core
+        let config = self.core.config();
+
+        // Parse the pipeline manifest
+        let manifest: Manifest = serde_json::from_value(config.manifest.clone())
+            .map_err(|e| Error::from_reason(format!("Invalid manifest: {}", e)))?;
+        let manifest = Arc::new(manifest);
+
+        // Create PipelineRunner
+        let runner = Arc::new(
+            PipelineRunner::new()
+                .map_err(|e| Error::from_reason(format!("Failed to create PipelineRunner: {}", e)))?,
+        );
+
+        // Build WebRTC transport configuration
+        let transport_config = Arc::new(config.to_webrtc_config());
+
+        eprintln!("[NAPI] Creating WebSocketSignalingServer on port {}", port);
+
+        // Create WebSocket signaling server
+        let ws_server = WebSocketSignalingServer::new(
+            port as u16,
+            Arc::clone(&transport_config),
+            Arc::clone(&runner),
+            Arc::clone(&manifest),
+        );
+
+        eprintln!("[NAPI] Starting WebSocketSignalingServer...");
+
+        // Start the WebSocket server - this returns when the server is actually listening
+        let ws_handle = ws_server.start().await
+            .map_err(|e| Error::from_reason(format!("Failed to start WebSocket server: {}", e)))?;
+
+        eprintln!("[NAPI] WebSocketSignalingServer started successfully on port {}", port);
+
+        // Store the server handle
+        *self.ws_server_handle.lock().await = Some(ws_handle);
+
+        Ok(())
+    }
+
     /// Stop the server gracefully
     ///
     /// Disconnects all peers and cleans up resources.
@@ -255,6 +322,13 @@ impl WebRtcServer {
         // Wait for event loop to finish
         if let Some(handle) = self.event_loop_handle.lock().await.take() {
             let _ = handle.await;
+        }
+
+        // Shutdown explicit signaling server if running
+        if let Some(handle) = self.ws_server_handle.lock().await.take() {
+            eprintln!("[NAPI] Shutting down explicit signaling server...");
+            handle.shutdown().await;
+            eprintln!("[NAPI] Explicit signaling server shut down");
         }
 
         // Shutdown core
