@@ -11,7 +11,8 @@ use super::events::{
 use crate::webrtc::core::WebRtcServerCore;
 use crate::webrtc::events::WebRtcEvent;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::{PyAny, PyBytes, PyDict};
+use pyo3::IntoPyObjectExt;
 use pyo3_async_runtimes::tokio::future_into_py;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -196,9 +197,9 @@ impl WebRtcServer {
     ///     @server.on_peer_connected
     ///     async def handle_peer(event: PeerConnectedEvent):
     ///         print(f"Peer {event.peer_id} connected")
-    fn on_peer_connected(&self, callback: Py<PyAny>) -> PyResult<Py<PyAny>> {
+    fn on_peer_connected(&self, py: Python<'_>, callback: Py<PyAny>) -> PyResult<Py<PyAny>> {
         let callbacks = self.on_peer_connected_callbacks.clone();
-        let callback_clone = callback.clone();
+        let callback_clone = callback.clone_ref(py);
         tokio::spawn(async move {
             callbacks.lock().await.push(callback_clone);
         });
@@ -207,9 +208,9 @@ impl WebRtcServer {
     }
 
     /// Register a callback for peer disconnected events (decorator pattern)
-    fn on_peer_disconnected(&self, callback: Py<PyAny>) -> PyResult<Py<PyAny>> {
+    fn on_peer_disconnected(&self, py: Python<'_>, callback: Py<PyAny>) -> PyResult<Py<PyAny>> {
         let callbacks = self.on_peer_disconnected_callbacks.clone();
-        let callback_clone = callback.clone();
+        let callback_clone = callback.clone_ref(py);
         tokio::spawn(async move {
             callbacks.lock().await.push(callback_clone);
         });
@@ -217,9 +218,9 @@ impl WebRtcServer {
     }
 
     /// Register a callback for pipeline output events (decorator pattern)
-    fn on_pipeline_output(&self, callback: Py<PyAny>) -> PyResult<Py<PyAny>> {
+    fn on_pipeline_output(&self, py: Python<'_>, callback: Py<PyAny>) -> PyResult<Py<PyAny>> {
         let callbacks = self.on_pipeline_output_callbacks.clone();
-        let callback_clone = callback.clone();
+        let callback_clone = callback.clone_ref(py);
         tokio::spawn(async move {
             callbacks.lock().await.push(callback_clone);
         });
@@ -227,9 +228,9 @@ impl WebRtcServer {
     }
 
     /// Register a callback for raw data events (decorator pattern)
-    fn on_data(&self, callback: Py<PyAny>) -> PyResult<Py<PyAny>> {
+    fn on_data(&self, py: Python<'_>, callback: Py<PyAny>) -> PyResult<Py<PyAny>> {
         let callbacks = self.on_data_callbacks.clone();
-        let callback_clone = callback.clone();
+        let callback_clone = callback.clone_ref(py);
         tokio::spawn(async move {
             callbacks.lock().await.push(callback_clone);
         });
@@ -237,9 +238,9 @@ impl WebRtcServer {
     }
 
     /// Register a callback for error events (decorator pattern)
-    fn on_error(&self, callback: Py<PyAny>) -> PyResult<Py<PyAny>> {
+    fn on_error(&self, py: Python<'_>, callback: Py<PyAny>) -> PyResult<Py<PyAny>> {
         let callbacks = self.on_error_callbacks.clone();
-        let callback_clone = callback.clone();
+        let callback_clone = callback.clone_ref(py);
         tokio::spawn(async move {
             callbacks.lock().await.push(callback_clone);
         });
@@ -247,9 +248,9 @@ impl WebRtcServer {
     }
 
     /// Register a callback for session events (decorator pattern)
-    fn on_session(&self, callback: Py<PyAny>) -> PyResult<Py<PyAny>> {
+    fn on_session(&self, py: Python<'_>, callback: Py<PyAny>) -> PyResult<Py<PyAny>> {
         let callbacks = self.on_session_callbacks.clone();
-        let callback_clone = callback.clone();
+        let callback_clone = callback.clone_ref(py);
         tokio::spawn(async move {
             callbacks.lock().await.push(callback_clone);
         });
@@ -390,16 +391,59 @@ impl WebRtcServer {
         })
     }
 
-    /// Create a new session (room)
+    /// Create a new session (room) and return a WebRtcSession object
     ///
     /// Args:
     ///     session_id: Unique session identifier
     ///     metadata: Optional session metadata (dict)
     ///
     /// Returns:
-    ///     SessionInfo
+    ///     WebRtcSession instance for managing the room
     #[pyo3(signature = (session_id, metadata=None))]
     fn create_session<'py>(
+        &self,
+        py: Python<'py>,
+        session_id: String,
+        metadata: Option<Bound<'py, PyDict>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let core = self.core.clone();
+
+        // Convert metadata dict to HashMap
+        let metadata_map: Option<HashMap<String, String>> = metadata.map(|dict| {
+            dict.iter()
+                .filter_map(|(k, v)| {
+                    let key: Option<String> = k.extract().ok();
+                    let value: Option<String> = v.extract().ok();
+                    key.zip(value)
+                })
+                .collect()
+        });
+
+        let session_id_clone = session_id.clone();
+
+        future_into_py(py, async move {
+            // Create the session in core
+            let _session = core
+                .create_session(&session_id_clone, metadata_map)
+                .await
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+            // Return a WebRtcSession wrapper
+            let py_session = super::session::WebRtcSession::new(core, session_id_clone);
+            Python::attach(|py| Py::new(py, py_session))
+        })
+    }
+
+    /// Create a new session (room) and return SessionInfo
+    ///
+    /// Args:
+    ///     session_id: Unique session identifier
+    ///     metadata: Optional session metadata (dict)
+    ///
+    /// Returns:
+    ///     SessionInfo with session details
+    #[pyo3(signature = (session_id, metadata=None))]
+    fn create_session_info<'py>(
         &self,
         py: Python<'py>,
         session_id: String,
@@ -466,7 +510,7 @@ impl WebRtcServer {
 
     /// Context manager support: async with server
     fn __aenter__<'py>(slf: Py<Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let server = slf.clone();
+        let server = slf.clone_ref(py);
         future_into_py(py, async move {
             // Start the server when entering context
             let core = Python::attach(|py| {
@@ -568,20 +612,20 @@ async fn run_event_loop(
     tracing::debug!("Python WebRTC event loop stopped");
 }
 
-async fn invoke_callbacks<T: IntoPyObject<'static> + Clone + Send + 'static>(
-    callbacks: &[Py<PyAny>],
-    event: T,
-) {
+async fn invoke_callbacks<T>(callbacks: &[Py<PyAny>], event: T)
+where
+    T: for<'a> IntoPyObjectExt<'a> + Clone + Send + 'static,
+{
     for callback in callbacks.iter() {
-        let callback = callback.clone();
         let event = event.clone();
 
         // Invoke callback in a way that handles both sync and async functions
         if let Err(e) = Python::attach(|py| -> PyResult<()> {
             let cb = callback.bind(py);
-            let py_event = event.into_pyobject(py)?;
+            // Convert event to a PyAny object
+            let py_event = event.into_py_any(py)?;
 
-            // Call the callback
+            // Call the callback with the bound Python object
             let result = cb.call1((py_event,))?;
 
             // If the result is a coroutine, we need to schedule it

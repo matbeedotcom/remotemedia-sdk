@@ -66,7 +66,6 @@ echo "Copying native library to all locations..."
 TARGETS=(
     "$PROJECT_ROOT/target/$BUILD_TYPE/remotemedia_native.node"
     "$SCRIPT_DIR/nodejs/remotemedia-native.x86_64-unknown-linux-gnu.node"
-    "$SCRIPT_DIR/tests/nodejs/remotemedia-native.linux-x64-gnu.node"
 )
 
 for TARGET in "${TARGETS[@]}"; do
@@ -81,5 +80,5 @@ echo "Library size: $(du -h "$SOURCE_LIB" | cut -f1)"
 echo "Modified: $(stat -c %y "$SOURCE_LIB" 2>/dev/null || stat -f "%Sm" "$SOURCE_LIB" 2>/dev/null)"
 echo ""
 echo "To test, run:"
-echo "  cd $SCRIPT_DIR/tests/nodejs"
-echo "  npx ts-node demo/server.ts"
+echo "  cd $SCRIPT_DIR/nodejs"
+echo "  npm test"

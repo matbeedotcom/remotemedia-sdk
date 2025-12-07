@@ -39,13 +39,25 @@
     "build:napi:debug": "napi build --platform",
     "prepublishOnly": "napi prepublish -t npm",
     "test": "jest",
+    "test:subscriber": "jest subscriber.test.ts",
+    "test:publisher": "jest publisher.test.ts",
+    "test:session": "jest session.test.ts",
+    "test:webrtc": "jest webrtc.test.ts",
+    "test:webrtc-pipeline": "jest webrtc-pipeline.test.ts",
     "benchmark": "node benchmark-zero-copy.js"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4",
+    "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.0",
     "jest": "^29.5.0",
-    "typescript": "^5.0.0"
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.0.0",
+    "werift": "^0.22.2"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
   },
   "files": [
     "index.js",

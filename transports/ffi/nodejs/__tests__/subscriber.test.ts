@@ -56,7 +56,7 @@ let subscriberNative: NativeModule | null = null;
 let subscriberLoadError: Error | null = null;
 
 try {
-  subscriberNative = require('../../nodejs') as NativeModule;
+  subscriberNative = require('..') as NativeModule;
 } catch (e) {
   subscriberLoadError = e as Error;
 }

@@ -114,6 +114,7 @@ impl WebRtcServerConfig {
             max_peers: self.max_peers.unwrap_or(10),
             audio_codec,
             video_codec,
+            reconnect: core_config::ReconnectConfig::default(),
         };
 
         // Validate the config

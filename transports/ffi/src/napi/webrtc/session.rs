@@ -5,12 +5,11 @@
 
 use super::config::SessionInfo;
 use crate::webrtc::core::WebRtcServerCore;
-use crate::webrtc::events::{SessionEvent, WebRtcEvent};
 use napi::bindgen_prelude::*;
-use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
+use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
 use napi_derive::napi;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -106,7 +105,7 @@ impl WebRtcSession {
     /// @param event - Event name ('peer_joined', 'peer_left')
     /// @param callback - Event handler function
     #[napi]
-    pub fn on(&self, env: Env, event: String, callback: JsFunction) -> Result<()> {
+    pub fn on(&self, _env: Env, event: String, callback: JsFunction) -> Result<()> {
         match event.as_str() {
             "peer_joined" => {
                 let tsfn: PeerJoinedCallback = callback.create_threadsafe_function(

@@ -4,10 +4,10 @@
 //! between Node.js and Python bindings. It wraps the `remotemedia-webrtc`
 //! crate's signaling service and provides event forwarding.
 
-use super::config::{PeerInfo, PeerState, ServerState, WebRtcServerConfig};
+use super::config::{PeerInfo, PeerState, ReconnectConfig, ServerState, WebRtcServerConfig};
 use super::error::{WebRtcError, WebRtcResult};
 use super::events::{
-    DataReceivedEvent, ErrorEvent, PeerConnectedEvent, PeerDisconnectedEvent,
+    DataReceivedEvent, ErrorCode, ErrorEvent, PeerConnectedEvent, PeerDisconnectedEvent,
     PipelineOutputEvent, SessionEvent, WebRtcEvent,
 };
 use remotemedia_runtime_core::manifest::Manifest;
@@ -15,8 +15,9 @@ use remotemedia_runtime_core::transport::PipelineRunner;
 use remotemedia_webrtc::signaling::WebSocketSignalingServer;
 use remotemedia_webrtc::signaling::websocket::WebSocketServerHandle;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
 use uuid::Uuid;
 
@@ -57,6 +58,12 @@ pub struct WebRtcServerCore {
 
     /// WebSocket signaling server handle
     ws_server_handle: Arc<RwLock<Option<WebSocketServerHandle>>>,
+
+    /// Current reconnection attempt count (for external signaling mode)
+    reconnect_attempt: Arc<AtomicU32>,
+
+    /// Flag indicating if reconnection is in progress
+    reconnecting: Arc<AtomicBool>,
 }
 
 /// Session information for room/group management
@@ -91,6 +98,8 @@ impl WebRtcServerCore {
             shutdown: Arc::new(AtomicBool::new(false)),
             runtime_handle: tokio::runtime::Handle::try_current().ok(),
             ws_server_handle: Arc::new(RwLock::new(None)),
+            reconnect_attempt: Arc::new(AtomicU32::new(0)),
+            reconnecting: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -210,7 +219,23 @@ impl WebRtcServerCore {
     ///
     /// Can be called from Created, Running, or Stopping states.
     /// If called from Created state, just transitions to Stopped.
+    ///
+    /// Graceful shutdown process:
+    /// 1. Set shutdown flag to stop accepting new connections
+    /// 2. Disconnect all active peers with "Server shutdown" reason
+    /// 3. Emit peer_disconnected events for each peer
+    /// 4. Clear all sessions
+    /// 5. Shutdown the WebSocket signaling server
+    /// 6. Transition to Stopped state
     pub async fn shutdown(&self) -> WebRtcResult<()> {
+        self.shutdown_with_timeout(Duration::from_secs(30)).await
+    }
+
+    /// Shutdown the server with a custom timeout for peer disconnections
+    ///
+    /// If disconnecting all peers takes longer than the timeout, remaining
+    /// peers are forcefully disconnected without sending disconnect messages.
+    pub async fn shutdown_with_timeout(&self, timeout: Duration) -> WebRtcResult<()> {
         let mut state = self.state.write().await;
 
         if *state == ServerState::Stopped {
@@ -235,28 +260,127 @@ impl WebRtcServerCore {
         self.shutdown.store(true, Ordering::SeqCst);
         drop(state);
 
-        tracing::info!(server_id = %self.id, "Shutting down WebRTC server");
+        tracing::info!(
+            server_id = %self.id,
+            timeout_secs = timeout.as_secs(),
+            "Initiating graceful shutdown of WebRTC server"
+        );
 
-        // Shutdown WebSocket server
+        // Shutdown WebSocket server first to stop accepting new connections
         if let Some(handle) = self.ws_server_handle.write().await.take() {
             tracing::info!("Shutting down WebSocket signaling server...");
             handle.shutdown().await;
             tracing::info!("WebSocket signaling server shut down complete");
         }
 
-        // Disconnect all peers
+        // Collect all peer IDs before starting disconnection
         let peers = self.peers.read().await.keys().cloned().collect::<Vec<_>>();
-        for peer_id in peers {
-            let _ = self.disconnect_peer_internal(&peer_id, Some("Server shutdown")).await;
+        let peer_count = peers.len();
+
+        if peer_count > 0 {
+            tracing::info!(
+                server_id = %self.id,
+                peer_count = peer_count,
+                "Disconnecting active peers during graceful shutdown"
+            );
+
+            // Create a future that disconnects all peers
+            let disconnect_all = async {
+                for peer_id in peers {
+                    if let Err(e) = self.disconnect_peer_graceful(&peer_id, "Server shutdown").await {
+                        tracing::warn!(
+                            peer_id = %peer_id,
+                            error = %e,
+                            "Failed to gracefully disconnect peer during shutdown"
+                        );
+                    }
+                }
+            };
+
+            // Apply timeout to peer disconnection
+            match tokio::time::timeout(timeout, disconnect_all).await {
+                Ok(()) => {
+                    tracing::info!(
+                        server_id = %self.id,
+                        "All peers disconnected gracefully"
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        server_id = %self.id,
+                        timeout_secs = timeout.as_secs(),
+                        "Graceful peer disconnection timed out, forcing cleanup"
+                    );
+                    // Force clear remaining peers
+                    self.peers.write().await.clear();
+                }
+            }
         }
 
         // Clear sessions
+        let session_count = self.sessions.read().await.len();
+        if session_count > 0 {
+            tracing::info!(
+                server_id = %self.id,
+                session_count = session_count,
+                "Clearing sessions during shutdown"
+            );
+        }
         self.sessions.write().await.clear();
 
         let mut state = self.state.write().await;
         *state = ServerState::Stopped;
 
         tracing::info!(server_id = %self.id, "WebRTC server stopped");
+
+        Ok(())
+    }
+
+    /// Gracefully disconnect a peer, ensuring events are emitted
+    async fn disconnect_peer_graceful(&self, peer_id: &str, reason: &str) -> WebRtcResult<()> {
+        // Check if peer exists
+        let peer_exists = self.peers.read().await.contains_key(peer_id);
+        if !peer_exists {
+            return Ok(()); // Already disconnected
+        }
+
+        // Update peer state to Disconnecting
+        if let Some(peer) = self.peers.write().await.get_mut(peer_id) {
+            peer.state = PeerState::Disconnecting;
+        }
+
+        // TODO: Send disconnect message to peer via WebRTC data channel
+        // For now, we just emit the event and clean up
+
+        // Emit disconnect event
+        let event = PeerDisconnectedEvent::new(peer_id.to_string())
+            .with_reason(reason.to_string());
+        let _ = self.event_tx.send(WebRtcEvent::PeerDisconnected(event)).await;
+
+        // Remove peer from internal tracking
+        self.peers.write().await.remove(peer_id);
+
+        // Remove peer from all sessions and emit session events
+        let mut sessions = self.sessions.write().await;
+        for (session_id, session) in sessions.iter_mut() {
+            if session.peers.contains(&peer_id.to_string()) {
+                session.peers.retain(|p| p != peer_id);
+
+                let _ = self
+                    .event_tx
+                    .send(WebRtcEvent::Session(SessionEvent::peer_left(
+                        session_id.clone(),
+                        peer_id.to_string(),
+                    )))
+                    .await;
+            }
+        }
+
+        tracing::debug!(
+            peer_id = %peer_id,
+            reason = %reason,
+            "Gracefully disconnected peer"
+        );
 
         Ok(())
     }
@@ -513,6 +637,199 @@ impl WebRtcServerCore {
     pub(crate) async fn emit_error(&self, event: ErrorEvent) {
         let _ = self.event_tx.send(WebRtcEvent::Error(event)).await;
     }
+
+    // ============ Reconnection logic for external signaling ============
+
+    /// Calculate backoff delay for reconnection attempt
+    fn calculate_backoff(&self, attempt: u32, config: &ReconnectConfig) -> Duration {
+        let delay_ms = (config.initial_backoff_ms as f64
+            * config.backoff_multiplier.powi(attempt as i32))
+            .min(config.max_backoff_ms as f64) as u64;
+        Duration::from_millis(delay_ms)
+    }
+
+    /// Attempt to connect to external signaling with reconnection logic
+    ///
+    /// This method implements exponential backoff for reconnection attempts.
+    /// It emits `ReconnectAttempt` events during reconnection and `ReconnectFailed`
+    /// if all attempts are exhausted.
+    pub async fn connect_with_retry<F, Fut>(
+        &self,
+        connect_fn: F,
+    ) -> WebRtcResult<()>
+    where
+        F: Fn() -> Fut + Send + Sync,
+        Fut: std::future::Future<Output = WebRtcResult<()>> + Send,
+    {
+        let reconnect_config = &self.config.reconnect;
+        let max_attempts = reconnect_config.max_attempts;
+
+        // If reconnection is disabled, try once
+        if max_attempts == 0 {
+            return connect_fn().await;
+        }
+
+        let mut last_error: Option<WebRtcError> = None;
+
+        for attempt in 0..=max_attempts {
+            // Check for shutdown
+            if self.shutdown.load(Ordering::SeqCst) {
+                return Err(WebRtcError::internal("Shutdown requested during reconnection"));
+            }
+
+            // Update reconnection state
+            self.reconnect_attempt.store(attempt, Ordering::SeqCst);
+
+            if attempt > 0 {
+                self.reconnecting.store(true, Ordering::SeqCst);
+
+                // Emit reconnect attempt event
+                let event = ErrorEvent::new(
+                    ErrorCode::ReconnectAttempt,
+                    format!(
+                        "Reconnection attempt {}/{} - waiting {:?}",
+                        attempt,
+                        max_attempts,
+                        self.calculate_backoff(attempt - 1, reconnect_config)
+                    ),
+                );
+                self.emit_error(event).await;
+
+                // Wait with exponential backoff
+                let backoff = self.calculate_backoff(attempt - 1, reconnect_config);
+                tokio::time::sleep(backoff).await;
+            }
+
+            // Attempt connection
+            match connect_fn().await {
+                Ok(()) => {
+                    // Success! Reset reconnection state
+                    self.reconnecting.store(false, Ordering::SeqCst);
+                    self.reconnect_attempt.store(0, Ordering::SeqCst);
+
+                    if attempt > 0 {
+                        tracing::info!(
+                            server_id = %self.id,
+                            attempt = attempt,
+                            "Reconnected to external signaling server"
+                        );
+                    }
+                    return Ok(());
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        server_id = %self.id,
+                        attempt = attempt,
+                        max_attempts = max_attempts,
+                        error = %e,
+                        "Connection attempt failed"
+                    );
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        // All attempts exhausted
+        self.reconnecting.store(false, Ordering::SeqCst);
+
+        let error_msg = format!(
+            "Failed to connect after {} attempts: {}",
+            max_attempts + 1,
+            last_error.as_ref().map(|e| e.to_string()).unwrap_or_default()
+        );
+
+        // Emit reconnect failed event
+        let event = ErrorEvent::new(ErrorCode::ReconnectFailed, error_msg.clone());
+        self.emit_error(event).await;
+
+        Err(WebRtcError::signaling(error_msg))
+    }
+
+    /// Start external signaling connection with reconnection support
+    ///
+    /// This is called when the server is configured with `signaling_url` instead of `port`.
+    /// The connection will automatically retry with exponential backoff according to
+    /// the `reconnect` configuration.
+    pub async fn start_external(&self) -> WebRtcResult<()> {
+        let signaling_url = self.config.signaling_url.as_ref().ok_or_else(|| {
+            WebRtcError::config("signaling_url is required for external signaling mode")
+        })?;
+
+        let mut state = self.state.write().await;
+
+        if *state != ServerState::Created {
+            return Err(WebRtcError::invalid_state(format!(
+                "Cannot start server in {:?} state",
+                *state
+            )));
+        }
+
+        *state = ServerState::Starting;
+        drop(state);
+
+        tracing::info!(
+            server_id = %self.id,
+            signaling_url = %signaling_url,
+            max_reconnect_attempts = self.config.reconnect.max_attempts,
+            "Starting WebRTC server in external signaling mode"
+        );
+
+        // Clone values needed for the closure
+        let signaling_url = signaling_url.clone();
+        let _config = self.config.clone();
+
+        // Connect with retry logic
+        let result = self.connect_with_retry(|| async {
+            // TODO: Implement actual external signaling client connection
+            // This would connect to the external signaling server via gRPC or WebSocket
+            // For now, we simulate the connection check
+            tracing::debug!(signaling_url = %signaling_url, "Attempting to connect to external signaling server");
+
+            // Placeholder: In a real implementation, this would:
+            // 1. Create a gRPC/WebSocket client to the signaling server
+            // 2. Establish the connection and authenticate
+            // 3. Start receiving peer events from the signaling server
+
+            // For now, return an error to indicate external signaling is not yet implemented
+            Err(WebRtcError::signaling(format!(
+                "External signaling connection to {} is not yet implemented. Use embedded signaling (port) instead.",
+                signaling_url
+            )))
+        }).await;
+
+        match result {
+            Ok(()) => {
+                let mut state = self.state.write().await;
+                *state = ServerState::Running;
+                tracing::info!(
+                    server_id = %self.id,
+                    signaling_url = %signaling_url,
+                    "WebRTC server started in external signaling mode"
+                );
+                Ok(())
+            }
+            Err(e) => {
+                let mut state = self.state.write().await;
+                *state = ServerState::Created; // Reset to Created state on failure
+                Err(e)
+            }
+        }
+    }
+
+    /// Check if the server is currently reconnecting
+    pub fn is_reconnecting(&self) -> bool {
+        self.reconnecting.load(Ordering::SeqCst)
+    }
+
+    /// Get the current reconnection attempt number
+    pub fn reconnect_attempt(&self) -> u32 {
+        self.reconnect_attempt.load(Ordering::SeqCst)
+    }
+
+    /// Get the reconnection configuration
+    pub fn reconnect_config(&self) -> &ReconnectConfig {
+        &self.config.reconnect
+    }
 }
 
 #[cfg(test)]
@@ -520,10 +837,20 @@ mod tests {
     use super::*;
 
     fn test_config() -> WebRtcServerConfig {
+        use std::sync::atomic::{AtomicU16, Ordering};
+        // Use unique high ports to avoid "Address already in use" errors in parallel tests
+        static PORT_COUNTER: AtomicU16 = AtomicU16::new(50100);
+        let port = PORT_COUNTER.fetch_add(1, Ordering::SeqCst);
+
         WebRtcServerConfig {
-            port: Some(50051),
+            port: Some(port),
             signaling_url: None,
-            manifest: serde_json::json!({}),
+            manifest: serde_json::json!({
+                "version": "1.0",
+                "metadata": { "name": "test-pipeline" },
+                "nodes": [],
+                "connections": []
+            }),
             stun_servers: vec!["stun:stun.l.google.com:19302".to_string()],
             ..Default::default()
         }
@@ -577,5 +904,130 @@ mod tests {
         // Second take returns None
         let rx2 = core.take_event_receiver().await;
         assert!(rx2.is_none());
+    }
+
+    fn external_signaling_config() -> WebRtcServerConfig {
+        WebRtcServerConfig {
+            port: None,
+            signaling_url: Some("grpc://localhost:50052".to_string()),
+            manifest: serde_json::json!({
+                "version": "1.0",
+                "metadata": { "name": "external-signaling-test" },
+                "nodes": [],
+                "connections": []
+            }),
+            stun_servers: vec!["stun:stun.l.google.com:19302".to_string()],
+            reconnect: ReconnectConfig {
+                max_attempts: 2,
+                initial_backoff_ms: 10, // Short for tests
+                max_backoff_ms: 50,
+                backoff_multiplier: 2.0,
+            },
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_backoff_calculation() {
+        let core = WebRtcServerCore::new(external_signaling_config()).unwrap();
+        let config = core.reconnect_config();
+
+        // First attempt: 10ms
+        let delay0 = core.calculate_backoff(0, config);
+        assert_eq!(delay0.as_millis(), 10);
+
+        // Second attempt: 10ms * 2 = 20ms
+        let delay1 = core.calculate_backoff(1, config);
+        assert_eq!(delay1.as_millis(), 20);
+
+        // Third attempt: 10ms * 4 = 40ms
+        let delay2 = core.calculate_backoff(2, config);
+        assert_eq!(delay2.as_millis(), 40);
+
+        // Fourth attempt: should be capped at max_backoff_ms (50ms)
+        let delay3 = core.calculate_backoff(3, config);
+        assert_eq!(delay3.as_millis(), 50);
+    }
+
+    #[tokio::test]
+    async fn test_connect_with_retry_success() {
+        let core = WebRtcServerCore::new(external_signaling_config()).unwrap();
+
+        let attempt_count = Arc::new(AtomicU32::new(0));
+        let attempt_count_clone = Arc::clone(&attempt_count);
+
+        // Succeed on first attempt
+        let result = core
+            .connect_with_retry(|| {
+                let count = Arc::clone(&attempt_count_clone);
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            })
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(attempt_count.load(Ordering::SeqCst), 1);
+        assert!(!core.is_reconnecting());
+        assert_eq!(core.reconnect_attempt(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_connect_with_retry_eventual_success() {
+        let core = WebRtcServerCore::new(external_signaling_config()).unwrap();
+
+        let attempt_count = Arc::new(AtomicU32::new(0));
+        let attempt_count_clone = Arc::clone(&attempt_count);
+
+        // Succeed on second attempt
+        let result = core
+            .connect_with_retry(|| {
+                let count = Arc::clone(&attempt_count_clone);
+                async move {
+                    let current = count.fetch_add(1, Ordering::SeqCst);
+                    if current < 1 {
+                        Err(WebRtcError::signaling("Connection refused"))
+                    } else {
+                        Ok(())
+                    }
+                }
+            })
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(attempt_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_connect_with_retry_exhausted() {
+        let core = WebRtcServerCore::new(external_signaling_config()).unwrap();
+
+        let attempt_count = Arc::new(AtomicU32::new(0));
+        let attempt_count_clone = Arc::clone(&attempt_count);
+
+        // Always fail
+        let result = core
+            .connect_with_retry(|| {
+                let count = Arc::clone(&attempt_count_clone);
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    Err(WebRtcError::signaling("Connection refused"))
+                }
+            })
+            .await;
+
+        assert!(result.is_err());
+        // max_attempts=2, so we try: attempt 0, 1, 2 = 3 total
+        assert_eq!(attempt_count.load(Ordering::SeqCst), 3);
+        assert!(!core.is_reconnecting());
+    }
+
+    #[tokio::test]
+    async fn test_reconnection_state() {
+        let core = WebRtcServerCore::new(external_signaling_config()).unwrap();
+
+        assert!(!core.is_reconnecting());
+        assert_eq!(core.reconnect_attempt(), 0);
     }
 }

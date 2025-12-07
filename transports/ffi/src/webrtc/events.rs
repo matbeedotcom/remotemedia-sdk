@@ -3,7 +3,7 @@
 //! These event types are emitted from the WebRTC layer and forwarded to
 //! language-specific callbacks (ThreadsafeFunction for Node.js, Py<PyAny> for Python).
 
-use super::config::{PeerCapabilities, PeerInfo};
+use super::config::PeerCapabilities;
 use remotemedia_runtime_core::data::RuntimeData;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -131,6 +131,10 @@ pub enum ErrorCode {
     PeerNotFound,
     /// Internal error
     InternalError,
+    /// Reconnection attempt (informational)
+    ReconnectAttempt,
+    /// Reconnection failed after max attempts
+    ReconnectFailed,
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -144,6 +148,8 @@ impl std::fmt::Display for ErrorCode {
             ErrorCode::SessionNotFound => write!(f, "SESSION_NOT_FOUND"),
             ErrorCode::PeerNotFound => write!(f, "PEER_NOT_FOUND"),
             ErrorCode::InternalError => write!(f, "INTERNAL_ERROR"),
+            ErrorCode::ReconnectAttempt => write!(f, "RECONNECT_ATTEMPT"),
+            ErrorCode::ReconnectFailed => write!(f, "RECONNECT_FAILED"),
         }
     }
 }
@@ -182,6 +188,15 @@ impl ErrorEvent {
 pub enum SessionEventType {
     PeerJoined,
     PeerLeft,
+}
+
+impl std::fmt::Display for SessionEventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SessionEventType::PeerJoined => write!(f, "peer_joined"),
+            SessionEventType::PeerLeft => write!(f, "peer_left"),
+        }
+    }
 }
 
 /// Event emitted for session lifecycle events

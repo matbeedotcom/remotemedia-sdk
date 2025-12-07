@@ -6,7 +6,6 @@
 use super::config::{PeerInfo, SessionInfo, WebRtcServerConfig};
 use super::events::{
     DataReceivedData, ErrorData, PeerConnectedData, PeerDisconnectedData, PipelineOutputData,
-    SessionEventData,
 };
 use crate::webrtc::core::WebRtcServerCore;
 use crate::webrtc::events::WebRtcEvent;
@@ -163,7 +162,7 @@ impl WebRtcServer {
     /// @param event - Event name ('peer_connected', 'peer_disconnected', 'pipeline_output', 'data', 'error')
     /// @param callback - Event handler function
     #[napi]
-    pub fn on(&self, env: Env, event: String, callback: JsFunction) -> Result<()> {
+    pub fn on(&self, _env: Env, event: String, callback: JsFunction) -> Result<()> {
         match event.as_str() {
             "peer_connected" => {
                 let tsfn: PeerConnectedCallback = callback.create_threadsafe_function(
@@ -375,12 +374,38 @@ impl WebRtcServer {
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 
-    /// Create a new session (room)
+    /// Create a new session (room) and return a WebRtcSession object
     ///
     /// @param session_id - Unique session identifier
     /// @param metadata - Optional session metadata as key-value pairs
+    /// @returns WebRtcSession instance for managing the room
     #[napi]
     pub async fn create_session(
+        &self,
+        session_id: String,
+        metadata: Option<HashMap<String, String>>,
+    ) -> Result<crate::napi::webrtc::session::WebRtcSession> {
+        // Create the session in the core
+        let _session = self
+            .core
+            .create_session(&session_id, metadata)
+            .await
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+
+        // Return a WebRtcSession wrapper
+        Ok(crate::napi::webrtc::session::WebRtcSession::new(
+            self.core.clone(),
+            session_id,
+        ))
+    }
+
+    /// Create a new session (room) and return SessionInfo
+    ///
+    /// @param session_id - Unique session identifier
+    /// @param metadata - Optional session metadata as key-value pairs
+    /// @returns SessionInfo with session details
+    #[napi]
+    pub async fn create_session_info(
         &self,
         session_id: String,
         metadata: Option<HashMap<String, String>>,

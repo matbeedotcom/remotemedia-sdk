@@ -37,8 +37,10 @@
 pub mod config;
 pub mod events;
 pub mod server;
+pub mod session;
 
 // Re-export main types for convenience
 pub use config::*;
 pub use events::*;
 pub use server::*;
+pub use session::*;

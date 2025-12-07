@@ -1,14 +1,28 @@
 # RemoteMedia FFI Transport
 
-Python FFI (Foreign Function Interface) transport for RemoteMedia pipelines, providing fast Rust-accelerated pipeline execution for Python applications.
+FFI (Foreign Function Interface) transport for RemoteMedia pipelines, providing fast Rust-accelerated pipeline execution for **Node.js** and **Python** applications, including **WebRTC** real-time communication support.
 
 ## Overview
 
-This crate provides Python bindings to the `remotemedia-runtime-core`, enabling:
+This crate provides bindings to the `remotemedia-runtime-core` for multiple languages:
+
+### Python FFI
 - **Fast execution**: Native Rust performance for media processing
 - **Zero-copy**: Direct numpy array integration for audio/video data
 - **Async support**: Full Python asyncio integration via PyO3
 - **Independent deployment**: Can be updated without touching runtime-core
+
+### Node.js FFI (N-API)
+- **Native performance**: Rust-powered media processing in Node.js
+- **Async/Promise support**: Full async/await integration
+- **Buffer handling**: Zero-copy Buffer operations
+- **WebRTC support**: Built-in WebRTC transport layer
+
+### WebRTC Transport (both languages)
+- **Real-time communication**: Low-latency audio/video streaming
+- **Multi-peer support**: Up to 10 concurrent peer connections
+- **Session management**: Room/session-based peer grouping
+- **Event-driven**: Callbacks for peer connections, disconnections, and data
 
 ## Architecture
 
@@ -313,9 +327,246 @@ For maximum performance:
 2. Enable CPU optimizations: `RUSTFLAGS="-C target-cpu=native" maturin develop --release`
 3. Use zero-copy numpy integration where possible
 
+## WebRTC FFI Transport
+
+The WebRTC module provides real-time peer-to-peer communication with pipeline integration.
+
+### Building with WebRTC Support
+
+```bash
+# Node.js bindings
+cargo build --features napi-webrtc
+
+# Python bindings
+cargo build --features python-webrtc
+
+# Both
+cargo build --features napi-webrtc,python-webrtc
+```
+
+### Node.js WebRTC Usage
+
+```typescript
+// Import the native module
+const native = require('./nodejs');
+
+// Create WebRTC server with embedded signaling
+const server = await native.WebRtcServer.create({
+  port: 50051,                                    // WebSocket signaling port
+  manifest: JSON.stringify({                      // Pipeline configuration
+    nodes: [{ id: 'echo', type: 'Echo' }],
+    connections: []
+  }),
+  stunServers: ['stun:stun.l.google.com:19302'], // Required: at least one
+  turnServers: [{                                 // Optional TURN for NAT
+    url: 'turn:turn.example.com:3478',
+    username: 'user',
+    credential: 'pass'
+  }],
+  maxPeers: 5,                                    // Max concurrent peers (1-10)
+  videoCodec: 'vp9'                               // 'vp8', 'vp9', or 'h264'
+});
+
+// Register event handlers
+server.on('peer_connected', (event) => {
+  console.log(`Peer ${event.peerId} connected`);
+  console.log(`Capabilities: audio=${event.capabilities.audio}, video=${event.capabilities.video}`);
+});
+
+server.on('peer_disconnected', (event) => {
+  console.log(`Peer ${event.peerId} disconnected: ${event.reason || 'unknown'}`);
+});
+
+server.on('pipeline_output', (event) => {
+  console.log(`Pipeline output for peer ${event.peerId}:`, event.data);
+});
+
+server.on('data', (event) => {
+  console.log(`Data from peer ${event.peerId}:`, event.data);
+});
+
+server.on('error', (event) => {
+  console.error(`Error ${event.code}: ${event.message}`);
+});
+
+// Start the server
+await server.start();
+console.log(`WebRTC server running on ws://localhost:50051/ws`);
+
+// Session/room management
+const session = await server.createSession('room-1', { name: 'My Room' });
+const sessions = await server.getSessions();
+const retrieved = await server.getSession('room-1');
+await server.deleteSession('room-1');
+
+// Peer messaging
+await server.sendToPeer('peer-123', Buffer.from('Hello!'));
+await server.broadcast(Buffer.from('Hello everyone!'));
+await server.disconnectPeer('peer-123', 'kicked');
+
+// Get connected peers
+const peers = await server.getPeers();
+for (const peer of peers) {
+  console.log(`Peer ${peer.peerId}: state=${peer.state}`);
+}
+
+// Graceful shutdown
+await server.shutdown();
+```
+
+### Python WebRTC Usage
+
+```python
+import asyncio
+import json
+from remotemedia.webrtc import WebRtcServer
+
+async def main():
+    # Create WebRTC server with embedded signaling
+    server = await WebRtcServer.create({
+        "port": 50051,
+        "manifest": json.dumps({
+            "nodes": [{"id": "echo", "type": "Echo"}],
+            "connections": []
+        }),
+        "stun_servers": ["stun:stun.l.google.com:19302"],
+        "turn_servers": [{
+            "url": "turn:turn.example.com:3478",
+            "username": "user",
+            "credential": "pass"
+        }],
+        "max_peers": 5,
+        "video_codec": "vp9"
+    })
+
+    # Register event handlers using decorators
+    @server.on_peer_connected
+    async def handle_peer_connected(event):
+        print(f"Peer {event.peer_id} connected")
+        print(f"Capabilities: audio={event.capabilities.audio}, video={event.capabilities.video}")
+
+    @server.on_peer_disconnected
+    async def handle_peer_disconnected(event):
+        print(f"Peer {event.peer_id} disconnected: {event.reason or 'unknown'}")
+
+    @server.on_pipeline_output
+    async def handle_pipeline_output(event):
+        print(f"Pipeline output for peer {event.peer_id}: {event.data}")
+
+    @server.on_error
+    async def handle_error(event):
+        print(f"Error {event.code}: {event.message}")
+
+    # Start the server
+    await server.start()
+    print(f"WebRTC server running on ws://localhost:50051/ws")
+
+    # Session/room management
+    session = await server.create_session("room-1", metadata={"name": "My Room"})
+    sessions = await server.get_sessions()
+    retrieved = await server.get_session("room-1")
+    await server.delete_session("room-1")
+
+    # Peer messaging
+    await server.send_to_peer("peer-123", b"Hello!")
+    await server.broadcast(b"Hello everyone!")
+    await server.disconnect_peer("peer-123", reason="kicked")
+
+    # Get connected peers
+    peers = await server.get_peers()
+    for peer in peers:
+        print(f"Peer {peer.peer_id}: state={peer.state}")
+
+    # Keep server running
+    try:
+        await asyncio.sleep(float('inf'))
+    except KeyboardInterrupt:
+        pass
+
+    # Graceful shutdown
+    await server.shutdown()
+
+asyncio.run(main())
+```
+
+### External Signaling Mode
+
+For distributed deployments, connect to an external signaling server:
+
+**Node.js:**
+```typescript
+const server = await native.WebRtcServer.connect({
+  signalingUrl: 'grpc://signaling.example.com:50051',
+  manifest: JSON.stringify({ nodes: [], connections: [] }),
+  stunServers: ['stun:stun.l.google.com:19302'],
+  reconnect: {
+    maxAttempts: 5,
+    initialBackoffMs: 1000,
+    maxBackoffMs: 30000,
+    backoffMultiplier: 2.0
+  }
+});
+```
+
+**Python:**
+```python
+server = await WebRtcServer.connect({
+    "signaling_url": "grpc://signaling.example.com:50051",
+    "manifest": json.dumps({"nodes": [], "connections": []}),
+    "stun_servers": ["stun:stun.l.google.com:19302"],
+    "reconnect": {
+        "max_attempts": 5,
+        "initial_backoff_ms": 1000,
+        "max_backoff_ms": 30000,
+        "backoff_multiplier": 2.0
+    }
+})
+```
+
+### WebRTC Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `port` | u16 | - | Port for embedded WebSocket signaling (mutually exclusive with `signaling_url`) |
+| `signaling_url` | string | - | URL for external signaling server (`grpc://` or `grpcs://`) |
+| `manifest` | string | required | Pipeline manifest as JSON string |
+| `stun_servers` | string[] | required | STUN server URLs (`stun:host:port`) |
+| `turn_servers` | TurnServer[] | [] | TURN server configurations |
+| `max_peers` | u32 | 10 | Maximum concurrent peers (1-10) |
+| `audio_codec` | string | "opus" | Audio codec (only "opus" supported) |
+| `video_codec` | string | "vp9" | Video codec ("vp8", "vp9", "h264") |
+| `reconnect` | ReconnectConfig | default | Reconnection settings for external signaling |
+
+### Events
+
+| Event | Description | Data |
+|-------|-------------|------|
+| `peer_connected` | Peer completed WebRTC handshake | `{ peerId, capabilities, metadata }` |
+| `peer_disconnected` | Peer disconnected | `{ peerId, reason? }` |
+| `pipeline_output` | Pipeline produced output for peer | `{ peerId, data, timestamp }` |
+| `data` | Raw data received from peer | `{ peerId, data, timestamp }` |
+| `error` | Error occurred | `{ code, message, peerId? }` |
+| `session` | Session lifecycle event | `{ sessionId, eventType, peerId }` |
+
+### Error Codes
+
+| Code | Description |
+|------|-------------|
+| `SIGNALING_ERROR` | Signaling connection failed |
+| `PEER_ERROR` | Peer connection error |
+| `PIPELINE_ERROR` | Pipeline execution error |
+| `CONFIG_ERROR` | Invalid configuration |
+| `MAX_PEERS_REACHED` | Maximum peer limit reached |
+| `SESSION_NOT_FOUND` | Session not found |
+| `PEER_NOT_FOUND` | Peer not found |
+| `RECONNECT_ATTEMPT` | Reconnection attempt (informational) |
+| `RECONNECT_FAILED` | Reconnection failed after max attempts |
+| `INTERNAL_ERROR` | Internal error |
+
 ## See Also
 
 - [Runtime Core](../../runtime-core/README.md) - Core execution engine
 - [gRPC Transport](../remotemedia-grpc/README.md) - gRPC service transport
 - [Python Client](../../python-client/README.md) - Python SDK documentation
 - [Transport Decoupling Spec](../../specs/003-transport-decoupling/spec.md) - Architecture details
+- [WebRTC Spec](../../specs/016-ffi-webrtc-bindings/spec.md) - WebRTC FFI design specification

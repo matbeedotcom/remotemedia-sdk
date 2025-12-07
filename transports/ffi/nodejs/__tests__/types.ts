@@ -84,7 +84,7 @@ export function loadNativeModule(): { native: NativeModule | null; loadError: Er
   let loadError: Error | null = null;
 
   try {
-    native = require('../../nodejs') as NativeModule;
+    native = require('..') as NativeModule;
   } catch (e) {
     loadError = e as Error;
   }

@@ -4,6 +4,7 @@
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3::IntoPyObjectExt;
 use serde_json;
 use std::collections::HashMap;
 
@@ -184,6 +185,7 @@ impl WebRtcServerConfig {
             max_peers: self.max_peers,
             audio_codec: crate::webrtc::config::AudioCodec::Opus,
             video_codec,
+            reconnect: crate::webrtc::config::ReconnectConfig::default(),
         };
 
         // Validate the config
@@ -328,7 +330,7 @@ impl From<crate::webrtc::core::SessionInfo> for SessionInfo {
         Self {
             session_id: s.session_id,
             metadata_map: s.metadata,
-            peer_ids: s.peer_ids,
+            peer_ids: s.peers,
             created_at: s.created_at,
         }
     }
@@ -344,17 +346,17 @@ fn python_dict_to_json_string(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResul
     Ok(json_str)
 }
 
-fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
+fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<Py<PyAny>> {
     match value {
-        serde_json::Value::Null => Ok(py.None().into()),
-        serde_json::Value::Bool(b) => Ok(b.into_pyobject(py)?.into_any().unbind()),
+        serde_json::Value::Null => Ok(py.None()),
+        serde_json::Value::Bool(b) => Ok(b.into_pyobject(py)?.to_owned().into_any().unbind()),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Ok(i.into_pyobject(py)?.into_any().unbind())
             } else if let Some(f) = n.as_f64() {
                 Ok(f.into_pyobject(py)?.into_any().unbind())
             } else {
-                Ok(py.None().into())
+                Ok(py.None())
             }
         }
         serde_json::Value::String(s) => Ok(s.into_pyobject(py)?.into_any().unbind()),
@@ -363,14 +365,14 @@ fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObjec
             for item in arr {
                 list.append(json_to_python(py, item)?)?;
             }
-            Ok(list.into())
+            Ok(list.unbind().into_any())
         }
         serde_json::Value::Object(obj) => {
             let dict = PyDict::new(py);
             for (k, v) in obj {
                 dict.set_item(k, json_to_python(py, v)?)?;
             }
-            Ok(dict.into())
+            Ok(dict.unbind().into_any())
         }
     }
 }

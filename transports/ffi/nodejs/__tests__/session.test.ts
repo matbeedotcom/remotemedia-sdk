@@ -6,10 +6,21 @@
  */
 
 // Type imports from the native module
+interface NapiRuntimeData {
+  dataType: number;
+  getText(): string;
+}
+
+interface NapiRuntimeDataFactory {
+  text(text: string): NapiRuntimeData;
+  audio(samplesBuffer: Buffer, sampleRate: number, channels: number): NapiRuntimeData;
+  binary(data: Buffer): NapiRuntimeData;
+}
+
 interface NapiPublisher {
   readonly channelName: string;
   readonly isValid: boolean;
-  publish(data: Buffer): void;
+  publish(data: NapiRuntimeData): void;
   close(): void;
 }
 
@@ -57,6 +68,7 @@ interface NativeModule {
   listSessions(): string[];
   isNativeLoaded(): boolean;
   getLoadError(): Error | null;
+  NapiRuntimeData: NapiRuntimeDataFactory;
 }
 
 // Attempt to load the native module
@@ -64,7 +76,7 @@ let native: NativeModule | null = null;
 let loadError: Error | null = null;
 
 try {
-  native = require('../../nodejs') as NativeModule;
+  native = require('..') as NativeModule;
 } catch (e) {
   loadError = e as Error;
 }
@@ -419,7 +431,7 @@ describe('Session Isolation', () => {
     });
 
     // Publish from session1
-    const testData = Buffer.from([1, 2, 3, 4, 5]);
+    const testData = native.NapiRuntimeData.text('test message');
     publisher.publish(testData);
 
     // Wait a bit

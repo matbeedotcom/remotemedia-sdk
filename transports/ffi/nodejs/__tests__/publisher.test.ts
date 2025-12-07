@@ -54,7 +54,7 @@ let publisherNative: NativeModule | null = null;
 let publisherLoadError: Error | null = null;
 
 try {
-  publisherNative = require('../../nodejs') as NativeModule;
+  publisherNative = require('..') as NativeModule;
 } catch (e) {
   publisherLoadError = e as Error;
 }

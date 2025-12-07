@@ -125,9 +125,14 @@ impl PipelineOutputEvent {
 
 impl From<crate::webrtc::events::PipelineOutputEvent> for PipelineOutputEvent {
     fn from(e: crate::webrtc::events::PipelineOutputEvent) -> Self {
+        // Serialize RuntimeData to bytes for Python consumption
+        let data_bytes = match serde_json::to_vec(&e.data) {
+            Ok(bytes) => bytes,
+            Err(_) => Vec::new(),
+        };
         Self {
             peer_id: e.peer_id,
-            data_bytes: e.data,
+            data_bytes,
             timestamp: e.timestamp,
         }
     }
@@ -248,7 +253,7 @@ impl From<crate::webrtc::events::SessionEvent> for SessionEvent {
         Self {
             session_id: e.session_id,
             event_type: e.event_type.to_string(),
-            peer_id: e.peer_id,
+            peer_id: Some(e.peer_id),
         }
     }
 }

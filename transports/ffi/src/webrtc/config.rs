@@ -47,6 +47,53 @@ pub enum AudioCodec {
     Opus,
 }
 
+/// Reconnection configuration for external signaling
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReconnectConfig {
+    /// Maximum number of reconnection attempts (0 = disabled)
+    #[serde(default = "default_max_reconnect_attempts")]
+    pub max_attempts: u32,
+
+    /// Initial backoff delay in milliseconds
+    #[serde(default = "default_initial_backoff_ms")]
+    pub initial_backoff_ms: u64,
+
+    /// Maximum backoff delay in milliseconds
+    #[serde(default = "default_max_backoff_ms")]
+    pub max_backoff_ms: u64,
+
+    /// Backoff multiplier (exponential backoff)
+    #[serde(default = "default_backoff_multiplier")]
+    pub backoff_multiplier: f64,
+}
+
+fn default_max_reconnect_attempts() -> u32 {
+    5
+}
+
+fn default_initial_backoff_ms() -> u64 {
+    1000
+}
+
+fn default_max_backoff_ms() -> u64 {
+    30000
+}
+
+fn default_backoff_multiplier() -> f64 {
+    2.0
+}
+
+impl Default for ReconnectConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: default_max_reconnect_attempts(),
+            initial_backoff_ms: default_initial_backoff_ms(),
+            max_backoff_ms: default_max_backoff_ms(),
+            backoff_multiplier: default_backoff_multiplier(),
+        }
+    }
+}
+
 /// WebRTC server configuration
 ///
 /// Used to create a WebRTC server with either embedded or external signaling.
@@ -82,6 +129,10 @@ pub struct WebRtcServerConfig {
     /// Video codec (vp8, vp9, h264)
     #[serde(default)]
     pub video_codec: VideoCodec,
+
+    /// Reconnection configuration for external signaling mode
+    #[serde(default)]
+    pub reconnect: ReconnectConfig,
 }
 
 fn default_max_peers() -> u32 {
@@ -99,6 +150,7 @@ impl Default for WebRtcServerConfig {
             max_peers: 10,
             audio_codec: AudioCodec::Opus,
             video_codec: VideoCodec::Vp9,
+            reconnect: ReconnectConfig::default(),
         }
     }
 }
@@ -324,6 +376,7 @@ mod tests {
             max_peers: 10,
             audio_codec: AudioCodec::Opus,
             video_codec: VideoCodec::Vp9,
+            reconnect: ReconnectConfig::default(),
         };
         assert!(config.validate().is_ok());
         assert!(config.is_embedded());
@@ -341,6 +394,7 @@ mod tests {
             max_peers: 5,
             audio_codec: AudioCodec::Opus,
             video_codec: VideoCodec::Vp8,
+            reconnect: ReconnectConfig::default(),
         };
         assert!(config.validate().is_ok());
         assert!(!config.is_embedded());
