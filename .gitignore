@@ -172,6 +172,9 @@ runtime/wasmtime-v*/
 # .github/prompts/
 # .claude/commands/openspec/
 
+# Native Node.js addons (large binary files)
+*.node
+
 # Rust specific
 target/
 *.rlib
