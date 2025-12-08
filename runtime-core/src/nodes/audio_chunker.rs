@@ -15,8 +15,28 @@ use crate::data::RuntimeData;
 use crate::error::{Error, Result};
 use crate::nodes::AsyncStreamingNode;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+/// Audio Chunker Node configuration
+///
+/// Configuration for the audio chunker streaming node. Uses `#[serde(default)]` to allow
+/// partial config, and `#[serde(alias)]` to accept both snake_case and camelCase.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct AudioChunkerConfig {
+    /// Target chunk size in samples (e.g., 512 for Silero VAD)
+    #[serde(alias = "chunkSize")]
+    #[schemars(range(min = 1, max = 65536))]
+    pub chunk_size: usize,
+}
+
+impl Default for AudioChunkerConfig {
+    fn default() -> Self {
+        Self { chunk_size: 512 }
+    }
+}
 
 /// Chunker state for a session
 #[derive(Debug, Clone)]
@@ -51,11 +71,19 @@ pub struct AudioChunkerNode {
 }
 
 impl AudioChunkerNode {
-    pub fn new(chunk_size: Option<usize>) -> Self {
+    /// Create a new AudioChunkerNode with the given configuration
+    pub fn with_config(config: AudioChunkerConfig) -> Self {
         Self {
-            chunk_size: chunk_size.unwrap_or(512),
+            chunk_size: config.chunk_size,
             states: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
+    }
+
+    /// Create a new AudioChunkerNode with optional chunk size (legacy API)
+    pub fn new(chunk_size: Option<usize>) -> Self {
+        Self::with_config(AudioChunkerConfig {
+            chunk_size: chunk_size.unwrap_or(512),
+        })
     }
 
     /// Convert ProtoAudioBuffer samples to f32 vector

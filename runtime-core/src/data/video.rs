@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Pixel format for video frames
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[repr(u8)]
 pub enum PixelFormat {
     /// Unknown/unspecified format
@@ -69,7 +69,7 @@ impl PixelFormat {
 }
 
 /// Video codec type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[repr(u8)]
 pub enum VideoCodec {
     /// VP8 (WebM, WebRTC standard)

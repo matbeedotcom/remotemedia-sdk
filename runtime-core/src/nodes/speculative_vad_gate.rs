@@ -21,40 +21,58 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Configuration for SpeculativeVADGate
-#[derive(Debug, Clone)]
+///
+/// All fields have sensible defaults via `#[serde(default)]`, so you can
+/// deserialize from an empty object `{}` or partial config.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(default)]
 pub struct SpeculativeVADConfig {
     /// Lookback window in milliseconds (how much audio to keep for cancellation)
+    #[serde(alias = "lookbackMs")]
+    #[schemars(range(max = 1000))]
     pub lookback_ms: u32,
 
     /// Lookahead window in milliseconds (how long to wait before confirming speculation)
+    #[serde(alias = "lookaheadMs")]
+    #[schemars(range(max = 500))]
     pub lookahead_ms: u32,
 
     /// Sample rate of audio (needed for time calculations)
+    #[serde(alias = "sampleRate")]
+    #[schemars(range(min = 8000, max = 48000))]
     pub sample_rate: u32,
 
     /// VAD confidence threshold for speech detection (0.0-1.0)
+    #[serde(alias = "vadThreshold")]
+    #[schemars(range(min = 0.0, max = 1.0))]
     pub vad_threshold: f32,
 
     /// Minimum speech duration in milliseconds to trigger forwarding
+    #[serde(alias = "minSpeechMs")]
+    #[schemars(range(max = 5000))]
     pub min_speech_ms: u32,
 
     /// Minimum silence duration in milliseconds to end speech segment
+    #[serde(alias = "minSilenceMs")]
+    #[schemars(range(max = 5000))]
     pub min_silence_ms: u32,
 
     /// Padding before/after speech in milliseconds
+    #[serde(alias = "padMs")]
+    #[schemars(range(max = 500))]
     pub pad_ms: u32,
 }
 
 impl Default for SpeculativeVADConfig {
     fn default() -> Self {
         Self {
-            lookback_ms: 150,    // 150ms lookback
-            lookahead_ms: 50,    // 50ms lookahead
-            sample_rate: 16000,  // 16kHz default
-            vad_threshold: 0.5,  // 50% confidence
-            min_speech_ms: 250,  // 250ms minimum speech
-            min_silence_ms: 100, // 100ms minimum silence
-            pad_ms: 30,          // 30ms padding
+            lookback_ms: 150,
+            lookahead_ms: 50,
+            sample_rate: 16000,
+            vad_threshold: 0.5,
+            min_speech_ms: 250,
+            min_silence_ms: 100,
+            pad_ms: 30,
         }
     }
 }
@@ -404,6 +422,7 @@ mod tests {
             samples: vec![0.1, 0.2, 0.3],
             sample_rate: 16000,
             channels: 1,
+            stream_id: None,
         };
 
         let mut outputs = Vec::new();
@@ -441,6 +460,7 @@ mod tests {
             samples: vec![0.1; 100],
             sample_rate: 16000,
             channels: 1,
+            stream_id: None,
         };
 
         let callback = |_: RuntimeData| Ok(());
@@ -465,6 +485,7 @@ mod tests {
                 samples: vec![session_num as f32; 100],
                 sample_rate: 16000,
                 channels: 1,
+                stream_id: None,
             };
 
             let callback = |_: RuntimeData| Ok(());

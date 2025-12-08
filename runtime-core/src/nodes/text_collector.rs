@@ -15,8 +15,41 @@ use crate::data::RuntimeData;
 use crate::error::{Error, Result};
 use crate::nodes::AsyncStreamingNode;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+/// Text Collector Node configuration
+///
+/// Configuration for the text collector streaming node. Uses `#[serde(default)]` to allow
+/// partial config, and `#[serde(alias)]` to accept both snake_case and camelCase.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct TextCollectorConfig {
+    /// Split pattern for sentence boundaries (e.g., "[.!?;\\n]+")
+    /// If not specified, uses default boundary chars: . ! ? ; \n
+    #[serde(alias = "splitPattern")]
+    pub split_pattern: Option<String>,
+
+    /// Minimum sentence length before yielding (characters)
+    #[serde(alias = "minSentenceLength")]
+    #[schemars(range(min = 1, max = 1000))]
+    pub min_sentence_length: usize,
+
+    /// Yield partial sentences when <|text_end|> or <|audio_end|> is received
+    #[serde(alias = "yieldPartialOnEnd")]
+    pub yield_partial_on_end: bool,
+}
+
+impl Default for TextCollectorConfig {
+    fn default() -> Self {
+        Self {
+            split_pattern: None,
+            min_sentence_length: 3,
+            yield_partial_on_end: true,
+        }
+    }
+}
 
 /// Buffer state for a single session
 #[derive(Debug, Clone)]
@@ -52,14 +85,11 @@ pub struct TextCollectorNode {
 }
 
 impl TextCollectorNode {
-    pub fn new(
-        split_pattern: Option<String>,
-        min_sentence_length: Option<usize>,
-        yield_partial_on_end: Option<bool>,
-    ) -> Result<Self> {
+    /// Create a new TextCollectorNode with the given configuration
+    pub fn with_config(config: TextCollectorConfig) -> Self {
         // Parse split pattern to extract boundary characters
         // Default: [.!?;\n]+ (no commas - we want to keep them in sentences)
-        let boundary_chars = if let Some(pattern) = split_pattern {
+        let boundary_chars = if let Some(pattern) = config.split_pattern {
             // Simple parsing: extract characters from pattern like [.!?;\n]+
             pattern
                 .chars()
@@ -69,12 +99,25 @@ impl TextCollectorNode {
             vec!['.', '!', '?', ';', '\n']
         };
 
-        Ok(Self {
+        Self {
             boundary_chars,
+            min_sentence_length: config.min_sentence_length,
+            yield_partial_on_end: config.yield_partial_on_end,
+            states: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        }
+    }
+
+    /// Create a new TextCollectorNode with optional parameters (legacy API)
+    pub fn new(
+        split_pattern: Option<String>,
+        min_sentence_length: Option<usize>,
+        yield_partial_on_end: Option<bool>,
+    ) -> Result<Self> {
+        Ok(Self::with_config(TextCollectorConfig {
+            split_pattern,
             min_sentence_length: min_sentence_length.unwrap_or(3),
             yield_partial_on_end: yield_partial_on_end.unwrap_or(true),
-            states: Arc::new(Mutex::new(std::collections::HashMap::new())),
-        })
+        }))
     }
 
     fn is_boundary_char(&self, c: char) -> bool {

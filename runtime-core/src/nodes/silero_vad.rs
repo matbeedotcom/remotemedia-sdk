@@ -12,8 +12,53 @@ use crate::data::RuntimeData;
 use crate::error::{Error, Result};
 use crate::nodes::AsyncStreamingNode;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{Mutex, OnceCell};
+
+/// Silero VAD Node configuration
+///
+/// Configuration for the Silero VAD streaming node. Uses `#[serde(default)]` to allow
+/// partial config, and `#[serde(alias)]` to accept both snake_case and camelCase.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct SileroVADConfig {
+    /// Speech probability threshold (0.0-1.0)
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub threshold: f32,
+
+    /// Expected sample rate (8000 or 16000)
+    #[serde(alias = "samplingRate")]
+    #[schemars(range(min = 8000, max = 16000))]
+    pub sampling_rate: u32,
+
+    /// Minimum speech duration in ms to trigger
+    #[serde(alias = "minSpeechDurationMs")]
+    #[schemars(range(max = 5000))]
+    pub min_speech_duration_ms: u32,
+
+    /// Minimum silence duration in ms to end speech
+    #[serde(alias = "minSilenceDurationMs")]
+    #[schemars(range(max = 5000))]
+    pub min_silence_duration_ms: u32,
+
+    /// Padding before/after speech in ms
+    #[serde(alias = "speechPadMs")]
+    #[schemars(range(max = 500))]
+    pub speech_pad_ms: u32,
+}
+
+impl Default for SileroVADConfig {
+    fn default() -> Self {
+        Self {
+            threshold: 0.5,
+            sampling_rate: 16000,
+            min_speech_duration_ms: 250,
+            min_silence_duration_ms: 100,
+            speech_pad_ms: 30,
+        }
+    }
+}
 
 #[cfg(feature = "silero-vad")]
 use ort::{
@@ -71,6 +116,21 @@ pub struct SileroVADNode {
 }
 
 impl SileroVADNode {
+    /// Create a new SileroVADNode with the given configuration
+    pub fn with_config(config: SileroVADConfig) -> Self {
+        Self {
+            threshold: config.threshold,
+            sampling_rate: config.sampling_rate,
+            min_speech_duration_ms: config.min_speech_duration_ms,
+            min_silence_duration_ms: config.min_silence_duration_ms,
+            speech_pad_ms: config.speech_pad_ms,
+            #[cfg(feature = "silero-vad")]
+            session: OnceCell::new(),
+            states: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        }
+    }
+
+    /// Create a new SileroVADNode with optional parameters (legacy API)
     pub fn new(
         threshold: Option<f32>,
         sampling_rate: Option<u32>,
@@ -78,16 +138,13 @@ impl SileroVADNode {
         min_silence_duration_ms: Option<u32>,
         speech_pad_ms: Option<u32>,
     ) -> Self {
-        Self {
+        Self::with_config(SileroVADConfig {
             threshold: threshold.unwrap_or(0.5),
             sampling_rate: sampling_rate.unwrap_or(16000),
             min_speech_duration_ms: min_speech_duration_ms.unwrap_or(250),
             min_silence_duration_ms: min_silence_duration_ms.unwrap_or(100),
             speech_pad_ms: speech_pad_ms.unwrap_or(30),
-            #[cfg(feature = "silero-vad")]
-            session: OnceCell::new(),
-            states: Arc::new(Mutex::new(std::collections::HashMap::new())),
-        }
+        })
     }
 
     #[cfg(feature = "silero-vad")]

@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 /// Flip direction
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum FlipDirection {
     /// Flip vertically (upside down)
@@ -27,10 +27,13 @@ impl Default for FlipDirection {
 }
 
 /// Video flip node configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Configuration for the video flip streaming node. Uses `#[serde(default)]` to allow
+/// partial config.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
 pub struct VideoFlipConfig {
-    /// Direction to flip
-    #[serde(default)]
+    /// Direction to flip (vertical, horizontal, or both)
     pub direction: FlipDirection,
 }
 

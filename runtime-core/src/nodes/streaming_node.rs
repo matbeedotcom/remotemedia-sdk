@@ -341,6 +341,17 @@ pub trait StreamingNodeFactory: Send + Sync {
     fn is_multi_output_streaming(&self) -> bool {
         false // Default: single output
     }
+
+    /// Get the node schema for type generation.
+    ///
+    /// Override this to provide schema metadata (description, accepts/produces,
+    /// config parameters) that gets exported to TypeScript types via NAPI.
+    ///
+    /// Returns None by default - nodes without schema info are still usable
+    /// but won't have typed configs in generated TypeScript.
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        None
+    }
 }
 
 /// Registry for streaming nodes
@@ -413,6 +424,17 @@ impl StreamingNodeRegistry {
         let mut types: Vec<String> = self.factories.keys().cloned().collect();
         types.sort();
         types
+    }
+
+    /// Collect all schemas from registered factories.
+    ///
+    /// This allows building a schema registry dynamically from factory metadata
+    /// rather than maintaining a separate manual registry.
+    pub fn collect_schemas(&self) -> Vec<crate::nodes::schema::NodeSchema> {
+        self.factories
+            .values()
+            .filter_map(|factory| factory.schema())
+            .collect()
     }
 }
 

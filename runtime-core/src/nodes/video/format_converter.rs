@@ -11,15 +11,22 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
 /// Configuration for pixel format conversion
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Configuration for the video format converter node. Uses `#[serde(default)]` to allow
+/// partial config, and `#[serde(alias)]` to accept both snake_case and camelCase.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
 pub struct VideoFormatConverterConfig {
-    /// Target pixel format
+    /// Target pixel format (yuv420p, i420, nv12, rgb24, rgba32)
+    #[serde(alias = "targetFormat")]
     pub target_format: PixelFormat,
 
-    /// Color matrix ("bt601", "bt709", "bt2020")
+    /// Color matrix: "bt601", "bt709", or "bt2020"
+    #[serde(alias = "colorMatrix")]
     pub color_matrix: String,
 
-    /// Color range ("tv", "pc")
+    /// Color range: "tv" or "pc"
+    #[serde(alias = "colorRange")]
     pub color_range: String,
 }
 

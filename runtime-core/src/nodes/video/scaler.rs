@@ -11,18 +11,27 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
 /// Configuration for video scaling
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Configuration for the video scaler node. Uses `#[serde(default)]` to allow
+/// partial config, and `#[serde(alias)]` to accept both snake_case and camelCase.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
 pub struct VideoScalerConfig {
     /// Target width in pixels (0 = maintain aspect ratio based on height)
+    #[serde(alias = "targetWidth")]
+    #[schemars(range(min = 0, max = 7680))]
     pub target_width: u32,
 
     /// Target height in pixels (0 = maintain aspect ratio based on width)
+    #[serde(alias = "targetHeight")]
+    #[schemars(range(min = 0, max = 4320))]
     pub target_height: u32,
 
-    /// Scaling algorithm ("bilinear", "bicubic", "lanczos")
+    /// Scaling algorithm: "bilinear", "bicubic", or "lanczos"
     pub algorithm: String,
 
     /// Maintain aspect ratio (add padding if needed)
+    #[serde(alias = "maintainAspectRatio")]
     pub maintain_aspect_ratio: bool,
 }
 

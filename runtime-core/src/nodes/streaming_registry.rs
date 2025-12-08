@@ -66,18 +66,27 @@ impl StreamingNodeFactory for VideoFlipNodeFactory {
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
-        let config = if params.is_null() {
-            crate::nodes::video_flip::VideoFlipConfig::default()
-        } else {
-            serde_json::from_value(params.clone())
-                .map_err(|e| Error::Execution(format!("Failed to parse VideoFlip config: {}", e)))?
-        };
+        use crate::nodes::video_flip::VideoFlipConfig;
+        let config: VideoFlipConfig = serde_json::from_value(params.clone()).unwrap_or_default();
         let node = VideoFlipNode::new(config);
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
     fn node_type(&self) -> &str {
         "VideoFlip"
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{NodeSchema, RuntimeDataType};
+        use crate::nodes::video_flip::VideoFlipConfig;
+        Some(
+            NodeSchema::new("VideoFlip")
+                .description("Flips video frames horizontally or vertically")
+                .category("video")
+                .accepts([RuntimeDataType::Video])
+                .produces([RuntimeDataType::Video])
+                .config_schema_from::<VideoFlipConfig>(),
+        )
     }
 }
 
@@ -92,21 +101,26 @@ impl StreamingNodeFactory for VideoEncoderNodeFactory {
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
-        let config = if params.is_null() {
-            VideoEncoderConfig::default()
-        } else {
-            serde_json::from_value(params.clone())
-                .map_err(|e| Error::Execution(format!("Invalid VideoEncoder config: {}", e)))?
-        };
-
+        let config: VideoEncoderConfig = serde_json::from_value(params.clone()).unwrap_or_default();
         let node = VideoEncoderNode::new(config)
             .map_err(|e| Error::Execution(format!("Failed to create VideoEncoder: {}", e)))?;
-
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
     fn node_type(&self) -> &str {
         "VideoEncoder"
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{NodeSchema, RuntimeDataType};
+        Some(
+            NodeSchema::new("VideoEncoder")
+                .description("Encodes raw video frames to compressed bitstreams (VP8/AV1/H.264)")
+                .category("video")
+                .accepts([RuntimeDataType::Video])
+                .produces([RuntimeDataType::Video])
+                .config_schema_from::<VideoEncoderConfig>(),
+        )
     }
 }
 
@@ -121,21 +135,26 @@ impl StreamingNodeFactory for VideoDecoderNodeFactory {
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
-        let config = if params.is_null() {
-            VideoDecoderConfig::default()
-        } else {
-            serde_json::from_value(params.clone())
-                .map_err(|e| Error::Execution(format!("Invalid VideoDecoder config: {}", e)))?
-        };
-
+        let config: VideoDecoderConfig = serde_json::from_value(params.clone()).unwrap_or_default();
         let node = VideoDecoderNode::new(config)
             .map_err(|e| Error::Execution(format!("Failed to create VideoDecoder: {}", e)))?;
-
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
     fn node_type(&self) -> &str {
         "VideoDecoder"
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{NodeSchema, RuntimeDataType};
+        Some(
+            NodeSchema::new("VideoDecoder")
+                .description("Decodes compressed video bitstreams to raw frames")
+                .category("video")
+                .accepts([RuntimeDataType::Video])
+                .produces([RuntimeDataType::Video])
+                .config_schema_from::<VideoDecoderConfig>(),
+        )
     }
 }
 
@@ -151,22 +170,27 @@ impl StreamingNodeFactory for VideoScalerNodeFactory {
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
         use crate::nodes::video::{VideoScalerNode, VideoScalerConfig};
-
-        let config = if params.is_null() {
-            VideoScalerConfig::default()
-        } else {
-            serde_json::from_value(params.clone())
-                .map_err(|e| Error::Execution(format!("Invalid VideoScaler config: {}", e)))?
-        };
-
+        let config: VideoScalerConfig = serde_json::from_value(params.clone()).unwrap_or_default();
         let node = VideoScalerNode::new(config)
             .map_err(|e| Error::Execution(format!("Failed to create VideoScaler: {}", e)))?;
-
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
     fn node_type(&self) -> &str {
         "VideoScaler"
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{NodeSchema, RuntimeDataType};
+        use crate::nodes::video::VideoScalerConfig;
+        Some(
+            NodeSchema::new("VideoScaler")
+                .description("Scales/resizes video frames")
+                .category("video")
+                .accepts([RuntimeDataType::Video])
+                .produces([RuntimeDataType::Video])
+                .config_schema_from::<VideoScalerConfig>(),
+        )
     }
 }
 
@@ -182,22 +206,27 @@ impl StreamingNodeFactory for VideoFormatConverterNodeFactory {
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
         use crate::nodes::video::{VideoFormatConverterNode, VideoFormatConverterConfig};
-
-        let config = if params.is_null() {
-            VideoFormatConverterConfig::default()
-        } else {
-            serde_json::from_value(params.clone())
-                .map_err(|e| Error::Execution(format!("Invalid VideoFormatConverter config: {}", e)))?
-        };
-
+        let config: VideoFormatConverterConfig = serde_json::from_value(params.clone()).unwrap_or_default();
         let node = VideoFormatConverterNode::new(config)
             .map_err(|e| Error::Execution(format!("Failed to create VideoFormatConverter: {}", e)))?;
-
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
     fn node_type(&self) -> &str {
         "VideoFormatConverter"
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{NodeSchema, RuntimeDataType};
+        use crate::nodes::video::VideoFormatConverterConfig;
+        Some(
+            NodeSchema::new("VideoFormatConverter")
+                .description("Converts between pixel formats (RGB/YUV/NV12)")
+                .category("video")
+                .accepts([RuntimeDataType::Video])
+                .produces([RuntimeDataType::Video])
+                .config_schema_from::<VideoFormatConverterConfig>(),
+        )
     }
 }
 
@@ -365,24 +394,9 @@ impl StreamingNodeFactory for TextCollectorNodeFactory {
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
-        use crate::nodes::TextCollectorNode;
-
-        let split_pattern = params
-            .get("splitPattern")
-            .or(params.get("split_pattern"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let min_length = params
-            .get("minSentenceLength")
-            .or(params.get("min_sentence_length"))
-            .and_then(|v| v.as_u64())
-            .map(|v| v as usize);
-        let yield_partial = params
-            .get("yieldPartialOnEnd")
-            .or(params.get("yield_partial_on_end"))
-            .and_then(|v| v.as_bool());
-
-        let node = TextCollectorNode::new(split_pattern, min_length, yield_partial)?;
+        use crate::nodes::text_collector::{TextCollectorNode, TextCollectorConfig};
+        let config: TextCollectorConfig = serde_json::from_value(params.clone()).unwrap_or_default();
+        let node = TextCollectorNode::with_config(config);
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
@@ -393,6 +407,19 @@ impl StreamingNodeFactory for TextCollectorNodeFactory {
     fn is_multi_output_streaming(&self) -> bool {
         true // Can output 0 or multiple items (complete sentences)
     }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{NodeSchema, RuntimeDataType};
+        use crate::nodes::text_collector::TextCollectorConfig;
+        Some(
+            NodeSchema::new("TextCollectorNode")
+                .description("Accumulates streaming text tokens and yields complete sentences")
+                .category("text")
+                .accepts([RuntimeDataType::Text])
+                .produces([RuntimeDataType::Text])
+                .config_schema_from::<TextCollectorConfig>(),
+        )
+    }
 }
 
 #[cfg(feature = "silero-vad")]
@@ -402,46 +429,13 @@ struct SileroVADNodeFactory;
 impl StreamingNodeFactory for SileroVADNodeFactory {
     fn create(
         &self,
-        _node_id: String,  // Reserved for future node identification/logging
+        _node_id: String,
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
-        use crate::nodes::SileroVADNode;
-
-        // Extract parameters
-        let threshold = params
-            .get("threshold")
-            .and_then(|v| v.as_f64())
-            .map(|v| v as f32);
-        let sampling_rate = params
-            .get("samplingRate")
-            .or(params.get("sampling_rate"))
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32);
-        let min_speech_ms = params
-            .get("minSpeechDurationMs")
-            .or(params.get("min_speech_duration_ms"))
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32);
-        let min_silence_ms = params
-            .get("minSilenceDurationMs")
-            .or(params.get("min_silence_duration_ms"))
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32);
-        let speech_pad_ms = params
-            .get("speechPadMs")
-            .or(params.get("speech_pad_ms"))
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32);
-
-        let node = SileroVADNode::new(
-            threshold,
-            sampling_rate,
-            min_speech_ms,
-            min_silence_ms,
-            speech_pad_ms,
-        );
-
+        use crate::nodes::silero_vad::{SileroVADNode, SileroVADConfig};
+        let config: SileroVADConfig = serde_json::from_value(params.clone()).unwrap_or_default();
+        let node = SileroVADNode::with_config(config);
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
@@ -451,6 +445,25 @@ impl StreamingNodeFactory for SileroVADNodeFactory {
 
     fn is_multi_output_streaming(&self) -> bool {
         true // Outputs 2 items: VAD event + pass-through audio
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{LatencyClass, NodeCapabilitiesSchema, NodeSchema, RuntimeDataType};
+        use crate::nodes::silero_vad::SileroVADConfig;
+        Some(
+            NodeSchema::new("SileroVADNode")
+                .description("Voice activity detection using Silero VAD ONNX model")
+                .category("audio")
+                .accepts([RuntimeDataType::Audio])
+                .produces([RuntimeDataType::Json, RuntimeDataType::Audio])
+                .capabilities(NodeCapabilitiesSchema {
+                    parallelizable: false,
+                    batch_aware: false,
+                    supports_control: true,
+                    latency_class: LatencyClass::Fast,
+                })
+                .config_schema_from::<SileroVADConfig>(),
+        )
     }
 }
 
@@ -465,69 +478,10 @@ impl StreamingNodeFactory for SpeculativeVADGateFactory {
     ) -> Result<Box<dyn StreamingNode>, Error> {
         use crate::nodes::speculative_vad_gate::{SpeculativeVADConfig, SpeculativeVADGate};
 
-        // Parse configuration parameters
-        let config = if params.is_null() {
-            SpeculativeVADConfig::default()
-        } else {
-            let lookback_ms = params
-                .get("lookbackMs")
-                .or(params.get("lookback_ms"))
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(150);
-
-            let lookahead_ms = params
-                .get("lookaheadMs")
-                .or(params.get("lookahead_ms"))
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(50);
-
-            let sample_rate = params
-                .get("sampleRate")
-                .or(params.get("sample_rate"))
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(16000);
-
-            let vad_threshold = params
-                .get("vadThreshold")
-                .or(params.get("vad_threshold"))
-                .and_then(|v| v.as_f64())
-                .map(|v| v as f32)
-                .unwrap_or(0.5);
-
-            let min_speech_ms = params
-                .get("minSpeechMs")
-                .or(params.get("min_speech_ms"))
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(250);
-
-            let min_silence_ms = params
-                .get("minSilenceMs")
-                .or(params.get("min_silence_ms"))
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(100);
-
-            let pad_ms = params
-                .get("padMs")
-                .or(params.get("pad_ms"))
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(30);
-
-            SpeculativeVADConfig {
-                lookback_ms,
-                lookahead_ms,
-                sample_rate,
-                vad_threshold,
-                min_speech_ms,
-                min_silence_ms,
-                pad_ms,
-            }
-        };
+        // Deserialize config directly - #[serde(default)] handles missing fields,
+        // #[serde(alias = "camelCase")] handles both snake_case and camelCase
+        let config: SpeculativeVADConfig = serde_json::from_value(params.clone())
+            .unwrap_or_default();
 
         let node = SpeculativeVADGate::with_config(config);
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
@@ -539,6 +493,25 @@ impl StreamingNodeFactory for SpeculativeVADGateFactory {
 
     fn is_multi_output_streaming(&self) -> bool {
         true // Outputs audio + optional cancellation messages
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{LatencyClass, NodeCapabilitiesSchema, NodeSchema, RuntimeDataType};
+        use crate::nodes::speculative_vad_gate::SpeculativeVADConfig;
+        Some(
+            NodeSchema::new("SpeculativeVADGate")
+                .description("Speculative VAD gate for low-latency voice interaction")
+                .category("audio")
+                .accepts([RuntimeDataType::Audio])
+                .produces([RuntimeDataType::Audio, RuntimeDataType::ControlMessage])
+                .capabilities(NodeCapabilitiesSchema {
+                    parallelizable: false,
+                    batch_aware: false,
+                    supports_control: true,
+                    latency_class: LatencyClass::Realtime,
+                })
+                .config_schema_from::<SpeculativeVADConfig>(),
+        )
     }
 }
 
@@ -575,19 +548,13 @@ struct AudioChunkerNodeFactory;
 impl StreamingNodeFactory for AudioChunkerNodeFactory {
     fn create(
         &self,
-        _node_id: String,  // Reserved for future node identification/logging
+        _node_id: String,
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
-        use crate::nodes::AudioChunkerNode;
-
-        let chunk_size = params
-            .get("chunkSize")
-            .or(params.get("chunk_size"))
-            .and_then(|v| v.as_u64())
-            .map(|v| v as usize);
-
-        let node = AudioChunkerNode::new(chunk_size);
+        use crate::nodes::audio_chunker::{AudioChunkerNode, AudioChunkerConfig};
+        let config: AudioChunkerConfig = serde_json::from_value(params.clone()).unwrap_or_default();
+        let node = AudioChunkerNode::with_config(config);
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
@@ -597,6 +564,19 @@ impl StreamingNodeFactory for AudioChunkerNodeFactory {
 
     fn is_multi_output_streaming(&self) -> bool {
         true // Can output 0 or multiple chunks per input
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{NodeSchema, RuntimeDataType};
+        use crate::nodes::audio_chunker::AudioChunkerConfig;
+        Some(
+            NodeSchema::new("AudioChunkerNode")
+                .description("Splits incoming audio into fixed-size chunks")
+                .category("audio")
+                .accepts([RuntimeDataType::Audio])
+                .produces([RuntimeDataType::Audio])
+                .config_schema_from::<AudioChunkerConfig>(),
+        )
     }
 }
 
@@ -656,6 +636,48 @@ impl StreamingNodeFactory for FastResampleNodeFactory {
 
     fn is_multi_output_streaming(&self) -> bool {
         false // Always outputs exactly 1 chunk per input
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{NodeSchema, RuntimeDataType};
+        Some(
+            NodeSchema::new("FastResampleNode")
+                .description("High-quality audio resampling using sinc interpolation")
+                .category("audio")
+                .accepts([RuntimeDataType::Audio])
+                .produces([RuntimeDataType::Audio])
+                .config_schema(serde_json::json!({
+                    "type": "object",
+                    "required": ["source_rate", "target_rate"],
+                    "properties": {
+                        "source_rate": {
+                            "type": "integer",
+                            "description": "Source sample rate in Hz",
+                            "minimum": 8000,
+                            "maximum": 192000
+                        },
+                        "target_rate": {
+                            "type": "integer",
+                            "description": "Target sample rate in Hz",
+                            "minimum": 8000,
+                            "maximum": 192000
+                        },
+                        "quality": {
+                            "type": "string",
+                            "description": "Resampling quality",
+                            "enum": ["Low", "Medium", "High"],
+                            "default": "Medium"
+                        },
+                        "channels": {
+                            "type": "integer",
+                            "description": "Number of audio channels",
+                            "default": 1,
+                            "minimum": 1,
+                            "maximum": 8
+                        }
+                    }
+                })),
+        )
     }
 }
 

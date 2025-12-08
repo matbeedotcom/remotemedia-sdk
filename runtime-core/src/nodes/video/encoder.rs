@@ -14,43 +14,41 @@ use std::sync::{Arc, Mutex};
 use super::codec::{CodecError, FFmpegEncoder, VideoEncoderBackend};
 
 /// Configuration for video encoding
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Configuration for the video encoder node. Uses `#[serde(default)]` to allow
+/// partial config, and `#[serde(alias)]` to accept both snake_case and camelCase.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
 pub struct VideoEncoderConfig {
-    /// Codec to use
+    /// Codec to use (vp8, h264, av1)
     pub codec: VideoCodec,
 
-    /// Target bitrate in bits per second
-    /// Example: 2_000_000 for 2 Mbps
-    /// Default: 1 Mbps for 720p
+    /// Target bitrate in bits per second (e.g., 2_000_000 for 2 Mbps)
+    #[schemars(range(min = 100000, max = 50000000))]
     pub bitrate: u32,
 
-    /// Target frame rate (fps)
-    /// Example: 30 for 30fps
-    /// Default: 30
+    /// Target frame rate (fps) (e.g., 30 for 30fps)
+    #[schemars(range(min = 1, max = 120))]
     pub framerate: u32,
 
-    /// Keyframe interval in frames
-    /// Example: 60 means I-frame every 60 frames (2 seconds @ 30fps)
-    /// Default: 60
+    /// Keyframe interval in frames (e.g., 60 means I-frame every 60 frames)
+    #[serde(alias = "keyframeInterval")]
+    #[schemars(range(min = 1, max = 300))]
     pub keyframe_interval: u32,
 
     /// Quality preset (codec-specific)
     /// VP8: "good", "best", "realtime"
     /// H.264: "ultrafast", "fast", "medium", "slow"
     /// AV1: "0" (slowest) to "10" (fastest)
-    /// Default: "medium" or equivalent
+    #[serde(alias = "qualityPreset")]
     pub quality_preset: String,
 
-    /// Enable hardware acceleration
-    /// - Linux: VAAPI
-    /// - macOS: VideoToolbox
-    /// - Windows: NVENC (NVIDIA), QuickSync (Intel)
-    /// Default: true (fallback to software if unavailable)
+    /// Enable hardware acceleration (VAAPI on Linux, VideoToolbox on macOS, NVENC/QuickSync on Windows)
+    #[serde(alias = "hardwareAccel")]
     pub hardware_accel: bool,
 
-    /// Number of threads for encoding
-    /// 0 means auto-detect based on CPU cores
-    /// Default: 0
+    /// Number of threads for encoding (0 = auto-detect based on CPU cores)
+    #[schemars(range(min = 0, max = 64))]
     pub threads: u32,
 }
 

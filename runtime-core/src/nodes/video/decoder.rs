@@ -14,30 +14,30 @@ use tracing::warn;
 use super::codec::{CodecError, FFmpegDecoder, VideoDecoderBackend};
 
 /// Configuration for video decoding
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Configuration for the video decoder node. Uses `#[serde(default)]` to allow
+/// partial config, and `#[serde(alias)]` to accept both snake_case and camelCase.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
 pub struct VideoDecoderConfig {
-    /// Expected codec (for validation)
-    /// None means auto-detect from bitstream
+    /// Expected codec (for validation). None means auto-detect from bitstream.
+    #[serde(alias = "expectedCodec")]
     pub expected_codec: Option<VideoCodec>,
 
-    /// Output pixel format
-    /// Decoder will convert to this format
-    /// Default: Yuv420p (most efficient)
+    /// Output pixel format (yuv420p, i420, nv12, rgb24, rgba32)
+    #[serde(alias = "outputFormat")]
     pub output_format: PixelFormat,
 
     /// Enable hardware acceleration
-    /// Default: true
+    #[serde(alias = "hardwareAccel")]
     pub hardware_accel: bool,
 
-    /// Number of threads for decoding
-    /// 0 means auto-detect
-    /// Default: 0
+    /// Number of threads for decoding (0 = auto-detect)
+    #[schemars(range(min = 0, max = 64))]
     pub threads: u32,
 
-    /// Error resilience mode
-    /// - "strict": Fail on any bitstream error
-    /// - "lenient": Attempt to decode partial/corrupted frames
-    /// Default: "lenient" for real-time streams
+    /// Error resilience mode: "strict" (fail on error) or "lenient" (attempt partial decode)
+    #[serde(alias = "errorResilience")]
     pub error_resilience: String,
 }
 

@@ -24,6 +24,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 toml = { workspace = true }
 bincode = { workspace = true }
+schemars = { workspace = true }
 
 # Async trait support
 async-trait = { workspace = true }

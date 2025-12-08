@@ -49,6 +49,17 @@ pub trait NodeFactory: Send + Sync {
     fn is_rust_native(&self) -> bool {
         true
     }
+
+    /// Get the node schema for type generation.
+    ///
+    /// Override this to provide schema metadata (description, accepts/produces,
+    /// config parameters) that gets exported to TypeScript types via NAPI.
+    ///
+    /// Returns None by default - nodes without schema info are still usable
+    /// but won't have typed configs in generated TypeScript.
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        None
+    }
 }
 
 /// Node registry for managing node factories

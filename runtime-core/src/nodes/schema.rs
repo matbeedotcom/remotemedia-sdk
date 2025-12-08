@@ -242,7 +242,24 @@ impl NodeSchema {
     }
 
     /// Set config schema from a type that implements schemars::JsonSchema
-    #[cfg(feature = "schemars")]
+    ///
+    /// This automatically generates a JSON Schema from the Rust struct's type definition,
+    /// eliminating the need to manually define schemas. Just derive `JsonSchema` on your
+    /// config struct and call this method.
+    ///
+    /// # Example
+    /// ```ignore
+    /// #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+    /// pub struct MyNodeConfig {
+    ///     /// Sample rate in Hz
+    ///     pub sample_rate: u32,
+    ///     /// Threshold value (0.0-1.0)
+    ///     pub threshold: f32,
+    /// }
+    ///
+    /// NodeSchema::new("MyNode")
+    ///     .config_schema_from::<MyNodeConfig>()
+    /// ```
     pub fn config_schema_from<T: schemars::JsonSchema>(mut self) -> Self {
         let schema = schemars::schema_for!(T);
         self.config_schema = Some(serde_json::to_value(schema).unwrap_or_default());
@@ -630,6 +647,7 @@ pub fn create_builtin_schema_registry() -> NodeSchemaRegistry {
     );
 
     // Speculative VAD Gate (low-latency speculative forwarding)
+    // Uses auto-generated schema from SpeculativeVADConfig struct
     registry.register(
         NodeSchema::new("SpeculativeVADGate")
             .description("Speculative VAD gate for low-latency voice interaction")
@@ -642,60 +660,7 @@ pub fn create_builtin_schema_registry() -> NodeSchemaRegistry {
                 supports_control: true,
                 latency_class: LatencyClass::Realtime,
             })
-            .config_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "lookback_ms": {
-                        "type": "integer",
-                        "description": "Lookback window in milliseconds (audio to keep for cancellation)",
-                        "default": 150,
-                        "minimum": 0,
-                        "maximum": 1000
-                    },
-                    "lookahead_ms": {
-                        "type": "integer",
-                        "description": "Lookahead window in milliseconds (wait before confirming)",
-                        "default": 50,
-                        "minimum": 0,
-                        "maximum": 500
-                    },
-                    "sample_rate": {
-                        "type": "integer",
-                        "description": "Sample rate of audio in Hz",
-                        "default": 16000,
-                        "minimum": 8000,
-                        "maximum": 48000
-                    },
-                    "vad_threshold": {
-                        "type": "number",
-                        "description": "VAD confidence threshold for speech detection (0.0-1.0)",
-                        "default": 0.5,
-                        "minimum": 0.0,
-                        "maximum": 1.0
-                    },
-                    "min_speech_ms": {
-                        "type": "integer",
-                        "description": "Minimum speech duration in milliseconds to trigger forwarding",
-                        "default": 250,
-                        "minimum": 0,
-                        "maximum": 5000
-                    },
-                    "min_silence_ms": {
-                        "type": "integer",
-                        "description": "Minimum silence duration in milliseconds to end speech segment",
-                        "default": 100,
-                        "minimum": 0,
-                        "maximum": 5000
-                    },
-                    "pad_ms": {
-                        "type": "integer",
-                        "description": "Padding before/after speech in milliseconds",
-                        "default": 30,
-                        "minimum": 0,
-                        "maximum": 500
-                    }
-                }
-            })),
+            .config_schema_from::<crate::nodes::speculative_vad_gate::SpeculativeVADConfig>(),
     );
 
     // Video nodes

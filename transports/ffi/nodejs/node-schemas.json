@@ -1,31 +1,7 @@
 [
   {
-    "nodeType": "CalculatorNode",
-    "description": "Performs arithmetic operations on JSON input",
-    "category": "utility",
-    "accepts": [
-      "json"
-    ],
-    "produces": [
-      "json"
-    ],
-    "parameters": [
-      {
-        "name": "precision",
-        "paramType": "integer",
-        "description": "Decimal precision for results",
-        "defaultValue": "10",
-        "required": false
-      }
-    ],
-    "configSchema": "{\"properties\":{\"precision\":{\"default\":10,\"description\":\"Decimal precision for results\",\"type\":\"integer\"}},\"type\":\"object\"}",
-    "isPython": false,
-    "streaming": true,
-    "multiOutput": false
-  },
-  {
-    "nodeType": "AudioChunker",
-    "description": "Splits audio into fixed-size chunks",
+    "nodeType": "AudioResample",
+    "description": "Resamples audio to target sample rate",
     "category": "audio",
     "accepts": [
       "audio"
@@ -35,131 +11,23 @@
     ],
     "parameters": [
       {
-        "name": "chunk_size_ms",
+        "name": "target_sample_rate",
         "paramType": "integer",
-        "description": "Chunk duration in milliseconds",
-        "defaultValue": "20",
-        "required": false
-      }
-    ],
-    "configSchema": "{\"properties\":{\"chunk_size_ms\":{\"default\":20,\"description\":\"Chunk duration in milliseconds\",\"type\":\"integer\"}},\"type\":\"object\"}",
-    "isPython": false,
-    "streaming": true,
-    "multiOutput": true
-  },
-  {
-    "nodeType": "Echo",
-    "description": "Passes input through unchanged (for testing)",
-    "category": "utility",
-    "accepts": [
-      "audio",
-      "video",
-      "json",
-      "text",
-      "binary",
-      "tensor",
-      "numpy",
-      "controlmessage"
-    ],
-    "produces": [
-      "audio",
-      "video",
-      "json",
-      "text",
-      "binary",
-      "tensor",
-      "numpy",
-      "controlmessage"
-    ],
-    "parameters": [],
-    "isPython": false,
-    "streaming": true,
-    "multiOutput": false
-  },
-  {
-    "nodeType": "SpeculativeVADGate",
-    "description": "Speculative VAD gate for low-latency voice interaction",
-    "category": "audio",
-    "accepts": [
-      "audio"
-    ],
-    "produces": [
-      "audio",
-      "controlmessage"
-    ],
-    "parameters": [
-      {
-        "name": "lookahead_ms",
-        "paramType": "integer",
-        "description": "Lookahead window in milliseconds (wait before confirming)",
-        "defaultValue": "50",
-        "required": false,
-        "minimum": 0,
-        "maximum": 500
-      },
-      {
-        "name": "lookback_ms",
-        "paramType": "integer",
-        "description": "Lookback window in milliseconds (audio to keep for cancellation)",
-        "defaultValue": "150",
-        "required": false,
-        "minimum": 0,
-        "maximum": 1000
-      },
-      {
-        "name": "min_silence_ms",
-        "paramType": "integer",
-        "description": "Minimum silence duration in milliseconds to end speech segment",
-        "defaultValue": "100",
-        "required": false,
-        "minimum": 0,
-        "maximum": 5000
-      },
-      {
-        "name": "min_speech_ms",
-        "paramType": "integer",
-        "description": "Minimum speech duration in milliseconds to trigger forwarding",
-        "defaultValue": "250",
-        "required": false,
-        "minimum": 0,
-        "maximum": 5000
-      },
-      {
-        "name": "pad_ms",
-        "paramType": "integer",
-        "description": "Padding before/after speech in milliseconds",
-        "defaultValue": "30",
-        "required": false,
-        "minimum": 0,
-        "maximum": 500
-      },
-      {
-        "name": "sample_rate",
-        "paramType": "integer",
-        "description": "Sample rate of audio in Hz",
+        "description": "Target sample rate in Hz",
         "defaultValue": "16000",
         "required": false,
         "minimum": 8000,
         "maximum": 48000
-      },
-      {
-        "name": "vad_threshold",
-        "paramType": "number",
-        "description": "VAD confidence threshold for speech detection (0.0-1.0)",
-        "defaultValue": "0.5",
-        "required": false,
-        "minimum": 0,
-        "maximum": 1
       }
     ],
-    "configSchema": "{\"properties\":{\"lookahead_ms\":{\"default\":50,\"description\":\"Lookahead window in milliseconds (wait before confirming)\",\"maximum\":500,\"minimum\":0,\"type\":\"integer\"},\"lookback_ms\":{\"default\":150,\"description\":\"Lookback window in milliseconds (audio to keep for cancellation)\",\"maximum\":1000,\"minimum\":0,\"type\":\"integer\"},\"min_silence_ms\":{\"default\":100,\"description\":\"Minimum silence duration in milliseconds to end speech segment\",\"maximum\":5000,\"minimum\":0,\"type\":\"integer\"},\"min_speech_ms\":{\"default\":250,\"description\":\"Minimum speech duration in milliseconds to trigger forwarding\",\"maximum\":5000,\"minimum\":0,\"type\":\"integer\"},\"pad_ms\":{\"default\":30,\"description\":\"Padding before/after speech in milliseconds\",\"maximum\":500,\"minimum\":0,\"type\":\"integer\"},\"sample_rate\":{\"default\":16000,\"description\":\"Sample rate of audio in Hz\",\"maximum\":48000,\"minimum\":8000,\"type\":\"integer\"},\"vad_threshold\":{\"default\":0.5,\"description\":\"VAD confidence threshold for speech detection (0.0-1.0)\",\"maximum\":1.0,\"minimum\":0.0,\"type\":\"number\"}},\"type\":\"object\"}",
+    "configSchema": "{\"properties\":{\"target_sample_rate\":{\"default\":16000,\"description\":\"Target sample rate in Hz\",\"maximum\":48000,\"minimum\":8000,\"type\":\"integer\"}},\"type\":\"object\"}",
     "isPython": false,
     "streaming": true,
     "multiOutput": false,
     "capabilities": {
-      "parallelizable": false,
+      "parallelizable": true,
       "batchAware": false,
-      "supportsControl": true,
+      "supportsControl": false,
       "latencyClass": 0
     }
   },
@@ -212,50 +80,62 @@
     }
   },
   {
-    "nodeType": "WhisperNode",
-    "description": "Speech-to-text transcription using Whisper",
-    "category": "ml",
+    "nodeType": "Echo",
+    "description": "Passes input through unchanged (for testing)",
+    "category": "utility",
     "accepts": [
-      "audio"
+      "audio",
+      "video",
+      "json",
+      "text",
+      "binary",
+      "tensor",
+      "numpy",
+      "controlmessage"
     ],
     "produces": [
+      "audio",
+      "video",
+      "json",
       "text",
-      "json"
+      "binary",
+      "tensor",
+      "numpy",
+      "controlmessage"
     ],
-    "parameters": [
-      {
-        "name": "language",
-        "paramType": "string",
-        "description": "Language code (null for auto-detect)",
-        "required": false
-      },
-      {
-        "name": "model",
-        "paramType": "string",
-        "description": "Whisper model size",
-        "defaultValue": "\"base\"",
-        "required": false,
-        "enumValues": "[\"tiny\",\"base\",\"small\",\"medium\",\"large\",\"large-v3\"]"
-      },
-      {
-        "name": "task",
-        "paramType": "string",
-        "description": "Task type",
-        "defaultValue": "\"transcribe\"",
-        "required": false,
-        "enumValues": "[\"transcribe\",\"translate\"]"
-      }
-    ],
-    "configSchema": "{\"properties\":{\"language\":{\"description\":\"Language code (null for auto-detect)\",\"type\":\"string\"},\"model\":{\"default\":\"base\",\"description\":\"Whisper model size\",\"enum\":[\"tiny\",\"base\",\"small\",\"medium\",\"large\",\"large-v3\"],\"type\":\"string\"},\"task\":{\"default\":\"transcribe\",\"description\":\"Task type\",\"enum\":[\"transcribe\",\"translate\"],\"type\":\"string\"}},\"type\":\"object\"}",
-    "isPython": true,
+    "parameters": [],
+    "isPython": false,
     "streaming": true,
-    "multiOutput": false,
-    "capabilities": {
-      "parallelizable": false,
-      "batchAware": true,
-      "supportsControl": false,
-      "latencyClass": 4
-    }
+    "multiOutput": false
+  },
+  {
+    "nodeType": "PassThrough",
+    "description": "Passes input through unchanged",
+    "category": "utility",
+    "accepts": [
+      "audio",
+      "video",
+      "json",
+      "text",
+      "binary",
+      "tensor",
+      "numpy",
+      "controlmessage"
+    ],
+    "produces": [
+      "audio",
+      "video",
+      "json",
+      "text",
+      "binary",
+      "tensor",
+      "numpy",
+      "controlmessage"
+    ],
+    "parameters": [],
+    "isPython": false,
+    "streaming": true,
+    "multiOutput": false
   },
   {
     "nodeType": "SileroVAD",
@@ -305,93 +185,71 @@
     }
   },
   {
-    "nodeType": "AudioResample",
-    "description": "Resamples audio to target sample rate",
-    "category": "audio",
+    "nodeType": "WhisperNode",
+    "description": "Speech-to-text transcription using Whisper",
+    "category": "ml",
     "accepts": [
       "audio"
     ],
     "produces": [
-      "audio"
+      "text",
+      "json"
     ],
     "parameters": [
       {
-        "name": "target_sample_rate",
-        "paramType": "integer",
-        "description": "Target sample rate in Hz",
-        "defaultValue": "16000",
-        "required": false,
-        "minimum": 8000,
-        "maximum": 48000
-      }
-    ],
-    "configSchema": "{\"properties\":{\"target_sample_rate\":{\"default\":16000,\"description\":\"Target sample rate in Hz\",\"maximum\":48000,\"minimum\":8000,\"type\":\"integer\"}},\"type\":\"object\"}",
-    "isPython": false,
-    "streaming": true,
-    "multiOutput": false,
-    "capabilities": {
-      "parallelizable": true,
-      "batchAware": false,
-      "supportsControl": false,
-      "latencyClass": 0
-    }
-  },
-  {
-    "nodeType": "VideoFlip",
-    "description": "Flips video frames horizontally or vertically",
-    "category": "video",
-    "accepts": [
-      "video"
-    ],
-    "produces": [
-      "video"
-    ],
-    "parameters": [
-      {
-        "name": "horizontal",
-        "paramType": "boolean",
-        "description": "Flip horizontally",
-        "defaultValue": "true",
+        "name": "language",
+        "paramType": "string",
+        "description": "Language code (null for auto-detect)",
         "required": false
       },
       {
-        "name": "vertical",
-        "paramType": "boolean",
-        "description": "Flip vertically",
-        "defaultValue": "false",
+        "name": "model",
+        "paramType": "string",
+        "description": "Whisper model size",
+        "defaultValue": "\"base\"",
+        "required": false,
+        "enumValues": "[\"tiny\",\"base\",\"small\",\"medium\",\"large\",\"large-v3\"]"
+      },
+      {
+        "name": "task",
+        "paramType": "string",
+        "description": "Task type",
+        "defaultValue": "\"transcribe\"",
+        "required": false,
+        "enumValues": "[\"transcribe\",\"translate\"]"
+      }
+    ],
+    "configSchema": "{\"properties\":{\"language\":{\"description\":\"Language code (null for auto-detect)\",\"type\":\"string\"},\"model\":{\"default\":\"base\",\"description\":\"Whisper model size\",\"enum\":[\"tiny\",\"base\",\"small\",\"medium\",\"large\",\"large-v3\"],\"type\":\"string\"},\"task\":{\"default\":\"transcribe\",\"description\":\"Task type\",\"enum\":[\"transcribe\",\"translate\"],\"type\":\"string\"}},\"type\":\"object\"}",
+    "isPython": true,
+    "streaming": true,
+    "multiOutput": false,
+    "capabilities": {
+      "parallelizable": false,
+      "batchAware": true,
+      "supportsControl": false,
+      "latencyClass": 4
+    }
+  },
+  {
+    "nodeType": "CalculatorNode",
+    "description": "Performs arithmetic operations on JSON input",
+    "category": "utility",
+    "accepts": [
+      "json"
+    ],
+    "produces": [
+      "json"
+    ],
+    "parameters": [
+      {
+        "name": "precision",
+        "paramType": "integer",
+        "description": "Decimal precision for results",
+        "defaultValue": "10",
         "required": false
       }
     ],
-    "configSchema": "{\"properties\":{\"horizontal\":{\"default\":true,\"description\":\"Flip horizontally\",\"type\":\"boolean\"},\"vertical\":{\"default\":false,\"description\":\"Flip vertically\",\"type\":\"boolean\"}},\"type\":\"object\"}",
-    "isPython": false,
-    "streaming": true,
-    "multiOutput": false
-  },
-  {
-    "nodeType": "PassThrough",
-    "description": "Passes input through unchanged",
-    "category": "utility",
-    "accepts": [
-      "audio",
-      "video",
-      "json",
-      "text",
-      "binary",
-      "tensor",
-      "numpy",
-      "controlmessage"
-    ],
-    "produces": [
-      "audio",
-      "video",
-      "json",
-      "text",
-      "binary",
-      "tensor",
-      "numpy",
-      "controlmessage"
-    ],
-    "parameters": [],
+    "configSchema": "{\"properties\":{\"precision\":{\"default\":10,\"description\":\"Decimal precision for results\",\"type\":\"integer\"}},\"type\":\"object\"}",
     "isPython": false,
     "streaming": true,
     "multiOutput": false
@@ -423,6 +281,148 @@
       }
     ],
     "configSchema": "{\"properties\":{\"delimiter\":{\"default\":\"\",\"description\":\"Delimiter to split on\",\"type\":\"string\"},\"flush_on_silence\":{\"default\":true,\"description\":\"Flush buffer when silence detected\",\"type\":\"boolean\"}},\"type\":\"object\"}",
+    "isPython": false,
+    "streaming": true,
+    "multiOutput": false
+  },
+  {
+    "nodeType": "AudioChunker",
+    "description": "Splits audio into fixed-size chunks",
+    "category": "audio",
+    "accepts": [
+      "audio"
+    ],
+    "produces": [
+      "audio"
+    ],
+    "parameters": [
+      {
+        "name": "chunk_size_ms",
+        "paramType": "integer",
+        "description": "Chunk duration in milliseconds",
+        "defaultValue": "20",
+        "required": false
+      }
+    ],
+    "configSchema": "{\"properties\":{\"chunk_size_ms\":{\"default\":20,\"description\":\"Chunk duration in milliseconds\",\"type\":\"integer\"}},\"type\":\"object\"}",
+    "isPython": false,
+    "streaming": true,
+    "multiOutput": true
+  },
+  {
+    "nodeType": "SpeculativeVADGate",
+    "description": "Speculative VAD gate for low-latency voice interaction",
+    "category": "audio",
+    "accepts": [
+      "audio"
+    ],
+    "produces": [
+      "audio",
+      "controlmessage"
+    ],
+    "parameters": [
+      {
+        "name": "lookahead_ms",
+        "paramType": "integer",
+        "description": "Lookahead window in milliseconds (how long to wait before confirming speculation)",
+        "defaultValue": "50",
+        "required": false,
+        "minimum": 0,
+        "maximum": 500
+      },
+      {
+        "name": "lookback_ms",
+        "paramType": "integer",
+        "description": "Lookback window in milliseconds (how much audio to keep for cancellation)",
+        "defaultValue": "150",
+        "required": false,
+        "minimum": 0,
+        "maximum": 1000
+      },
+      {
+        "name": "min_silence_ms",
+        "paramType": "integer",
+        "description": "Minimum silence duration in milliseconds to end speech segment",
+        "defaultValue": "100",
+        "required": false,
+        "minimum": 0,
+        "maximum": 5000
+      },
+      {
+        "name": "min_speech_ms",
+        "paramType": "integer",
+        "description": "Minimum speech duration in milliseconds to trigger forwarding",
+        "defaultValue": "250",
+        "required": false,
+        "minimum": 0,
+        "maximum": 5000
+      },
+      {
+        "name": "pad_ms",
+        "paramType": "integer",
+        "description": "Padding before/after speech in milliseconds",
+        "defaultValue": "30",
+        "required": false,
+        "minimum": 0,
+        "maximum": 500
+      },
+      {
+        "name": "sample_rate",
+        "paramType": "integer",
+        "description": "Sample rate of audio (needed for time calculations)",
+        "defaultValue": "16000",
+        "required": false,
+        "minimum": 8000,
+        "maximum": 48000
+      },
+      {
+        "name": "vad_threshold",
+        "paramType": "number",
+        "description": "VAD confidence threshold for speech detection (0.0-1.0)",
+        "defaultValue": "0.5",
+        "required": false,
+        "minimum": 0,
+        "maximum": 1
+      }
+    ],
+    "configSchema": "{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"description\":\"Configuration for SpeculativeVADGate\\n\\nAll fields have sensible defaults via `#[serde(default)]`, so you can deserialize from an empty object `{}` or partial config.\",\"properties\":{\"lookahead_ms\":{\"default\":50,\"description\":\"Lookahead window in milliseconds (how long to wait before confirming speculation)\",\"format\":\"uint32\",\"maximum\":500.0,\"minimum\":0.0,\"type\":\"integer\"},\"lookback_ms\":{\"default\":150,\"description\":\"Lookback window in milliseconds (how much audio to keep for cancellation)\",\"format\":\"uint32\",\"maximum\":1000.0,\"minimum\":0.0,\"type\":\"integer\"},\"min_silence_ms\":{\"default\":100,\"description\":\"Minimum silence duration in milliseconds to end speech segment\",\"format\":\"uint32\",\"maximum\":5000.0,\"minimum\":0.0,\"type\":\"integer\"},\"min_speech_ms\":{\"default\":250,\"description\":\"Minimum speech duration in milliseconds to trigger forwarding\",\"format\":\"uint32\",\"maximum\":5000.0,\"minimum\":0.0,\"type\":\"integer\"},\"pad_ms\":{\"default\":30,\"description\":\"Padding before/after speech in milliseconds\",\"format\":\"uint32\",\"maximum\":500.0,\"minimum\":0.0,\"type\":\"integer\"},\"sample_rate\":{\"default\":16000,\"description\":\"Sample rate of audio (needed for time calculations)\",\"format\":\"uint32\",\"maximum\":48000.0,\"minimum\":8000.0,\"type\":\"integer\"},\"vad_threshold\":{\"default\":0.5,\"description\":\"VAD confidence threshold for speech detection (0.0-1.0)\",\"format\":\"float\",\"maximum\":1.0,\"minimum\":0.0,\"type\":\"number\"}},\"title\":\"SpeculativeVADConfig\",\"type\":\"object\"}",
+    "isPython": false,
+    "streaming": true,
+    "multiOutput": false,
+    "capabilities": {
+      "parallelizable": false,
+      "batchAware": false,
+      "supportsControl": true,
+      "latencyClass": 0
+    }
+  },
+  {
+    "nodeType": "VideoFlip",
+    "description": "Flips video frames horizontally or vertically",
+    "category": "video",
+    "accepts": [
+      "video"
+    ],
+    "produces": [
+      "video"
+    ],
+    "parameters": [
+      {
+        "name": "horizontal",
+        "paramType": "boolean",
+        "description": "Flip horizontally",
+        "defaultValue": "true",
+        "required": false
+      },
+      {
+        "name": "vertical",
+        "paramType": "boolean",
+        "description": "Flip vertically",
+        "defaultValue": "false",
+        "required": false
+      }
+    ],
+    "configSchema": "{\"properties\":{\"horizontal\":{\"default\":true,\"description\":\"Flip horizontally\",\"type\":\"boolean\"},\"vertical\":{\"default\":false,\"description\":\"Flip vertically\",\"type\":\"boolean\"}},\"type\":\"object\"}",
     "isPython": false,
     "streaming": true,
     "multiOutput": false
