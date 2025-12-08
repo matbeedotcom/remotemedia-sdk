@@ -477,3 +477,12 @@ export interface WebRtcServerFactory {
  * WebRTC server module (available when built with napi-webrtc feature)
  */
 export const WebRtcServer: WebRtcServerFactory | undefined;
+
+// =============================================================================
+// Proto Utils (Browser/Node.js compatible)
+// =============================================================================
+
+export * from './proto-utils';
+
+import * as protoUtilsModule from './proto-utils';
+export const protoUtils: typeof protoUtilsModule;

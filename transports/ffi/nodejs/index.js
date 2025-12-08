@@ -128,3 +128,11 @@ if (nativeBinding) {
 // Export type helpers
 module.exports.isNativeLoaded = () => nativeBinding !== null;
 module.exports.getLoadError = () => loadError;
+
+// Export proto-utils (browser/Node.js compatible)
+const protoUtils = require('./proto-utils');
+module.exports.protoUtils = protoUtils;
+module.exports.encodeTextData = protoUtils.encodeTextData;
+module.exports.encodeJsonData = protoUtils.encodeJsonData;
+module.exports.decodeDataBuffer = protoUtils.decodeDataBuffer;
+module.exports.parseJsonFromDataBuffer = protoUtils.parseJsonFromDataBuffer;

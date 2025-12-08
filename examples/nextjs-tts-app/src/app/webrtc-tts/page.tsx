@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useState, useRef } from 'react';
-import { encodeTextData } from '@/lib/proto-encoder';
+import { encodeTextData } from '@/lib/proto-utils';
 
 interface PeerConnection {
   pc: RTCPeerConnection;
