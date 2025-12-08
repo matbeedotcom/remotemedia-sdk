@@ -52,52 +52,34 @@ export type RuntimeData =
   | { type: 'numpy'; data: NumpyArray }
   | { type: 'control'; data: ControlMessage };
 
-/** Splits audio into fixed-size chunks - Configuration */
-export interface AudioChunkerConfig {
-  /** Chunk duration in milliseconds */
-  chunk_size_ms?: number;
-}
-
 /** Performs arithmetic operations on JSON input - Configuration */
 export interface CalculatorNodeConfig {
   /** Decimal precision for results */
   precision?: number;
 }
 
-/** Flips video frames horizontally or vertically - Configuration */
-export interface VideoFlipConfig {
-  /** Flip horizontally */
-  horizontal?: boolean;
-  /** Flip vertically */
-  vertical?: boolean;
+/** Splits audio into fixed-size chunks - Configuration */
+export interface AudioChunkerConfig {
+  /** Chunk duration in milliseconds */
+  chunk_size_ms?: number;
 }
 
-/** Speech-to-text transcription using Whisper - Configuration */
-export interface WhisperNodeConfig {
-  /** Language code (null for auto-detect) */
-  language?: string;
-  /** Whisper model size */
-  model?: 'tiny' | 'base' | 'small' | 'medium' | 'large' | 'large-v3';
-  /** Task type */
-  task?: 'transcribe' | 'translate';
-}
-
-/** Collects text chunks into complete utterances - Configuration */
-export interface TextCollectorConfig {
-  /** Delimiter to split on */
-  delimiter?: string;
-  /** Flush buffer when silence detected */
-  flush_on_silence?: boolean;
-}
-
-/** Voice Activity Detection using Silero VAD model - Configuration */
-export interface SileroVADConfig {
-  /** Minimum silence duration in ms */
-  min_silence_duration_ms?: number;
-  /** Minimum speech duration in ms */
-  min_speech_duration_ms?: number;
-  /** Speech probability threshold */
-  threshold?: number;
+/** Speculative VAD gate for low-latency voice interaction - Configuration */
+export interface SpeculativeVADGateConfig {
+  /** Lookahead window in milliseconds (wait before confirming) */
+  lookahead_ms?: number;
+  /** Lookback window in milliseconds (audio to keep for cancellation) */
+  lookback_ms?: number;
+  /** Minimum silence duration in milliseconds to end speech segment */
+  min_silence_ms?: number;
+  /** Minimum speech duration in milliseconds to trigger forwarding */
+  min_speech_ms?: number;
+  /** Padding before/after speech in milliseconds */
+  pad_ms?: number;
+  /** Sample rate of audio in Hz */
+  sample_rate?: number;
+  /** VAD confidence threshold for speech detection (0.0-1.0) */
+  vad_threshold?: number;
 }
 
 /** Text-to-speech synthesis using Kokoro TTS - Configuration */
@@ -110,10 +92,46 @@ export interface KokoroTTSNodeConfig {
   voice?: 'af_bella' | 'af_nicole' | 'af_sarah' | 'af_sky' | 'am_adam' | 'am_michael' | 'bf_emma' | 'bf_isabella' | 'bm_george' | 'bm_lewis';
 }
 
+/** Speech-to-text transcription using Whisper - Configuration */
+export interface WhisperNodeConfig {
+  /** Language code (null for auto-detect) */
+  language?: string;
+  /** Whisper model size */
+  model?: 'tiny' | 'base' | 'small' | 'medium' | 'large' | 'large-v3';
+  /** Task type */
+  task?: 'transcribe' | 'translate';
+}
+
+/** Voice Activity Detection using Silero VAD model - Configuration */
+export interface SileroVADConfig {
+  /** Minimum silence duration in ms */
+  min_silence_duration_ms?: number;
+  /** Minimum speech duration in ms */
+  min_speech_duration_ms?: number;
+  /** Speech probability threshold */
+  threshold?: number;
+}
+
 /** Resamples audio to target sample rate - Configuration */
 export interface AudioResampleConfig {
   /** Target sample rate in Hz */
   target_sample_rate?: number;
+}
+
+/** Flips video frames horizontally or vertically - Configuration */
+export interface VideoFlipConfig {
+  /** Flip horizontally */
+  horizontal?: boolean;
+  /** Flip vertically */
+  vertical?: boolean;
+}
+
+/** Collects text chunks into complete utterances - Configuration */
+export interface TextCollectorConfig {
+  /** Delimiter to split on */
+  delimiter?: string;
+  /** Flush buffer when silence detected */
+  flush_on_silence?: boolean;
 }
 
 /** Node metadata from registry */
@@ -130,29 +148,31 @@ export interface NodeMetadata {
 
 /** All registered node types */
 export type NodeType =
-  | 'AudioChunker'
   | 'CalculatorNode'
-  | 'VideoFlip'
-  | 'WhisperNode'
+  | 'AudioChunker'
   | 'Echo'
-  | 'TextCollector'
-  | 'SileroVAD'
+  | 'SpeculativeVADGate'
   | 'KokoroTTSNode'
+  | 'WhisperNode'
+  | 'SileroVAD'
+  | 'AudioResample'
+  | 'VideoFlip'
   | 'PassThrough'
-  | 'AudioResample';
+  | 'TextCollector';
 
 /** Node type to config type mapping */
 export interface NodeConfigMap {
-  'AudioChunker': AudioChunkerConfig;
   'CalculatorNode': CalculatorNodeConfig;
-  'VideoFlip': VideoFlipConfig;
-  'WhisperNode': WhisperNodeConfig;
+  'AudioChunker': AudioChunkerConfig;
   'Echo': Record<string, unknown>;
-  'TextCollector': TextCollectorConfig;
-  'SileroVAD': SileroVADConfig;
+  'SpeculativeVADGate': SpeculativeVADGateConfig;
   'KokoroTTSNode': KokoroTTSNodeConfig;
-  'PassThrough': Record<string, unknown>;
+  'WhisperNode': WhisperNodeConfig;
+  'SileroVAD': SileroVADConfig;
   'AudioResample': AudioResampleConfig;
+  'VideoFlip': VideoFlipConfig;
+  'PassThrough': Record<string, unknown>;
+  'TextCollector': TextCollectorConfig;
 }
 
 /** Pipeline node with typed config */
@@ -178,6 +198,20 @@ export interface PipelineManifest {
 /** All node schemas (for runtime introspection) */
 export const nodeSchemas: NodeMetadata[] = [
   {
+    "nodeType": "CalculatorNode",
+    "description": "Performs arithmetic operations on JSON input",
+    "category": "utility",
+    "accepts": [
+      "json"
+    ],
+    "produces": [
+      "json"
+    ],
+    "isPython": false,
+    "streaming": true,
+    "multiOutput": false
+  },
+  {
     "nodeType": "AudioChunker",
     "description": "Splits audio into fixed-size chunks",
     "category": "audio",
@@ -192,14 +226,101 @@ export const nodeSchemas: NodeMetadata[] = [
     "multiOutput": true
   },
   {
-    "nodeType": "CalculatorNode",
-    "description": "Performs arithmetic operations on JSON input",
+    "nodeType": "Echo",
+    "description": "Passes input through unchanged (for testing)",
     "category": "utility",
     "accepts": [
-      "json"
+      "audio",
+      "video",
+      "json",
+      "text",
+      "binary",
+      "tensor",
+      "numpy",
+      "controlmessage"
     ],
     "produces": [
+      "audio",
+      "video",
+      "json",
+      "text",
+      "binary",
+      "tensor",
+      "numpy",
+      "controlmessage"
+    ],
+    "isPython": false,
+    "streaming": true,
+    "multiOutput": false
+  },
+  {
+    "nodeType": "SpeculativeVADGate",
+    "description": "Speculative VAD gate for low-latency voice interaction",
+    "category": "audio",
+    "accepts": [
+      "audio"
+    ],
+    "produces": [
+      "audio",
+      "controlmessage"
+    ],
+    "isPython": false,
+    "streaming": true,
+    "multiOutput": false
+  },
+  {
+    "nodeType": "KokoroTTSNode",
+    "description": "Text-to-speech synthesis using Kokoro TTS",
+    "category": "ml",
+    "accepts": [
+      "text"
+    ],
+    "produces": [
+      "audio"
+    ],
+    "isPython": true,
+    "streaming": true,
+    "multiOutput": true
+  },
+  {
+    "nodeType": "WhisperNode",
+    "description": "Speech-to-text transcription using Whisper",
+    "category": "ml",
+    "accepts": [
+      "audio"
+    ],
+    "produces": [
+      "text",
       "json"
+    ],
+    "isPython": true,
+    "streaming": true,
+    "multiOutput": false
+  },
+  {
+    "nodeType": "SileroVAD",
+    "description": "Voice Activity Detection using Silero VAD model",
+    "category": "audio",
+    "accepts": [
+      "audio"
+    ],
+    "produces": [
+      "audio",
+      "controlmessage"
+    ],
+    "isPython": false,
+    "streaming": true,
+    "multiOutput": false
+  },
+  {
+    "nodeType": "AudioResample",
+    "description": "Resamples audio to target sample rate",
+    "category": "audio",
+    "accepts": [
+      "audio"
+    ],
+    "produces": [
+      "audio"
     ],
     "isPython": false,
     "streaming": true,
@@ -220,23 +341,8 @@ export const nodeSchemas: NodeMetadata[] = [
     "multiOutput": false
   },
   {
-    "nodeType": "WhisperNode",
-    "description": "Speech-to-text transcription using Whisper",
-    "category": "ml",
-    "accepts": [
-      "audio"
-    ],
-    "produces": [
-      "text",
-      "json"
-    ],
-    "isPython": true,
-    "streaming": true,
-    "multiOutput": false
-  },
-  {
-    "nodeType": "Echo",
-    "description": "Passes input through unchanged (for testing)",
+    "nodeType": "PassThrough",
+    "description": "Passes input through unchanged",
     "category": "utility",
     "accepts": [
       "audio",
@@ -271,77 +377,6 @@ export const nodeSchemas: NodeMetadata[] = [
     ],
     "produces": [
       "text"
-    ],
-    "isPython": false,
-    "streaming": true,
-    "multiOutput": false
-  },
-  {
-    "nodeType": "SileroVAD",
-    "description": "Voice Activity Detection using Silero VAD model",
-    "category": "audio",
-    "accepts": [
-      "audio"
-    ],
-    "produces": [
-      "audio",
-      "controlmessage"
-    ],
-    "isPython": false,
-    "streaming": true,
-    "multiOutput": false
-  },
-  {
-    "nodeType": "KokoroTTSNode",
-    "description": "Text-to-speech synthesis using Kokoro TTS",
-    "category": "ml",
-    "accepts": [
-      "text"
-    ],
-    "produces": [
-      "audio"
-    ],
-    "isPython": true,
-    "streaming": true,
-    "multiOutput": true
-  },
-  {
-    "nodeType": "PassThrough",
-    "description": "Passes input through unchanged",
-    "category": "utility",
-    "accepts": [
-      "audio",
-      "video",
-      "json",
-      "text",
-      "binary",
-      "tensor",
-      "numpy",
-      "controlmessage"
-    ],
-    "produces": [
-      "audio",
-      "video",
-      "json",
-      "text",
-      "binary",
-      "tensor",
-      "numpy",
-      "controlmessage"
-    ],
-    "isPython": false,
-    "streaming": true,
-    "multiOutput": false
-  },
-  {
-    "nodeType": "AudioResample",
-    "description": "Resamples audio to target sample rate",
-    "category": "audio",
-    "accepts": [
-      "audio"
-    ],
-    "produces": [
-      "audio"
     ],
     "isPython": false,
     "streaming": true,
@@ -398,25 +433,6 @@ export interface PipelineConnection {
 }
 
 /**
- * Splits audio into fixed-size chunks
- *
- * @example
- * ```typescript
- * const node = new AudioChunker('my-audiochunker', { });
- * pipeline.addNode(node);
- * ```
- */
-export class AudioChunker extends NodeBuilder<'AudioChunker', AudioChunkerConfig> {
-  static readonly nodeType = 'AudioChunker' as const;
-  static readonly accepts: RuntimeDataType[] = ['audio'];
-  static readonly produces: RuntimeDataType[] = ['audio'];
-
-  constructor(id: string, config?: AudioChunkerConfig) {
-    super(id, 'AudioChunker', config);
-  }
-}
-
-/**
  * Performs arithmetic operations on JSON input
  *
  * @example
@@ -436,40 +452,21 @@ export class CalculatorNode extends NodeBuilder<'CalculatorNode', CalculatorNode
 }
 
 /**
- * Flips video frames horizontally or vertically
+ * Splits audio into fixed-size chunks
  *
  * @example
  * ```typescript
- * const node = new VideoFlip('my-videoflip', { });
+ * const node = new AudioChunker('my-audiochunker', { });
  * pipeline.addNode(node);
  * ```
  */
-export class VideoFlip extends NodeBuilder<'VideoFlip', VideoFlipConfig> {
-  static readonly nodeType = 'VideoFlip' as const;
-  static readonly accepts: RuntimeDataType[] = ['video'];
-  static readonly produces: RuntimeDataType[] = ['video'];
-
-  constructor(id: string, config?: VideoFlipConfig) {
-    super(id, 'VideoFlip', config);
-  }
-}
-
-/**
- * Speech-to-text transcription using Whisper
- *
- * @example
- * ```typescript
- * const node = new WhisperNode('my-whispernode', { });
- * pipeline.addNode(node);
- * ```
- */
-export class WhisperNode extends NodeBuilder<'WhisperNode', WhisperNodeConfig> {
-  static readonly nodeType = 'WhisperNode' as const;
+export class AudioChunker extends NodeBuilder<'AudioChunker', AudioChunkerConfig> {
+  static readonly nodeType = 'AudioChunker' as const;
   static readonly accepts: RuntimeDataType[] = ['audio'];
-  static readonly produces: RuntimeDataType[] = ['text', 'json'];
+  static readonly produces: RuntimeDataType[] = ['audio'];
 
-  constructor(id: string, config?: WhisperNodeConfig) {
-    super(id, 'WhisperNode', config);
+  constructor(id: string, config?: AudioChunkerConfig) {
+    super(id, 'AudioChunker', config);
   }
 }
 
@@ -493,40 +490,21 @@ export class Echo extends NodeBuilder<'Echo', Record<string, unknown>> {
 }
 
 /**
- * Collects text chunks into complete utterances
+ * Speculative VAD gate for low-latency voice interaction
  *
  * @example
  * ```typescript
- * const node = new TextCollector('my-textcollector', { });
+ * const node = new SpeculativeVADGate('my-speculativevadgate', { });
  * pipeline.addNode(node);
  * ```
  */
-export class TextCollector extends NodeBuilder<'TextCollector', TextCollectorConfig> {
-  static readonly nodeType = 'TextCollector' as const;
-  static readonly accepts: RuntimeDataType[] = ['text'];
-  static readonly produces: RuntimeDataType[] = ['text'];
-
-  constructor(id: string, config?: TextCollectorConfig) {
-    super(id, 'TextCollector', config);
-  }
-}
-
-/**
- * Voice Activity Detection using Silero VAD model
- *
- * @example
- * ```typescript
- * const node = new SileroVAD('my-silerovad', { });
- * pipeline.addNode(node);
- * ```
- */
-export class SileroVAD extends NodeBuilder<'SileroVAD', SileroVADConfig> {
-  static readonly nodeType = 'SileroVAD' as const;
+export class SpeculativeVADGate extends NodeBuilder<'SpeculativeVADGate', SpeculativeVADGateConfig> {
+  static readonly nodeType = 'SpeculativeVADGate' as const;
   static readonly accepts: RuntimeDataType[] = ['audio'];
   static readonly produces: RuntimeDataType[] = ['audio', 'controlmessage'];
 
-  constructor(id: string, config?: SileroVADConfig) {
-    super(id, 'SileroVAD', config);
+  constructor(id: string, config?: SpeculativeVADGateConfig) {
+    super(id, 'SpeculativeVADGate', config);
   }
 }
 
@@ -550,21 +528,40 @@ export class KokoroTTSNode extends NodeBuilder<'KokoroTTSNode', KokoroTTSNodeCon
 }
 
 /**
- * Passes input through unchanged
+ * Speech-to-text transcription using Whisper
  *
  * @example
  * ```typescript
- * const node = new PassThrough('my-passthrough');
+ * const node = new WhisperNode('my-whispernode', { });
  * pipeline.addNode(node);
  * ```
  */
-export class PassThrough extends NodeBuilder<'PassThrough', Record<string, unknown>> {
-  static readonly nodeType = 'PassThrough' as const;
-  static readonly accepts: RuntimeDataType[] = ['audio', 'video', 'json', 'text', 'binary', 'tensor', 'numpy', 'controlmessage'];
-  static readonly produces: RuntimeDataType[] = ['audio', 'video', 'json', 'text', 'binary', 'tensor', 'numpy', 'controlmessage'];
+export class WhisperNode extends NodeBuilder<'WhisperNode', WhisperNodeConfig> {
+  static readonly nodeType = 'WhisperNode' as const;
+  static readonly accepts: RuntimeDataType[] = ['audio'];
+  static readonly produces: RuntimeDataType[] = ['text', 'json'];
 
-  constructor(id: string, config?: Record<string, unknown>) {
-    super(id, 'PassThrough', config);
+  constructor(id: string, config?: WhisperNodeConfig) {
+    super(id, 'WhisperNode', config);
+  }
+}
+
+/**
+ * Voice Activity Detection using Silero VAD model
+ *
+ * @example
+ * ```typescript
+ * const node = new SileroVAD('my-silerovad', { });
+ * pipeline.addNode(node);
+ * ```
+ */
+export class SileroVAD extends NodeBuilder<'SileroVAD', SileroVADConfig> {
+  static readonly nodeType = 'SileroVAD' as const;
+  static readonly accepts: RuntimeDataType[] = ['audio'];
+  static readonly produces: RuntimeDataType[] = ['audio', 'controlmessage'];
+
+  constructor(id: string, config?: SileroVADConfig) {
+    super(id, 'SileroVAD', config);
   }
 }
 
@@ -587,18 +584,76 @@ export class AudioResample extends NodeBuilder<'AudioResample', AudioResampleCon
   }
 }
 
+/**
+ * Flips video frames horizontally or vertically
+ *
+ * @example
+ * ```typescript
+ * const node = new VideoFlip('my-videoflip', { });
+ * pipeline.addNode(node);
+ * ```
+ */
+export class VideoFlip extends NodeBuilder<'VideoFlip', VideoFlipConfig> {
+  static readonly nodeType = 'VideoFlip' as const;
+  static readonly accepts: RuntimeDataType[] = ['video'];
+  static readonly produces: RuntimeDataType[] = ['video'];
+
+  constructor(id: string, config?: VideoFlipConfig) {
+    super(id, 'VideoFlip', config);
+  }
+}
+
+/**
+ * Passes input through unchanged
+ *
+ * @example
+ * ```typescript
+ * const node = new PassThrough('my-passthrough');
+ * pipeline.addNode(node);
+ * ```
+ */
+export class PassThrough extends NodeBuilder<'PassThrough', Record<string, unknown>> {
+  static readonly nodeType = 'PassThrough' as const;
+  static readonly accepts: RuntimeDataType[] = ['audio', 'video', 'json', 'text', 'binary', 'tensor', 'numpy', 'controlmessage'];
+  static readonly produces: RuntimeDataType[] = ['audio', 'video', 'json', 'text', 'binary', 'tensor', 'numpy', 'controlmessage'];
+
+  constructor(id: string, config?: Record<string, unknown>) {
+    super(id, 'PassThrough', config);
+  }
+}
+
+/**
+ * Collects text chunks into complete utterances
+ *
+ * @example
+ * ```typescript
+ * const node = new TextCollector('my-textcollector', { });
+ * pipeline.addNode(node);
+ * ```
+ */
+export class TextCollector extends NodeBuilder<'TextCollector', TextCollectorConfig> {
+  static readonly nodeType = 'TextCollector' as const;
+  static readonly accepts: RuntimeDataType[] = ['text'];
+  static readonly produces: RuntimeDataType[] = ['text'];
+
+  constructor(id: string, config?: TextCollectorConfig) {
+    super(id, 'TextCollector', config);
+  }
+}
+
 /** Namespace containing all node builder classes */
 export const Nodes = {
-  AudioChunker,
   CalculatorNode,
-  VideoFlip,
-  WhisperNode,
+  AudioChunker,
   Echo,
-  TextCollector,
-  SileroVAD,
+  SpeculativeVADGate,
   KokoroTTSNode,
+  WhisperNode,
+  SileroVAD,
+  AudioResample,
+  VideoFlip,
   PassThrough,
-  AudioResample
+  TextCollector
 } as const;
 
 /**

@@ -629,6 +629,75 @@ pub fn create_builtin_schema_registry() -> NodeSchemaRegistry {
             })),
     );
 
+    // Speculative VAD Gate (low-latency speculative forwarding)
+    registry.register(
+        NodeSchema::new("SpeculativeVADGate")
+            .description("Speculative VAD gate for low-latency voice interaction")
+            .category("audio")
+            .accepts([RuntimeDataType::Audio])
+            .produces([RuntimeDataType::Audio, RuntimeDataType::ControlMessage])
+            .capabilities(NodeCapabilitiesSchema {
+                parallelizable: false,
+                batch_aware: false,
+                supports_control: true,
+                latency_class: LatencyClass::Realtime,
+            })
+            .config_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "lookback_ms": {
+                        "type": "integer",
+                        "description": "Lookback window in milliseconds (audio to keep for cancellation)",
+                        "default": 150,
+                        "minimum": 0,
+                        "maximum": 1000
+                    },
+                    "lookahead_ms": {
+                        "type": "integer",
+                        "description": "Lookahead window in milliseconds (wait before confirming)",
+                        "default": 50,
+                        "minimum": 0,
+                        "maximum": 500
+                    },
+                    "sample_rate": {
+                        "type": "integer",
+                        "description": "Sample rate of audio in Hz",
+                        "default": 16000,
+                        "minimum": 8000,
+                        "maximum": 48000
+                    },
+                    "vad_threshold": {
+                        "type": "number",
+                        "description": "VAD confidence threshold for speech detection (0.0-1.0)",
+                        "default": 0.5,
+                        "minimum": 0.0,
+                        "maximum": 1.0
+                    },
+                    "min_speech_ms": {
+                        "type": "integer",
+                        "description": "Minimum speech duration in milliseconds to trigger forwarding",
+                        "default": 250,
+                        "minimum": 0,
+                        "maximum": 5000
+                    },
+                    "min_silence_ms": {
+                        "type": "integer",
+                        "description": "Minimum silence duration in milliseconds to end speech segment",
+                        "default": 100,
+                        "minimum": 0,
+                        "maximum": 5000
+                    },
+                    "pad_ms": {
+                        "type": "integer",
+                        "description": "Padding before/after speech in milliseconds",
+                        "default": 30,
+                        "minimum": 0,
+                        "maximum": 500
+                    }
+                }
+            })),
+    );
+
     // Video nodes
     registry.register(
         NodeSchema::new("VideoFlip")
