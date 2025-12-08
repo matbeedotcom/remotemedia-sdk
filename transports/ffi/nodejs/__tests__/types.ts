@@ -74,6 +74,51 @@ export interface NativeModule {
   isRuntimeAvailable(): boolean;
   isNativeLoaded(): boolean;
   getLoadError(): Error | null;
+
+  // Node schema registry
+  getNodeSchemas(): NapiNodeSchema[];
+  getNodeSchema(nodeType: string): NapiNodeSchema | null;
+  getNodeParameters(nodeType: string): NapiNodeParameter[];
+  getNodeSchemasJson(): string;
+  getNodeSchemaJson(nodeType: string): string | null;
+  getNodeTypes(): string[];
+  getNodeTypesByCategory(category: string): string[];
+  hasNodeType(nodeType: string): boolean;
+  getNodeCategories(): string[];
+  validateManifest(manifestJson: string): string[];
+}
+
+export interface NapiNodeParameter {
+  name: string;
+  paramType: string;
+  description?: string;
+  defaultValue?: string;
+  required: boolean;
+  enumValues?: string;
+  minimum?: number;
+  maximum?: number;
+}
+
+export interface NapiNodeCapabilities {
+  parallelizable: boolean;
+  batchAware: boolean;
+  supportsControl: boolean;
+  latencyClass: number;
+}
+
+export interface NapiNodeSchema {
+  nodeType: string;
+  description?: string;
+  category?: string;
+  accepts: string[];
+  produces: string[];
+  parameters: NapiNodeParameter[];
+  configSchema?: string;
+  configDefaults?: string;
+  isPython: boolean;
+  streaming: boolean;
+  multiOutput: boolean;
+  capabilities?: NapiNodeCapabilities;
 }
 
 /**

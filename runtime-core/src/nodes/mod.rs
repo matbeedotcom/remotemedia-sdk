@@ -22,6 +22,7 @@ pub mod python_streaming;
 pub mod registration_macros;
 pub mod registry;
 pub mod remote_pipeline;
+pub mod schema;
 pub mod streaming_node;
 pub mod streaming_registry;
 

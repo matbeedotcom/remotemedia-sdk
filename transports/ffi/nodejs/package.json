@@ -37,6 +37,8 @@
     "build:debug": "cd ../../.. && rm -f target/release/remotemedia_native.node && cargo build --features napi --no-default-features -p remotemedia-ffi && cp target/debug/libremotemedia_ffi.so target/debug/remotemedia_native.node || cp target/debug/libremotemedia_ffi.dylib target/debug/remotemedia_native.node 2>/dev/null || true",
     "build:napi": "napi build --platform --release",
     "build:napi:debug": "napi build --platform",
+    "generate-types": "node scripts/generate-types.js",
+    "postbuild": "npm run generate-types || true",
     "prepublishOnly": "napi prepublish -t npm",
     "test": "jest",
     "test:subscriber": "jest subscriber.test.ts",

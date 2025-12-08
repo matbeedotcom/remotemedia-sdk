@@ -486,3 +486,232 @@ export * from './proto-utils';
 
 import * as protoUtilsModule from './proto-utils';
 export const protoUtils: typeof protoUtilsModule;
+
+// =============================================================================
+// Node Schema Registry (Pipeline Introspection)
+// =============================================================================
+
+/** RuntimeData type variants that nodes can accept/produce */
+export enum NapiRuntimeDataType {
+  Audio = 0,
+  Video = 1,
+  Json = 2,
+  Text = 3,
+  Binary = 4,
+  Tensor = 5,
+  Numpy = 6,
+  ControlMessage = 7,
+}
+
+/** Processing latency classification */
+export enum NapiLatencyClass {
+  /** Sub-millisecond (< 1ms) - audio resampling */
+  Realtime = 0,
+  /** Fast (1-10ms) - VAD, format conversion */
+  Fast = 1,
+  /** Medium (10-100ms) - text processing */
+  Medium = 2,
+  /** Slow (100ms-1s) - TTS synthesis */
+  Slow = 3,
+  /** Very slow (> 1s) - ML inference, transcription */
+  Batch = 4,
+}
+
+/** Node execution capabilities for scheduling hints */
+export interface NapiNodeCapabilities {
+  /** Can process inputs in parallel */
+  parallelizable: boolean;
+  /** Benefits from batched inputs */
+  batchAware: boolean;
+  /** Supports control messages */
+  supportsControl: boolean;
+  /** Latency class (0=realtime, 1=fast, 2=medium, 3=slow, 4=batch) */
+  latencyClass: number;
+}
+
+/** Parameter type enumeration */
+export enum NapiParameterType {
+  String = 0,
+  Number = 1,
+  Integer = 2,
+  Boolean = 3,
+  Array = 4,
+  Object = 5,
+}
+
+/** A single configuration parameter for a node */
+export interface NapiNodeParameter {
+  /** Parameter name */
+  name: string;
+  /** Parameter type as string (string, number, integer, boolean, array, object) */
+  paramType: string;
+  /** Human-readable description */
+  description?: string;
+  /** Default value as JSON string */
+  defaultValue?: string;
+  /** Whether the parameter is required */
+  required: boolean;
+  /** Allowed values as JSON array string (for enum constraints) */
+  enumValues?: string;
+  /** Minimum value (for numbers) */
+  minimum?: number;
+  /** Maximum value (for numbers) */
+  maximum?: number;
+}
+
+/** Complete schema for a pipeline node */
+export interface NapiNodeSchema {
+  /** Node type identifier (e.g., "KokoroTTSNode", "AudioResample") */
+  nodeType: string;
+  /** Human-readable description */
+  description?: string;
+  /** Category for grouping (e.g., "audio", "text", "ml", "video") */
+  category?: string;
+  /** Accepted input RuntimeData types as strings */
+  accepts: string[];
+  /** Produced output RuntimeData types as strings */
+  produces: string[];
+  /** Configuration parameters (extracted from config_schema) */
+  parameters: NapiNodeParameter[];
+  /** Configuration JSON Schema (as JSON string) */
+  configSchema?: string;
+  /** Default configuration values (as JSON string) */
+  configDefaults?: string;
+  /** Whether this is a Python node */
+  isPython: boolean;
+  /** Whether this node supports streaming */
+  streaming: boolean;
+  /** Whether this node produces multiple outputs per input */
+  multiOutput: boolean;
+  /** Execution capabilities */
+  capabilities?: NapiNodeCapabilities;
+}
+
+/**
+ * Get all registered node schemas
+ *
+ * @example
+ * ```javascript
+ * const schemas = getNodeSchemas();
+ * schemas.forEach(schema => {
+ *   console.log(`${schema.nodeType}: ${schema.description}`);
+ * });
+ * ```
+ */
+export function getNodeSchemas(): NapiNodeSchema[];
+
+/**
+ * Get schema for a specific node type
+ *
+ * @param nodeType - The node type identifier (e.g., "KokoroTTSNode")
+ * @returns The node schema, or null if not found
+ *
+ * @example
+ * ```javascript
+ * const schema = getNodeSchema('KokoroTTSNode');
+ * if (schema) {
+ *   console.log('Accepts:', schema.accepts);
+ *   console.log('Produces:', schema.produces);
+ * }
+ * ```
+ */
+export function getNodeSchema(nodeType: string): NapiNodeSchema | null;
+
+/**
+ * Get configuration parameters for a specific node type
+ *
+ * @param nodeType - The node type identifier (e.g., "KokoroTTSNode")
+ * @returns Array of parameter definitions, or empty array if node not found
+ *
+ * @example
+ * ```javascript
+ * const params = getNodeParameters('KokoroTTSNode');
+ * params.forEach(p => {
+ *   console.log(`${p.name} (${p.paramType}): ${p.description}`);
+ *   if (p.enumValues) {
+ *     console.log(`  Allowed: ${JSON.parse(p.enumValues).join(', ')}`);
+ *   }
+ *   if (p.defaultValue) {
+ *     console.log(`  Default: ${p.defaultValue}`);
+ *   }
+ * });
+ * ```
+ */
+export function getNodeParameters(nodeType: string): NapiNodeParameter[];
+
+/**
+ * Get all node schemas as JSON string
+ *
+ * @returns JSON array of all node schemas
+ */
+export function getNodeSchemasJson(): string;
+
+/**
+ * Get schema for a specific node type as JSON string
+ *
+ * @param nodeType - The node type identifier
+ * @returns JSON string of the schema, or null if not found
+ */
+export function getNodeSchemaJson(nodeType: string): string | null;
+
+/**
+ * Get all registered node type names
+ *
+ * @returns Array of node type identifiers
+ *
+ * @example
+ * ```javascript
+ * const nodeTypes = getNodeTypes();
+ * console.log('Available nodes:', nodeTypes.join(', '));
+ * ```
+ */
+export function getNodeTypes(): string[];
+
+/**
+ * Get node types filtered by category
+ *
+ * @param category - Category to filter by (e.g., "audio", "ml", "video")
+ * @returns Array of node type identifiers in that category
+ *
+ * @example
+ * ```javascript
+ * const audioNodes = getNodeTypesByCategory('audio');
+ * ```
+ */
+export function getNodeTypesByCategory(category: string): string[];
+
+/**
+ * Check if a node type is registered
+ *
+ * @param nodeType - The node type identifier to check
+ */
+export function hasNodeType(nodeType: string): boolean;
+
+/**
+ * Get all unique categories from registered nodes
+ *
+ * @returns Array of category names
+ *
+ * @example
+ * ```javascript
+ * const categories = getNodeCategories();
+ * // ['audio', 'ml', 'text', 'utility', 'video']
+ * ```
+ */
+export function getNodeCategories(): string[];
+
+/**
+ * Validate a pipeline manifest against node schemas
+ *
+ * @param manifestJson - Pipeline manifest as JSON string
+ * @returns Array of validation errors (empty if valid)
+ *
+ * @example
+ * ```javascript
+ * const errors = validateManifest(JSON.stringify(manifest));
+ * if (errors.length > 0) {
+ *   console.error('Invalid manifest:', errors);
+ * }
+ * ```
+ */
+export function validateManifest(manifestJson: string): string[];
