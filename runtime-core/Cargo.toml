@@ -25,6 +25,10 @@ serde_yaml = { workspace = true }
 toml = { workspace = true }
 bincode = { workspace = true }
 schemars = { workspace = true }
+inventory = { workspace = true }
+
+# Proc-macros for NodeConfig
+remotemedia-runtime-core-derive = { path = "../runtime-core-derive" }
 
 # Async trait support
 async-trait = { workspace = true }

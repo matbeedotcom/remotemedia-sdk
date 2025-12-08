@@ -519,6 +519,51 @@ pub fn validate_manifest(manifest_json: String) -> napi::Result<Vec<String>> {
     Ok(errors)
 }
 
+/// Generate TypeScript type definitions for all node configs
+///
+/// Returns a complete `.d.ts` file with interfaces for all registered node types.
+///
+/// # Example
+///
+/// ```javascript
+/// const fs = require('fs');
+/// const { generateTypescript } = require('@remotemedia/native');
+///
+/// // Generate and save TypeScript definitions
+/// const typescriptDefs = generateTypescript();
+/// fs.writeFileSync('node-configs.d.ts', typescriptDefs);
+/// ```
+#[napi]
+pub fn generate_typescript() -> String {
+    let registry = get_registry();
+    remotemedia_runtime_core::nodes::schema::generate_typescript(registry)
+}
+
+/// Generate TypeScript type definitions including auto-registered configs
+///
+/// This version merges the builtin schemas with any configs registered
+/// via `#[derive(NodeConfig)]` and inventory.
+///
+/// # Example
+///
+/// ```javascript
+/// const { generateTypescriptWithRegistered } = require('@remotemedia/native');
+/// const fullDefs = generateTypescriptWithRegistered();
+/// ```
+#[napi]
+pub fn generate_typescript_with_registered() -> String {
+    // Start with builtin schemas
+    let mut registry = create_builtin_schema_registry();
+
+    // Merge in auto-registered configs
+    let registered = remotemedia_runtime_core::nodes::schema::collect_registered_configs();
+    for schema in registered.iter() {
+        registry.register(schema.clone());
+    }
+
+    remotemedia_runtime_core::nodes::schema::generate_typescript(&registry)
+}
+
 // Note: Tests for this module should be run via Node.js Jest tests
 // since they require NAPI bindings to be loaded in a Node.js environment.
 // See transports/ffi/nodejs/__tests__/schema.test.ts

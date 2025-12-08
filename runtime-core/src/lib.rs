@@ -35,6 +35,9 @@
 #![warn(clippy::all)]
 #![allow(clippy::arc_with_non_send_sync)] // iceoryx2 types are intentionally !Send
 
+// Allow the crate to refer to itself as `remotemedia_runtime_core` for proc-macro compatibility
+extern crate self as remotemedia_runtime_core;
+
 // Core execution modules
 pub mod audio;
 pub mod executor;
@@ -366,6 +369,10 @@ pub mod manifest;
 // Error types
 mod error;
 pub use error::{Error, Result};
+
+// Re-export attribute macros (always available since derive is default)
+pub use remotemedia_runtime_core_derive::node_config;
+pub use remotemedia_runtime_core_derive::node;
 
 /// Initialize the RemoteMedia runtime core
 ///

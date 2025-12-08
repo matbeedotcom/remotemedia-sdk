@@ -304,6 +304,7 @@ mod tests {
             frame_number: 0,
             timestamp_us: 0,
             is_keyframe: false,
+            stream_id: None,
         };
 
         let output = node.process(input_data).await.unwrap();
@@ -345,6 +346,7 @@ mod tests {
             frame_number: 0,
             timestamp_us: 0,
             is_keyframe: false,
+            stream_id: None,
         };
 
         let output = node.process(input_data).await.unwrap();
@@ -391,6 +393,7 @@ mod tests {
             frame_number: 0,
             timestamp_us: 0,
             is_keyframe: false,
+            stream_id: None,
         };
 
         let output = node.process(input_data).await.unwrap();

@@ -129,6 +129,7 @@ fn create_test_audio(duration_ms: u32, sample_rate: u32) -> RuntimeData {
         samples,
         sample_rate,
         channels: 1,
+        stream_id: None,
     }
 }
 
@@ -331,6 +332,7 @@ async fn test_docker_ipc_data_transfer() {
                             samples,
                             sample_rate,
                             channels,
+                            ..
                         } = test_audio
                         {
                             let ipc_data = IpcRuntimeData::audio(
@@ -1124,6 +1126,7 @@ async fn test_docker_ipc_channel_lifecycle() {
                             samples,
                             sample_rate,
                             channels,
+                            ..
                         } = test_audio
                         {
                             let ipc_data = IpcRuntimeData::audio(

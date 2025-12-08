@@ -78,6 +78,7 @@ async fn test_streaming_send_and_receive() {
         samples: vec![0.0, 0.1, 0.2],
         sample_rate: 16000,
         channels: 1,
+        stream_id: None,
     })
     .with_sequence(1);
 
@@ -93,6 +94,7 @@ async fn test_streaming_send_and_receive() {
             samples,
             sample_rate,
             channels,
+            ..
         } => {
             assert_eq!(samples.len(), 3);
             assert_eq!(sample_rate, 16000);

@@ -312,6 +312,7 @@ mod tests {
             frame_number: 0,
             timestamp_us: 0,
             is_keyframe: false,
+            stream_id: None,
         };
 
         // Convert to same format (should be no-op)

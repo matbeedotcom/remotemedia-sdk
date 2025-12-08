@@ -70,12 +70,14 @@ impl AsyncStreamingNode for MockSpeculativeVADGate {
                 samples,
                 sample_rate,
                 channels,
+                stream_id,
             } => {
                 // **Behavior 1: Forward audio immediately (speculative forwarding)**
                 let forwarded_audio = RuntimeData::Audio {
                     samples: samples.clone(),
                     sample_rate: *sample_rate,
                     channels: *channels,
+                    stream_id: stream_id.clone(),
                 };
 
                 // Store in outputs for test validation
@@ -133,6 +135,7 @@ async fn test_speculative_forwarding_immediate() {
         samples: vec![0.1, 0.2, 0.3, 0.4, 0.5], // 5 samples
         sample_rate: 16000,
         channels: 1,
+        stream_id: None,
     };
 
     let mut callback_outputs = Vec::new();
@@ -171,6 +174,7 @@ async fn test_cancellation_on_false_positive() {
         samples: vec![0.1, 0.2, 0.3, 0.4, 0.5],
         sample_rate: 16000,
         channels: 1,
+        stream_id: None,
     };
 
     let mut callback_outputs = Vec::new();
@@ -242,6 +246,7 @@ async fn test_ring_buffer_storage() {
             samples: vec![i as f32; 100], // 100 samples per chunk
             sample_rate: 16000,
             channels: 1,
+            stream_id: None,
         };
 
         let callback = |_: RuntimeData| Ok(());
@@ -273,6 +278,7 @@ async fn test_speculation_acceptance_tracking() {
         samples: vec![0.1; 100],
         sample_rate: 16000,
         channels: 1,
+        stream_id: None,
     };
 
     // Accepted speculation (no cancellation)
@@ -321,6 +327,7 @@ async fn test_concurrent_sessions() {
                 samples: vec![session_num as f32; 100],
                 sample_rate: 16000,
                 channels: 1,
+                stream_id: None,
             };
 
             let callback = |_: RuntimeData| Ok(());

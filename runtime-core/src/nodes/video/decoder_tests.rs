@@ -47,6 +47,7 @@ mod tests {
                 frame_number: 0,
                 timestamp_us: 0,
                 is_keyframe: false,
+                stream_id: None,
             };
 
             let result = decoder.process(raw_frame).await;
@@ -81,6 +82,7 @@ mod tests {
                 frame_number: 0,
                 timestamp_us: 0,
                 is_keyframe: true,
+                stream_id: None,
             };
 
             // In lenient mode, should return empty frame instead of error
@@ -120,6 +122,7 @@ mod tests {
                 frame_number: 0,
                 timestamp_us: 0,
                 is_keyframe: true,
+                stream_id: None,
             };
 
             // In strict mode, should return error (or success with mock decoder)
@@ -160,6 +163,7 @@ mod tests {
                 frame_number: 0,
                 timestamp_us: 0,
                 is_keyframe: true,
+                stream_id: None,
             };
 
             let result = decoder.process(encoded_frame).await;
@@ -198,6 +202,7 @@ mod tests {
                 frame_number: 0,
                 timestamp_us: 0,
                 is_keyframe: true,
+                stream_id: None,
             };
 
             let result = decoder.process(encoded_frame).await;

@@ -13,69 +13,10 @@
 
 use crate::data::{ControlMessageType, RuntimeData, SpeculativeSegment};
 use crate::executor::latency_metrics::LatencyMetrics;
-use crate::nodes::AsyncStreamingNode;
 use crate::Error;
-use async_trait::async_trait;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
-/// Configuration for SpeculativeVADGate
-///
-/// All fields have sensible defaults via `#[serde(default)]`, so you can
-/// deserialize from an empty object `{}` or partial config.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(default)]
-pub struct SpeculativeVADConfig {
-    /// Lookback window in milliseconds (how much audio to keep for cancellation)
-    #[serde(alias = "lookbackMs")]
-    #[schemars(range(max = 1000))]
-    pub lookback_ms: u32,
-
-    /// Lookahead window in milliseconds (how long to wait before confirming speculation)
-    #[serde(alias = "lookaheadMs")]
-    #[schemars(range(max = 500))]
-    pub lookahead_ms: u32,
-
-    /// Sample rate of audio (needed for time calculations)
-    #[serde(alias = "sampleRate")]
-    #[schemars(range(min = 8000, max = 48000))]
-    pub sample_rate: u32,
-
-    /// VAD confidence threshold for speech detection (0.0-1.0)
-    #[serde(alias = "vadThreshold")]
-    #[schemars(range(min = 0.0, max = 1.0))]
-    pub vad_threshold: f32,
-
-    /// Minimum speech duration in milliseconds to trigger forwarding
-    #[serde(alias = "minSpeechMs")]
-    #[schemars(range(max = 5000))]
-    pub min_speech_ms: u32,
-
-    /// Minimum silence duration in milliseconds to end speech segment
-    #[serde(alias = "minSilenceMs")]
-    #[schemars(range(max = 5000))]
-    pub min_silence_ms: u32,
-
-    /// Padding before/after speech in milliseconds
-    #[serde(alias = "padMs")]
-    #[schemars(range(max = 500))]
-    pub pad_ms: u32,
-}
-
-impl Default for SpeculativeVADConfig {
-    fn default() -> Self {
-        Self {
-            lookback_ms: 150,
-            lookahead_ms: 50,
-            sample_rate: 16000,
-            vad_threshold: 0.5,
-            min_speech_ms: 250,
-            min_silence_ms: 100,
-            pad_ms: 30,
-        }
-    }
-}
 
 /// Per-session state for speculative VAD processing
 #[derive(Debug)]
@@ -87,7 +28,7 @@ struct SessionState {
     buffer_capacity: usize,
 
     /// Current speculative segments being tracked
-    #[allow(dead_code)]  // Reserved for speculative segment tracking (spec 007)
+    #[allow(dead_code)] // Reserved for speculative segment tracking (spec 007)
     segments: Vec<SpeculativeSegment>,
 
     /// Total samples processed in this session
@@ -97,11 +38,11 @@ struct SessionState {
     segment_counter: u64,
 
     /// Is speech currently active
-    #[allow(dead_code)]  // Reserved for speech state tracking (spec 007)
+    #[allow(dead_code)] // Reserved for speech state tracking (spec 007)
     speech_active: bool,
 
     /// Samples of silence accumulated
-    #[allow(dead_code)]  // Reserved for silence detection (spec 007)
+    #[allow(dead_code)] // Reserved for silence detection (spec 007)
     silence_samples: usize,
 
     /// Speculation metrics
@@ -134,6 +75,22 @@ impl SessionState {
     }
 }
 
+/// VAD decision result
+#[derive(Debug, Clone)]
+pub struct VADResult {
+    /// Is this the end of a speech segment
+    pub is_speech_end: bool,
+
+    /// Was the speech confirmed (true) or false positive (false)
+    pub is_confirmed_speech: bool,
+
+    /// VAD confidence score (0.0-1.0)
+    pub confidence: f32,
+
+    /// Number of samples in the chunk that triggered this VAD result
+    pub samples_in_chunk: usize,
+}
+
 /// Speculative VAD Gate Node
 ///
 /// Implements speculative forwarding strategy:
@@ -141,30 +98,96 @@ impl SessionState {
 /// 2. Store in ring buffer
 /// 3. Check VAD decision after lookahead
 /// 4. Emit cancellation if false positive
+#[crate::node(
+    node_type = "SpeculativeVADGate",
+    category = "audio",
+    description = "Speculative VAD gate for low-latency voice interaction",
+    accepts = "audio",
+    produces = "audio,control",
+    multi_output
+)]
 pub struct SpeculativeVADGate {
-    /// Configuration
-    config: SpeculativeVADConfig,
+    /// Lookback window in milliseconds (how much audio to keep for cancellation)
+    #[config(default = 150)]
+    pub lookback_ms: u32,
+
+    /// Lookahead window in milliseconds (how long to wait before confirming speculation)
+    #[config(default = 50)]
+    pub lookahead_ms: u32,
+
+    /// Sample rate of audio (needed for time calculations)
+    #[config(default = 16000)]
+    pub sample_rate: u32,
+
+    /// VAD confidence threshold for speech detection (0.0-1.0)
+    #[config(default = 0.5)]
+    pub vad_threshold: f32,
+
+    /// Minimum speech duration in milliseconds to trigger forwarding
+    #[config(default = 250)]
+    pub min_speech_ms: u32,
+
+    /// Minimum silence duration in milliseconds to end speech segment
+    #[config(default = 100)]
+    pub min_silence_ms: u32,
+
+    /// Padding before/after speech in milliseconds
+    #[config(default = 30)]
+    pub pad_ms: u32,
 
     /// Per-session state (keyed by session_id)
+    #[state(default = Arc::new(Mutex::new(HashMap::new())))]
     sessions: Arc<Mutex<HashMap<String, SessionState>>>,
 
     /// Latency metrics for tracking speculation performance
+    #[state(default = Arc::new(LatencyMetrics::new("speculative_vad_gate").unwrap()))]
     metrics: Arc<LatencyMetrics>,
 }
 
 impl SpeculativeVADGate {
-    /// Create a new SpeculativeVADGate with default configuration
-    pub fn new() -> Self {
-        Self::with_config(SpeculativeVADConfig::default())
-    }
+    /// Process streaming implementation - required for multi_output nodes
+    pub async fn process_streaming_impl<F>(
+        &self,
+        data: RuntimeData,
+        session_id: Option<String>,
+        mut callback: F,
+    ) -> Result<usize, Error>
+    where
+        F: FnMut(RuntimeData) -> Result<(), Error> + Send,
+    {
+        let session_id = session_id.unwrap_or_else(|| "default".to_string());
 
-    /// Create a new SpeculativeVADGate with custom configuration
-    pub fn with_config(config: SpeculativeVADConfig) -> Self {
-        Self {
-            config,
-            sessions: Arc::new(Mutex::new(HashMap::new())),
-            metrics: Arc::new(LatencyMetrics::new("speculative_vad_gate").unwrap()),
+        // Extract audio from RuntimeData
+        let (samples, sample_rate, channels) = match &data {
+            RuntimeData::Audio {
+                samples,
+                sample_rate,
+                channels,
+                stream_id: _,
+            } => (samples.clone(), *sample_rate, *channels),
+            _ => {
+                return Err(Error::Execution(
+                    "SpeculativeVADGate requires audio input".into(),
+                ))
+            }
+        };
+
+        // External VAD implementations (e.g. Silero) should call process_vad_result()
+        // once their asynchronous inference completes. Streaming mode forwards audio immediately.
+        let vad_result = None;
+
+        // Process the audio chunk
+        let outputs = self
+            .process_audio_chunk(&samples, sample_rate, channels, &session_id, vad_result)
+            .await?;
+
+        // Emit all outputs via callback
+        let output_count = outputs.len();
+        for output in outputs {
+            callback(output)?;
         }
+
+        Ok(output_count)
     }
 
     /// Get or create session state
@@ -323,90 +346,9 @@ impl SpeculativeVADGate {
     }
 }
 
-/// VAD decision result
-#[derive(Debug, Clone)]
-pub struct VADResult {
-    /// Is this the end of a speech segment
-    pub is_speech_end: bool,
-
-    /// Was the speech confirmed (true) or false positive (false)
-    pub is_confirmed_speech: bool,
-
-    /// VAD confidence score (0.0-1.0)
-    pub confidence: f32,
-
-    /// Number of samples in the chunk that triggered this VAD result
-    pub samples_in_chunk: usize,
-}
-
-#[async_trait]
-impl AsyncStreamingNode for SpeculativeVADGate {
-    fn node_type(&self) -> &str {
-        "SpeculativeVADGate"
-    }
-
-    async fn initialize(&self) -> Result<(), Error> {
-        tracing::info!(
-            "SpeculativeVADGate initialized with config: {:?}",
-            self.config
-        );
-        Ok(())
-    }
-
-    async fn process(&self, _data: RuntimeData) -> Result<RuntimeData, Error> {
-        Err(Error::Execution(
-            "SpeculativeVADGate requires streaming mode - use process_streaming() instead".into(),
-        ))
-    }
-
-    async fn process_streaming<F>(
-        &self,
-        data: RuntimeData,
-        session_id: Option<String>,
-        mut callback: F,
-    ) -> Result<usize, Error>
-    where
-        F: FnMut(RuntimeData) -> Result<(), Error> + Send,
-    {
-        let session_id = session_id.unwrap_or_else(|| "default".to_string());
-
-        // Extract audio from RuntimeData
-        let (samples, sample_rate, channels) = match &data {
-            RuntimeData::Audio {
-                samples,
-                sample_rate,
-                channels,
-                stream_id: _,
-            } => (samples.clone(), *sample_rate, *channels),
-            _ => {
-                return Err(Error::Execution(
-                    "SpeculativeVADGate requires audio input".into(),
-                ))
-            }
-        };
-
-        // External VAD implementations (e.g. Silero) should call process_vad_result()
-        // once their asynchronous inference completes. Streaming mode forwards audio immediately.
-        let vad_result = None;
-
-        // Process the audio chunk
-        let outputs = self
-            .process_audio_chunk(&samples, sample_rate, channels, &session_id, vad_result)
-            .await?;
-
-        // Emit all outputs via callback
-        let output_count = outputs.len();
-        for output in outputs {
-            callback(output)?;
-        }
-
-        Ok(output_count)
-    }
-}
-
 impl Default for SpeculativeVADGate {
     fn default() -> Self {
-        Self::new()
+        Self::with_default()
     }
 }
 
@@ -416,7 +358,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_immediate_forwarding() {
-        let gate = SpeculativeVADGate::new();
+        let gate = SpeculativeVADGate::with_default();
 
         let audio = RuntimeData::Audio {
             samples: vec![0.1, 0.2, 0.3],
@@ -431,6 +373,7 @@ mod tests {
             Ok(())
         };
 
+        use crate::nodes::AsyncStreamingNode;
         let result = gate
             .process_streaming(audio, Some("test_session".to_string()), callback)
             .await;
@@ -449,7 +392,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_acceptance_rate_tracking() {
-        let gate = SpeculativeVADGate::new();
+        let gate = SpeculativeVADGate::with_default();
 
         // Initially should be 1.0 (no data)
         let rate = gate.get_acceptance_rate("test").await;
@@ -463,6 +406,7 @@ mod tests {
             stream_id: None,
         };
 
+        use crate::nodes::AsyncStreamingNode;
         let callback = |_: RuntimeData| Ok(());
         let _ = gate
             .process_streaming(audio, Some("test".to_string()), callback)
@@ -474,7 +418,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_isolation() {
-        let gate = Arc::new(SpeculativeVADGate::new());
+        let gate = Arc::new(SpeculativeVADGate::with_default());
 
         // Process audio from two different sessions
         for session_num in 0..2 {
@@ -488,6 +432,7 @@ mod tests {
                 stream_id: None,
             };
 
+            use crate::nodes::AsyncStreamingNode;
             let callback = |_: RuntimeData| Ok(());
             let result = gate_clone
                 .process_streaming(audio, Some(session_id.clone()), callback)

@@ -476,14 +476,14 @@ impl StreamingNodeFactory for SpeculativeVADGateFactory {
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
-        use crate::nodes::speculative_vad_gate::{SpeculativeVADConfig, SpeculativeVADGate};
+        use crate::nodes::speculative_vad_gate::{SpeculativeVADGate, SpeculativeVADGateConfig};
 
         // Deserialize config directly - #[serde(default)] handles missing fields,
         // #[serde(alias = "camelCase")] handles both snake_case and camelCase
-        let config: SpeculativeVADConfig = serde_json::from_value(params.clone())
+        let config: SpeculativeVADGateConfig = serde_json::from_value(params.clone())
             .unwrap_or_default();
 
-        let node = SpeculativeVADGate::with_config(config);
+        let node = SpeculativeVADGate::new(config);
         Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
     }
 
@@ -497,7 +497,7 @@ impl StreamingNodeFactory for SpeculativeVADGateFactory {
 
     fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
         use crate::nodes::schema::{LatencyClass, NodeCapabilitiesSchema, NodeSchema, RuntimeDataType};
-        use crate::nodes::speculative_vad_gate::SpeculativeVADConfig;
+        use crate::nodes::speculative_vad_gate::SpeculativeVADGateConfig;
         Some(
             NodeSchema::new("SpeculativeVADGate")
                 .description("Speculative VAD gate for low-latency voice interaction")
@@ -510,7 +510,7 @@ impl StreamingNodeFactory for SpeculativeVADGateFactory {
                     supports_control: true,
                     latency_class: LatencyClass::Realtime,
                 })
-                .config_schema_from::<SpeculativeVADConfig>(),
+                .config_schema_from::<SpeculativeVADGateConfig>(),
         )
     }
 }

@@ -10,6 +10,7 @@
  */
 
 import WebSocket from 'ws';
+import { PipelineBuilder, Echo, CalculatorNode } from '../node-schemas';
 
 // Type imports from the native module
 interface TurnServer {
@@ -157,68 +158,36 @@ const getUniquePort = () => portCounter++;
 function createAudioVideoPipelineManifest(
   name: string = 'webrtc-pipeline'
 ): string {
-  return JSON.stringify({
-    version: '1.0',
-    metadata: { name },
-    nodes: [
-      {
-        id: 'audio_input',
-        node_type: 'AudioInput',
-        config: { sample_rate: 48000, channels: 1 },
-      },
-      {
-        id: 'video_input',
-        node_type: 'VideoInput',
-        config: { width: 640, height: 480, fps: 30 },
-      },
-      {
-        id: 'audio_passthrough',
-        node_type: 'Echo',
-        config: {},
-      },
-      {
-        id: 'video_passthrough',
-        node_type: 'Echo',
-        config: {},
-      },
-    ],
-    connections: [
-      { source: 'audio_input', destination: 'audio_passthrough' },
-      { source: 'video_input', destination: 'video_passthrough' },
-    ],
-  });
+  const audioInput = new Echo('audio_input');
+  const videoInput = new Echo('video_input');
+  const audioPassthrough = new Echo('audio_passthrough');
+  const videoPassthrough = new Echo('video_passthrough');
+
+  return new PipelineBuilder('1.0')
+    .name(name)
+    .add(audioInput)
+    .add(videoInput)
+    .add(audioPassthrough)
+    .add(videoPassthrough)
+    .connect(audioInput, audioPassthrough)
+    .connect(videoInput, videoPassthrough)
+    .toJson();
 }
 
 /** Create a simple echo pipeline manifest */
 function createEchoPipelineManifest(name: string = 'echo-pipeline'): string {
-  return JSON.stringify({
-    version: '1.0',
-    metadata: { name },
-    nodes: [
-      {
-        id: 'echo',
-        node_type: 'Echo',
-        config: {},
-      },
-    ],
-    connections: [],
-  });
+  return new PipelineBuilder('1.0')
+    .name(name)
+    .add(new Echo('echo'))
+    .toJson();
 }
 
 /** Create a calculator pipeline manifest for JSON processing tests */
 function createCalculatorPipelineManifest(name: string = 'calculator-pipeline'): string {
-  return JSON.stringify({
-    version: '1.0',
-    metadata: { name },
-    nodes: [
-      {
-        id: 'calculator',
-        node_type: 'CalculatorNode',
-        config: {},
-      },
-    ],
-    connections: [],
-  });
+  return new PipelineBuilder('1.0')
+    .name(name)
+    .add(new CalculatorNode('calculator'))
+    .toJson();
 }
 
 /** JSON-RPC 2.0 message helper */

@@ -338,6 +338,7 @@ mod tests {
             frame_number: 0,
             timestamp_us: 0,
             is_keyframe: false,
+            stream_id: None,
         };
 
         // Scale to 720p
@@ -393,6 +394,7 @@ mod tests {
             frame_number: 0,
             timestamp_us: 0,
             is_keyframe: false,
+            stream_id: None,
         };
 
         let result = scaler.process(input_frame).await;
