@@ -188,6 +188,11 @@ path = "tests/integration/test_docker_resource_limits.rs"
 name = "test_param_validation"
 path = "tests/integration/test_param_validation.rs"
 
+# Cross-transport validation consistency test (T034)
+[[test]]
+name = "test_transport_consistency"
+path = "tests/integration/test_transport_consistency.rs"
+
 # Benchmarks for latency measurement
 [[bench]]
 name = "bench_latency"

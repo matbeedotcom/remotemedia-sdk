@@ -99,9 +99,12 @@ impl ExecutionServiceImpl {
     }
 
     /// Validate manifest structure
+    ///
+    /// Note: Node parameter validation is performed by PipelineRunner during execution.
+    /// This method handles transport-specific validation only (e.g., size limits).
     fn validate_manifest(&self, _manifest: &Manifest) -> Result<(), ServiceError> {
-        // Basic validation - runtime will do deeper validation
-        // TODO: Add any transport-specific validation here
+        // Transport-specific validation (size limits, rate limits, etc.)
+        // Node parameter validation is performed by PipelineRunner
         Ok(())
     }
 
@@ -254,13 +257,36 @@ impl PipelineExecutionService for ExecutionServiceImpl {
                 error!(error = %e, "Pipeline execution failed");
                 self.metrics
                     .record_request_end("ExecutePipeline", "error", start_time);
-                self.metrics.record_error("execution");
+
+                // Detect validation errors and map to appropriate error type
+                let (error_type, message, context) =
+                    if let remotemedia_runtime_core::Error::Validation(ref validation_errors) = e {
+                        self.metrics.record_error("validation");
+                        // Format validation errors as structured JSON for clients
+                        let errors_json = serde_json::to_string(validation_errors)
+                            .unwrap_or_else(|_| e.to_string());
+                        (
+                            ErrorType::Validation as i32,
+                            errors_json,
+                            format!(
+                                "{} validation error(s) in node parameters",
+                                validation_errors.len()
+                            ),
+                        )
+                    } else {
+                        self.metrics.record_error("execution");
+                        (
+                            ErrorType::NodeExecution as i32,
+                            e.to_string(),
+                            String::new(),
+                        )
+                    };
 
                 let error_response = ErrorResponse {
-                    error_type: ErrorType::NodeExecution as i32,
-                    message: e.to_string(),
+                    error_type,
+                    message,
                     failing_node_id: String::new(),
-                    context: String::new(),
+                    context,
                     stack_trace: String::new(),
                 };
 

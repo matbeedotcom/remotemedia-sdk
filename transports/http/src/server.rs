@@ -164,26 +164,87 @@ struct ExecuteResponse {
     output: TransportData,
 }
 
+/// Error response body for structured error responses
+#[derive(Debug, Serialize)]
+struct ErrorResponse {
+    /// Error type (e.g., "validation", "execution", "internal")
+    error_type: String,
+    /// Human-readable error message
+    message: String,
+    /// Structured validation errors (only for validation errors)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validation_errors: Option<serde_json::Value>,
+}
+
+/// Map runtime errors to appropriate HTTP status codes and structured responses
+fn map_runtime_error(e: remotemedia_runtime_core::Error) -> (StatusCode, Json<ErrorResponse>) {
+    match e {
+        remotemedia_runtime_core::Error::Validation(ref validation_errors) => {
+            let errors_json = serde_json::to_value(validation_errors).ok();
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error_type: "validation".to_string(),
+                    message: format!(
+                        "{} validation error(s) in node parameters",
+                        validation_errors.len()
+                    ),
+                    validation_errors: errors_json,
+                }),
+            )
+        }
+        remotemedia_runtime_core::Error::Manifest(msg)
+        | remotemedia_runtime_core::Error::InvalidManifest(msg) => (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error_type: "manifest".to_string(),
+                message: msg,
+                validation_errors: None,
+            }),
+        ),
+        remotemedia_runtime_core::Error::InvalidData(msg)
+        | remotemedia_runtime_core::Error::InvalidInput { message: msg, .. } => (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error_type: "input".to_string(),
+                message: msg,
+                validation_errors: None,
+            }),
+        ),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error_type: "execution".to_string(),
+                message: e.to_string(),
+                validation_errors: None,
+            }),
+        ),
+    }
+}
+
 /// POST /execute - Unary pipeline execution
 async fn execute_handler(
     State(state): State<ServerState>,
     Json(request): Json<ExecuteRequest>,
-) -> std::result::Result<Json<ExecuteResponse>, (StatusCode, String)> {
+) -> std::result::Result<Json<ExecuteResponse>, (StatusCode, Json<ErrorResponse>)> {
     // Parse manifest
-    let manifest: Manifest = serde_json::from_value(request.manifest)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid manifest: {}", e)))?;
+    let manifest: Manifest = serde_json::from_value(request.manifest).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error_type: "manifest".to_string(),
+                message: format!("Invalid manifest: {}", e),
+                validation_errors: None,
+            }),
+        )
+    })?;
 
-    // Execute pipeline
+    // Execute pipeline - uses map_runtime_error for proper validation error handling
     let output = state
         .runner
         .execute_unary(Arc::new(manifest), request.input)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Execution failed: {}", e),
-            )
-        })?;
+        .map_err(map_runtime_error)?;
 
     Ok(Json(ExecuteResponse { output }))
 }
@@ -204,22 +265,25 @@ struct CreateStreamResponse {
 async fn create_stream_handler(
     State(state): State<ServerState>,
     Json(request): Json<CreateStreamRequest>,
-) -> std::result::Result<Json<CreateStreamResponse>, (StatusCode, String)> {
+) -> std::result::Result<Json<CreateStreamResponse>, (StatusCode, Json<ErrorResponse>)> {
     // Parse manifest
-    let manifest: Manifest = serde_json::from_value(request.manifest)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid manifest: {}", e)))?;
+    let manifest: Manifest = serde_json::from_value(request.manifest).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error_type: "manifest".to_string(),
+                message: format!("Invalid manifest: {}", e),
+                validation_errors: None,
+            }),
+        )
+    })?;
 
-    // Create stream session
+    // Create stream session - uses map_runtime_error for proper validation error handling
     let session = state
         .runner
         .create_stream_session(Arc::new(manifest))
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to create session: {}", e),
-            )
-        })?;
+        .map_err(map_runtime_error)?;
 
     let session_id = session.session_id().to_string();
 

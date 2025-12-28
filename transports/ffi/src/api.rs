@@ -15,6 +15,41 @@ use remotemedia_runtime_core::{
 };
 use std::sync::Arc;
 
+/// Map runtime errors to appropriate Python exceptions
+///
+/// Provides consistent error handling across FFI, with special handling for:
+/// - Validation errors -> ValueError with structured error details
+/// - Manifest errors -> ValueError
+/// - Execution errors -> RuntimeError
+fn map_runtime_error(e: remotemedia_runtime_core::Error) -> PyErr {
+    match e {
+        remotemedia_runtime_core::Error::Validation(ref validation_errors) => {
+            // Format validation errors as structured JSON for Python consumers
+            let errors_json = serde_json::to_string_pretty(validation_errors)
+                .unwrap_or_else(|_| e.to_string());
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Parameter validation failed ({} error(s)):\n{}",
+                validation_errors.len(),
+                errors_json
+            ))
+        }
+        remotemedia_runtime_core::Error::Manifest(msg)
+        | remotemedia_runtime_core::Error::InvalidManifest(msg) => {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid manifest: {}", msg))
+        }
+        remotemedia_runtime_core::Error::InvalidData(msg) => {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid data: {}", msg))
+        }
+        remotemedia_runtime_core::Error::InvalidInput { message, node_id, .. } => {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Invalid input for node '{}': {}",
+                node_id, message
+            ))
+        }
+        _ => PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Execution failed: {}", e)),
+    }
+}
+
 /// Execute a pipeline from a JSON manifest
 ///
 /// # Arguments
@@ -61,9 +96,10 @@ pub fn execute_pipeline(
 
         // Execute using PipelineRunner (no input data for basic execution)
         let input = TransportData::new(RuntimeData::Text(String::new()));
-        let output = runner.execute_unary(manifest, input).await.map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Execution failed: {}", e))
-        })?;
+        let output = runner
+            .execute_unary(manifest, input)
+            .await
+            .map_err(map_runtime_error)?;
 
         // Convert output to Python
         Python::attach(|py| {
@@ -136,11 +172,12 @@ pub fn execute_pipeline_with_input<'py>(
             RuntimeData::Text(String::new())
         };
 
-        // Execute using PipelineRunner
+        // Execute using PipelineRunner - uses map_runtime_error for proper validation error handling
         let input = TransportData::new(input_data);
-        let output = runner.execute_unary(manifest, input).await.map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Execution failed: {}", e))
-        })?;
+        let output = runner
+            .execute_unary(manifest, input)
+            .await
+            .map_err(map_runtime_error)?;
 
         // Convert output to Python
         Python::attach(|py| {
