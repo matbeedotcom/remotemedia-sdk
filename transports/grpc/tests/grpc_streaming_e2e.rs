@@ -8,6 +8,7 @@
 //! 5. Receive processed video frames
 //! 6. Verify VideoFlip node processes frames correctly
 
+use remotemedia_grpc::generated::VideoCodec;
 use remotemedia_grpc::generated::{
     data_buffer::DataType, stream_request::Request as StreamRequestType,
     stream_response::Response as StreamResponseType,
@@ -100,6 +101,8 @@ fn create_test_video_buffer(frame_number: u64) -> DataBuffer {
     ];
 
     let video_frame = VideoFrame {
+        codec: VideoCodec::H264 as i32,
+        is_keyframe: true,
         pixel_data: pixels,
         width: 2,
         height: 2,
