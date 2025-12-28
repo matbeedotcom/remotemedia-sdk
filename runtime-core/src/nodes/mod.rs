@@ -61,6 +61,9 @@ pub use video_flip::VideoFlipNode;
 pub mod speculative_vad_gate;
 pub use speculative_vad_gate::{SpeculativeVADGate, SpeculativeVADGateConfig, VADResult};
 
+pub mod speculative_vad_coordinator;
+pub use speculative_vad_coordinator::{SpeculativeVADCoordinator, SpeculativeVADCoordinatorConfig};
+
 pub use registry::{CompositeRegistry, NodeFactory as NodeFactoryTrait, RuntimeHint};
 pub use streaming_node::{
     AsyncNodeWrapper, AsyncStreamingNode, StreamingNode, StreamingNodeFactory,
