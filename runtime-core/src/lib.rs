@@ -54,6 +54,9 @@ pub mod registration_macros {
 // Manifest
 pub use manifest::Manifest;
 
+// Validation - convenience re-exports for introspection API
+pub use validation::{get_all_schemas, get_node_schema, SchemaValidator, ValidationResult};
+
 // Transport abstraction layer
 pub mod transport;
 

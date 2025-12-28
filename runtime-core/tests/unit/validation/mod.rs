@@ -12,3 +12,6 @@ mod test_error_messages;
 // User Story 4: Node developers define validation rules
 mod test_macro_schema;
 mod test_schemars_integration;
+
+// User Story 5: Operators can introspect valid node parameters
+mod test_introspection;
