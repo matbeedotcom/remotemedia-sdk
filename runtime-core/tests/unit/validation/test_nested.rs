@@ -110,10 +110,9 @@ fn test_nested_required_missing() {
     assert!(result.is_err());
 
     let errors = result.unwrap_err();
-    // The expected field contains the property name for Required errors
     assert!(errors.iter().any(|e| {
         e.constraint == ValidationConstraint::Required
-            && e.expected.contains("path")
+            && e.message.contains("path")
     }));
 }
 
@@ -135,10 +134,9 @@ fn test_deeply_nested_required_missing() {
     assert!(result.is_err());
 
     let errors = result.unwrap_err();
-    // The expected field contains the property name for Required errors
     assert!(errors.iter().any(|e| {
         e.constraint == ValidationConstraint::Required
-            && e.expected.contains("batch_size")
+            && e.message.contains("batch_size")
     }));
 }
 

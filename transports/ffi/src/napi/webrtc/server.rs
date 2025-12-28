@@ -288,12 +288,16 @@ impl WebRtcServer {
 
         eprintln!("[NAPI] Creating WebSocketSignalingServer on port {}", port);
 
-        // Create WebSocket signaling server
-        let ws_server = WebSocketSignalingServer::new(
+        // Create event channel for forwarding events from signaling to NAPI callbacks
+        let (bridge_tx, mut bridge_rx) = tokio::sync::mpsc::channel::<remotemedia_webrtc::signaling::WebRtcEventBridge>(1024);
+
+        // Create WebSocket signaling server WITH event forwarding
+        let ws_server = WebSocketSignalingServer::new_with_events(
             port as u16,
             Arc::clone(&transport_config),
             Arc::clone(&runner),
             Arc::clone(&manifest),
+            Some(bridge_tx),
         );
 
         eprintln!("[NAPI] Starting WebSocketSignalingServer...");
@@ -306,6 +310,118 @@ impl WebRtcServer {
 
         // Store the server handle
         *self.ws_server_handle.lock().await = Some(ws_handle);
+
+        // Spawn bridge event forwarder task
+        let on_peer_connected = self.on_peer_connected.clone();
+        let on_peer_disconnected = self.on_peer_disconnected.clone();
+        let on_pipeline_output = self.on_pipeline_output.clone();
+        let on_data = self.on_data.clone();
+        let on_error = self.on_error.clone();
+        let event_loop_running = self.event_loop_running.clone();
+
+        event_loop_running.store(true, Ordering::SeqCst);
+
+        let bridge_handle = tokio::spawn(async move {
+            eprintln!("[NAPI] Event bridge task started");
+            while let Some(bridge_event) = bridge_rx.recv().await {
+                eprintln!("[NAPI] Received bridge event: {:?}", std::mem::discriminant(&bridge_event));
+                match bridge_event {
+                    remotemedia_webrtc::signaling::WebRtcEventBridge::PeerConnected { peer_id, capabilities, metadata } => {
+                        eprintln!("[NAPI] Processing PeerConnected event for peer: {}", peer_id);
+                        let data = PeerConnectedData {
+                            peer_id: peer_id.clone(),
+                            capabilities: super::config::PeerCapabilities {
+                                audio: capabilities.contains(&"audio".to_string()),
+                                video: capabilities.contains(&"video".to_string()),
+                                data: capabilities.contains(&"data".to_string()),
+                            },
+                            metadata: metadata.iter().map(|(k, v)| (k.clone(), v.to_string())).collect(),
+                        };
+                        let callbacks = on_peer_connected.lock().await;
+                        eprintln!("[NAPI] Calling {} peer_connected callbacks", callbacks.len());
+                        for callback in callbacks.iter() {
+                            let _ = callback.call(data.clone(), napi::threadsafe_function::ThreadsafeFunctionCallMode::Blocking);
+                        }
+                    }
+                    remotemedia_webrtc::signaling::WebRtcEventBridge::PeerDisconnected { peer_id, reason } => {
+                        eprintln!("[NAPI] Processing PeerDisconnected event for peer: {}", peer_id);
+                        let data = PeerDisconnectedData {
+                            peer_id: peer_id.clone(),
+                            reason,
+                        };
+                        let callbacks = on_peer_disconnected.lock().await;
+                        eprintln!("[NAPI] Calling {} peer_disconnected callbacks", callbacks.len());
+                        for callback in callbacks.iter() {
+                            let _ = callback.call(data.clone(), napi::threadsafe_function::ThreadsafeFunctionCallMode::Blocking);
+                        }
+                    }
+                    remotemedia_webrtc::signaling::WebRtcEventBridge::PipelineOutput { peer_id, data_json, timestamp_ns } => {
+                        // Parse the data_json to extract data type
+                        let (data_type, data_str) = if let Ok(runtime_data) = serde_json::from_str::<remotemedia_runtime_core::data::RuntimeData>(&data_json) {
+                            use remotemedia_runtime_core::data::RuntimeData;
+                            match &runtime_data {
+                                RuntimeData::Audio { samples, sample_rate, channels, .. } => (
+                                    "audio".to_string(),
+                                    serde_json::json!({ "sample_rate": sample_rate, "channels": channels, "num_samples": samples.len() }).to_string(),
+                                ),
+                                RuntimeData::Text(content) => ("text".to_string(), serde_json::json!({ "content": content }).to_string()),
+                                RuntimeData::Video { width, height, format, .. } => (
+                                    "video".to_string(),
+                                    serde_json::json!({ "width": width, "height": height, "format": format!("{:?}", format) }).to_string(),
+                                ),
+                                RuntimeData::Binary(data) => ("binary".to_string(), serde_json::json!({ "size": data.len() }).to_string()),
+                                RuntimeData::Json(value) => ("json".to_string(), value.to_string()),
+                                _ => ("unknown".to_string(), "{}".to_string()),
+                            }
+                        } else {
+                            ("unknown".to_string(), data_json)
+                        };
+                        let data = PipelineOutputData {
+                            peer_id: peer_id.clone(),
+                            data_type,
+                            data: data_str,
+                            timestamp: timestamp_ns as f64,
+                        };
+                        let callbacks = on_pipeline_output.lock().await;
+                        for callback in callbacks.iter() {
+                            let _ = callback.call(data.clone(), napi::threadsafe_function::ThreadsafeFunctionCallMode::Blocking);
+                        }
+                    }
+                    remotemedia_webrtc::signaling::WebRtcEventBridge::DataReceived { peer_id, data, timestamp_ns } => {
+                        let data = DataReceivedData {
+                            peer_id: peer_id.clone(),
+                            size: data.len() as u32,
+                            timestamp: timestamp_ns as f64,
+                        };
+                        let callbacks = on_data.lock().await;
+                        for callback in callbacks.iter() {
+                            let _ = callback.call(data.clone(), napi::threadsafe_function::ThreadsafeFunctionCallMode::Blocking);
+                        }
+                    }
+                    remotemedia_webrtc::signaling::WebRtcEventBridge::Error { code, message, peer_id } => {
+                        let error_code = match code {
+                            remotemedia_webrtc::signaling::WebRtcErrorCode::SignalingError => "signaling_error",
+                            remotemedia_webrtc::signaling::WebRtcErrorCode::PeerError => "peer_error",
+                            remotemedia_webrtc::signaling::WebRtcErrorCode::PipelineError => "pipeline_error",
+                            remotemedia_webrtc::signaling::WebRtcErrorCode::InternalError => "internal_error",
+                        };
+                        let data = ErrorData {
+                            code: error_code.to_string(),
+                            message,
+                            peer_id,
+                        };
+                        let callbacks = on_error.lock().await;
+                        for callback in callbacks.iter() {
+                            let _ = callback.call(data.clone(), napi::threadsafe_function::ThreadsafeFunctionCallMode::Blocking);
+                        }
+                    }
+                }
+            }
+            eprintln!("[NAPI] Event bridge task ended");
+        });
+
+        // Store the bridge handle (so it can be cancelled on shutdown)
+        *self.event_loop_handle.lock().await = Some(bridge_handle);
 
         Ok(())
     }

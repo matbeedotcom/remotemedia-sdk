@@ -13,6 +13,11 @@
 #   ./scripts/build-pip.sh --release    # Release build (optimized)
 #   ./scripts/build-pip.sh --all        # Build for all supported platforms
 #   ./scripts/build-pip.sh --sdist      # Build source distribution only
+#   ./scripts/build-pip.sh --webrtc     # Include WebRTC support
+#
+# Feature flags:
+#   Without --webrtc: maturin build --features extension-module
+#   With --webrtc:    maturin build --features extension-module,webrtc
 #
 # Environment variables:
 #   MATURIN_PYPI_TOKEN  - PyPI API token for publishing
@@ -90,7 +95,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --webrtc)
-            FEATURES="extension-module,python-webrtc"
+            FEATURES="extension-module,webrtc"
             shift
             ;;
         --verbose|-v)

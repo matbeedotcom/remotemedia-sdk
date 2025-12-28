@@ -12,8 +12,7 @@ use super::events::{
 };
 use remotemedia_runtime_core::manifest::Manifest;
 use remotemedia_runtime_core::transport::PipelineRunner;
-use remotemedia_webrtc::signaling::WebSocketSignalingServer;
-use remotemedia_webrtc::signaling::websocket::WebSocketServerHandle;
+use remotemedia_webrtc::signaling::{WebRtcEventBridge, WebSocketServerHandle, WebSocketSignalingServer};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -53,7 +52,8 @@ pub struct WebRtcServerCore {
     /// Shutdown flag
     shutdown: Arc<AtomicBool>,
 
-    /// Tokio runtime handle for async operations
+    /// Tokio runtime handle for async operations (reserved for future use)
+    #[allow(dead_code)]
     runtime_handle: Option<tokio::runtime::Handle>,
 
     /// WebSocket signaling server handle
@@ -183,12 +183,16 @@ impl WebRtcServerCore {
         // Build WebRTC transport configuration using the conversion helper
         let transport_config = Arc::new(self.config.to_webrtc_config());
 
-        // Create WebSocket signaling server
-        let ws_server = WebSocketSignalingServer::new(
+        // Create bridge channel for event forwarding from signaling to FFI
+        let (bridge_tx, mut bridge_rx) = mpsc::channel::<WebRtcEventBridge>(EVENT_CHANNEL_CAPACITY);
+
+        // Create WebSocket signaling server WITH event forwarding
+        let ws_server = WebSocketSignalingServer::new_with_events(
             port as u16,
             Arc::clone(&transport_config),
             Arc::clone(&runner),
             Arc::clone(&manifest),
+            Some(bridge_tx),
         );
 
         tracing::info!(
@@ -202,6 +206,51 @@ impl WebRtcServerCore {
 
         // Store the server handle
         *self.ws_server_handle.write().await = Some(ws_handle);
+
+        // Spawn task to convert bridge events to FFI events and forward them
+        let event_tx = self.event_tx.clone();
+        let peers = Arc::clone(&self.peers);
+        tokio::spawn(async move {
+            tracing::debug!("WebRTC event bridge task started");
+            while let Some(bridge_event) = bridge_rx.recv().await {
+                let ffi_event = convert_bridge_to_ffi_event(&bridge_event);
+                
+                // Sync peer state based on events
+                match &bridge_event {
+                    WebRtcEventBridge::PeerConnected { peer_id, capabilities, metadata } => {
+                        let peer_info = PeerInfo {
+                            peer_id: peer_id.clone(),
+                            capabilities: super::config::PeerCapabilities {
+                                audio: capabilities.contains(&"audio".to_string()),
+                                video: capabilities.contains(&"video".to_string()),
+                                data: capabilities.contains(&"data".to_string()),
+                            },
+                            metadata: metadata.iter()
+                                .map(|(k, v)| (k.clone(), v.to_string()))
+                                .collect(),
+                            state: PeerState::Connected,
+                            connected_at: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                        };
+                        peers.write().await.insert(peer_id.clone(), peer_info);
+                        tracing::debug!("Synced peer {} to FFI peers map", peer_id);
+                    }
+                    WebRtcEventBridge::PeerDisconnected { peer_id, .. } => {
+                        peers.write().await.remove(peer_id);
+                        tracing::debug!("Removed peer {} from FFI peers map", peer_id);
+                    }
+                    _ => {}
+                }
+
+                // Forward event to FFI callback system
+                if let Err(e) = event_tx.send(ffi_event).await {
+                    tracing::warn!("Failed to forward event to FFI: {}", e);
+                }
+            }
+            tracing::debug!("WebRTC event bridge task ended");
+        });
 
         let mut state = self.state.write().await;
         *state = ServerState::Running;
@@ -587,53 +636,11 @@ impl WebRtcServerCore {
     }
 
     // ============ Internal event emission methods ============
+    // Note: Most event emission is now handled by the event bridge task spawned in start().
+    // The bridge converts WebRtcEventBridge events from the signaling layer to FFI WebRtcEvent.
 
-    /// Emit a peer connected event (called by signaling layer)
-    pub(crate) async fn emit_peer_connected(&self, event: PeerConnectedEvent) {
-        // Add to peers map
-        let peer_info = PeerInfo {
-            peer_id: event.peer_id.clone(),
-            capabilities: event.capabilities.clone(),
-            metadata: event.metadata.clone(),
-            state: PeerState::Connected,
-            connected_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-        };
-
-        self.peers
-            .write()
-            .await
-            .insert(event.peer_id.clone(), peer_info);
-
-        // Forward event
-        let _ = self.event_tx.send(WebRtcEvent::PeerConnected(event)).await;
-    }
-
-    /// Emit a peer disconnected event (called by signaling layer)
-    pub(crate) async fn emit_peer_disconnected(&self, event: PeerDisconnectedEvent) {
-        // Remove from peers map
-        self.peers.write().await.remove(&event.peer_id);
-
-        // Forward event
-        let _ = self
-            .event_tx
-            .send(WebRtcEvent::PeerDisconnected(event))
-            .await;
-    }
-
-    /// Emit a pipeline output event (called by pipeline)
-    pub(crate) async fn emit_pipeline_output(&self, event: PipelineOutputEvent) {
-        let _ = self.event_tx.send(WebRtcEvent::PipelineOutput(event)).await;
-    }
-
-    /// Emit a data received event (called by data channel)
-    pub(crate) async fn emit_data_received(&self, event: DataReceivedEvent) {
-        let _ = self.event_tx.send(WebRtcEvent::DataReceived(event)).await;
-    }
-
-    /// Emit an error event
+    /// Emit an error event (for internal error reporting)
+    #[allow(dead_code)]
     pub(crate) async fn emit_error(&self, event: ErrorEvent) {
         let _ = self.event_tx.send(WebRtcEvent::Error(event)).await;
     }
@@ -829,6 +836,92 @@ impl WebRtcServerCore {
     /// Get the reconnection configuration
     pub fn reconnect_config(&self) -> &ReconnectConfig {
         &self.config.reconnect
+    }
+}
+
+/// Convert a bridge event from the WebRTC signaling layer to an FFI event
+fn convert_bridge_to_ffi_event(bridge_event: &WebRtcEventBridge) -> WebRtcEvent {
+    match bridge_event {
+        WebRtcEventBridge::PeerConnected {
+            peer_id,
+            capabilities,
+            metadata,
+        } => {
+            let ffi_capabilities = super::config::PeerCapabilities {
+                audio: capabilities.contains(&"audio".to_string()),
+                video: capabilities.contains(&"video".to_string()),
+                data: capabilities.contains(&"data".to_string()),
+            };
+            let ffi_metadata: HashMap<String, String> = metadata
+                .iter()
+                .map(|(k, v)| (k.clone(), v.to_string()))
+                .collect();
+
+            WebRtcEvent::PeerConnected(PeerConnectedEvent {
+                peer_id: peer_id.clone(),
+                capabilities: ffi_capabilities,
+                metadata: ffi_metadata,
+            })
+        }
+        WebRtcEventBridge::PeerDisconnected { peer_id, reason } => {
+            let mut event = PeerDisconnectedEvent::new(peer_id.clone());
+            if let Some(r) = reason {
+                event = event.with_reason(r.clone());
+            }
+            WebRtcEvent::PeerDisconnected(event)
+        }
+        WebRtcEventBridge::PipelineOutput {
+            peer_id,
+            data_json,
+            timestamp_ns,
+        } => {
+            // Deserialize RuntimeData from JSON
+            let runtime_data = serde_json::from_str(data_json).unwrap_or_else(|e| {
+                tracing::warn!("Failed to deserialize pipeline output RuntimeData: {}", e);
+                remotemedia_runtime_core::data::RuntimeData::Text(format!(
+                    "Error deserializing: {}",
+                    e
+                ))
+            });
+
+            WebRtcEvent::PipelineOutput(PipelineOutputEvent {
+                peer_id: peer_id.clone(),
+                data: runtime_data,
+                timestamp: *timestamp_ns,
+            })
+        }
+        WebRtcEventBridge::DataReceived {
+            peer_id,
+            data,
+            timestamp_ns,
+        } => WebRtcEvent::DataReceived(DataReceivedEvent {
+            peer_id: peer_id.clone(),
+            data: data.clone(),
+            timestamp: *timestamp_ns,
+        }),
+        WebRtcEventBridge::Error {
+            code,
+            message,
+            peer_id,
+        } => {
+            let error_code = match code {
+                remotemedia_webrtc::signaling::WebRtcErrorCode::SignalingError => {
+                    ErrorCode::SignalingError
+                }
+                remotemedia_webrtc::signaling::WebRtcErrorCode::PeerError => ErrorCode::PeerError,
+                remotemedia_webrtc::signaling::WebRtcErrorCode::PipelineError => {
+                    ErrorCode::PipelineError
+                }
+                remotemedia_webrtc::signaling::WebRtcErrorCode::InternalError => {
+                    ErrorCode::InternalError
+                }
+            };
+            let mut event = ErrorEvent::new(error_code, message.clone());
+            if let Some(pid) = peer_id {
+                event = event.with_peer(pid.clone());
+            }
+            WebRtcEvent::Error(event)
+        }
     }
 }
 

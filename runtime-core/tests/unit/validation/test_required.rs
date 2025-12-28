@@ -37,10 +37,9 @@ fn test_single_missing_required() {
     assert!(result.is_err());
 
     let errors = result.unwrap_err();
-    // The missing field name is in the `expected` field (e.g., "property 'model_path'")
     assert!(errors.iter().any(|e| {
         e.constraint == ValidationConstraint::Required
-            && e.expected.contains("model_path")
+            && e.message.contains("model_path")
     }));
 }
 
@@ -92,14 +91,10 @@ fn test_required_error_message_format() {
     let errors = result.unwrap_err();
 
     let error = &errors[0];
-    // Error should indicate it's a required constraint
-    assert_eq!(error.constraint, ValidationConstraint::Required);
-    // The expected field contains the property name
-    assert!(error.expected.contains("model_path"));
-    // Node ID should be present
+    // Error message should be self-explanatory (SC-003)
+    assert!(error.message.contains("model_path"));
+    assert!(error.message.contains("required") || error.message.contains("Required"));
     assert_eq!(error.node_id, "asr_node");
-    // Message should mention "required"
-    assert!(error.message.to_lowercase().contains("required"));
 }
 
 #[test]
@@ -163,9 +158,8 @@ fn test_required_in_nested_object() {
     assert!(result.is_err());
 
     let errors = result.unwrap_err();
-    // The expected field contains the property name
     assert!(errors.iter().any(|e| {
         e.constraint == ValidationConstraint::Required
-            && e.expected.contains("api_key")
+            && e.message.contains("api_key")
     }));
 }

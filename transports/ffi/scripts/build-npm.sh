@@ -11,6 +11,10 @@
 #   ./scripts/build-npm.sh --all        # Build for all supported platforms
 #   ./scripts/build-npm.sh --webrtc     # Include WebRTC support
 #
+# Feature flags:
+#   Without --webrtc: cargo build --features napi --no-default-features
+#   With --webrtc:    cargo build --features napi,webrtc --no-default-features
+#
 # Environment variables:
 #   NPM_TOKEN  - npm auth token for publishing
 
@@ -82,7 +86,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --webrtc)
-            FEATURES="napi-webrtc"
+            FEATURES="napi,webrtc"
             shift
             ;;
         --verbose|-v)

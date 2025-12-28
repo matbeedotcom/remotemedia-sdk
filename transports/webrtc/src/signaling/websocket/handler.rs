@@ -2,6 +2,7 @@
 //!
 //! Handles individual WebSocket connections and processes JSON-RPC messages.
 
+use super::events::WebRtcEventBridge;
 use crate::config::WebRtcTransportConfig;
 use crate::peer::ServerPeer;
 use crate::signaling::protocol::{
@@ -39,13 +40,27 @@ pub struct SharedState {
     pub config: Arc<WebRtcTransportConfig>,
     pub runner: Arc<PipelineRunner>,
     pub manifest: Arc<Manifest>,
+    /// Optional event sender for FFI integration
+    /// When set, peer connect/disconnect and pipeline events are forwarded
+    pub event_tx: Option<mpsc::Sender<WebRtcEventBridge>>,
 }
 
 impl SharedState {
+    /// Create new shared state without event forwarding
     pub fn new(
         config: Arc<WebRtcTransportConfig>,
         runner: Arc<PipelineRunner>,
         manifest: Arc<Manifest>,
+    ) -> Self {
+        Self::new_with_events(config, runner, manifest, None)
+    }
+
+    /// Create new shared state with optional event forwarding
+    pub fn new_with_events(
+        config: Arc<WebRtcTransportConfig>,
+        runner: Arc<PipelineRunner>,
+        manifest: Arc<Manifest>,
+        event_tx: Option<mpsc::Sender<WebRtcEventBridge>>,
     ) -> Self {
         Self {
             peers: Arc::new(RwLock::new(HashMap::new())),
@@ -53,6 +68,16 @@ impl SharedState {
             config,
             runner,
             manifest,
+            event_tx,
+        }
+    }
+
+    /// Emit an event if event_tx is configured
+    pub async fn emit_event(&self, event: WebRtcEventBridge) {
+        if let Some(ref tx) = self.event_tx {
+            if let Err(e) = tx.send(event).await {
+                warn!("Failed to emit WebRTC event: {}", e);
+            }
         }
     }
 }
@@ -129,6 +154,14 @@ pub async fn handle_connection(
     // Cleanup on disconnect
     if let Some(peer_id) = peer_id.read().await.clone() {
         info!("Cleaning up peer: {}", peer_id);
+
+        // Emit peer disconnected event for FFI integration BEFORE cleanup
+        state
+            .emit_event(WebRtcEventBridge::peer_disconnected(
+                peer_id.clone(),
+                Some("WebSocket connection closed".to_string()),
+            ))
+            .await;
 
         // Shutdown ServerPeer if exists
         if let Some(server_peer) = state.server_peers.write().await.remove(&peer_id) {
@@ -248,6 +281,15 @@ async fn handle_announce(
 
     drop(peers);
 
+    // Emit peer connected event for FFI integration
+    state
+        .emit_event(WebRtcEventBridge::peer_connected(
+            params.peer_id.clone(),
+            params.capabilities.clone(),
+            params.user_data.clone().unwrap_or_default(),
+        ))
+        .await;
+
     // Send success response
     let response = JsonRpcResponse::new(
         json!({
@@ -326,12 +368,13 @@ async fn handle_offer(
             }
         }
 
-        // Create ServerPeer
-        let server_peer: Arc<ServerPeer> = match ServerPeer::new(
+        // Create ServerPeer with event forwarding if configured
+        let server_peer: Arc<ServerPeer> = match ServerPeer::new_with_events(
             from_peer_id.clone(),
             &*state.config,
             Arc::clone(&state.runner),
             Arc::clone(&state.manifest),
+            state.event_tx.clone(),
         )
         .await
         {

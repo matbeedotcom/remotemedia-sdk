@@ -1,13 +1,19 @@
 #!/bin/bash
 #
-# Build script for Node.js native bindings with napi-webrtc feature
+# Build script for Node.js native bindings
 #
 # This script builds the FFI library and copies it to all the locations
 # where Node.js may look for it, avoiding stale .node file issues.
 #
 # Usage:
-#   ./build-napi.sh           # Debug build
-#   ./build-napi.sh --release # Release build
+#   ./build-napi.sh             # Debug build
+#   ./build-napi.sh --release   # Release build
+#   ./build-napi.sh --webrtc    # Debug build with WebRTC
+#   ./build-napi.sh --release --webrtc  # Release build with WebRTC
+#
+# Feature flags:
+#   Without --webrtc: cargo build --features napi --no-default-features
+#   With --webrtc:    cargo build --features napi,webrtc --no-default-features
 #
 
 set -e
@@ -18,15 +24,31 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # Parse arguments
 BUILD_TYPE="debug"
 CARGO_FLAGS=""
+FEATURES="napi"
 
-if [[ "$1" == "--release" ]]; then
-    BUILD_TYPE="release"
-    CARGO_FLAGS="--release"
-fi
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --release)
+            BUILD_TYPE="release"
+            CARGO_FLAGS="--release"
+            shift
+            ;;
+        --webrtc)
+            FEATURES="napi,webrtc"
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--release] [--webrtc]"
+            exit 1
+            ;;
+    esac
+done
 
 echo "=========================================="
 echo "Building Node.js native bindings"
 echo "Build type: $BUILD_TYPE"
+echo "Features:   $FEATURES"
 echo "=========================================="
 
 # Source cargo environment if needed
@@ -43,9 +65,9 @@ fi
 
 # Build the library
 echo ""
-echo "Building remotemedia-ffi with napi-webrtc feature..."
+echo "Building remotemedia-ffi with features: $FEATURES..."
 cd "$SCRIPT_DIR"
-cargo build --features napi-webrtc $CARGO_FLAGS
+cargo build --features "$FEATURES" --no-default-features $CARGO_FLAGS
 
 # Determine source file and target locations
 if [[ "$BUILD_TYPE" == "release" ]]; then

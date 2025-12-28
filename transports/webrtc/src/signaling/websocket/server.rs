@@ -6,6 +6,7 @@
 //! the accept loop is always polled, even when used from FFI contexts like
 //! napi-rs where the main runtime may not continuously poll spawned tasks.
 
+use super::events::WebRtcEventBridge;
 use super::handler::{handle_connection, SharedState};
 use crate::config::WebRtcTransportConfig;
 use remotemedia_runtime_core::{manifest::Manifest, transport::PipelineRunner};
@@ -13,7 +14,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::thread;
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{error, info};
 
 /// WebSocket signaling server
@@ -26,20 +27,31 @@ pub struct WebSocketSignalingServer {
 }
 
 impl WebSocketSignalingServer {
-    /// Create a new WebSocket signaling server
+    /// Create a new WebSocket signaling server without event forwarding
     pub fn new(
         port: u16,
         config: Arc<WebRtcTransportConfig>,
         runner: Arc<PipelineRunner>,
         manifest: Arc<Manifest>,
     ) -> Self {
-        let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
-        let state = Arc::new(SharedState::new(config, runner, manifest));
+        Self::new_with_events(port, config, runner, manifest, None)
+    }
 
-        Self {
-            addr,
-            state,
-        }
+    /// Create a new WebSocket signaling server with event forwarding
+    ///
+    /// When `event_tx` is provided, peer connect/disconnect and pipeline events
+    /// are forwarded through the channel for FFI integration.
+    pub fn new_with_events(
+        port: u16,
+        config: Arc<WebRtcTransportConfig>,
+        runner: Arc<PipelineRunner>,
+        manifest: Arc<Manifest>,
+        event_tx: Option<mpsc::Sender<WebRtcEventBridge>>,
+    ) -> Self {
+        let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
+        let state = Arc::new(SharedState::new_with_events(config, runner, manifest, event_tx));
+
+        Self { addr, state }
     }
 
     /// Get shared state (for external access)

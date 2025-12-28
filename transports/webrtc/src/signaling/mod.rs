@@ -19,7 +19,10 @@ pub use client::SignalingClient;
 pub use protocol::IceCandidateParams;
 
 #[cfg(feature = "ws-signaling")]
-pub use websocket::WebSocketSignalingServer;
+pub use websocket::{
+    current_timestamp_ns, SharedState, WebRtcErrorCode, WebRtcEventBridge,
+    WebSocketServerHandle, WebSocketSignalingServer,
+};
 
 #[cfg(feature = "grpc-signaling")]
 pub use grpc::WebRtcSignalingService;
