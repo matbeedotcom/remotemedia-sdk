@@ -6,6 +6,7 @@
 //! 3. Basic streaming session flow works
 
 use remotemedia_grpc::{metrics::ServiceMetrics, ServiceConfig, StreamingServiceImpl};
+use remotemedia_runtime_core::data::PixelFormat;
 use remotemedia_runtime_core::transport::PipelineRunner;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
@@ -174,6 +175,9 @@ async fn test_pipeline_runner_end_to_end() {
 
     // Send test frame
     let test_frame = RuntimeData::Video {
+        codec: None,
+        is_keyframe: true,
+        stream_id: None,
         pixel_data: vec![
             255, 0, 0, // red
             0, 255, 0, // green
@@ -182,7 +186,7 @@ async fn test_pipeline_runner_end_to_end() {
         ],
         width: 2,
         height: 2,
-        format: 1, // RGB24
+        format: PixelFormat::Rgb24,
         frame_number: 0,
         timestamp_us: 0,
     };

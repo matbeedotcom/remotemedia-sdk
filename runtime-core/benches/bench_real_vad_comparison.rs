@@ -8,7 +8,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::nodes::{AsyncStreamingNode, SpeculativeVADGate};
+use remotemedia_runtime_core::nodes::{AsyncStreamingNode, SpeculativeVADGate, SpeculativeVADGateConfig};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -30,6 +30,7 @@ fn create_test_audio() -> RuntimeData {
         samples,
         sample_rate: 16000,
         channels: 1,
+        stream_id: None,
     }
 }
 
@@ -81,7 +82,7 @@ async fn run_traditional_flow(audio: RuntimeData) -> (Duration, Duration) {
 
 #[cfg(feature = "silero-vad")]
 async fn run_speculative_flow(audio: RuntimeData) -> (Duration, Duration) {
-    let gate = Arc::new(SpeculativeVADGate::new());
+    let gate = Arc::new(SpeculativeVADGate::new(SpeculativeVADGateConfig::default()));
     let vad = Arc::new(SileroVADNode::new(Some(0.5), Some(16000), None, None, None));
 
     let start = Instant::now();

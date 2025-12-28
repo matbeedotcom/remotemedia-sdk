@@ -3,7 +3,7 @@
 //! This example demonstrates streaming input → streaming output through a pipeline.
 
 use remotemedia_runtime_core::{
-    data::RuntimeData,
+    data::{PixelFormat, RuntimeData},
     manifest::Manifest,
     transport::{PipelineRunner, StreamSession, TransportData},
 };
@@ -65,6 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             frame_number: 0,
             timestamp_us: 0,
             is_keyframe: true,
+            stream_id: None,
         };
 
         // Send input (wrap in TransportData)
@@ -89,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             assert_eq!(width, 2);
             assert_eq!(height, 2);
-            assert_eq!(format, 1);
+            assert_eq!(format, PixelFormat::Rgb24);
             assert_eq!(pixel_data.len(), 12);
 
             // After vertical flip:
@@ -121,9 +122,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 pixel_data: input_pixels,
                 width: 2,
                 height: 2,
-                format: 1,
+                format: PixelFormat::Rgb24,
+                codec: None,
                 frame_number: i as u64,
                 timestamp_us: i as u64 * 33333, // ~30 FPS
+                is_keyframe: true,
+                stream_id: None,
             };
 
             session.send_input(TransportData::new(input_data)).await?;
@@ -166,7 +170,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             pixel_data: input_pixels.clone(),
             width: 4,
             height: 4,
-            format: 3, // I420
+            format: PixelFormat::I420,
+            codec: None,
+            is_keyframe: true,
+            stream_id: None,
             frame_number: 100,
             timestamp_us: 3000000,
         };
@@ -190,7 +197,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             assert_eq!(width, 4);
             assert_eq!(height, 4);
-            assert_eq!(format, 3);
+            assert_eq!(format, PixelFormat::I420);
             assert_eq!(pixel_data.len(), 24);
 
             // Verify Y plane is flipped
@@ -214,7 +221,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 pixel_data: vec![0u8; 12],
                 width: 2,
                 height: 2,
-                format: 1,
+                format: PixelFormat::Rgb24,
+                codec: None,
+                is_keyframe: true,
+                stream_id: None,
                 frame_number: i as u64,
                 timestamp_us: i as u64 * 33333,
             };

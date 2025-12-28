@@ -93,6 +93,7 @@ fn create_audio_chunk(sample_count: usize) -> RuntimeData {
         samples: vec![0.1; sample_count],
         sample_rate: 16000,
         channels: 1,
+        stream_id: None,
     }
 }
 
@@ -143,7 +144,9 @@ async fn run_traditional_measurement(audio: RuntimeData) -> (Duration, Duration)
 
 #[cfg(feature = "silero-vad")]
 async fn run_speculative_measurement(audio: RuntimeData) -> (Duration, Duration) {
-    let gate = Arc::new(SpeculativeVADGate::new());
+    use remotemedia_runtime_core::nodes::SpeculativeVADGateConfig;
+
+    let gate = Arc::new(SpeculativeVADGate::new(SpeculativeVADGateConfig::default()));
     let vad = Arc::new(SileroVADNode::new(Some(0.5), Some(16000), None, None, None));
 
     let start = Instant::now();
@@ -353,6 +356,10 @@ fn bench_concurrent_sessions(c: &mut Criterion) {
 
 /// Benchmark: Speculative forwarding latency improvement
 fn bench_speculative_vs_non_speculative(c: &mut Criterion) {
+    // Pre-compute delays BEFORE creating the benchmark runtime to avoid nested runtime panic
+    let vad_delay = vad_delay_us();
+    let speculative_delay = speculative_delay_us();
+
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
     let mut group = c.benchmark_group("speculative_comparison");
@@ -364,7 +371,7 @@ fn bench_speculative_vs_non_speculative(c: &mut Criterion) {
     // Using actual measured VAD time
     group.bench_function("non_speculative", |b| {
         b.to_async(&runtime).iter(|| async {
-            let pipeline = LatencyMockPipeline::new(vad_delay_us());
+            let pipeline = LatencyMockPipeline::new(vad_delay);
             let audio = create_audio_chunk(320);
 
             let _output = pipeline.process_chunk(audio).await;
@@ -377,7 +384,7 @@ fn bench_speculative_vs_non_speculative(c: &mut Criterion) {
     // Speculative: Forward immediately
     group.bench_function("speculative", |b| {
         b.to_async(&runtime).iter(|| async {
-            let pipeline = LatencyMockPipeline::new(speculative_delay_us());
+            let pipeline = LatencyMockPipeline::new(speculative_delay);
             let audio = create_audio_chunk(320);
 
             let _output = pipeline.process_chunk(audio).await;
@@ -470,6 +477,10 @@ fn bench_ring_buffer_overhead(c: &mut Criterion) {
 
 /// Comprehensive latency test with success criteria validation
 fn bench_success_criteria_validation(c: &mut Criterion) {
+    // Pre-compute delays BEFORE creating the benchmark runtime to avoid nested runtime panic
+    let vad_delay = vad_delay_us();
+    let speculative_delay = speculative_delay_us();
+
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
     let mut group = c.benchmark_group("success_criteria_comparison");
@@ -524,8 +535,7 @@ fn bench_success_criteria_validation(c: &mut Criterion) {
         b.to_async(&runtime).iter(|| async {
             // Simulates speculative approach: immediate forwarding
             // Uses real SpeculativeVADGate overhead measurements when available
-            let simulated_delay_us = speculative_delay_us();
-            let pipeline = Arc::new(LatencyMockPipeline::new(simulated_delay_us));
+            let pipeline = Arc::new(LatencyMockPipeline::new(speculative_delay));
 
             let session_count = 100;
             let chunks_per_session = 50;
@@ -554,17 +564,17 @@ fn bench_success_criteria_validation(c: &mut Criterion) {
             let p99 = LatencyMockPipeline::calculate_percentile(&latencies, 99.0);
 
             println!("\n=== Speculative Results ===");
-            println!("Simulated delay: {}us", simulated_delay_us);
+            println!("Simulated delay: {}us", speculative_delay);
             println!("P50: {:?}", p50);
             println!("P95: {:?}", p95);
             println!("P99: {:?}", p99);
 
             // Calculate improvement ratio (data-driven, not hardcoded)
-            let theoretical_improvement = vad_delay_us() as f64 / simulated_delay_us as f64;
+            let theoretical_improvement = vad_delay as f64 / speculative_delay as f64;
 
             println!("\n=== IMPROVEMENT ANALYSIS ===");
-            println!("Traditional VAD time: {}ms", vad_delay_us() as f64 / 1000.0);
-            println!("Speculative overhead: {}us", simulated_delay_us);
+            println!("Traditional VAD time: {}ms", vad_delay as f64 / 1000.0);
+            println!("Speculative overhead: {}us", speculative_delay);
             println!(
                 "Theoretical improvement: {:.0}x faster",
                 theoretical_improvement

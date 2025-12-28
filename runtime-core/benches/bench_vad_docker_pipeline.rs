@@ -17,7 +17,7 @@ use remotemedia_runtime_core::nodes::AsyncStreamingNode;
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "silero-vad")]
-use remotemedia_runtime_core::nodes::{SileroVADNode, SpeculativeVADGate};
+use remotemedia_runtime_core::nodes::{SileroVADNode, SpeculativeVADGate, SpeculativeVADGateConfig};
 
 /// Pipeline metrics for VAD processing
 struct PipelineMetrics {
@@ -75,6 +75,7 @@ fn create_browser_audio_chunk(chunk_idx: usize) -> RuntimeData {
         samples,
         sample_rate: 48000,
         channels: 1,
+        stream_id: None,
     }
 }
 
@@ -85,15 +86,17 @@ fn resample_48_to_16(audio: RuntimeData) -> RuntimeData {
             samples,
             sample_rate: 48000,
             channels,
+            stream_id,
         } => {
             let resampled: Vec<f32> = samples.iter().step_by(3).copied().collect();
             RuntimeData::Audio {
                 samples: resampled,
                 sample_rate: 16000,
                 channels,
+                stream_id: stream_id,
             }
         }
-        _ => audio,
+        _ => audio.clone(),
     }
 }
 
@@ -166,7 +169,7 @@ fn bench_speculative_vad_pipeline(c: &mut Criterion) {
 
     group.bench_function("parallel_vad_smooth", |b| {
         b.to_async(&runtime).iter(|| async {
-            let speculative = SpeculativeVADGate::new();
+            let speculative = SpeculativeVADGate::new(SpeculativeVADGateConfig::default());
             let vad = std::sync::Arc::new(SileroVADNode::new(
                 Some(0.5),
                 Some(16000),
@@ -288,7 +291,7 @@ fn bench_speculative_gate_overhead(c: &mut Criterion) {
 
     group.bench_function("gate_forward_only", |b| {
         b.to_async(&runtime).iter(|| async {
-            let speculative = SpeculativeVADGate::new();
+            let speculative = SpeculativeVADGate::new(SpeculativeVADGateConfig::default());
             let spec_callback = |_: RuntimeData| Ok(());
 
             let start = Instant::now();

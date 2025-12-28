@@ -22,7 +22,7 @@ use tokio::task::JoinSet;
 #[cfg(feature = "silero-vad")]
 use remotemedia_runtime_core::nodes::SileroVADNode;
 
-use remotemedia_runtime_core::nodes::{SpeculativeVADGate, VADResult};
+use remotemedia_runtime_core::nodes::{SpeculativeVADGate, SpeculativeVADGateConfig, VADResult};
 
 /// Simulates a complete speech utterance scenario
 #[cfg(feature = "silero-vad")]
@@ -87,6 +87,7 @@ fn build_utterance_chunks() -> Vec<RuntimeData> {
                 samples,
                 sample_rate: 16000,
                 channels: 1,
+                stream_id: None,
             }
         })
         .collect()
@@ -102,7 +103,7 @@ async fn execute_complete_utterance(mode: CompleteUtteranceMode) -> UtteranceBen
         None,
     ));
     let gate = match mode {
-        CompleteUtteranceMode::Speculative => Some(Arc::new(SpeculativeVADGate::new())),
+        CompleteUtteranceMode::Speculative => Some(Arc::new(SpeculativeVADGate::new(SpeculativeVADGateConfig::default()))),
         CompleteUtteranceMode::Traditional => None,
     };
 

@@ -126,23 +126,25 @@ print("INFO: Test script completed", flush=True)
         .await?;
 
     // Start the exec and collect output
-    if let Some(exec_id) = exec.id {
-        let start_config = StartExecOptions {
-            detach: false,
-            ..Default::default()
-        };
+    let exec_id = exec.id;
+    let start_config = StartExecOptions {
+        detach: false,
+        ..Default::default()
+    };
 
-        use futures::StreamExt;
-        let stream = docker_support
-            .docker_client()
-            .start_exec(&exec_id, Some(start_config))
-            .await;
+    use bollard::exec::StartExecResults;
+    use futures::StreamExt;
 
-        println!("=== Container Output (will be forwarded to tracing) ===\n");
+    let exec_result = docker_support
+        .docker_client()
+        .start_exec(&exec_id, Some(start_config))
+        .await?;
 
-        if let Ok(mut stream) = stream {
-            while let Some(output) = stream.next().await {
-            if let Ok(msg) = output {
+    println!("=== Container Output (will be forwarded to tracing) ===\n");
+
+    if let StartExecResults::Attached { mut output, .. } = exec_result {
+        while let Some(result) = output.next().await {
+            if let Ok(msg) = result {
                 // The logs will be automatically forwarded to tracing by our forwarding task
                 // We can also print them here for demonstration
                 print!("{}", msg);

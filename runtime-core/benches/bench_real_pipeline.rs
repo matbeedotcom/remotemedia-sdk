@@ -12,7 +12,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::nodes::{AsyncStreamingNode, SpeculativeVADGate, VADResult};
+use remotemedia_runtime_core::nodes::{AsyncStreamingNode, SpeculativeVADGate, SpeculativeVADGateConfig, VADResult};
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "silero-vad")]
@@ -97,6 +97,7 @@ fn resample_to_16khz(input_chunk: &RuntimeData) -> RuntimeData {
             samples: samples.iter().step_by(3).copied().collect(),
             sample_rate: 16000,
             channels: 1,
+            stream_id: None,
         },
         other => other.clone(),
     }
@@ -120,7 +121,7 @@ async fn execute_pipeline(mode: PipelineMode) -> PipelineMetrics {
     let start = Instant::now();
     let input_chunks: Vec<RuntimeData> = (0..CHUNK_COUNT).map(create_browser_audio_chunk).collect();
     let speculative_gate = if matches!(mode, PipelineMode::Speculative) {
-        Some(Arc::new(SpeculativeVADGate::new()))
+        Some(Arc::new(SpeculativeVADGate::new(SpeculativeVADGateConfig::default())))
     } else {
         None
     };
@@ -285,6 +286,7 @@ fn create_browser_audio_chunk(chunk_idx: usize) -> RuntimeData {
         samples,
         sample_rate: 48000,
         channels: 1,
+        stream_id: None,
     }
 }
 

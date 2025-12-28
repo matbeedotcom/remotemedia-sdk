@@ -1,4 +1,5 @@
 use remotemedia_runtime_core::data::RuntimeData;
+use remotemedia_runtime_core::data::PixelFormat;
 use remotemedia_runtime_core::nodes::streaming_node::AsyncStreamingNode;
 use remotemedia_runtime_core::nodes::video_flip::{FlipDirection, VideoFlipConfig, VideoFlipNode};
 
@@ -27,11 +28,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pixel_data: input,
         width: 2,
         height: 2,
-        format: remotemedia_runtime_core::data::PixelFormat::Rgb24,
+        format: PixelFormat::Rgb24,
         codec: None,
         frame_number: 0,
         timestamp_us: 0,
         is_keyframe: true,
+        stream_id: None,
     };
 
     let output = node.process(input_data).await?;
@@ -67,11 +69,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pixel_data: input,
         width: 2,
         height: 2,
-        format: remotemedia_runtime_core::data::PixelFormat::Rgb24,
+        format: PixelFormat::Rgb24,
         codec: None,
         frame_number: 0,
         timestamp_us: 0,
         is_keyframe: true,
+        stream_id: None,
     };
 
     let output = node.process(input_data).await?;
@@ -113,7 +116,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pixel_data: input,
         width: 4,
         height: 4,
-        format: 3, // I420
+        format: PixelFormat::I420,
+        codec: None,
+        is_keyframe: true,
+        stream_id: None,
         frame_number: 0,
         timestamp_us: 0,
     };
@@ -130,7 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         assert_eq!(width, 4);
         assert_eq!(height, 4);
-        assert_eq!(format, 3);
+        assert_eq!(format, PixelFormat::I420);
         assert_eq!(pixel_data.len(), 24);
 
         // Y plane should be flipped vertically

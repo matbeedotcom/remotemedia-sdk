@@ -200,11 +200,6 @@ path = "benches/bench_real_pipeline.rs"
 harness = false
 
 [[bench]]
-name = "bench_docker_latency"
-path = "benches/bench_docker_latency.rs"
-harness = false
-
-[[bench]]
 name = "docker_vs_multiprocess"
 path = "benches/docker_vs_multiprocess.rs"
 harness = false
