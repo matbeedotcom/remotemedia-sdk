@@ -81,7 +81,14 @@ mod tests {
 
         let manifest_json = r#"{
             "version": "v1",
-            "nodes": [],
+            "metadata": { "name": "test" },
+            "nodes": [
+                {
+                    "id": "passthrough",
+                    "node_type": "PassThrough",
+                    "params": {}
+                }
+            ],
             "connections": []
         }"#;
         let manifest = Arc::new(serde_json::from_str::<Manifest>(manifest_json).unwrap());
@@ -89,10 +96,10 @@ mod tests {
         let input = TransportData::new(RuntimeData::Text("test input".into()));
 
         let result = transport.execute(manifest, input).await;
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "execute failed: {:?}", result.err());
 
         let output = result.unwrap();
-        // In Phase 2, runner echoes input
+        // PassthroughNode echoes input unchanged
         assert_eq!(output.data, RuntimeData::Text("test input".into()));
     }
 
@@ -102,13 +109,20 @@ mod tests {
 
         let manifest_json = r#"{
             "version": "v1",
-            "nodes": [],
+            "metadata": { "name": "test" },
+            "nodes": [
+                {
+                    "id": "passthrough",
+                    "node_type": "PassThrough",
+                    "params": {}
+                }
+            ],
             "connections": []
         }"#;
         let manifest = Arc::new(serde_json::from_str::<Manifest>(manifest_json).unwrap());
 
         let result = transport.stream(manifest).await;
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "stream failed: {:?}", result.err());
 
         let mut session = result.unwrap();
         assert!(session.is_active());

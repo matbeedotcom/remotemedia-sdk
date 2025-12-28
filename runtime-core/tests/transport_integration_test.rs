@@ -13,6 +13,16 @@ use remotemedia_runtime_core::transport::{
 };
 use std::sync::Arc;
 
+/// Valid test manifest with a PassThrough node
+fn test_manifest() -> Manifest {
+    serde_json::from_str(r#"{
+        "version": "v1",
+        "metadata": { "name": "test" },
+        "nodes": [{"id": "passthrough", "node_type": "PassThrough", "params": {}}],
+        "connections": []
+    }"#).unwrap()
+}
+
 #[tokio::test]
 async fn test_pipeline_runner_creation() {
     let runner = PipelineRunner::new();
@@ -25,35 +35,24 @@ async fn test_pipeline_runner_creation() {
 #[tokio::test]
 async fn test_unary_execution_via_runner() {
     let runner = PipelineRunner::new().unwrap();
-
-    let manifest_json = r#"{
-        "version": "v1",
-        "nodes": [],
-        "connections": []
-    }"#;
-    let manifest = Arc::new(serde_json::from_str::<Manifest>(manifest_json).unwrap());
+    let manifest = Arc::new(test_manifest());
 
     let input = TransportData::new(RuntimeData::Text("test".into()));
     let output = runner.execute_unary(manifest, input).await;
 
-    assert!(output.is_ok(), "Unary execution should succeed");
+    assert!(output.is_ok(), "Unary execution should succeed: {:?}", output.err());
     let result = output.unwrap();
+    // PassThrough node echoes input
     assert_eq!(result.data, RuntimeData::Text("test".into()));
 }
 
 #[tokio::test]
 async fn test_streaming_session_creation() {
     let runner = PipelineRunner::new().unwrap();
-
-    let manifest_json = r#"{
-        "version": "v1",
-        "nodes": [],
-        "connections": []
-    }"#;
-    let manifest = Arc::new(serde_json::from_str::<Manifest>(manifest_json).unwrap());
+    let manifest = Arc::new(test_manifest());
 
     let session_result = runner.create_stream_session(manifest).await;
-    assert!(session_result.is_ok(), "Session creation should succeed");
+    assert!(session_result.is_ok(), "Session creation should succeed: {:?}", session_result.err());
 
     let session = session_result.unwrap();
     assert!(session.is_active());
@@ -63,13 +62,7 @@ async fn test_streaming_session_creation() {
 #[tokio::test]
 async fn test_streaming_send_and_receive() {
     let runner = PipelineRunner::new().unwrap();
-
-    let manifest_json = r#"{
-        "version": "v1",
-        "nodes": [],
-        "connections": []
-    }"#;
-    let manifest = Arc::new(serde_json::from_str::<Manifest>(manifest_json).unwrap());
+    let manifest = Arc::new(test_manifest());
 
     let mut session = runner.create_stream_session(manifest).await.unwrap();
 
@@ -111,10 +104,7 @@ async fn test_streaming_send_and_receive() {
 #[tokio::test]
 async fn test_session_close_idempotency() {
     let runner = PipelineRunner::new().unwrap();
-    let manifest = Arc::new(
-        serde_json::from_str::<Manifest>(r#"{"version":"v1","nodes":[],"connections":[]}"#)
-            .unwrap(),
-    );
+    let manifest = Arc::new(test_manifest());
 
     let mut session = runner.create_stream_session(manifest).await.unwrap();
 
@@ -130,10 +120,7 @@ async fn test_session_close_idempotency() {
 #[tokio::test]
 async fn test_send_after_close_fails() {
     let runner = PipelineRunner::new().unwrap();
-    let manifest = Arc::new(
-        serde_json::from_str::<Manifest>(r#"{"version":"v1","nodes":[],"connections":[]}"#)
-            .unwrap(),
-    );
+    let manifest = Arc::new(test_manifest());
 
     let mut session = runner.create_stream_session(manifest).await.unwrap();
 
@@ -150,14 +137,10 @@ async fn test_send_after_close_fails() {
 #[tokio::test]
 async fn test_mock_transport_trait_implementation() {
     let transport = MockTransport::new().unwrap();
-
-    let manifest = Arc::new(
-        serde_json::from_str::<Manifest>(r#"{"version":"v1","nodes":[],"connections":[]}"#)
-            .unwrap(),
-    );
+    let manifest = Arc::new(test_manifest());
     let input = TransportData::new(RuntimeData::Text("via trait".into()));
 
-    // Call via trait
+    // Call via trait - PassThrough echoes input
     let output = transport.execute(manifest, input).await.unwrap();
     assert_eq!(output.data, RuntimeData::Text("via trait".into()));
 }
@@ -178,10 +161,7 @@ async fn test_transport_data_builder_pattern() {
 #[tokio::test]
 async fn test_multiple_concurrent_sessions() {
     let runner = PipelineRunner::new().unwrap();
-    let manifest = Arc::new(
-        serde_json::from_str::<Manifest>(r#"{"version":"v1","nodes":[],"connections":[]}"#)
-            .unwrap(),
-    );
+    let manifest = Arc::new(test_manifest());
 
     // Create multiple sessions concurrently
     let session1 = runner

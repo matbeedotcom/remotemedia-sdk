@@ -1,5 +1,37 @@
 [
   {
+    "nodeType": "AudioResample",
+    "description": "Resamples audio to target sample rate",
+    "category": "audio",
+    "accepts": [
+      "audio"
+    ],
+    "produces": [
+      "audio"
+    ],
+    "parameters": [
+      {
+        "name": "target_sample_rate",
+        "paramType": "integer",
+        "description": "Target sample rate in Hz",
+        "defaultValue": "16000",
+        "required": false,
+        "minimum": 8000,
+        "maximum": 48000
+      }
+    ],
+    "configSchema": "{\"properties\":{\"target_sample_rate\":{\"default\":16000,\"description\":\"Target sample rate in Hz\",\"maximum\":48000,\"minimum\":8000,\"type\":\"integer\"}},\"type\":\"object\"}",
+    "isPython": false,
+    "streaming": true,
+    "multiOutput": false,
+    "capabilities": {
+      "parallelizable": true,
+      "batchAware": false,
+      "supportsControl": false,
+      "latencyClass": 0
+    }
+  },
+  {
     "nodeType": "SileroVAD",
     "description": "Voice Activity Detection using Silero VAD model",
     "category": "audio",
@@ -47,30 +79,6 @@
     }
   },
   {
-    "nodeType": "CalculatorNode",
-    "description": "Performs arithmetic operations on JSON input",
-    "category": "utility",
-    "accepts": [
-      "json"
-    ],
-    "produces": [
-      "json"
-    ],
-    "parameters": [
-      {
-        "name": "precision",
-        "paramType": "integer",
-        "description": "Decimal precision for results",
-        "defaultValue": "10",
-        "required": false
-      }
-    ],
-    "configSchema": "{\"properties\":{\"precision\":{\"default\":10,\"description\":\"Decimal precision for results\",\"type\":\"integer\"}},\"type\":\"object\"}",
-    "isPython": false,
-    "streaming": true,
-    "multiOutput": false
-  },
-  {
     "nodeType": "TextCollector",
     "description": "Collects text chunks into complete utterances",
     "category": "text",
@@ -100,6 +108,30 @@
     "isPython": false,
     "streaming": true,
     "multiOutput": false
+  },
+  {
+    "nodeType": "AudioChunker",
+    "description": "Splits audio into fixed-size chunks",
+    "category": "audio",
+    "accepts": [
+      "audio"
+    ],
+    "produces": [
+      "audio"
+    ],
+    "parameters": [
+      {
+        "name": "chunk_size_ms",
+        "paramType": "integer",
+        "description": "Chunk duration in milliseconds",
+        "defaultValue": "20",
+        "required": false
+      }
+    ],
+    "configSchema": "{\"properties\":{\"chunk_size_ms\":{\"default\":20,\"description\":\"Chunk duration in milliseconds\",\"type\":\"integer\"}},\"type\":\"object\"}",
+    "isPython": false,
+    "streaming": true,
+    "multiOutput": true
   },
   {
     "nodeType": "VideoFlip",
@@ -133,112 +165,8 @@
     "multiOutput": false
   },
   {
-    "nodeType": "AudioChunker",
-    "description": "Splits audio into fixed-size chunks",
-    "category": "audio",
-    "accepts": [
-      "audio"
-    ],
-    "produces": [
-      "audio"
-    ],
-    "parameters": [
-      {
-        "name": "chunk_size_ms",
-        "paramType": "integer",
-        "description": "Chunk duration in milliseconds",
-        "defaultValue": "20",
-        "required": false
-      }
-    ],
-    "configSchema": "{\"properties\":{\"chunk_size_ms\":{\"default\":20,\"description\":\"Chunk duration in milliseconds\",\"type\":\"integer\"}},\"type\":\"object\"}",
-    "isPython": false,
-    "streaming": true,
-    "multiOutput": true
-  },
-  {
-    "nodeType": "AudioResample",
-    "description": "Resamples audio to target sample rate",
-    "category": "audio",
-    "accepts": [
-      "audio"
-    ],
-    "produces": [
-      "audio"
-    ],
-    "parameters": [
-      {
-        "name": "target_sample_rate",
-        "paramType": "integer",
-        "description": "Target sample rate in Hz",
-        "defaultValue": "16000",
-        "required": false,
-        "minimum": 8000,
-        "maximum": 48000
-      }
-    ],
-    "configSchema": "{\"properties\":{\"target_sample_rate\":{\"default\":16000,\"description\":\"Target sample rate in Hz\",\"maximum\":48000,\"minimum\":8000,\"type\":\"integer\"}},\"type\":\"object\"}",
-    "isPython": false,
-    "streaming": true,
-    "multiOutput": false,
-    "capabilities": {
-      "parallelizable": true,
-      "batchAware": false,
-      "supportsControl": false,
-      "latencyClass": 0
-    }
-  },
-  {
-    "nodeType": "KokoroTTSNode",
-    "description": "Text-to-speech synthesis using Kokoro TTS",
-    "category": "ml",
-    "accepts": [
-      "text"
-    ],
-    "produces": [
-      "audio"
-    ],
-    "parameters": [
-      {
-        "name": "language",
-        "paramType": "string",
-        "description": "Language code",
-        "defaultValue": "\"en-us\"",
-        "required": false,
-        "enumValues": "[\"en-us\",\"en-gb\",\"es\",\"fr\",\"de\",\"it\",\"ja\",\"ko\",\"pt-br\",\"zh\"]"
-      },
-      {
-        "name": "speed",
-        "paramType": "number",
-        "description": "Speech speed multiplier",
-        "defaultValue": "1.0",
-        "required": false,
-        "minimum": 0.5,
-        "maximum": 2
-      },
-      {
-        "name": "voice",
-        "paramType": "string",
-        "description": "Voice ID to use",
-        "defaultValue": "\"af_bella\"",
-        "required": false,
-        "enumValues": "[\"af_bella\",\"af_nicole\",\"af_sarah\",\"af_sky\",\"am_adam\",\"am_michael\",\"bf_emma\",\"bf_isabella\",\"bm_george\",\"bm_lewis\"]"
-      }
-    ],
-    "configSchema": "{\"properties\":{\"language\":{\"default\":\"en-us\",\"description\":\"Language code\",\"enum\":[\"en-us\",\"en-gb\",\"es\",\"fr\",\"de\",\"it\",\"ja\",\"ko\",\"pt-br\",\"zh\"],\"type\":\"string\"},\"speed\":{\"default\":1.0,\"description\":\"Speech speed multiplier\",\"maximum\":2.0,\"minimum\":0.5,\"type\":\"number\"},\"voice\":{\"default\":\"af_bella\",\"description\":\"Voice ID to use\",\"enum\":[\"af_bella\",\"af_nicole\",\"af_sarah\",\"af_sky\",\"am_adam\",\"am_michael\",\"bf_emma\",\"bf_isabella\",\"bm_george\",\"bm_lewis\"],\"type\":\"string\"}},\"type\":\"object\"}",
-    "isPython": true,
-    "streaming": true,
-    "multiOutput": true,
-    "capabilities": {
-      "parallelizable": false,
-      "batchAware": true,
-      "supportsControl": false,
-      "latencyClass": 3
-    }
-  },
-  {
-    "nodeType": "Echo",
-    "description": "Passes input through unchanged (for testing)",
+    "nodeType": "PassThrough",
+    "description": "Passes input through unchanged",
     "category": "utility",
     "accepts": [
       "audio",
@@ -266,8 +194,32 @@
     "multiOutput": false
   },
   {
-    "nodeType": "PassThrough",
-    "description": "Passes input through unchanged",
+    "nodeType": "CalculatorNode",
+    "description": "Performs arithmetic operations on JSON input",
+    "category": "utility",
+    "accepts": [
+      "json"
+    ],
+    "produces": [
+      "json"
+    ],
+    "parameters": [
+      {
+        "name": "precision",
+        "paramType": "integer",
+        "description": "Decimal precision for results",
+        "defaultValue": "10",
+        "required": false
+      }
+    ],
+    "configSchema": "{\"properties\":{\"precision\":{\"default\":10,\"description\":\"Decimal precision for results\",\"type\":\"integer\"}},\"type\":\"object\"}",
+    "isPython": false,
+    "streaming": true,
+    "multiOutput": false
+  },
+  {
+    "nodeType": "Echo",
+    "description": "Passes input through unchanged (for testing)",
     "category": "utility",
     "accepts": [
       "audio",
@@ -338,6 +290,54 @@
       "batchAware": true,
       "supportsControl": false,
       "latencyClass": 4
+    }
+  },
+  {
+    "nodeType": "KokoroTTSNode",
+    "description": "Text-to-speech synthesis using Kokoro TTS",
+    "category": "ml",
+    "accepts": [
+      "text"
+    ],
+    "produces": [
+      "audio"
+    ],
+    "parameters": [
+      {
+        "name": "language",
+        "paramType": "string",
+        "description": "Language code",
+        "defaultValue": "\"en-us\"",
+        "required": false,
+        "enumValues": "[\"en-us\",\"en-gb\",\"es\",\"fr\",\"de\",\"it\",\"ja\",\"ko\",\"pt-br\",\"zh\"]"
+      },
+      {
+        "name": "speed",
+        "paramType": "number",
+        "description": "Speech speed multiplier",
+        "defaultValue": "1.0",
+        "required": false,
+        "minimum": 0.5,
+        "maximum": 2
+      },
+      {
+        "name": "voice",
+        "paramType": "string",
+        "description": "Voice ID to use",
+        "defaultValue": "\"af_bella\"",
+        "required": false,
+        "enumValues": "[\"af_bella\",\"af_nicole\",\"af_sarah\",\"af_sky\",\"am_adam\",\"am_michael\",\"bf_emma\",\"bf_isabella\",\"bm_george\",\"bm_lewis\"]"
+      }
+    ],
+    "configSchema": "{\"properties\":{\"language\":{\"default\":\"en-us\",\"description\":\"Language code\",\"enum\":[\"en-us\",\"en-gb\",\"es\",\"fr\",\"de\",\"it\",\"ja\",\"ko\",\"pt-br\",\"zh\"],\"type\":\"string\"},\"speed\":{\"default\":1.0,\"description\":\"Speech speed multiplier\",\"maximum\":2.0,\"minimum\":0.5,\"type\":\"number\"},\"voice\":{\"default\":\"af_bella\",\"description\":\"Voice ID to use\",\"enum\":[\"af_bella\",\"af_nicole\",\"af_sarah\",\"af_sky\",\"am_adam\",\"am_michael\",\"bf_emma\",\"bf_isabella\",\"bm_george\",\"bm_lewis\"],\"type\":\"string\"}},\"type\":\"object\"}",
+    "isPython": true,
+    "streaming": true,
+    "multiOutput": true,
+    "capabilities": {
+      "parallelizable": false,
+      "batchAware": true,
+      "supportsControl": false,
+      "latencyClass": 3
     }
   }
 ]

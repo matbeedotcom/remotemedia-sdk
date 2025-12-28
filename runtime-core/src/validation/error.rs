@@ -146,9 +146,11 @@ impl ValidationError {
                 )
             }
             ValidationConstraint::Required => {
+                // For Required errors, the property name is in the expected field
+                // (format: "property 'name'")
                 format!(
                     "Node '{}' ({}): required parameter {} is missing",
-                    node_id, node_type, param_display
+                    node_id, node_type, expected
                 )
             }
             ValidationConstraint::Minimum => {
@@ -303,16 +305,18 @@ mod tests {
 
     #[test]
     fn test_validation_error_required() {
+        // Note: For Required errors, the expected field contains the property name
+        // (as produced by schema_validator.rs when converting jsonschema errors)
         let error = ValidationError::new(
             "tts",
             "KokoroTTSNode",
-            "/voice",
+            "",
             ValidationConstraint::Required,
-            "required parameter",
+            "property 'voice'",
             "(missing)",
         );
 
-        assert!(error.message.contains("required parameter 'voice' is missing"));
+        assert!(error.message.contains("required parameter property 'voice' is missing"));
     }
 
     #[test]

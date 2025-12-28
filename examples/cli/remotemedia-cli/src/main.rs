@@ -11,11 +11,20 @@
 //!
 //! # Start a server
 //! remotemedia serve pipeline.yaml --port 50051 --transport grpc
+//!
+//! # Use named pipes for Unix pipeline integration
+//! mkfifo /tmp/audio_in
+//! remotemedia stream pipeline.yaml --input /tmp/audio_in
+//!
+//! # Use stdin/stdout shorthand
+//! cat audio.wav | remotemedia run pipeline.yaml --input - --output -
 //! ```
 
 mod audio;
 mod commands;
 mod config;
+pub mod io;
+pub mod pipeline_nodes;
 mod output;
 mod transports;
 
@@ -23,7 +32,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use commands::{nodes, remote, run, serve, servers, stream, validate};
+use commands::{nodes as nodes_cmd, remote, run, serve, servers, stream, validate};
 
 /// RemoteMedia SDK command-line interface
 #[derive(Parser)]
@@ -68,7 +77,7 @@ enum Commands {
     /// Manage available node types
     Nodes {
         #[command(subcommand)]
-        command: nodes::NodesCommand,
+        command: nodes_cmd::NodesCommand,
     },
 
     /// Execute pipeline on remote server
@@ -112,7 +121,7 @@ async fn main() -> Result<()> {
         Commands::Stream(args) => stream::execute(args, &config, cli.output_format).await,
         Commands::Serve(args) => serve::execute(args, &config).await,
         Commands::Validate(args) => validate::execute(args, cli.output_format).await,
-        Commands::Nodes { command } => nodes::execute(command, cli.output_format).await,
+        Commands::Nodes { command } => nodes_cmd::execute(command, cli.output_format).await,
         Commands::Remote { command } => remote::execute(command, &config, cli.output_format).await,
         Commands::Servers { command } => {
             servers::execute(command, &config, cli.output_format).await

@@ -21,11 +21,11 @@ pub struct RemoteRunArgs {
     pub pipeline: Option<String>,
 
     /// Input file
-    #[arg(short, long)]
+    #[arg(short = 'i', long)]
     pub input: Option<PathBuf>,
 
     /// Output file
-    #[arg(short, long)]
+    #[arg(short = 'O', long)]
     pub output: Option<PathBuf>,
 
     /// Override auth token

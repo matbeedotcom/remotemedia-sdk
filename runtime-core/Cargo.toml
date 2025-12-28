@@ -243,3 +243,8 @@ harness = false
 name = "bench_speculative_coordinator"
 path = "benches/bench_speculative_coordinator.rs"
 harness = false
+
+[[bench]]
+name = "bench_validation"
+path = "benches/bench_validation.rs"
+harness = false

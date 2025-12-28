@@ -1,6 +1,6 @@
 {
   "name": "@matbee/remotemedia-native",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Native Node.js bindings for RemoteMedia zero-copy IPC with iceoryx2 shared memory",
   "main": "index.js",
   "types": "index.d.ts",

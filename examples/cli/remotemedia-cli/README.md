@@ -61,8 +61,8 @@ Run a pipeline with file input/output.
 remotemedia run <manifest> --input <file> [--output <file>]
 
 Options:
-  --input, -i    Input file path
-  --output, -o   Output file path (default: stdout)
+  --input, -i    Input source: file path, named pipe (FIFO), or '-' for stdin
+  --output, -o   Output destination: file path, named pipe (FIFO), or '-' for stdout
   --timeout      Execution timeout in seconds
 ```
 
@@ -76,8 +76,8 @@ remotemedia stream <manifest> [options]
 Options:
   --mic          Use microphone input
   --speaker      Use speaker output
-  --input, -i    Input file for streaming
-  --output, -o   Output file for streaming
+  --input, -i    Input source: file path, named pipe (FIFO), or '-' for stdin
+  --output, -o   Output destination: file path, named pipe (FIFO), or '-' for stdout
 ```
 
 ### `validate` - Validate Manifest
@@ -220,6 +220,62 @@ remotemedia remote run --server cloud \
 ```bash
 remotemedia nodes list --output-format json | jq '.nodes[].name'
 ```
+
+## Unix Pipes and Named Pipes (FIFOs)
+
+The CLI supports Unix-style pipeline integration through:
+
+### Standard Input/Output (`-` shorthand)
+
+Use `-` as a shorthand for stdin (input) or stdout (output):
+
+```bash
+# Read from stdin
+cat audio.wav | remotemedia run pipeline.yaml --input -
+
+# Write to stdout
+remotemedia run pipeline.yaml --input audio.wav --output -
+
+# Filter mode (read from stdin, write to stdout)
+cat audio.wav | remotemedia run pipeline.yaml --input - --output - > processed.wav
+```
+
+### Named Pipes (FIFOs)
+
+Named pipes enable integration with other processes for continuous streaming:
+
+```bash
+# Create named pipes
+mkfifo /tmp/audio_in
+mkfifo /tmp/audio_out
+
+# In terminal 1: Feed audio to the pipeline
+ffmpeg -i input.mp3 -f wav - > /tmp/audio_in
+
+# In terminal 2: Consume processed output
+cat /tmp/audio_out > processed.wav
+
+# In terminal 3: Run the pipeline
+remotemedia stream pipeline.yaml --input /tmp/audio_in --output /tmp/audio_out
+```
+
+### Pipeline Composition with FFmpeg
+
+```bash
+# Convert and transcribe in one pipeline
+ffmpeg -i video.mp4 -f wav -ar 16000 -ac 1 - | \
+  remotemedia run transcribe.yaml --input - --output transcript.txt
+
+# Real-time audio processing
+ffmpeg -f pulse -i default -f wav - | \
+  remotemedia stream voice-assistant.yaml --input - --speaker
+```
+
+### Notes on Named Pipes
+
+- **Blocking behavior**: Opening a named pipe will block until both a reader and writer are connected (standard Unix behavior)
+- **SIGPIPE handling**: If the output reader closes, the CLI will exit cleanly with code 141 (128 + SIGPIPE)
+- **Platform support**: Named pipes are supported on Linux and macOS. Windows named pipes use a different mechanism and are not currently supported.
 
 ## Environment Variables
 

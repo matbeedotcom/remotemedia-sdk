@@ -213,8 +213,12 @@ fn test_constraint_display_is_human_readable() {
         let display = format!("{}", constraint);
         // Should not be empty
         assert!(!display.is_empty());
-        // Should be lowercase and readable
-        assert!(display.chars().all(|c| c.is_lowercase() || c.is_whitespace()));
+        // Should be lowercase and readable (allow punctuation like apostrophes)
+        assert!(
+            display.chars().all(|c| c.is_lowercase() || c.is_whitespace() || c.is_ascii_punctuation()),
+            "Display '{}' should be human-readable lowercase text",
+            display
+        );
     }
 }
 
@@ -238,8 +242,12 @@ fn test_error_message_is_actionable() {
     assert!(message.contains("my_node"));
     // 2. Which parameter is wrong
     assert!(message.contains("threshold"));
-    // 3. What the constraint is
-    assert!(message.contains("maximum") || message.contains("Maximum"));
+    // 3. What the constraint is (either "maximum" or "<=" for range constraint)
+    assert!(
+        message.contains("maximum") || message.contains("Maximum") || message.contains("<="),
+        "Message should indicate maximum constraint: {}",
+        message
+    );
     // 4. What value was provided
     assert!(message.contains("2.5"));
 }

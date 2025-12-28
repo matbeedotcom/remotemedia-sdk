@@ -22,7 +22,7 @@ repository = "https://github.com/matbeeDOTcom/remotemedia-sdk"
 
 [workspace.dependencies]
 # Async runtime
-tokio = { version = "1.35", features = ["sync", "macros", "io-util", "rt", "rt-multi-thread", "time", "fs", "process"] }
+tokio = { version = "1.35", features = ["sync", "macros", "io-util", "rt", "rt-multi-thread", "time", "fs", "process", "signal"] }
 tokio-stream = "0.1"
 futures = "0.3"
 bollard = { version = "0.19.4", features = ["chrono"] }

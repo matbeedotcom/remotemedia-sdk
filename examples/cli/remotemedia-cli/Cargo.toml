@@ -33,6 +33,8 @@ comfy-table = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
 futures = { workspace = true }
+# async-trait for NodeExecutor trait implementation
+async-trait = "0.1"
 
 # Serialization
 serde = { workspace = true }
