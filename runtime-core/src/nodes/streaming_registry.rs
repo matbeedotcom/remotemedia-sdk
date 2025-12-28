@@ -168,7 +168,8 @@ impl crate::nodes::AsyncStreamingNode for WhisperStreamingNode {
             // Time offset for this chunk in the original audio
             let chunk_time_offset = chunk_start_sample as f64 / SAMPLE_RATE as f64;
             
-            eprintln!("[CHUNK {}/{}] Processing {:.2}s-{:.2}s ({} samples)", 
+            tracing::debug!(
+                "Processing chunk {}/{}: {:.2}s-{:.2}s ({} samples)", 
                 chunk_idx + 1, num_chunks,
                 chunk_time_offset,
                 chunk_end_sample as f64 / SAMPLE_RATE as f64,
@@ -202,7 +203,10 @@ impl crate::nodes::AsyncStreamingNode for WhisperStreamingNode {
                 // BPE tokens need to be merged: continuation tokens don't start with space
                 let mut got_word_timestamps = false;
                 let chunks: Vec<_> = segment.chunks().collect();
-                eprintln!("[DEBUG] Segment '{:.50}...' has {} chunks", text, chunks.len());
+                tracing::trace!("Segment '{:.50}...' has {} chunks", text, chunks.len());
+                
+                // Words with zero duration get prepended to the next valid word
+                let mut pending_prefix = String::new();
                 
                 for chunk in chunks {
                     let chunk_text_raw = chunk.text(); // DON'T trim - leading space matters!
@@ -216,6 +220,24 @@ impl crate::nodes::AsyncStreamingNode for WhisperStreamingNode {
                             // Add segment_start (which includes chunk offset) for absolute timing
                             let abs_start = segment_start + ts.start as f64;
                             let abs_end = segment_start + ts.end as f64;
+                            let duration = abs_end - abs_start;
+                            
+                            // Skip punctuation that spans long gaps (silence markers)
+                            let is_punctuation = !chunk_text.chars().any(|c| c.is_alphabetic());
+                            if is_punctuation && duration > 1.0 {
+                                tracing::debug!("Skipping punctuation spanning silence: {:.2}s-{:.2}s '{}'", abs_start, abs_end, chunk_text);
+                                continue;
+                            }
+                            
+                            // For zero-duration words at time 0, save to prepend to next word
+                            if duration < 0.001 && abs_start < 0.1 {
+                                tracing::debug!("Deferring misaligned word '{}' to next token", chunk_text);
+                                if !pending_prefix.is_empty() {
+                                    pending_prefix.push(' ');
+                                }
+                                pending_prefix.push_str(chunk_text);
+                                continue;
+                            }
                             
                             // Check if this is a continuation token (no leading space, starts with letter)
                             let is_continuation = !chunk_text_raw.starts_with(' ') 
@@ -227,17 +249,32 @@ impl crate::nodes::AsyncStreamingNode for WhisperStreamingNode {
                                 let last = word_chunks.last_mut().unwrap();
                                 last.1 = abs_end;
                                 last.2.push_str(chunk_text);
-                                eprintln!("[DEBUG] Merged '{}' -> '{}'", chunk_text, last.2);
+                                tracing::trace!("Merged BPE token '{}' -> '{}'", chunk_text, last.2);
                             } else {
-                                eprintln!("[WORD] {:.2}s-{:.2}s '{}'", abs_start, abs_end, chunk_text);
-                                word_chunks.push((abs_start, abs_end, chunk_text.to_string()));
+                                // Prepend any deferred words
+                                let final_text = if pending_prefix.is_empty() {
+                                    chunk_text.to_string()
+                                } else {
+                                    let combined = format!("{} {}", pending_prefix, chunk_text);
+                                    tracing::debug!("Prepended '{}' -> '{}'", pending_prefix, combined);
+                                    pending_prefix.clear();
+                                    combined
+                                };
+                                tracing::trace!("Word {:.2}s-{:.2}s '{}'", abs_start, abs_end, final_text);
+                                word_chunks.push((abs_start, abs_end, final_text));
                             }
                         }
                     }
                 }
                 
+                // If there's still a pending prefix, add it as its own word at segment start
+                if !pending_prefix.is_empty() {
+                    tracing::debug!("Adding remaining deferred words: '{}'", pending_prefix);
+                    word_chunks.push((segment_start, segment_start + 0.5, pending_prefix));
+                }
+                
                 if !got_word_timestamps {
-                    eprintln!("[WARN] Segment has NO word timestamps. Model may need DTW support.");
+                    tracing::warn!("Segment has no word timestamps - DTW may not be supported by model");
                     word_chunks.push((segment_start, segment_end, text.to_string()));
                 }
             }
@@ -246,7 +283,7 @@ impl crate::nodes::AsyncStreamingNode for WhisperStreamingNode {
             drop(ctx_guard);
         }
         
-        eprintln!("[OK] Total: {} word chunks from {} chunks", word_chunks.len(), num_chunks);
+        tracing::debug!("Transcription complete: {} word chunks from {} audio chunks", word_chunks.len(), num_chunks);
         
         // Group word chunks into subtitle segments (5-7 seconds target, break at sentences)
         let segments = group_words_into_subtitles(&word_chunks, 5.0, 10.0);
@@ -261,12 +298,40 @@ impl crate::nodes::AsyncStreamingNode for WhisperStreamingNode {
     }
 }
 
+/// Join words intelligently - no space before punctuation or contractions
+fn smart_join(words: &[&str]) -> String {
+    let mut result = String::new();
+    for word in words {
+        let word = word.trim();
+        if word.is_empty() {
+            continue;
+        }
+        
+        // Don't add space before punctuation or contractions
+        let needs_space = !result.is_empty() 
+            && !word.starts_with(',')
+            && !word.starts_with('.')
+            && !word.starts_with('!')
+            && !word.starts_with('?')
+            && !word.starts_with(':')
+            && !word.starts_with(';')
+            && !word.starts_with('\'')  // contractions like 's, 'll, 're
+            && !word.starts_with('\u{2019}');  // curly apostrophe '
+        
+        if needs_space {
+            result.push(' ');
+        }
+        result.push_str(word);
+    }
+    result
+}
+
 /// Group word chunks into subtitle segments using actual word timestamps
 /// 
 /// This ensures subtitles align with actual speech - no cutting mid-word
 fn group_words_into_subtitles(
     chunks: &[(f64, f64, String)],
-    target_duration: f64,
+    _target_duration: f64,
     max_duration: f64,
 ) -> Vec<serde_json::Value> {
     if chunks.is_empty() {
@@ -281,7 +346,7 @@ fn group_words_into_subtitles(
     for (start, end, text) in chunks {
         let word = text.trim();
         
-        // Skip empty/punctuation-only entries
+        // Skip empty entries
         if word.is_empty() {
             continue;
         }
@@ -303,8 +368,8 @@ fn group_words_into_subtitles(
         let should_break = is_sentence_end || current_duration >= max_duration;
         
         if should_break && !current_words.is_empty() {
-            // Emit current segment
-            let segment_text = current_words.join(" ");
+            // Emit current segment with smart joining (no spaces before punctuation)
+            let segment_text = smart_join(&current_words);
             segments.push(serde_json::json!({
                 "start": current_start,
                 "end": current_end,
@@ -325,7 +390,7 @@ fn group_words_into_subtitles(
     
     // Don't forget the last segment
     if !current_words.is_empty() {
-        let segment_text = current_words.join(" ");
+        let segment_text = smart_join(&current_words);
         segments.push(serde_json::json!({
             "start": current_start,
             "end": current_end,
