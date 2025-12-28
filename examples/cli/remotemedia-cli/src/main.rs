@@ -24,6 +24,7 @@ mod audio;
 mod commands;
 mod config;
 pub mod io;
+pub mod pipeline;
 pub mod pipeline_nodes;
 mod output;
 mod transports;

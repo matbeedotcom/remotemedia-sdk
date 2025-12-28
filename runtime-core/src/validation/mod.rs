@@ -143,7 +143,6 @@ pub fn get_all_schemas(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn test_validation_result_is_ok() {
