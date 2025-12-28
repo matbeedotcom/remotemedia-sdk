@@ -7,6 +7,10 @@ authors.workspace = true
 description = "Command-line interface for RemoteMedia SDK pipeline execution"
 license.workspace = true
 
+[lib]
+name = "remotemedia_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "remotemedia"
 path = "src/main.rs"

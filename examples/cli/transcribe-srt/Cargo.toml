@@ -1,0 +1,36 @@
+[package]
+name = "transcribe-srt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Self-contained audio-to-SRT subtitle transcription using Whisper"
+license.workspace = true
+
+[[bin]]
+name = "transcribe-srt"
+path = "src/main.rs"
+
+[dependencies]
+# Reuse CLI library modules
+remotemedia-cli = { path = "../remotemedia-cli" }
+
+# SDK core
+remotemedia-runtime-core = { workspace = true }
+
+# CLI framework
+clap = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

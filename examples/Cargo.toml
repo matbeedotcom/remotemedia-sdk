@@ -4,6 +4,7 @@
 [workspace]
 members = [
     "cli/remotemedia-cli",
+    "cli/transcribe-srt",
     # Future Rust examples can be added here
 ]
 resolver = "2"
