@@ -15,3 +15,8 @@ mod test_schemars_integration;
 
 // User Story 5: Operators can introspect valid node parameters
 mod test_introspection;
+
+// Phase 8: Edge cases and backward/forward compatibility
+mod test_backward_compat;
+mod test_forward_compat;
+mod test_defaults;
