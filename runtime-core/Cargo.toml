@@ -42,7 +42,7 @@ ort = { workspace = true, optional = true }
 ndarray = { workspace = true }
 
 # Whisper transcription support
-rwhisper = "0.4"
+rwhisper = { version = "0.4", features = ["cuda"] }
 rodio = "0.20"  # Match rwhisper's rodio version
 base64 = "0.22"
 

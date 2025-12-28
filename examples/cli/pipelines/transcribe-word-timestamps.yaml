@@ -1,0 +1,36 @@
+# Word-Level Timestamp Transcription Pipeline
+# Usage: remotemedia run transcribe-word-timestamps.yaml --input audio.wav -O subtitles.srt
+#
+# Uses HuggingFace Whisper with word-level timestamps for accurate subtitle timing.
+# Each word is individually timestamped, ensuring subtitles align precisely with speech.
+
+version: v1
+metadata:
+  name: transcribe-word-timestamps
+  description: Audio transcription with word-level timestamps using HuggingFace Whisper
+
+nodes:
+  # HuggingFace Whisper with word-level timestamps (Python)
+  - id: whisper
+    node_type: HFWhisperNode
+    params:
+      # Model: openai/whisper-large-v3-turbo, whisper-base, whisper-small, etc.
+      model_id: openai/whisper-large-v3-turbo
+      # Device: cuda, cpu, mps (auto-detected if not specified)
+      # device: cuda
+      torch_dtype: float16
+      chunk_length_s: 30
+      # Buffer settings for streaming (not used in CLI batch mode)
+      initial_buffer_duration_s: 3
+      max_buffer_duration_s: 15
+
+  # Convert word timestamps to SRT format
+  - id: srt
+    node_type: SrtOutput
+    params:
+      include_numbers: true
+      max_line_length: 42
+
+connections:
+  - from: whisper
+    to: srt

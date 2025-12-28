@@ -534,18 +534,25 @@ impl NodeExecutor for RustWhisperNode {
 
             tracing::info!("Loading Whisper model from source: {}", source_str);
 
+            // Prefer quantized models as they support word-level timestamps via DTW
             let source = match source_str.as_str() {
+        // Quantized models (support word timestamps)
+        "quantized_tiny" | "tiny_q" => WhisperSource::QuantizedTiny,
+        "quantized_tiny_en" | "tiny.en_q" | "tiny_en_q" => WhisperSource::QuantizedTinyEn,
+        // Non-quantized models (NO word timestamps - DTW alignment not available)
         "tiny" => WhisperSource::Tiny,
-        "tiny.en" => WhisperSource::TinyEn,
+        "tiny.en" | "tiny_en" => WhisperSource::TinyEn,
         "base" => WhisperSource::Base,
-        "base.en" => WhisperSource::BaseEn,
+        "base.en" | "base_en" => WhisperSource::BaseEn,
         "small" => WhisperSource::Small,
-        "small.en" => WhisperSource::SmallEn,
+        "small.en" | "small_en" => WhisperSource::SmallEn,
         "medium" => WhisperSource::Medium,
-        "medium.en" => WhisperSource::MediumEn,
-        "large-v2" | "large" => WhisperSource::LargeV2,  // rwhisper only has LargeV2
+        "medium.en" | "medium_en" => WhisperSource::MediumEn,
+        "large-v2" | "large" => WhisperSource::LargeV2,
+        // Large v3 turbo (quantized, supports word timestamps)
+        "large-v3-turbo" | "large_v3_turbo" => WhisperSource::QuantizedLargeV3Turbo,
         _ => return Err(Error::Manifest(
-            format!("Unknown model source: {}. Valid options: tiny, tiny.en, base, base.en, small, small.en, medium, medium.en, large, large-v2", source_str)
+            format!("Unknown model source: {}. Valid options: tiny, tiny.en, base, base.en, small, small.en, medium, medium.en, large, large-v2, large-v3-turbo. For word timestamps, use quantized_tiny, quantized_tiny_en, or large-v3-turbo", source_str)
         )),
             };
 

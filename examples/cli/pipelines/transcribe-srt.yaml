@@ -17,10 +17,13 @@ metadata:
 
 nodes:
   # Whisper speech-to-text (input is provided by CLI as RuntimeData::Audio)
+  # NOTE: Must use QUANTIZED model for word-level timestamps (DTW alignment)
+  # Options with word timestamps: quantized_tiny, quantized_tiny_en, large-v3-turbo
+  # Options without word timestamps: tiny, base, small, medium, large
   - id: whisper
     node_type: RustWhisperNode
     params:
-      model_source: base.en
+      model_source: large-v3-turbo
       language: en
       n_threads: 4
       accumulate_chunks: false
