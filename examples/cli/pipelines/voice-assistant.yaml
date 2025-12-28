@@ -1,14 +1,15 @@
 # Voice Assistant Pipeline
 # Usage: remotemedia stream voice-assistant.yaml --mic --speaker
 
-name: voice-assistant
-version: "1.0"
-description: Full voice assistant with VAD, STT, LLM, and TTS
+version: v1
+metadata:
+  name: voice-assistant
+  description: Full voice assistant with VAD, STT, LLM, and TTS
 
 nodes:
   - id: mic_input
     node_type: AudioInput
-    config:
+    params:
       sample_rate: 16000
       channels: 1
       format: f32
@@ -16,7 +17,7 @@ nodes:
 
   - id: vad
     node_type: SileroVAD
-    config:
+    params:
       threshold: 0.5
       min_speech_duration_ms: 250
       min_silence_duration_ms: 500
@@ -24,16 +25,14 @@ nodes:
 
   - id: whisper
     node_type: WhisperSTT
-    executor: multiprocess
-    config:
+    params:
       model: base.en
       language: en
       task: transcribe
 
   - id: llm
     node_type: OllamaLLM
-    executor: multiprocess
-    config:
+    params:
       model: llama3.2:1b
       system_prompt: |
         You are a helpful voice assistant. Keep responses concise
@@ -43,21 +42,20 @@ nodes:
 
   - id: tts
     node_type: KokoroTTS
-    executor: multiprocess
-    config:
+    params:
       voice: af_bella
       speed: 1.0
       sample_rate: 24000
 
   - id: resample
     node_type: AudioResample
-    config:
+    params:
       target_sample_rate: 48000
       quality: high
 
   - id: speaker_output
     node_type: AudioOutput
-    config:
+    params:
       sample_rate: 48000
       channels: 1
       format: f32

@@ -51,6 +51,11 @@ impl RustWhisperNode {
         }
     }
 
+    /// Get reference to the Whisper context (for streaming node use)
+    pub fn get_context(&self) -> Option<&Arc<Mutex<rwhisper::Whisper>>> {
+        self.context.as_ref()
+    }
+
     fn extract_audio_data(&self, input: &Value) -> Result<Vec<f32>> {
         tracing::info!("extract_audio_data: input = {:?}", input);
 

@@ -10,45 +10,28 @@
 #   00:00:05,000 --> 00:00:08,200
 #   And this is the second one.
 
-name: transcribe-srt
-version: "1.0"
-description: Audio transcription to SRT subtitle format using Whisper
+version: v1
+metadata:
+  name: transcribe-srt
+  description: Audio transcription to SRT subtitle format using Whisper
 
 nodes:
-  - id: input
-    node_type: AudioInput
-    config:
-      sample_rate: 16000
-      channels: 1
-      format: f32
-
-  - id: vad
-    node_type: SileroVAD
-    config:
-      threshold: 0.5
-      min_speech_duration_ms: 250
-      min_silence_duration_ms: 100
-
+  # Whisper speech-to-text (input is provided by CLI as RuntimeData::Audio)
   - id: whisper
-    node_type: WhisperSTT
-    executor: multiprocess
-    config:
-      model: base.en
+    node_type: RustWhisperNode
+    params:
+      model_source: base.en
       language: en
-      task: transcribe
+      n_threads: 4
+      accumulate_chunks: false
 
-  - id: output
+  # Convert Whisper JSON output to SRT format
+  - id: srt
     node_type: SrtOutput
-    config:
-      # Include segment numbers (1, 2, 3, ...)
+    params:
       include_numbers: true
-      # Max characters per subtitle line (0 = no limit)
       max_line_length: 42
 
 connections:
-  - from: input
-    to: vad
-  - from: vad
-    to: whisper
   - from: whisper
-    to: output
+    to: srt

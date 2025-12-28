@@ -1,42 +1,21 @@
 # Transcription Pipeline
 # Usage: remotemedia run transcribe.yaml --input audio.wav
 
-name: transcribe
-version: "1.0"
-description: Audio transcription using Whisper
+version: v1
+metadata:
+  name: transcribe
+  description: Audio transcription using Whisper
 
 nodes:
-  - id: input
-    node_type: AudioInput
-    config:
-      sample_rate: 16000
-      channels: 1
-      format: f32
-
-  - id: vad
-    node_type: SileroVAD
-    config:
-      threshold: 0.5
-      min_speech_duration_ms: 250
-      min_silence_duration_ms: 100
-
   - id: whisper
-    node_type: WhisperSTT
-    executor: multiprocess
-    config:
-      model: base.en
+    node_type: RustWhisperNode
+    params:
+      # Model source: tiny, tiny.en, base, base.en, small, small.en, medium, large
+      model_source: base.en
       language: en
-      task: transcribe
+      n_threads: 4
+      translate: false
+      # Disable accumulation for immediate transcription (CLI mode)
+      accumulate_chunks: false
 
-  - id: output
-    node_type: TextOutput
-    config:
-      format: plain
-
-connections:
-  - from: input
-    to: vad
-  - from: vad
-    to: whisper
-  - from: whisper
-    to: output
+connections: []

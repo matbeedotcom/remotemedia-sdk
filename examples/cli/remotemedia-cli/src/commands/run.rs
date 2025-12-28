@@ -121,8 +121,19 @@ fn to_runtime_data(data: Vec<u8>, format: InputFormat, path: Option<&str>) -> Re
 
     match format {
         InputFormat::Wav => {
-            let (samples, sample_rate, channels) =
-                parse_wav(&data).context("Failed to parse WAV file")?;
+            let (samples, sample_rate, channels) = parse_wav(&data).with_context(|| {
+                format!(
+                    "Failed to parse WAV file ({} bytes, starts with: {:02x?})",
+                    data.len(),
+                    &data[..std::cmp::min(16, data.len())]
+                )
+            })?;
+            tracing::info!(
+                "Parsed WAV: {} samples, {}Hz, {} ch",
+                samples.len(),
+                sample_rate,
+                channels
+            );
             Ok(RuntimeData::Audio {
                 samples,
                 sample_rate,

@@ -2,13 +2,17 @@
 
 use anyhow::{Context, Result};
 use clap::Args;
+use remotemedia_runtime_core::data::RuntimeData;
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use crate::audio::{is_wav, parse_wav};
 use crate::config::Config;
 use crate::io::{
     detect_input_source, detect_output_sink, InputReader, InputSource, OutputSink, OutputWriter,
 };
 use crate::output::OutputFormat;
+use crate::pipeline;
 
 /// Arguments for the stream command
 #[derive(Args)]
@@ -33,12 +37,51 @@ pub struct StreamArgs {
     pub output: Option<String>,
 
     /// Audio sample rate
-    #[arg(long, default_value = "48000")]
+    #[arg(long, default_value = "16000")]
     pub sample_rate: u32,
 
     /// Audio channels (1 or 2)
     #[arg(long, default_value = "1")]
     pub channels: u16,
+
+    /// Chunk size in samples for streaming
+    #[arg(long, default_value = "4000")]
+    pub chunk_size: usize,
+}
+
+/// Convert RuntimeData to output bytes for streaming
+fn format_output(data: &RuntimeData) -> Result<Vec<u8>> {
+    match data {
+        RuntimeData::Text(text) => {
+            let mut bytes = text.as_bytes().to_vec();
+            // Add newline for streaming text output
+            if !bytes.ends_with(&[b'\n']) {
+                bytes.push(b'\n');
+            }
+            Ok(bytes)
+        }
+        RuntimeData::Json(json) => {
+            let mut bytes = serde_json::to_vec(json)?;
+            bytes.push(b'\n');
+            Ok(bytes)
+        }
+        RuntimeData::Binary(bytes) => Ok(bytes.clone()),
+        RuntimeData::Audio { samples, .. } => {
+            // Output as raw f32 PCM
+            let mut bytes = Vec::with_capacity(samples.len() * 4);
+            for &sample in samples {
+                bytes.extend_from_slice(&sample.to_le_bytes());
+            }
+            Ok(bytes)
+        }
+        _ => {
+            // For other types, serialize as JSON
+            let json = serde_json::to_value(data)?;
+            let mut bytes = serde_json::to_vec(&json)?;
+            bytes.push(b'\n');
+            Ok(bytes)
+        }
+    }
 }
 
 pub async fn execute(args: StreamArgs, _config: &Config, _format: OutputFormat) -> Result<()> {
@@ -47,21 +90,30 @@ pub async fn execute(args: StreamArgs, _config: &Config, _format: OutputFormat) 
         .with_context(|| format!("Failed to read manifest: {:?}", args.manifest))?;
 
     // Parse manifest
-    let _manifest: serde_yaml::Value = serde_yaml::from_str(&manifest_content)
-        .map_err(|e| anyhow::anyhow!("Invalid manifest: {}", e))?;
+    let manifest = pipeline::parse_manifest(&manifest_content)
+        .with_context(|| format!("Failed to parse manifest: {:?}", args.manifest))?;
 
     tracing::info!(
-        "Starting stream pipeline from {:?} (sample_rate={}, channels={})",
-        args.manifest,
+        "Starting streaming pipeline '{}' (sample_rate={}, channels={}, chunk_size={})",
+        manifest.metadata.name,
         args.sample_rate,
-        args.channels
+        args.channels,
+        args.chunk_size
     );
 
+    // Create pipeline runner
+    let runner = pipeline::create_runner().context("Failed to create pipeline runner")?;
+
+    // Create streaming session
+    let manifest = Arc::new(manifest);
+    let mut session = pipeline::StreamingSession::new(&runner, manifest.clone())
+        .await
+        .context("Failed to create streaming session")?;
+
     // Detect and prepare input source
-    let input_reader: Option<InputReader> = if args.mic {
+    let mut input_reader: Option<InputReader> = if args.mic {
         tracing::info!("Using microphone input");
         // TODO: Initialize microphone capture using cpal
-        // This would use crate::audio::mic::capture()
         None
     } else if let Some(input_path) = &args.input {
         let source = detect_input_source(input_path).map_err(|e| {
@@ -80,7 +132,6 @@ pub async fn execute(args: StreamArgs, _config: &Config, _format: OutputFormat) 
         Some(reader)
     } else {
         tracing::info!("No input specified, waiting for data on stdin");
-        // Default to stdin if no input specified and no mic
         let reader = InputReader::open(InputSource::Stdin)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to open stdin: {}", e))?;
@@ -88,7 +139,7 @@ pub async fn execute(args: StreamArgs, _config: &Config, _format: OutputFormat) 
     };
 
     // Detect and prepare output sink
-    let output_writer: Option<OutputWriter> = if args.speaker {
+    let mut output_writer: Option<OutputWriter> = if args.speaker {
         tracing::info!("Audio output to speaker enabled");
         // TODO: Initialize speaker output using cpal
         None
@@ -108,11 +159,12 @@ pub async fn execute(args: StreamArgs, _config: &Config, _format: OutputFormat) 
             .map_err(|e| anyhow::anyhow!("Failed to open output: {}", e))?;
         Some(writer)
     } else {
-        None
+        // Default to stdout for streaming output
+        let writer = OutputWriter::open(OutputSink::Stdout)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to open stdout: {}", e))?;
+        Some(writer)
     };
-
-    // TODO: Execute streaming pipeline using runtime-core
-    // For now, just demonstrate the streaming I/O structure
 
     // Set up signal handler for graceful shutdown
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -123,78 +175,185 @@ pub async fn execute(args: StreamArgs, _config: &Config, _format: OutputFormat) 
     });
 
     // Main streaming loop
-    tokio::select! {
+    let result = tokio::select! {
         _ = &mut shutdown_rx => {
             tracing::info!("Received shutdown signal");
+            Ok(0usize)
         }
-        result = stream_data(input_reader, output_writer) => {
-            match result {
-                Ok(bytes_processed) => {
-                    tracing::info!("Processed {} bytes", bytes_processed);
+        result = stream_pipeline(&mut session, &mut input_reader, &mut output_writer, &args) => {
+            result
+        }
+    };
+
+    // Close session
+    if let Err(e) = session.close().await {
+        tracing::warn!("Error closing session: {}", e);
+    }
+
+    match result {
+        Ok(bytes_processed) => {
+            tracing::info!("Stream completed: processed {} bytes", bytes_processed);
+            Ok(())
+        }
+        Err(e) => {
+            // Check if it's a broken pipe (expected when downstream closes)
+            if let Some(io_err) = e.downcast_ref::<crate::io::IoError>() {
+                if matches!(io_err, crate::io::IoError::BrokenPipe { .. }) {
+                    tracing::debug!("Output pipe closed by reader");
+                    std::process::exit(141); // 128 + SIGPIPE (13)
                 }
-                Err(e) => {
-                    // Check if it's a broken pipe (expected when downstream closes)
-                    if let Some(io_err) = e.downcast_ref::<crate::io::IoError>() {
-                        if matches!(io_err, crate::io::IoError::BrokenPipe { .. }) {
-                            tracing::debug!("Output pipe closed by reader");
-                            // Exit with SIGPIPE exit code (128 + 13 = 141)
-                            std::process::exit(141);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Stream data through the pipeline
+async fn stream_pipeline(
+    session: &mut pipeline::StreamingSession,
+    input: &mut Option<InputReader>,
+    output: &mut Option<OutputWriter>,
+    args: &StreamArgs,
+) -> Result<usize> {
+    let mut total_bytes = 0;
+
+    // Check if we have a WAV file input that needs header parsing
+    let mut is_wav_input = false;
+    let mut wav_sample_rate = args.sample_rate;
+    let mut wav_channels = args.channels as u32;
+
+    if let Some(ref mut reader) = input {
+        // Try to read WAV header first (peek at first 12 bytes)
+        let mut header_buf = vec![0u8; 44]; // Standard WAV header size
+        if reader.read(&mut header_buf).await.is_ok() && is_wav(&header_buf) {
+            // Parse the full WAV file for now
+            // TODO: Implement streaming WAV parsing
+            let remaining = reader.read_to_end().await?;
+            let mut full_data = header_buf;
+            full_data.extend(remaining);
+
+            let (samples, sample_rate, channels) =
+                parse_wav(&full_data).context("Failed to parse WAV file")?;
+
+            wav_sample_rate = sample_rate;
+            wav_channels = channels as u32;
+            is_wav_input = true;
+
+            tracing::info!(
+                "WAV input: {} samples, {}Hz, {} channels",
+                samples.len(),
+                sample_rate,
+                channels
+            );
+
+            // Process WAV in chunks
+            for chunk in samples.chunks(args.chunk_size) {
+                let audio = RuntimeData::Audio {
+                    samples: chunk.to_vec(),
+                    sample_rate: wav_sample_rate,
+                    channels: wav_channels,
+                    stream_id: None,
+                };
+
+                session.send(audio).await?;
+                total_bytes += chunk.len() * 4;
+
+                // Try to receive any available output
+                while let Ok(Some(output_data)) = session.recv().await {
+                    if let Some(ref mut writer) = output {
+                        let bytes = format_output(&output_data)?;
+                        writer.write_all(&bytes).await?;
+                        writer.flush().await?;
+                    }
+                }
+            }
+        } else {
+            // Not a WAV file - stream as raw audio chunks
+            // Put back the header bytes
+            let mut combined = header_buf;
+
+            // Read rest of input
+            loop {
+                let mut buf = vec![0u8; args.chunk_size * 4]; // f32 samples
+                let n = reader.read(&mut buf).await?;
+
+                if n == 0 {
+                    // Process any remaining data from header
+                    if !combined.is_empty() {
+                        // Interpret as f32 PCM
+                        let samples: Vec<f32> = combined
+                            .chunks_exact(4)
+                            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                            .collect();
+
+                        if !samples.is_empty() {
+                            let audio = RuntimeData::Audio {
+                                samples,
+                                sample_rate: args.sample_rate,
+                                channels: args.channels as u32,
+                                stream_id: None,
+                            };
+                            session.send(audio).await?;
                         }
                     }
-                    return Err(e);
+                    break;
+                }
+
+                combined.extend_from_slice(&buf[..n]);
+                total_bytes += n;
+
+                // Process complete chunks
+                let chunk_bytes = args.chunk_size * 4;
+                while combined.len() >= chunk_bytes {
+                    let chunk_data: Vec<u8> = combined.drain(..chunk_bytes).collect();
+                    let samples: Vec<f32> = chunk_data
+                        .chunks_exact(4)
+                        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                        .collect();
+
+                    let audio = RuntimeData::Audio {
+                        samples,
+                        sample_rate: args.sample_rate,
+                        channels: args.channels as u32,
+                        stream_id: None,
+                    };
+
+                    session.send(audio).await?;
+
+                    // Try to receive any available output
+                    while let Ok(Some(output_data)) = session.recv().await {
+                        if let Some(ref mut writer) = output {
+                            let bytes = format_output(&output_data)?;
+                            writer.write_all(&bytes).await?;
+                            writer.flush().await?;
+                        }
+                    }
                 }
             }
         }
     }
 
-    tracing::info!("Stream completed");
-
-    // Exit code 0 for normal completion
-    Ok(())
-}
-
-/// Stream data from input to output
-async fn stream_data(
-    mut input: Option<InputReader>,
-    mut output: Option<OutputWriter>,
-) -> Result<usize> {
-    let mut total_bytes = 0;
-    let mut buf = vec![0u8; 8192]; // 8KB buffer for streaming
-
-    if let Some(ref mut reader) = input {
-        loop {
-            let n = reader
-                .read(&mut buf)
-                .await
-                .map_err(|e| anyhow::anyhow!("Read error: {}", e))?;
-
-            if n == 0 {
-                // End of stream
-                tracing::debug!("End of input stream");
+    // Drain remaining outputs
+    loop {
+        match session.recv().await {
+            Ok(Some(output_data)) => {
+                if let Some(ref mut writer) = output {
+                    let bytes = format_output(&output_data)?;
+                    writer.write_all(&bytes).await?;
+                    writer.flush().await?;
+                }
+            }
+            Ok(None) => break, // Session ended
+            Err(e) => {
+                tracing::warn!("Error receiving output: {}", e);
                 break;
             }
-
-            total_bytes += n;
-
-            // Write to output if available
-            if let Some(ref mut writer) = output {
-                writer
-                    .write_all(&buf[..n])
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Write error: {}", e))?;
-            }
-
-            // TODO: Process data through pipeline here
-            // For now, just pass through
         }
+    }
 
-        // Flush output
-        if let Some(ref mut writer) = output {
-            writer
-                .flush()
-                .await
-                .map_err(|e| anyhow::anyhow!("Flush error: {}", e))?;
-        }
+    // Final flush
+    if let Some(ref mut writer) = output {
+        writer.flush().await?;
     }
 
     Ok(total_bytes)

@@ -120,9 +120,10 @@ impl StreamingSession {
 
     /// Send input data to the pipeline
     pub async fn send(&mut self, data: RuntimeData) -> Result<()> {
+        use remotemedia_runtime_core::transport::StreamSession;
         let transport_data = TransportData::new(data);
         self.handle
-            .send(transport_data)
+            .send_input(transport_data)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to send data: {}", e))
     }
@@ -131,7 +132,8 @@ impl StreamingSession {
     ///
     /// Returns None if the session has ended.
     pub async fn recv(&mut self) -> Result<Option<RuntimeData>> {
-        match self.handle.recv().await {
+        use remotemedia_runtime_core::transport::StreamSession;
+        match self.handle.recv_output().await {
             Ok(Some(transport_data)) => Ok(Some(transport_data.data)),
             Ok(None) => Ok(None),
             Err(e) => Err(anyhow::anyhow!("Failed to receive data: {}", e)),
@@ -139,7 +141,8 @@ impl StreamingSession {
     }
 
     /// Close the streaming session
-    pub async fn close(self) -> Result<()> {
+    pub async fn close(mut self) -> Result<()> {
+        use remotemedia_runtime_core::transport::StreamSession;
         self.handle
             .close()
             .await

@@ -110,13 +110,32 @@ pub fn read_wav_header<R: Read + Seek>(reader: &mut R) -> Result<WavHeader> {
 /// Read WAV audio data as f32 samples
 ///
 /// Converts PCM data to normalized f32 samples in range [-1.0, 1.0]
-pub fn read_wav_samples<R: Read>(reader: &mut R, header: &WavHeader) -> Result<Vec<f32>> {
+/// Handles streaming WAV files where data_size may be 0xFFFFFFFF (unknown)
+pub fn read_wav_samples<R: Read>(reader: &mut R, header: &WavHeader, total_data_len: Option<usize>) -> Result<Vec<f32>> {
     let bytes_per_sample = header.bits_per_sample / 8;
-    let num_samples = header.data_size as usize / bytes_per_sample as usize;
 
+    // Handle streaming WAV files where data_size is 0xFFFFFFFF (unknown)
+    // In this case, read all remaining data
+    let buffer = if header.data_size == 0xFFFFFFFF || header.data_size == 0 {
+        // Read all remaining data
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf)?;
+        tracing::debug!("Streaming WAV: read {} bytes of audio data", buf.len());
+        buf
+    } else if let Some(available) = total_data_len {
+        // Use the smaller of declared size or available data
+        let read_size = std::cmp::min(header.data_size as usize, available);
+        let mut buf = vec![0u8; read_size];
+        reader.read_exact(&mut buf)?;
+        buf
+    } else {
+        let mut buf = vec![0u8; header.data_size as usize];
+        reader.read_exact(&mut buf)?;
+        buf
+    };
+
+    let num_samples = buffer.len() / bytes_per_sample as usize;
     let mut samples = Vec::with_capacity(num_samples);
-    let mut buffer = vec![0u8; header.data_size as usize];
-    reader.read_exact(&mut buffer)?;
 
     match (header.audio_format, header.bits_per_sample) {
         // PCM 8-bit unsigned
@@ -184,10 +203,36 @@ pub fn read_wav_samples<R: Read>(reader: &mut R, header: &WavHeader) -> Result<V
 /// Parse a complete WAV file from bytes
 ///
 /// Returns (samples, sample_rate, channels)
+/// Handles streaming WAV files where the data size may be unknown (0xFFFFFFFF)
 pub fn parse_wav(data: &[u8]) -> Result<(Vec<f32>, u32, u16)> {
     let mut cursor = std::io::Cursor::new(data);
-    let header = read_wav_header(&mut cursor)?;
-    let samples = read_wav_samples(&mut cursor, &header)?;
+    let header = read_wav_header(&mut cursor).with_context(|| {
+        format!(
+            "Failed to read WAV header (data size: {} bytes)",
+            data.len()
+        )
+    })?;
+
+    tracing::debug!(
+        "WAV header: format={}, channels={}, rate={}, bits={}, data_size={}",
+        header.audio_format,
+        header.channels,
+        header.sample_rate,
+        header.bits_per_sample,
+        header.data_size
+    );
+
+    // Calculate remaining data after header
+    let remaining_data = data.len() - cursor.position() as usize;
+
+    let samples = read_wav_samples(&mut cursor, &header, Some(remaining_data)).with_context(|| {
+        format!(
+            "Failed to read WAV samples (declared {} bytes, {} remaining at position {})",
+            header.data_size,
+            remaining_data,
+            cursor.position()
+        )
+    })?;
 
     tracing::debug!(
         "Parsed WAV: {} samples, {}Hz, {} channels, {} bits",

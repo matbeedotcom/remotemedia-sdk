@@ -4,6 +4,7 @@ use crate::nodes::calculator::CalculatorNode;
 use crate::nodes::passthrough::PassThroughNode;
 use crate::nodes::python_streaming::PythonStreamingNode;
 use crate::nodes::remote_pipeline::RemotePipelineNodeFactory;
+use crate::nodes::whisper::RustWhisperNode;
 // Temporarily disabled - incomplete implementation
 // use crate::nodes::sync_av::SynchronizedAudioVideoNode;
 use crate::nodes::video_flip::VideoFlipNode;
@@ -13,9 +14,13 @@ use crate::nodes::video::{VideoEncoderNode, VideoEncoderConfig, VideoDecoderNode
 use crate::nodes::{
     AsyncNodeWrapper, StreamingNode, StreamingNodeFactory, StreamingNodeRegistry, SyncNodeWrapper,
 };
+use crate::data::RuntimeData;
+use crate::nodes::{NodeContext, NodeExecutor};
 use crate::Error;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 // Factory implementations for built-in streaming nodes
 
@@ -34,6 +39,225 @@ impl StreamingNodeFactory for CalculatorNodeFactory {
 
     fn node_type(&self) -> &str {
         "CalculatorNode"
+    }
+}
+
+/// Streaming Whisper node that properly handles RuntimeData::Audio
+struct WhisperStreamingNode {
+    whisper: Mutex<RustWhisperNode>,
+}
+
+impl WhisperStreamingNode {
+    fn new(node: RustWhisperNode) -> Self {
+        Self {
+            whisper: Mutex::new(node),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::nodes::AsyncStreamingNode for WhisperStreamingNode {
+    fn node_type(&self) -> &str {
+        "RustWhisperNode"
+    }
+
+    async fn initialize(&self) -> Result<(), Error> {
+        // Initialization happens in the factory
+        Ok(())
+    }
+
+    async fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+        let whisper = self.whisper.lock().await;
+
+        // Extract audio samples directly from RuntimeData
+        let audio_samples = match &data {
+            RuntimeData::Audio { samples, sample_rate, channels, .. } => {
+                tracing::debug!(
+                    "WhisperStreamingNode received audio: {} samples, {}Hz, {} ch",
+                    samples.len(),
+                    sample_rate,
+                    channels
+                );
+                
+                // Resample to 16kHz if needed (Whisper requires 16kHz)
+                let target_rate = 16000u32;
+                if *sample_rate != target_rate {
+                    tracing::debug!("Resampling from {}Hz to {}Hz", sample_rate, target_rate);
+                    resample_audio(samples, *sample_rate, target_rate)
+                } else {
+                    samples.clone()
+                }
+            }
+            RuntimeData::Json(json) => {
+                // Fallback: try to extract from JSON format for backwards compatibility
+                if let Some(arr) = json.as_array() {
+                    if arr.len() >= 2 {
+                        if let Some(audio_arr) = arr[0].as_array() {
+                            audio_arr
+                                .iter()
+                                .filter_map(|v| v.as_f64().map(|f| f as f32))
+                                .collect()
+                        } else {
+                            return Err(Error::Execution(
+                                "JSON input must have audio array as first element".to_string(),
+                            ));
+                        }
+                    } else {
+                        return Err(Error::Execution(
+                            "JSON input must be [audio_array, sample_rate]".to_string(),
+                        ));
+                    }
+                } else {
+                    return Err(Error::Execution(format!(
+                        "Expected RuntimeData::Audio or JSON array, got: {:?}",
+                        json
+                    )));
+                }
+            }
+            _ => {
+                return Err(Error::Execution(format!(
+                    "WhisperStreamingNode expects RuntimeData::Audio, got: {}",
+                    data.data_type()
+                )));
+            }
+        };
+
+        // Check if we have enough audio
+        if audio_samples.is_empty() {
+            tracing::warn!("Received empty audio, returning empty result");
+            return Ok(RuntimeData::Json(serde_json::json!({
+                "text": "",
+                "segments": []
+            })));
+        }
+
+        // Get whisper context
+        let ctx = whisper.get_context().ok_or_else(|| {
+            Error::Execution("Whisper model not initialized".to_string())
+        })?;
+
+        // Run transcription using rodio SamplesBuffer
+        tracing::info!("Running Whisper transcription on {} samples", audio_samples.len());
+        
+        let ctx_guard = ctx.lock().await;
+        
+        // Create rodio Source from audio samples (mono, 16kHz)
+        let source = rodio::buffer::SamplesBuffer::new(1, 16000, audio_samples);
+        
+        // Start transcription task
+        let mut task = ctx_guard.transcribe(source);
+        
+        // Collect all segments from the stream
+        use futures::StreamExt;
+        let mut segments = Vec::new();
+        let mut full_text = String::new();
+
+        // Get segments with timeout
+        while let Ok(Some(segment)) = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            task.next()
+        ).await {
+            let text = segment.text();
+            let start = segment.start() as f64 / 1000.0; // Convert ms to seconds
+            let duration = segment.duration() as f64 / 1000.0;
+            let end = start + duration;
+
+            segments.push(serde_json::json!({
+                "text": text.trim(),
+                "start": start,
+                "end": end
+            }));
+
+            if !full_text.is_empty() {
+                full_text.push(' ');
+            }
+            full_text.push_str(text.trim());
+        }
+
+        tracing::info!("Transcription complete: \"{}\"", full_text);
+
+        Ok(RuntimeData::Json(serde_json::json!({
+            "text": full_text,
+            "segments": segments
+        })))
+    }
+}
+
+/// Simple audio resampling using linear interpolation
+fn resample_audio(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate {
+        return samples.to_vec();
+    }
+
+    let ratio = from_rate as f64 / to_rate as f64;
+    let new_len = (samples.len() as f64 / ratio) as usize;
+    let mut resampled = Vec::with_capacity(new_len);
+
+    for i in 0..new_len {
+        let src_idx = i as f64 * ratio;
+        let idx0 = src_idx.floor() as usize;
+        let idx1 = (idx0 + 1).min(samples.len() - 1);
+        let frac = src_idx.fract() as f32;
+
+        let sample = samples[idx0] * (1.0 - frac) + samples[idx1] * frac;
+        resampled.push(sample);
+    }
+
+    resampled
+}
+
+/// Factory for RustWhisperNode (Whisper speech-to-text)
+struct RustWhisperNodeFactory;
+
+impl StreamingNodeFactory for RustWhisperNodeFactory {
+    fn create(
+        &self,
+        node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        let mut node = RustWhisperNode::new();
+
+        // Create context for initialization
+        let context = NodeContext {
+            node_id: node_id.clone(),
+            node_type: "RustWhisperNode".to_string(),
+            params: params.clone(),
+            session_id: None,
+            metadata: HashMap::new(),
+        };
+
+        // Initialize synchronously using tokio runtime
+        // This loads the model
+        let init_result = std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                node.initialize(&context).await?;
+                Ok::<_, Error>(node)
+            })
+        })
+        .join()
+        .map_err(|_| Error::Execution("Whisper initialization thread panicked".to_string()))?;
+
+        let initialized_node = init_result?;
+        let streaming_node = WhisperStreamingNode::new(initialized_node);
+
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(streaming_node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "RustWhisperNode"
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{NodeSchema, RuntimeDataType};
+        Some(
+            NodeSchema::new("RustWhisperNode")
+                .description("Speech-to-text transcription using Whisper (Rust implementation)")
+                .category("ml")
+                .accepts([RuntimeDataType::Audio])
+                .produces([RuntimeDataType::Json, RuntimeDataType::Text])
+        )
     }
 }
 
@@ -939,6 +1163,9 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
     #[cfg(feature = "silero-vad")]
     registry.register(Arc::new(SileroVADNodeFactory));
 
+    // Register Whisper transcription node (Rust rwhisper)
+    registry.register(Arc::new(RustWhisperNodeFactory));
+
     // Register Speculative VAD Gate (Spec 007 - low-latency streaming)
     registry.register(Arc::new(SpeculativeVADGateFactory));
 
@@ -963,5 +1190,162 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
     registry.register(Arc::new(ConditionalExpanderNodeFactory));
     registry.register(Arc::new(FilterNodeFactory));
 
+    // Register output formatters
+    registry.register(Arc::new(SrtOutputNodeFactory));
+
     registry
+}
+
+/// SRT output node that converts Whisper JSON segments to SRT subtitle format
+struct SrtOutputStreamingNode {
+    include_numbers: bool,
+    max_line_length: usize,
+    segment_counter: std::sync::atomic::AtomicUsize,
+}
+
+impl SrtOutputStreamingNode {
+    fn new(include_numbers: bool, max_line_length: usize) -> Self {
+        Self {
+            include_numbers,
+            max_line_length,
+            segment_counter: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn seconds_to_timecode(seconds: f64) -> String {
+        let total_ms = (seconds * 1000.0).round() as u64;
+        let ms = total_ms % 1000;
+        let total_secs = total_ms / 1000;
+        let secs = total_secs % 60;
+        let total_mins = total_secs / 60;
+        let mins = total_mins % 60;
+        let hours = total_mins / 60;
+        format!("{:02}:{:02}:{:02},{:03}", hours, mins, secs, ms)
+    }
+
+    fn wrap_text(text: &str, max_len: usize) -> String {
+        if max_len == 0 || text.len() <= max_len {
+            return text.to_string();
+        }
+
+        let mut lines = Vec::new();
+        let mut current_line = String::new();
+
+        for word in text.split_whitespace() {
+            if current_line.is_empty() {
+                current_line = word.to_string();
+            } else if current_line.len() + 1 + word.len() <= max_len {
+                current_line.push(' ');
+                current_line.push_str(word);
+            } else {
+                lines.push(current_line);
+                current_line = word.to_string();
+            }
+        }
+
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+
+        lines.join("\n")
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::nodes::AsyncStreamingNode for SrtOutputStreamingNode {
+    fn node_type(&self) -> &str {
+        "SrtOutput"
+    }
+
+    async fn initialize(&self) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+        let json = match &data {
+            RuntimeData::Json(j) => j.clone(),
+            RuntimeData::Text(t) => {
+                // Plain text - wrap in a single segment
+                serde_json::json!({
+                    "text": t,
+                    "segments": [{"start": 0.0, "end": 10.0, "text": t}]
+                })
+            }
+            _ => {
+                return Err(Error::Execution(format!(
+                    "SrtOutput expects JSON or Text, got: {}",
+                    data.data_type()
+                )));
+            }
+        };
+
+        let mut srt_output = String::new();
+
+        if let Some(segments) = json.get("segments").and_then(|s| s.as_array()) {
+            for segment in segments {
+                let start = segment.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let end = segment.get("end").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let text = segment.get("text").and_then(|v| v.as_str()).unwrap_or("");
+
+                if !text.trim().is_empty() {
+                    let counter = self.segment_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    let start_tc = Self::seconds_to_timecode(start);
+                    let end_tc = Self::seconds_to_timecode(end);
+                    let formatted_text = Self::wrap_text(text.trim(), self.max_line_length);
+
+                    if self.include_numbers {
+                        srt_output.push_str(&format!(
+                            "{}\n{} --> {}\n{}\n\n",
+                            counter, start_tc, end_tc, formatted_text
+                        ));
+                    } else {
+                        srt_output.push_str(&format!(
+                            "{} --> {}\n{}\n\n",
+                            start_tc, end_tc, formatted_text
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(RuntimeData::Text(srt_output))
+    }
+}
+
+struct SrtOutputNodeFactory;
+
+impl StreamingNodeFactory for SrtOutputNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        let include_numbers = params
+            .get("include_numbers")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let max_line_length = params
+            .get("max_line_length")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+
+        let node = SrtOutputStreamingNode::new(include_numbers, max_line_length);
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "SrtOutput"
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{NodeSchema, RuntimeDataType};
+        Some(
+            NodeSchema::new("SrtOutput")
+                .description("Converts Whisper JSON output to SRT subtitle format")
+                .category("utility")
+                .accepts([RuntimeDataType::Json, RuntimeDataType::Text])
+                .produces([RuntimeDataType::Text])
+        )
+    }
 }

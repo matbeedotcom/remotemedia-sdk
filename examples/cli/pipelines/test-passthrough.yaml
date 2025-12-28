@@ -1,0 +1,14 @@
+# Simple passthrough pipeline for testing
+# Usage: remotemedia run test-passthrough.yaml --input audio.wav --output audio_out.wav
+
+version: v1
+metadata:
+  name: test-passthrough
+  description: Simple passthrough pipeline for testing CLI execution
+
+nodes:
+  - id: pass
+    node_type: PassThrough
+    params: {}
+
+connections: []
