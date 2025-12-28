@@ -8,3 +8,7 @@ mod test_range;
 mod test_enum;
 mod test_nested;
 mod test_error_messages;
+
+// User Story 4: Node developers define validation rules
+mod test_macro_schema;
+mod test_schemars_integration;
