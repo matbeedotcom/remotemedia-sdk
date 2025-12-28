@@ -281,12 +281,16 @@ impl AsyncStreamingNode for SpeculativeVADCoordinator {
         #[cfg(feature = "silero-vad")]
         let vad_result = {
             // Collect VAD events from the internal VAD node
-            let vad_events: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+            // Use std::sync::Mutex since callback is sync
+            let vad_events: Arc<std::sync::Mutex<Vec<serde_json::Value>>> = 
+                Arc::new(std::sync::Mutex::new(Vec::new()));
             let vad_events_clone = vad_events.clone();
 
             let vad_callback = move |vad_data: RuntimeData| {
                 if let RuntimeData::Json(json) = vad_data {
-                    vad_events_clone.blocking_lock().push(json);
+                    if let Ok(mut events) = vad_events_clone.lock() {
+                        events.push(json);
+                    }
                 }
                 Ok(())
             };
@@ -299,8 +303,8 @@ impl AsyncStreamingNode for SpeculativeVADCoordinator {
             ).await;
 
             // Extract the VAD result
-            let events = vad_events.lock().await;
-            events.first().cloned()
+            let events = vad_events.lock().ok();
+            events.and_then(|e| e.first().cloned())
         };
 
         #[cfg(not(feature = "silero-vad"))]

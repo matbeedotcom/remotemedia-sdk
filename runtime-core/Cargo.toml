@@ -153,6 +153,10 @@ name = "test_speculative_vad"
 path = "tests/integration/test_speculative_vad.rs"
 
 [[test]]
+name = "test_speculative_vad_coordinator"
+path = "tests/integration/test_speculative_vad_coordinator.rs"
+
+[[test]]
 name = "test_control_messages"
 path = "tests/integration/test_control_messages.rs"
 
@@ -222,4 +226,9 @@ harness = false
 [[bench]]
 name = "bench_vad_docker_pipeline"
 path = "benches/bench_vad_docker_pipeline.rs"
+harness = false
+
+[[bench]]
+name = "bench_speculative_coordinator"
+path = "benches/bench_speculative_coordinator.rs"
 harness = false

@@ -515,6 +515,52 @@ impl StreamingNodeFactory for SpeculativeVADGateFactory {
     }
 }
 
+// Speculative VAD Coordinator - integrates speculative forwarding with Silero VAD
+struct SpeculativeVADCoordinatorFactory;
+impl StreamingNodeFactory for SpeculativeVADCoordinatorFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::speculative_vad_coordinator::{SpeculativeVADCoordinator, SpeculativeVADCoordinatorConfig};
+
+        let config: SpeculativeVADCoordinatorConfig = serde_json::from_value(params.clone())
+            .unwrap_or_default();
+
+        let node = SpeculativeVADCoordinator::with_config(config);
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "SpeculativeVADCoordinator"
+    }
+
+    fn is_multi_output_streaming(&self) -> bool {
+        true // Outputs audio + VAD JSON + optional cancellation messages
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{LatencyClass, NodeCapabilitiesSchema, NodeSchema, RuntimeDataType};
+        use crate::nodes::speculative_vad_coordinator::SpeculativeVADCoordinatorConfig;
+        Some(
+            NodeSchema::new("SpeculativeVADCoordinator")
+                .description("Speculative VAD coordinator integrating immediate forwarding with Silero VAD for false positive detection")
+                .category("audio")
+                .accepts([RuntimeDataType::Audio])
+                .produces([RuntimeDataType::Audio, RuntimeDataType::Json, RuntimeDataType::ControlMessage])
+                .capabilities(NodeCapabilitiesSchema {
+                    parallelizable: false,
+                    batch_aware: false,
+                    supports_control: true,
+                    latency_class: LatencyClass::Realtime,
+                })
+                .config_schema_from::<SpeculativeVADCoordinatorConfig>(),
+        )
+    }
+}
+
 struct LFM2AudioNodeFactory;
 impl StreamingNodeFactory for LFM2AudioNodeFactory {
     fn create(
@@ -895,6 +941,9 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
 
     // Register Speculative VAD Gate (Spec 007 - low-latency streaming)
     registry.register(Arc::new(SpeculativeVADGateFactory));
+
+    // Register Speculative VAD Coordinator (integrates forwarding + Silero VAD)
+    registry.register(Arc::new(SpeculativeVADCoordinatorFactory));
 
     // Register Python TTS nodes
     registry.register(Arc::new(KokoroTTSNodeFactory));
