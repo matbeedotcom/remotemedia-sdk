@@ -2,6 +2,8 @@
 
 use thiserror::Error;
 
+use crate::validation::ValidationError;
+
 /// Result type alias for RemoteMedia Runtime Core operations
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -111,6 +113,10 @@ pub enum Error {
     /// Generic error
     #[error("{0}")]
     Other(String),
+
+    /// Node parameter validation failed
+    #[error("Parameter validation failed: {} error(s)", .0.len())]
+    Validation(Vec<ValidationError>),
 }
 
 impl From<anyhow::Error> for Error {

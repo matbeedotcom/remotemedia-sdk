@@ -1,6 +1,8 @@
 //! Core pipeline execution engine exposed to transports
 
+use crate::nodes::schema::collect_registered_configs;
 use crate::transport::{StreamSessionHandle, TransportData};
+use crate::validation::{validate_manifest, SchemaValidator, ValidationResult};
 use crate::Result;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -147,6 +149,23 @@ impl PipelineRunner {
     ) -> Arc<crate::nodes::streaming_node::StreamingNodeRegistry> {
         Arc::new(crate::nodes::streaming_registry::create_default_streaming_registry())
     }
+
+    /// Validate manifest parameters without executing
+    ///
+    /// Call this to validate a manifest before execution. Validation is also
+    /// performed automatically by execute_unary() and create_stream_session().
+    ///
+    /// # Arguments
+    ///
+    /// * `manifest` - Manifest to validate
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Validation passed (may have warnings logged)
+    /// * `Err(Error::Validation)` - Validation failed with errors
+    pub fn validate(&self, manifest: &crate::manifest::Manifest) -> Result<()> {
+        self.inner.validate(manifest)
+    }
 }
 
 // Clone is cheap (Arc-wrapped)
@@ -165,6 +184,9 @@ struct PipelineRunnerInner {
 
     /// Session counter for generating unique IDs
     session_counter: Arc<std::sync::atomic::AtomicU64>,
+
+    /// Pre-compiled schema validator for node parameter validation
+    schema_validator: SchemaValidator,
 }
 
 impl PipelineRunnerInner {
@@ -172,10 +194,41 @@ impl PipelineRunnerInner {
         // Initialize the real executor
         let executor = Arc::new(crate::executor::Executor::new());
 
+        // Collect registered node schemas and create validator
+        let schema_registry = collect_registered_configs();
+        let schema_validator = SchemaValidator::from_registry(&schema_registry)?;
+
+        tracing::info!(
+            "PipelineRunner initialized with {} node schemas for validation",
+            schema_validator.get_all_schemas().len()
+        );
+
         Ok(Self {
             executor,
             session_counter: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            schema_validator,
         })
+    }
+
+    /// Validate manifest parameters
+    fn validate(&self, manifest: &crate::manifest::Manifest) -> Result<()> {
+        match validate_manifest(manifest, &self.schema_validator) {
+            ValidationResult::Valid => Ok(()),
+            ValidationResult::PartiallyValid { warnings } => {
+                // Log warnings but proceed
+                for warning in &warnings {
+                    tracing::warn!("{}", warning);
+                }
+                Ok(())
+            }
+            ValidationResult::Invalid { errors } => {
+                // Log errors and return validation error
+                for error in &errors {
+                    tracing::error!("{}", error);
+                }
+                Err(crate::Error::Validation(errors))
+            }
+        }
     }
 
     async fn execute_unary(
@@ -183,6 +236,9 @@ impl PipelineRunnerInner {
         manifest: Arc<crate::manifest::Manifest>,
         input: TransportData,
     ) -> Result<TransportData> {
+        // Validate manifest parameters before execution
+        self.validate(&manifest)?;
+
         // Find the first input node from manifest
         let first_node_id = manifest
             .nodes
@@ -222,6 +278,9 @@ impl PipelineRunnerInner {
         &self,
         manifest: Arc<crate::manifest::Manifest>,
     ) -> Result<StreamSessionHandle> {
+        // Validate manifest parameters before session creation
+        self.validate(&manifest)?;
+
         // Generate unique session ID
         let session_num = self
             .session_counter

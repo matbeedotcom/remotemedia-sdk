@@ -43,6 +43,7 @@ pub mod audio;
 pub mod executor;
 pub mod nodes;
 pub mod python;
+pub mod validation;
 /// Public entrypoint for ergonomic registration macros.
 pub mod registration_macros {
     pub use crate::{

@@ -1,7 +1,7 @@
 {
-  "name": "@remotemedia/native",
+  "name": "@matbee/remotemedia-native",
   "version": "0.1.0",
-  "description": "Native Node.js bindings for RemoteMedia zero-copy IPC",
+  "description": "Native Node.js bindings for RemoteMedia zero-copy IPC with iceoryx2 shared memory",
   "main": "index.js",
   "types": "index.d.ts",
   "repository": {
@@ -9,6 +9,11 @@
     "url": "https://github.com/remotemedia/remotemedia-sdk.git",
     "directory": "transports/ffi/nodejs"
   },
+  "homepage": "https://github.com/remotemedia/remotemedia-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/remotemedia/remotemedia-sdk/issues"
+  },
+  "author": "RemoteMedia SDK Contributors",
   "license": "MIT",
   "keywords": [
     "remotemedia",
@@ -16,11 +21,26 @@
     "zero-copy",
     "shared-memory",
     "iceoryx2",
-    "napi-rs"
+    "napi-rs",
+    "native",
+    "ffi",
+    "pipeline",
+    "streaming",
+    "audio",
+    "video",
+    "machine-learning"
   ],
   "engines": {
     "node": ">= 18"
   },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
   "napi": {
     "name": "remotemedia-native",
     "triples": {
@@ -32,21 +52,32 @@
       ]
     }
   },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
-    "build": "cd ../../.. && cargo build --release --features napi --no-default-features -p remotemedia-ffi && cp target/release/libremotemedia_ffi.so target/release/remotemedia_native.node || cp target/release/libremotemedia_ffi.dylib target/release/remotemedia_native.node 2>/dev/null || true",
-    "build:debug": "cd ../../.. && rm -f target/release/remotemedia_native.node && cargo build --features napi --no-default-features -p remotemedia-ffi && cp target/debug/libremotemedia_ffi.so target/debug/remotemedia_native.node || cp target/debug/libremotemedia_ffi.dylib target/debug/remotemedia_native.node 2>/dev/null || true",
+    "build": "../scripts/build-npm.sh --release",
+    "build:debug": "../scripts/build-npm.sh --debug",
+    "build:cargo": "cd ../../.. && cargo build --release --features napi --no-default-features -p remotemedia-ffi && cp target/release/libremotemedia_ffi.so target/release/remotemedia_native.node || cp target/release/libremotemedia_ffi.dylib target/release/remotemedia_native.node 2>/dev/null || true",
+    "build:cargo:debug": "cd ../../.. && rm -f target/release/remotemedia_native.node && cargo build --features napi --no-default-features -p remotemedia-ffi && cp target/debug/libremotemedia_ffi.so target/debug/remotemedia_native.node || cp target/debug/libremotemedia_ffi.dylib target/debug/remotemedia_native.node 2>/dev/null || true",
     "build:napi": "napi build --platform --release",
     "build:napi:debug": "napi build --platform",
+    "build:all": "../scripts/build-npm.sh --release --all",
+    "build:webrtc": "../scripts/build-npm.sh --release --webrtc",
     "generate-types": "node scripts/generate-types.js",
     "postbuild": "npm run generate-types || true",
-    "prepublishOnly": "napi prepublish -t npm",
+    "prepublishOnly": "test -n \"$(ls *.node 2>/dev/null)\" || (echo 'Error: No .node binaries found. Run npm run build first.' && exit 1)",
+    "publish:npm": "../scripts/publish-npm.sh",
+    "publish:npm:dry": "../scripts/publish-npm.sh --dry-run",
     "test": "jest",
     "test:subscriber": "jest subscriber.test.ts",
     "test:publisher": "jest publisher.test.ts",
     "test:session": "jest session.test.ts",
     "test:webrtc": "jest webrtc.test.ts",
     "test:webrtc-pipeline": "jest webrtc-pipeline.test.ts",
-    "benchmark": "node benchmark-zero-copy.js"
+    "benchmark": "node benchmark-zero-copy.js",
+    "clean": "rm -rf *.node node_modules"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4",
@@ -64,6 +95,12 @@
   "files": [
     "index.js",
     "index.d.ts",
-    "*.node"
+    "proto-utils.js",
+    "proto-utils.d.ts",
+    "node-schemas.ts",
+    "node-schemas.json",
+    "*.node",
+    "LICENSE",
+    "README.md"
   ]
 }

@@ -26,6 +26,7 @@ toml = { workspace = true }
 bincode = { workspace = true }
 schemars = { workspace = true }
 inventory = { workspace = true }
+jsonschema = { workspace = true }
 
 # Proc-macros for NodeConfig
 remotemedia-runtime-core-derive = { path = "../runtime-core-derive" }
