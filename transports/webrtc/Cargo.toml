@@ -93,6 +93,8 @@ tonic-prost-build = { workspace = true }
 default = []
 codecs = ["dep:media-codec-vpx"]
 h264 = ["dep:openh264"]
+# Generic signaling feature for event bridge types (WebRtcEventBridge, etc.)
+signaling = ["ws-signaling"]
 # WebSocket signaling requires grpc-signaling because ServerPeer uses generated protobufs
 ws-signaling = ["grpc-signaling"]
 grpc-signaling = [

@@ -13,14 +13,14 @@
 
 // Phase 4 (US2) server peer infrastructure
 #![allow(dead_code)]
-
-use crate::signaling::websocket::{current_timestamp_ns, WebRtcEventBridge};
 use crate::{config::WebRtcTransportConfig, peer::PeerConnection, Error, Result};
 use crate::media::{
     TrackRegistry, FrameRouter, DEFAULT_STREAM_ID,
     tracks::{AudioTrack, VideoTrack},
     extract_stream_id,
 };
+#[cfg(feature = "ws-signaling")]
+use crate::signaling::{WebRtcEventBridge, current_timestamp_ns};
 use prost::Message;
 use remotemedia_runtime_core::{
     data::RuntimeData,
@@ -62,6 +62,7 @@ pub struct ServerPeer {
     track_registry: Arc<TrackRegistry<AudioTrack, VideoTrack>>,
 
     /// Optional event sender for FFI integration
+    #[cfg(feature = "ws-signaling")]
     event_tx: Option<mpsc::Sender<WebRtcEventBridge>>,
 
     /// Shutdown signal
@@ -88,7 +89,28 @@ impl ServerPeer {
         runner: Arc<PipelineRunner>,
         manifest: Arc<Manifest>,
     ) -> Result<Self> {
-        Self::new_with_events(peer_id, config, runner, manifest, None).await
+        info!("Creating server peer: {}", peer_id);
+
+        // Create WebRTC peer connection
+        let peer_connection = Arc::new(PeerConnection::new(peer_id.clone(), config).await?);
+
+        // Create track registry for multi-track support (Spec 013)
+        let track_registry = Arc::new(TrackRegistry::new(peer_id.clone()));
+
+        // Create shutdown channel
+        let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+
+        Ok(Self {
+            peer_id,
+            peer_connection,
+            runner,
+            manifest,
+            track_registry,
+            #[cfg(feature = "ws-signaling")]
+            event_tx: None,
+            shutdown_tx,
+            shutdown_rx: Arc::new(RwLock::new(Some(shutdown_rx))),
+        })
     }
 
     /// Create a new server peer with optional event forwarding
@@ -99,11 +121,12 @@ impl ServerPeer {
     /// * `config` - WebRTC transport configuration (STUN/TURN servers, etc.)
     /// * `runner` - Pipeline runner for media processing
     /// * `manifest` - Pipeline manifest (defines processing graph)
-    /// * `event_tx` - Optional event sender for FFI integration
+    /// * `event_tx` - Optional event sender for FFI integration (only with ws-signaling feature)
     ///
     /// # Returns
     ///
     /// ServerPeer ready to accept offers and stream media through pipeline
+    #[cfg(feature = "ws-signaling")]
     pub async fn new_with_events(
         peer_id: String,
         config: &WebRtcTransportConfig,
@@ -264,7 +287,9 @@ impl ServerPeer {
         let dc_input_tx_for_track = dc_input_tx.clone();
 
         // Clone event_tx for closures (FFI event forwarding)
+        #[cfg(feature = "ws-signaling")]
         let event_tx_for_dc = self.event_tx.clone();
+        #[cfg(feature = "ws-signaling")]
         let event_tx_for_output = self.event_tx.clone();
 
         // Create shared data channel reference for output routing
@@ -274,13 +299,16 @@ impl ServerPeer {
 
         // Set up data channel handler
         let peer_id_for_dc = self.peer_id.clone();
+        #[cfg(feature = "ws-signaling")]
+        let event_tx_for_dc_clone = event_tx_for_dc.clone();
         self.peer_connection
             .peer_connection()
             .on_data_channel(Box::new(move |data_channel| {
                 let peer_id = peer_id_for_dc.clone();
                 let dc_input_tx = dc_input_tx_for_dc.clone();
                 let data_channel_ref = Arc::clone(&data_channel_ref_for_dc);
-                let event_tx = event_tx_for_dc.clone();
+                #[cfg(feature = "ws-signaling")]
+                let event_tx = event_tx_for_dc_clone.clone();
                 let data_channel = Arc::new(data_channel);
 
                 Box::pin(async move {
@@ -298,15 +326,19 @@ impl ServerPeer {
                     let dc_for_handler = Arc::clone(&data_channel);
 
                     // Set up message handler - expects Protobuf-encoded DataBuffer
+                    #[cfg(feature = "ws-signaling")]
+                    let event_tx_for_msg = event_tx.clone();
                     dc_for_handler.on_message(Box::new(move |msg| {
                         let peer_id = peer_id.clone();
                         let dc_input_tx = dc_input_tx.clone();
-                        let event_tx = event_tx.clone();
+                        #[cfg(feature = "ws-signaling")]
+                        let event_tx = event_tx_for_msg.clone();
 
                         Box::pin(async move {
                             info!("Received data channel message: {} bytes from peer {}", msg.data.len(), peer_id);
 
                             // Emit raw data received event for FFI integration
+                            #[cfg(feature = "ws-signaling")]
                             if let Some(ref tx) = event_tx {
                                 let event = WebRtcEventBridge::data_received(
                                     peer_id.clone(),
@@ -431,6 +463,8 @@ impl ServerPeer {
         let _peer_connection = Arc::clone(&self.peer_connection);
         let track_registry = Arc::clone(&self.track_registry);
         let data_channel_for_output = Arc::clone(&data_channel_ref);
+        #[cfg(feature = "ws-signaling")]
+        let event_tx_for_output = event_tx_for_output;
         let mut shutdown_rx =
             self.shutdown_rx.write().await.take().ok_or_else(|| {
                 Error::InternalError("Shutdown receiver already taken".to_string())
@@ -468,6 +502,7 @@ impl ServerPeer {
                                 debug!("Received output from pipeline for peer {}", peer_id);
 
                                 // Emit pipeline output event for FFI integration
+                                #[cfg(feature = "ws-signaling")]
                                 if let Some(ref tx) = event_tx_for_output {
                                     // Serialize RuntimeData to JSON for cross-crate transport
                                     let data_json = serde_json::to_string(&transport_data.data)

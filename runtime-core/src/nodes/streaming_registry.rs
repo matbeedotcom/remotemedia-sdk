@@ -144,43 +144,129 @@ impl crate::nodes::AsyncStreamingNode for WhisperStreamingNode {
         // Create rodio Source from audio samples (mono, 16kHz)
         let source = rodio::buffer::SamplesBuffer::new(1, 16000, audio_samples);
         
-        // Start transcription task
-        let mut task = ctx_guard.transcribe(source);
+        // Start transcription task with word-level timestamps enabled
+        let mut task = ctx_guard.transcribe(source).timestamped();
         
         // Collect all segments from the stream
         use futures::StreamExt;
-        let mut segments = Vec::new();
+        let mut all_chunks: Vec<(f64, f64, String)> = Vec::new();
         let mut full_text = String::new();
 
-        // Get segments with timeout
+        // Sample rate is 16000 Hz (Whisper requirement)
+        const SAMPLE_RATE: f64 = 16000.0;
+        
+        // Collect word-level chunks from all segments
         while let Ok(Some(segment)) = tokio::time::timeout(
             std::time::Duration::from_secs(60),
             task.next()
         ).await {
-            let text = segment.text();
-            let start = segment.start() as f64 / 1000.0; // Convert ms to seconds
-            let duration = segment.duration() as f64 / 1000.0;
-            let end = start + duration;
-
-            segments.push(serde_json::json!({
-                "text": text.trim(),
-                "start": start,
-                "end": end
-            }));
-
+            let segment_range = segment.sample_range();
+            let segment_start = segment_range.start as f64 / SAMPLE_RATE;
+            let segment_end = segment_range.end as f64 / SAMPLE_RATE;
+            
+            // Try to get word-level timestamps from chunks
+            let mut has_word_timestamps = false;
+            for chunk in segment.chunks() {
+                if let Some(ts_range) = chunk.timestamp() {
+                    has_word_timestamps = true;
+                    let chunk_text = chunk.text().trim();
+                    if !chunk_text.is_empty() {
+                        // timestamp() returns Range<f32> in seconds
+                        let start = ts_range.start as f64;
+                        let end = ts_range.end as f64;
+                        all_chunks.push((start, end, chunk_text.to_string()));
+                    }
+                }
+            }
+            
+            // Fallback: if no word-level timestamps, use the whole segment
+            if !has_word_timestamps {
+                let text = segment.text().trim();
+                if !text.is_empty() {
+                    all_chunks.push((segment_start, segment_end, text.to_string()));
+                }
+            }
+            
             if !full_text.is_empty() {
                 full_text.push(' ');
             }
-            full_text.push_str(text.trim());
+            full_text.push_str(segment.text().trim());
         }
 
-        tracing::info!("Transcription complete: \"{}\"", full_text);
+        // Group chunks into subtitle segments (target: 5-7 seconds, max 10 seconds)
+        let segments = group_into_subtitles(&all_chunks, 5.0, 10.0);
+        
+        tracing::info!("Transcription complete: {} subtitle segments from {} word chunks", 
+            segments.len(), all_chunks.len());
 
         Ok(RuntimeData::Json(serde_json::json!({
             "text": full_text,
             "segments": segments
         })))
     }
+}
+
+/// Group word chunks into subtitle segments of appropriate duration
+/// 
+/// # Arguments
+/// * `chunks` - Vec of (start_time, end_time, text) tuples
+/// * `target_duration` - Target duration per subtitle (e.g., 5.0 seconds)
+/// * `max_duration` - Maximum duration before forcing a break (e.g., 10.0 seconds)
+fn group_into_subtitles(
+    chunks: &[(f64, f64, String)],
+    target_duration: f64,
+    max_duration: f64,
+) -> Vec<serde_json::Value> {
+    if chunks.is_empty() {
+        return Vec::new();
+    }
+    
+    let mut segments = Vec::new();
+    let mut current_start = chunks[0].0;
+    let mut current_text = String::new();
+    let mut last_end = chunks[0].0;
+    
+    for (start, end, text) in chunks {
+        let current_duration = *end - current_start;
+        let would_exceed_max = current_duration > max_duration;
+        
+        // Check for natural break points (sentence endings)
+        let is_sentence_end = current_text.ends_with('.') 
+            || current_text.ends_with('!') 
+            || current_text.ends_with('?');
+        
+        // Break if we've hit target duration at a sentence end, or exceeded max
+        let should_break = (current_duration >= target_duration && is_sentence_end) 
+            || would_exceed_max;
+        
+        if should_break && !current_text.is_empty() {
+            segments.push(serde_json::json!({
+                "start": current_start,
+                "end": last_end,
+                "text": current_text.trim()
+            }));
+            current_start = *start;
+            current_text = String::new();
+        }
+        
+        // Add word to current segment
+        if !current_text.is_empty() {
+            current_text.push(' ');
+        }
+        current_text.push_str(text);
+        last_end = *end;
+    }
+    
+    // Don't forget the last segment
+    if !current_text.is_empty() {
+        segments.push(serde_json::json!({
+            "start": current_start,
+            "end": last_end,
+            "text": current_text.trim()
+        }));
+    }
+    
+    segments
 }
 
 /// Simple audio resampling using linear interpolation
