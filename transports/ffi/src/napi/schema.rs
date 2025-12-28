@@ -8,7 +8,7 @@
 //! # Example
 //!
 //! ```javascript
-//! const { getNodeSchemas, getNodeSchema, generateTypescript } = require('@remotemedia/native');
+//! const { getNodeSchemas, getNodeSchema, generateTypescript } = require('@matbee/remotemedia-native');
 //!
 //! // Get all schemas as JSON array
 //! const schemas = getNodeSchemas();
@@ -527,7 +527,7 @@ pub fn validate_manifest(manifest_json: String) -> napi::Result<Vec<String>> {
 ///
 /// ```javascript
 /// const fs = require('fs');
-/// const { generateTypescript } = require('@remotemedia/native');
+/// const { generateTypescript } = require('@matbee/remotemedia-native');
 ///
 /// // Generate and save TypeScript definitions
 /// const typescriptDefs = generateTypescript();
@@ -547,7 +547,7 @@ pub fn generate_typescript() -> String {
 /// # Example
 ///
 /// ```javascript
-/// const { generateTypescriptWithRegistered } = require('@remotemedia/native');
+/// const { generateTypescriptWithRegistered } = require('@matbee/remotemedia-native');
 /// const fullDefs = generateTypescriptWithRegistered();
 /// ```
 #[napi]

@@ -1,7 +1,7 @@
 /**
  * Shared TypeScript types for Node.js FFI tests
  *
- * These types mirror the napi-rs exported types from @remotemedia/native
+ * These types mirror the napi-rs exported types from @matbee/remotemedia-native
  */
 
 export interface NapiRuntimeData {

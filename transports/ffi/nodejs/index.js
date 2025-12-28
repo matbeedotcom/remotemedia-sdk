@@ -1,4 +1,4 @@
-// @remotemedia/native - Node.js bindings for RemoteMedia zero-copy IPC
+// @matbee/remotemedia-native - Node.js bindings for RemoteMedia zero-copy IPC
 //
 // This module provides zero-copy IPC between Node.js, Python, and Rust
 // via iceoryx2 shared memory.
@@ -72,7 +72,7 @@ function loadNativeBinding() {
 
   // Try requiring without path (for globally installed)
   try {
-    return require(`@remotemedia/native-${triple}`);
+    return require(`@matbee/remotemedia-native-${triple}`);
   } catch (e) {
     // Ignore
   }

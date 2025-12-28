@@ -47,7 +47,7 @@
 //! # Usage (Node.js)
 //!
 //! ```javascript
-//! const { createSession } = require('@remotemedia/native');
+//! const { createSession } = require('@matbee/remotemedia-native');
 //!
 //! const session = createSession({ id: 'my-session' });
 //! const channel = session.channel('audio_input');

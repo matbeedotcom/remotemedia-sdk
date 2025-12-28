@@ -183,6 +183,11 @@ path = "tests/integration/test_docker_image_builder.rs"
 name = "test_docker_resource_limits"
 path = "tests/integration/test_docker_resource_limits.rs"
 
+# Integration test for parameter validation (T025-T027)
+[[test]]
+name = "test_param_validation"
+path = "tests/integration/test_param_validation.rs"
+
 # Benchmarks for latency measurement
 [[bench]]
 name = "bench_latency"

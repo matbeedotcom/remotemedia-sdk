@@ -3,7 +3,7 @@
 # publish-npm.sh - Publish RemoteMedia Node.js native addon to npm
 #
 # This script publishes the built native addon to npm. It handles:
-# - Publishing the main @remotemedia/native package
+# - Publishing the main @matbee/remotemedia-native package
 # - Optionally publishing platform-specific packages
 #
 # Usage:
@@ -92,7 +92,7 @@ echo -e "${BLUE}═════════════════════�
 echo -e "${BLUE}  RemoteMedia Node.js Package Publisher${NC}"
 echo -e "${BLUE}════════════════════════════════════════════════════════${NC}"
 echo ""
-echo -e "  Package:  ${GREEN}@remotemedia/native${NC}"
+echo -e "  Package:  ${GREEN}@matbee/remotemedia-native${NC}"
 echo -e "  Tag:      ${GREEN}$NPM_TAG${NC}"
 echo -e "  Access:   ${GREEN}$ACCESS${NC}"
 echo -e "  Dry run:  $([ "$DRY_RUN" = true ] && echo -e "${YELLOW}Yes${NC}" || echo -e "${GREEN}No${NC}")"

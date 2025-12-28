@@ -1,4 +1,4 @@
-# @remotemedia/native
+# @matbee/remotemedia-native
 
 Native Node.js bindings for RemoteMedia zero-copy IPC with iceoryx2 shared memory.
 
@@ -13,14 +13,14 @@ This package provides high-performance Node.js bindings for the RemoteMedia pipe
 ## Installation
 
 ```bash
-npm install @remotemedia/native
+npm install @matbee/remotemedia-native
 ```
 
 ## Requirements
 
 - Node.js >= 18
 - Linux (x64, arm64) or macOS (x64, arm64)
-- For WebRTC features: see `@remotemedia/native-webrtc`
+- For WebRTC features: see `@matbee/remotemedia-native-webrtc`
 
 ## Quick Start
 
@@ -29,7 +29,7 @@ import {
   createSession,
   NapiRuntimeData,
   isNativeLoaded,
-} from '@remotemedia/native';
+} from '@matbee/remotemedia-native';
 
 // Check if native bindings loaded successfully
 if (!isNativeLoaded()) {
@@ -163,7 +163,7 @@ subscriber.close();
 ## Pipeline Execution
 
 ```typescript
-import { executePipeline, createStreamSession } from '@remotemedia/native';
+import { executePipeline, createStreamSession } from '@matbee/remotemedia-native';
 
 // One-shot pipeline execution
 const manifest = {
