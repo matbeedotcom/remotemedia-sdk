@@ -1,5 +1,13 @@
-# Setup script to download FFmpeg for Windows builds
+# Setup script to build FFmpeg from source with STATIC linking for Windows (MSVC)
 # Run this once before building: .\setup-ffmpeg.ps1
+#
+# This builds FFmpeg as static libraries using MSVC toolchain so binaries are self-contained
+# (no runtime DLL dependencies) and compatible with Rust's MSVC target.
+#
+# Prerequisites:
+#   - Visual Studio 2019/2022 with C++ build tools
+#   - MSYS2 (for configure script and make)
+#   - Run from Developer PowerShell or after vcvars64.bat
 
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -10,125 +18,307 @@ $ffmpegDir = Join-Path $vendorDir "ffmpeg"
 $includeDir = Join-Path $ffmpegDir "include"
 $libDir = Join-Path $ffmpegDir "lib"
 
-# Function to create cargo config
-function New-CargoConfig {
+# FFmpeg version to build
+$FFMPEG_VERSION = "7.1"
+$FFMPEG_URL = "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
+
+# Function to update cargo config for static FFmpeg linking (preserves existing content)
+function Update-CargoConfig {
     $cargoDir = Join-Path $scriptDir ".cargo"
     New-Item -ItemType Directory -Force -Path $cargoDir | Out-Null
 
     $configPath = Join-Path $cargoDir "config.toml"
     $includeEscaped = $includeDir -replace '\\', '/'
     $libEscaped = $libDir -replace '\\', '/'
-    $configContent = @"
+
+    # Read existing config or start fresh
+    $existingContent = ""
+    if (Test-Path $configPath) {
+        $existingContent = Get-Content -Path $configPath -Raw
+    }
+
+    # Remove any existing FFmpeg-related lines
+    $lines = $existingContent -split "`n" | Where-Object {
+        $_ -notmatch "^FFMPEG_INCLUDE_DIR\s*=" -and
+        $_ -notmatch "^FFMPEG_LIB_DIR\s*=" -and
+        $_ -notmatch "^FFMPEG_LIBS_MODE\s*=" -and
+        $_ -notmatch "^#.*FFmpeg.*static" -and
+        $_ -notmatch "^#.*static linking for FFmpeg"
+    }
+
+    # Find or create [env] section
+    $hasEnvSection = $lines | Where-Object { $_ -match "^\[env\]" }
+
+    if (-not $hasEnvSection) {
+        # Add [env] section at the beginning if it doesn't exist
+        $ffmpegConfig = @"
 [env]
 FFMPEG_INCLUDE_DIR = "$includeEscaped"
 FFMPEG_LIB_DIR = "$libEscaped"
+# Use static linking for FFmpeg (single binary, no DLL dependencies)
+FFMPEG_LIBS_MODE = "static"
+
 "@
-    Set-Content -Path $configPath -Value $configContent
-    Write-Host "  Cargo config: $configPath" -ForegroundColor Gray
+        $newContent = $ffmpegConfig + ($lines -join "`n")
+    } else {
+        # Insert FFmpeg vars after [env] section
+        $newLines = @()
+        $insertedFfmpeg = $false
+        foreach ($line in $lines) {
+            $newLines += $line
+            if ($line -match "^\[env\]" -and -not $insertedFfmpeg) {
+                $newLines += "FFMPEG_INCLUDE_DIR = `"$includeEscaped`""
+                $newLines += "FFMPEG_LIB_DIR = `"$libEscaped`""
+                $newLines += "# Use static linking for FFmpeg (single binary, no DLL dependencies)"
+                $newLines += "FFMPEG_LIBS_MODE = `"static`""
+                $insertedFfmpeg = $true
+            }
+        }
+        $newContent = $newLines -join "`n"
+    }
+
+    # Clean up multiple blank lines
+    $newContent = $newContent -replace "`n{3,}", "`n`n"
+    $newContent = $newContent.Trim() + "`n"
+
+    Set-Content -Path $configPath -Value $newContent -NoNewline
+    Write-Host "  Cargo config updated: $configPath" -ForegroundColor Gray
 }
 
-# Check if already downloaded
-if ((Test-Path (Join-Path $includeDir "libavcodec")) -and (Test-Path $libDir)) {
-    Write-Host "FFmpeg already installed at $ffmpegDir" -ForegroundColor Green
-    # Still create/update cargo config
-    New-CargoConfig
+# Check if already built (look for MSVC .lib files)
+if (Test-Path (Join-Path $libDir "avcodec.lib")) {
+    Write-Host "FFmpeg static libraries already built at $ffmpegDir" -ForegroundColor Green
+    Update-CargoConfig
     exit 0
 }
 
-Write-Host "Downloading FFmpeg for Windows..." -ForegroundColor Cyan
+# Clean up old MinGW build if present
+if (Test-Path (Join-Path $libDir "libavcodec.a")) {
+    Write-Host "Removing old MinGW build..." -ForegroundColor Yellow
+    Remove-Item -Recurse -Force $ffmpegDir
+}
+
+Write-Host "Building FFmpeg $FFMPEG_VERSION from source (STATIC, MSVC)..." -ForegroundColor Cyan
+Write-Host ""
+
+# Check for MSVC environment
+if (-not $env:VSINSTALLDIR) {
+    Write-Host "Visual Studio environment not detected. Initializing..." -ForegroundColor Yellow
+
+    $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vsWhere) {
+        $vsPath = & $vsWhere -latest -property installationPath
+        $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+        if (Test-Path $vcvars) {
+            Write-Host "Loading MSVC environment from: $vcvars" -ForegroundColor Gray
+            cmd /c "`"$vcvars`" && set" | ForEach-Object {
+                if ($_ -match '^([^=]+)=(.*)$') {
+                    [System.Environment]::SetEnvironmentVariable($matches[1], $matches[2])
+                }
+            }
+        }
+    }
+
+    if (-not $env:VSINSTALLDIR) {
+        Write-Error @"
+MSVC environment not found. Please either:
+  1. Run this script from Developer PowerShell for VS 2022
+  2. Or run: & 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
+"@
+        exit 1
+    }
+}
+
+Write-Host "Using MSVC: $env:VCToolsVersion" -ForegroundColor Gray
+
+# Check prerequisites - MSYS2
+$msys2Path = $null
+$msys2Locations = @(
+    "C:\msys64",
+    "C:\tools\msys64",
+    "$env:USERPROFILE\scoop\apps\msys2\current"
+)
+
+foreach ($loc in $msys2Locations) {
+    if (Test-Path (Join-Path $loc "usr\bin\bash.exe")) {
+        $msys2Path = $loc
+        break
+    }
+}
+
+if (-not $msys2Path) {
+    Write-Host "MSYS2 not found. Installing via winget..." -ForegroundColor Yellow
+    winget install --id MSYS2.MSYS2 --accept-package-agreements --accept-source-agreements
+    $msys2Path = "C:\msys64"
+
+    if (-not (Test-Path $msys2Path)) {
+        Write-Error @"
+MSYS2 is required to build FFmpeg. Please install it manually:
+  1. Download from https://www.msys2.org/
+  2. Install to C:\msys64
+  3. Run this script again
+"@
+        exit 1
+    }
+}
+
+Write-Host "Using MSYS2 at: $msys2Path" -ForegroundColor Gray
 
 # Create directories
 New-Item -ItemType Directory -Force -Path $vendorDir | Out-Null
-
-# Use "full_build" which includes development headers and libs
-$downloadUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full-shared.7z"
-$archivePath = Join-Path $vendorDir "ffmpeg.7z"
-$extractDir = Join-Path $vendorDir "ffmpeg-extract"
-
-# Download
-Write-Host "Downloading from $downloadUrl..."
-try {
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath -UseBasicParsing
-} catch {
-    Write-Host "Invoke-WebRequest failed, trying curl..." -ForegroundColor Yellow
-    curl -L -o $archivePath $downloadUrl
-}
-
-if (-not (Test-Path $archivePath)) {
-    Write-Error "Failed to download FFmpeg"
-    exit 1
-}
-
-# Extract (7z file)
-Write-Host "Extracting..."
-if (Test-Path $extractDir) {
-    Remove-Item -Recurse -Force $extractDir
-}
-
-# Try 7z, then tar (Windows 10+ has tar with 7z support via bsdtar)
-$extracted = $false
-if (Get-Command "7z" -ErrorAction SilentlyContinue) {
-    & 7z x $archivePath -o"$extractDir" -y
-    $extracted = $true
-} elseif (Get-Command "7za" -ErrorAction SilentlyContinue) {
-    & 7za x $archivePath -o"$extractDir" -y
-    $extracted = $true
-} else {
-    # Fallback: download zip version instead
-    Write-Host "7z not found, downloading zip version instead..." -ForegroundColor Yellow
-    Remove-Item -Force $archivePath -ErrorAction SilentlyContinue
-    $downloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip"
-    $archivePath = Join-Path $vendorDir "ffmpeg.zip"
-    try {
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath -UseBasicParsing
-    } catch {
-        curl -L -o $archivePath $downloadUrl
-    }
-    Expand-Archive -Path $archivePath -DestinationPath $extractDir -Force
-    $extracted = $true
-}
-
-if (-not $extracted) {
-    Write-Error "Failed to extract FFmpeg. Please install 7-Zip or use a zip download."
-    exit 1
-}
-
-# Find extracted folder (ffmpeg-VERSION-full_build-shared)
-$extractedFolder = Get-ChildItem -Path $extractDir -Directory | Where-Object { $_.Name -like "ffmpeg-*" } | Select-Object -First 1
-
-if (-not $extractedFolder) {
-    Write-Error "Could not find extracted FFmpeg folder"
-    exit 1
-}
-
-# Create target directory
-if (Test-Path $ffmpegDir) {
-    Remove-Item -Recurse -Force $ffmpegDir
-}
 New-Item -ItemType Directory -Force -Path $ffmpegDir | Out-Null
 
-# Copy include and lib directories
-Write-Host "Copying include and lib directories..."
-Copy-Item -Path (Join-Path $extractedFolder.FullName "include") -Destination $ffmpegDir -Recurse
-Copy-Item -Path (Join-Path $extractedFolder.FullName "lib") -Destination $ffmpegDir -Recurse
-
-# Also copy bin for runtime DLLs
-if (Test-Path (Join-Path $extractedFolder.FullName "bin")) {
-    Copy-Item -Path (Join-Path $extractedFolder.FullName "bin") -Destination $ffmpegDir -Recurse
-    Write-Host "Note: FFmpeg DLLs copied to $ffmpegDir\bin - add to PATH or copy to output directory for runtime" -ForegroundColor Yellow
+# Download FFmpeg source
+$archivePath = Join-Path $vendorDir "ffmpeg-$FFMPEG_VERSION.tar.xz"
+if (-not (Test-Path $archivePath)) {
+    Write-Host "Downloading FFmpeg $FFMPEG_VERSION source..."
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        Invoke-WebRequest -Uri $FFMPEG_URL -OutFile $archivePath -UseBasicParsing -TimeoutSec 300
+    } catch {
+        Write-Host "Trying curl.exe..." -ForegroundColor Yellow
+        & curl.exe -L -o $archivePath $FFMPEG_URL
+    }
 }
 
-# Cleanup
-Write-Host "Cleaning up..."
-Remove-Item -Force $archivePath -ErrorAction SilentlyContinue
-Remove-Item -Recurse -Force $extractDir -ErrorAction SilentlyContinue
+# Convert Windows paths to MSYS2 paths for the build script
+$vendorDirMsys = $vendorDir -replace '\\', '/' -replace '^C:', '/c'
+$ffmpegDirMsys = $ffmpegDir -replace '\\', '/' -replace '^C:', '/c'
 
-# Create .cargo/config.toml with FFmpeg paths so cargo picks them up automatically
-New-CargoConfig
+# Verify MSVC is available
+$clPath = (Get-Command cl.exe -ErrorAction SilentlyContinue).Source
+if (-not $clPath) {
+    Write-Error "cl.exe not found in PATH. Ensure MSVC environment is loaded."
+    exit 1
+}
+Write-Host "Found cl.exe at: $clPath" -ForegroundColor Gray
+
+# Create build script for MSYS2 with MSVC toolchain
+$buildScript = @'
+#!/bin/bash
+set -e
+
+echo "=== FFmpeg Static Build for Windows (MSVC) ==="
+
+# Install MSYS2 build dependencies (not MinGW - we use MSVC)
+pacman -S --needed --noconfirm \
+    make \
+    diffutils \
+    pkg-config \
+    tar \
+    xz \
+    nasm \
+    yasm
+
+# Verify cl.exe is accessible (should be inherited from PowerShell via MSYS2_PATH_TYPE=inherit)
+if ! command -v cl.exe &> /dev/null; then
+    echo "ERROR: cl.exe not found in PATH"
+    echo "Make sure to run this from Developer PowerShell or after vcvars64.bat"
+    exit 1
+fi
+
+echo "Using MSVC compiler: $(which cl.exe)"
+
+# Extract source
+cd "VENDOR_DIR_PLACEHOLDER"
+if [ ! -d "ffmpeg-FFMPEG_VERSION_PLACEHOLDER" ]; then
+    echo "Extracting FFmpeg source..."
+    tar -xf ffmpeg-FFMPEG_VERSION_PLACEHOLDER.tar.xz
+fi
+
+cd ffmpeg-FFMPEG_VERSION_PLACEHOLDER
+
+# Clean previous build if exists
+if [ -f "config.h" ]; then
+    echo "Cleaning previous build..."
+    make clean || true
+fi
+
+# Configure for MSVC toolchain
+# --toolchain=msvc tells FFmpeg to use cl.exe, link.exe, lib.exe
+./configure \
+    --prefix="FFMPEG_DIR_PLACEHOLDER" \
+    --toolchain=msvc \
+    --enable-static \
+    --disable-shared \
+    --disable-programs \
+    --disable-doc \
+    --disable-debug \
+    --enable-gpl \
+    --enable-version3 \
+    --enable-nonfree \
+    --disable-network \
+    --disable-protocols \
+    --enable-protocol=file \
+    --disable-devices \
+    --disable-filters \
+    --enable-filter=aresample \
+    --enable-filter=anull \
+    --enable-filter=null \
+    --arch=x86_64
+
+# Note: This enables all built-in codecs including:
+# Video: H.264, H.265/HEVC, VP8, VP9, AV1, MPEG-1/2/4, ProRes, DNxHD, etc.
+# Audio: AAC, MP3, Opus, Vorbis, FLAC, AC3, DTS, PCM variants, etc.
+# Containers: MP4, MKV, WebM, AVI, MOV, FLV, etc.
+
+echo "Building FFmpeg with MSVC (this may take 10-20 minutes)..."
+make -j$(nproc)
+
+echo "Installing to prefix..."
+make install
+
+echo "=== FFmpeg build complete ==="
+'@
+
+# Replace placeholders with actual values
+$buildScript = $buildScript -replace 'VENDOR_DIR_PLACEHOLDER', $vendorDirMsys
+$buildScript = $buildScript -replace 'FFMPEG_DIR_PLACEHOLDER', $ffmpegDirMsys
+$buildScript = $buildScript -replace 'FFMPEG_VERSION_PLACEHOLDER', $FFMPEG_VERSION
+
+$buildScriptPath = Join-Path $vendorDir "build-ffmpeg.sh"
+$buildScript = $buildScript -replace '\r\n', "`n"
+[System.IO.File]::WriteAllText($buildScriptPath, $buildScript, [System.Text.UTF8Encoding]::new($false))
+
+# Run build using MSYS2 bash with MSVC environment inherited
+Write-Host "Starting FFmpeg build with MSVC (this may take 10-20 minutes)..." -ForegroundColor Yellow
+
+$msysBash = Join-Path $msys2Path "usr\bin\bash.exe"
+
+# Convert Windows path to MSYS2 path
+$buildScriptMsys = $buildScriptPath -replace '\\', '/' -replace '^C:', '/c'
+
+# Set up MSYS2 environment to inherit Windows PATH (which has MSVC)
+$env:MSYSTEM = "MSYS"
+$env:CHERE_INVOKING = "1"
+$env:MSYS2_PATH_TYPE = "inherit"
+
+# Run the build script
+Write-Host "Running: bash $buildScriptMsys" -ForegroundColor Gray
+& $msysBash --login -c "cd '$vendorDirMsys' && bash '$buildScriptMsys'"
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "FFmpeg build failed with exit code $LASTEXITCODE"
+    exit 1
+}
+
+# Verify build - MSVC produces .lib files
+if (-not (Test-Path (Join-Path $libDir "avcodec.lib"))) {
+    # Check if it produced libavcodec.a (wrong toolchain)
+    if (Test-Path (Join-Path $libDir "libavcodec.a")) {
+        Write-Error "Build produced MinGW libraries (.a) instead of MSVC (.lib). Toolchain configuration failed."
+    } else {
+        Write-Error "Build completed but avcodec.lib not found. Check build output."
+    }
+    exit 1
+}
+
+# Update cargo config
+Update-CargoConfig
 
 Write-Host ""
-Write-Host "FFmpeg installed successfully!" -ForegroundColor Green
+Write-Host "FFmpeg $FFMPEG_VERSION built successfully (STATIC, MSVC)!" -ForegroundColor Green
 Write-Host "  Include: $includeDir"
 Write-Host "  Lib: $libDir"
 Write-Host ""
-Write-Host "You can now build with: cargo build" -ForegroundColor Cyan
+Write-Host "Static libraries created - no runtime DLLs needed!" -ForegroundColor Cyan

@@ -5,6 +5,13 @@
 
 .DEFAULT_GOAL := help
 
+# Platform detection
+ifeq ($(OS),Windows_NT)
+  SETUP_FFMPEG := powershell.exe -ExecutionPolicy Bypass -File setup-ffmpeg.ps1
+else
+  SETUP_FFMPEG := ./setup-ffmpeg.sh
+endif
+
 # Build profiles
 RELEASE_FLAGS := --release
 PROFILE ?= dev
@@ -90,13 +97,22 @@ help: ## Show this help message
 	@echo.
 
 # =============================================================================
+# SETUP TARGETS
+# =============================================================================
+
+.PHONY: setup-ffmpeg
+
+setup-ffmpeg: ## Download and configure FFmpeg (required for video feature)
+	$(SETUP_FFMPEG)
+
+# =============================================================================
 # BUILD ALL
 # =============================================================================
 
 .PHONY: all build
 all: build ## Build everything (alias for build)
 
-build: core-default transports-all ## Build runtime-core and all transports
+build: setup-ffmpeg core-default transports-all ## Build runtime-core and all transports
 
 build-release: ## Build everything in release mode
 	$(MAKE) build PROFILE=release
@@ -107,7 +123,7 @@ build-release: ## Build everything in release mode
 
 .PHONY: core-default core-minimal core-multiprocess core-silero core-docker core-video core-video-pure-rust core-grpc-client core-cuda core-all-features
 
-core-default: ## Build runtime-core with default features (multiprocess, silero-vad, docker, video)
+core-default: setup-ffmpeg ## Build runtime-core with default features (multiprocess, silero-vad, docker, video)
 	cargo build -p remotemedia-runtime-core $(CARGO_FLAGS)
 
 core-cuda: ## Build runtime-core with CUDA support (requires CUDA 12.x toolkit)
@@ -125,7 +141,7 @@ core-silero: ## Build runtime-core with only silero-vad feature
 core-docker: ## Build runtime-core with only docker feature
 	cargo build -p remotemedia-runtime-core --no-default-features --features docker $(CARGO_FLAGS)
 
-core-video: ## Build runtime-core with video feature (FFmpeg-based)
+core-video: setup-ffmpeg ## Build runtime-core with video feature (FFmpeg-based)
 	cargo build -p remotemedia-runtime-core --no-default-features --features video $(CARGO_FLAGS)
 
 core-video-pure-rust: ## Build runtime-core with pure-Rust video codecs (rav1e, dav1d)
@@ -134,7 +150,7 @@ core-video-pure-rust: ## Build runtime-core with pure-Rust video codecs (rav1e, 
 core-grpc-client: ## Build runtime-core with gRPC client for RemotePipelineNode
 	cargo build -p remotemedia-runtime-core --no-default-features --features grpc-client $(CARGO_FLAGS)
 
-core-all-features: ## Build runtime-core with all features enabled
+core-all-features: setup-ffmpeg ## Build runtime-core with all features enabled
 	cargo build -p remotemedia-runtime-core --all-features $(CARGO_FLAGS)
 
 # =============================================================================
@@ -230,7 +246,7 @@ cli-remotemedia: ## Build the main remotemedia CLI
 cli-transcribe: ## Build the transcribe-srt CLI tool
 	cd examples && cargo build -p transcribe-srt $(CARGO_FLAGS)
 
-cli-embed: ## Build pipeline-embed (set PIPELINE_YAML env var)
+cli-embed: setup-ffmpeg ## Build pipeline-embed (set PIPELINE_YAML env var)
 ifndef PIPELINE_YAML
 	@echo Usage: make cli-embed PIPELINE_YAML=/absolute/path/to/pipeline.yaml
 	@echo        Output binary: examples/target/release/pipeline-runner
