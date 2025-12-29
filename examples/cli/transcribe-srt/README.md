@@ -1,89 +1,69 @@
 # transcribe-srt
 
-A self-contained audio-to-SRT subtitle transcription tool using Whisper.
-
-## Features
-
-- **Single binary** - No external configuration files needed
-- **Whisper integration** - Uses large-v3-turbo model by default for high-quality transcription
-- **SRT output** - Generates properly formatted SRT subtitles with timestamps
-- **Configurable** - Supports multiple Whisper models and languages
+A thin wrapper around the remotemedia CLI with an embedded transcription pipeline.
+Supports all the same I/O options: files, named pipes, and stdin/stdout.
 
 ## Installation
-
-Build from the examples workspace:
 
 ```bash
 cd examples
 cargo build -p transcribe-srt --release
 ```
 
-The binary will be at `examples/target/release/transcribe-srt`.
-
 ## Usage
 
-### Basic
+### File Input/Output
 
 ```bash
-# Transcribe to stdout
-transcribe-srt input.wav
+# MP4, MKV, MP3, WAV, etc.
+transcribe-srt -i input.mp4 -o subtitles.srt
 
-# Write to file
-transcribe-srt input.wav -o subtitles.srt
+# Output to stdout
+transcribe-srt -i input.mp4 -o -
+```
+
+### Pipe Workflows
+
+```bash
+# Pipe from ffmpeg (stdin must be WAV format)
+ffmpeg -i video.mp4 -f wav -ar 16000 -ac 1 - | transcribe-srt -i - -o subtitles.srt
+
+# Full pipeline: extract audio → transcribe → mux subtitles back
+ffmpeg -i input.mp4 -f wav -ar 16000 -ac 1 - 2>/dev/null | \
+  transcribe-srt -i - -o - | \
+  ffmpeg -y -i input.mp4 -f srt -i pipe:0 -map 0:v -map 0:a -map 1:0 \
+    -c:v copy -c:a copy -c:s mov_text output.mp4
 ```
 
 ### Options
 
 ```bash
-# Use faster model (lower quality)
-transcribe-srt --model quantized_tiny input.wav -o subtitles.srt
+# Use faster model
+transcribe-srt -i input.mp4 -o out.srt --model quantized_tiny
 
 # Different language
-transcribe-srt --language es input.wav -o spanish.srt
+transcribe-srt -i input.mp4 -o out.srt --language es
 
-# Verbose output for debugging
-transcribe-srt -vv input.wav -o subtitles.srt
-
-# Custom thread count
-transcribe-srt --threads 8 input.wav -o subtitles.srt
+# Verbose output
+transcribe-srt -vv -i input.mp4 -o out.srt
 ```
 
 ### Available Models
 
-Models with word-level timestamps (recommended for SRT):
-- `quantized_tiny` - Fast, lower quality
-- `quantized_tiny_en` - English-only variant
+With word timestamps (recommended for SRT):
 - `large-v3-turbo` (default) - Best quality
+- `quantized_tiny` - Fast
+- `quantized_tiny_en` - Fast, English-only
 
-Models without word timestamps:
+Without word timestamps:
 - `tiny`, `base`, `small`, `medium`, `large`
 
-## Example Output
+## How It Works
 
-```srt
-1
-00:00:01,000 --> 00:00:04,500
-Hello, this is the first subtitle.
+This is equivalent to running:
 
-2
-00:00:05,000 --> 00:00:08,200
-And this is the second one.
-```
-
-## Comparison to CLI
-
-Instead of:
 ```bash
-remotemedia run pipelines/transcribe-srt.yaml -i audio.wav -O subtitles.srt
+remotemedia run pipelines/transcribe-srt.yaml -i input.mp4 -O subtitles.srt
 ```
 
-Use:
-```bash
-transcribe-srt audio.wav -o subtitles.srt
-```
-
-Benefits:
-- Single binary, no YAML file needed
-- Simpler command-line interface
-- Built-in model/language options
-- Better error messages for audio transcription
+But with the pipeline embedded in the binary - no external YAML file needed.

@@ -5,6 +5,7 @@
 members = [
     "cli/remotemedia-cli",
     "cli/transcribe-srt",
+    "cli/pipeline-embed",
     # Future Rust examples can be added here
 ]
 resolver = "2"

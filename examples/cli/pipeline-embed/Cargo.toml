@@ -1,18 +1,25 @@
 [package]
-name = "transcribe-srt"
+name = "pipeline-embed"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
-description = "Self-contained audio-to-SRT subtitle transcription using Whisper"
+description = "Compile any pipeline YAML into a standalone executable"
 license.workspace = true
 
+# Binary name can be overridden: PIPELINE_BIN_NAME=my-tool cargo build
+# Default to the pipeline name from metadata, or "pipeline-runner"
+
 [[bin]]
-name = "transcribe-srt"
+name = "pipeline-runner"
 path = "src/main.rs"
 
+[build-dependencies]
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+
 [dependencies]
-# Reuse CLI library (includes FFmpeg, I/O, audio parsing, etc.)
+# Reuse CLI library
 remotemedia-cli = { path = "../remotemedia-cli" }
 
 # SDK core

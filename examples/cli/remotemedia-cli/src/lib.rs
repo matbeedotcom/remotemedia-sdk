@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use remotemedia_cli::{audio, io, pipeline};
+//! use remotemedia_cli::{audio, io, pipeline, ffmpeg};
 //! use remotemedia_runtime_core::data::RuntimeData;
 //!
 //! # async fn example() -> anyhow::Result<()> {
@@ -23,12 +23,14 @@
 //! ```
 
 pub mod audio;
+pub mod ffmpeg;
 pub mod io;
 pub mod pipeline;
 pub mod output;
 
 // Re-export commonly used types
 pub use audio::{is_wav, parse_wav};
+pub use ffmpeg::decode_audio_file;
 pub use io::{detect_input_source, detect_output_sink, InputReader, InputSource, OutputSink, OutputWriter};
 pub use output::{OutputFormat, Outputter};
 pub use pipeline::{create_runner, execute_unary, parse_manifest, StreamingSession};

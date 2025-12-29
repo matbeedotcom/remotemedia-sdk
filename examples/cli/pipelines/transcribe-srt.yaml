@@ -1,5 +1,8 @@
 # SRT Subtitle Transcription Pipeline
-# Usage: remotemedia run transcribe-srt.yaml --input audio.wav -O subtitles.srt
+# Usage: remotemedia run transcribe-srt.yaml -i audio.wav -O subtitles.srt
+#
+# Or use the standalone binary:
+#   transcribe-srt -i input.mp4 -o subtitles.srt
 #
 # Outputs SRT format subtitles with timestamps:
 #   1
@@ -23,9 +26,10 @@ nodes:
   - id: whisper
     node_type: RustWhisperNode
     params:
-      model_source: large-v3-turbo
-      language: en
-      n_threads: 4
+      # These can be overridden via CLI: --model, --language, --threads
+      model_source: ${MODEL:-large-v3-turbo}
+      language: ${LANGUAGE:-en}
+      n_threads: ${THREADS:-4}
       accumulate_chunks: false
 
   # Convert Whisper JSON output to SRT format
