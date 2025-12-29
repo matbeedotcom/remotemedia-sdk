@@ -56,6 +56,19 @@ pub struct NodeManifest {
     #[serde(default)]
     pub is_streaming: bool,
 
+    /// Whether this node should stream outputs to the client (spec 021, User Story 3)
+    ///
+    /// By default, only terminal nodes (sinks - nodes with no outputs) send data to
+    /// the client. Setting `is_output_node: true` allows intermediate nodes to also
+    /// stream their outputs to the client alongside terminal nodes.
+    ///
+    /// Use cases:
+    /// - Debugging: see intermediate processing results
+    /// - Monitoring: track VAD results while also getting final transcription
+    /// - Branching: receive outputs from multiple stages of the pipeline
+    #[serde(default)]
+    pub is_output_node: bool,
+
     /// Optional capability requirements
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<CapabilityRequirements>,
@@ -264,5 +277,55 @@ mod tests {
         };
 
         assert!(validate(&manifest).is_err());
+    }
+
+    /// Test is_output_node field parsing from JSON (spec 021 User Story 3)
+    #[test]
+    fn test_parse_is_output_node_field() {
+        // Test with is_output_node explicitly set to true
+        let json = r#"{
+            "version": "v1",
+            "metadata": { "name": "test-pipeline" },
+            "nodes": [
+                {
+                    "id": "node1",
+                    "node_type": "AudioSource",
+                    "params": {},
+                    "is_output_node": true
+                },
+                {
+                    "id": "node2",
+                    "node_type": "AudioSink",
+                    "params": {},
+                    "is_output_node": false
+                }
+            ],
+            "connections": [{"from": "node1", "to": "node2"}]
+        }"#;
+
+        let manifest = parse(json).unwrap();
+        assert_eq!(manifest.nodes.len(), 2);
+        assert!(manifest.nodes[0].is_output_node);  // Explicitly true
+        assert!(!manifest.nodes[1].is_output_node); // Explicitly false
+    }
+
+    /// Test is_output_node defaults to false when not specified
+    #[test]
+    fn test_is_output_node_defaults_to_false() {
+        let json = r#"{
+            "version": "v1",
+            "metadata": { "name": "test-pipeline" },
+            "nodes": [
+                {
+                    "id": "node1",
+                    "node_type": "AudioSource",
+                    "params": {}
+                }
+            ],
+            "connections": []
+        }"#;
+
+        let manifest = parse(json).unwrap();
+        assert!(!manifest.nodes[0].is_output_node); // Defaults to false
     }
 }

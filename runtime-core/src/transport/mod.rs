@@ -31,6 +31,7 @@ pub mod data;
 pub mod plugin_registry;
 pub mod runner;
 pub mod session;
+pub mod session_router;
 
 // Re-export key types for convenience
 pub use client::{ClientStreamSession, PipelineClient, TransportType};
@@ -38,6 +39,7 @@ pub use data::TransportData;
 pub use plugin_registry::TransportPluginRegistry;
 pub use runner::PipelineRunner;
 pub use session::{StreamSession, StreamSessionHandle};
+pub use session_router::{DataPacket, SessionRouter};
 
 /// Configuration for creating a transport client
 #[derive(Debug, Clone, Serialize, Deserialize)]

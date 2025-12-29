@@ -2,6 +2,16 @@
 //!
 //! This module implements a persistent router that runs for the entire session,
 //! continuously processing chunks from the client and routing them through the pipeline.
+//!
+//! # Graph Integration (spec 021)
+//!
+//! This router uses `PipelineGraph` from runtime-core for:
+//! - Cycle detection at session creation (early validation)
+//! - Access to execution_order, sources, and sinks
+//! - Graph topology information (fan-in/fan-out)
+//!
+//! The actual routing still uses per-node tasks for transport-specific features
+//! like status updates, multiprocess IPC setup, and gRPC streaming.
 
 // Internal infrastructure - some methods reserved for future use
 #![allow(dead_code)]
@@ -14,6 +24,7 @@ use crate::generated::{
 };
 use crate::streaming::StreamSession;
 use remotemedia_runtime_core::data::RuntimeData;
+use remotemedia_runtime_core::executor::PipelineGraph;
 use remotemedia_runtime_core::nodes::{StreamingNode, StreamingNodeRegistry};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -53,6 +64,10 @@ pub struct SessionRouter {
     /// Session state
     session: Arc<Mutex<StreamSession>>,
 
+    /// Pipeline graph (from spec 021) - provides validated topology
+    /// Used for: cycle detection, execution order, sources/sinks identification
+    graph: PipelineGraph,
+
     /// Channel to send results to client
     client_tx: mpsc::Sender<Result<StreamResponse, Status>>,
 
@@ -83,14 +98,43 @@ pub struct SessionRouter {
 }
 
 impl SessionRouter {
-    /// Create a new session router
+    /// Create a new session router with graph validation
+    ///
     /// Returns (router, shutdown_sender) - the shutdown_sender should be stored to trigger shutdown
-    pub fn new(
+    ///
+    /// # Errors
+    ///
+    /// Returns `Status::invalid_argument` if the pipeline graph is invalid:
+    /// - Cycles detected in connections
+    /// - References to non-existent nodes
+    /// - Other graph validation errors
+    pub async fn new(
         session_id: String,
         registry: Arc<StreamingNodeRegistry>,
         session: Arc<Mutex<StreamSession>>,
         client_tx: mpsc::Sender<Result<StreamResponse, Status>>,
-    ) -> (Self, mpsc::Sender<()>) {
+    ) -> Result<(Self, mpsc::Sender<()>), Status> {
+        // Build and validate the pipeline graph (spec 021)
+        let graph = {
+            let session_guard = session.lock().await;
+            PipelineGraph::from_manifest(&session_guard.manifest).map_err(|e| {
+                error!(
+                    "Session {}: Pipeline graph validation failed: {}",
+                    session_id, e
+                );
+                Status::invalid_argument(format!("Invalid pipeline graph: {}", e))
+            })?
+        };
+
+        info!(
+            "Session {}: Built pipeline graph - {} nodes, order: {:?}, sources: {:?}, sinks: {:?}",
+            session_id,
+            graph.node_count(),
+            graph.execution_order,
+            graph.sources,
+            graph.sinks
+        );
+
         let (input_tx, input_rx) = mpsc::unbounded_channel();
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         let shutdown_tx_clone = shutdown_tx.clone();
@@ -99,6 +143,7 @@ impl SessionRouter {
             session_id,
             registry,
             session,
+            graph,
             client_tx,
             input_rx,
             input_tx,
@@ -111,12 +156,37 @@ impl SessionRouter {
             multiprocess_executor: None,
         };
 
-        (router, shutdown_tx_clone)
+        Ok((router, shutdown_tx_clone))
     }
 
     /// Get the input sender for feeding chunks from the client
     pub fn get_input_sender(&self) -> mpsc::UnboundedSender<DataPacket> {
         self.input_tx.clone()
+    }
+
+    /// Get the pipeline graph
+    pub fn graph(&self) -> &PipelineGraph {
+        &self.graph
+    }
+
+    /// Get the execution order from the graph
+    pub fn execution_order(&self) -> &[String] {
+        &self.graph.execution_order
+    }
+
+    /// Get the source nodes (nodes with no inputs)
+    pub fn sources(&self) -> &[String] {
+        &self.graph.sources
+    }
+
+    /// Get the sink nodes (nodes with no outputs - terminal nodes)
+    pub fn sinks(&self) -> &[String] {
+        &self.graph.sinks
+    }
+
+    /// Check if a node is a terminal node (sink)
+    pub fn is_terminal_node(&self, node_id: &str) -> bool {
+        self.graph.sinks.contains(&node_id.to_string())
     }
 
     /// Set the multiprocess executor for IPC communication

@@ -238,6 +238,7 @@ mod tests {
             node_type: node_type.to_string(),
             params: Value::Null,
             is_streaming: false,
+            is_output_node: false,
             capabilities,
             host: None,
             runtime_hint,

@@ -380,6 +380,15 @@ impl PipelineRunnerInner {
         let graph_sinks = graph.sinks.clone();
         let graph_nodes = graph.nodes.clone();
 
+        // Collect nodes marked as output nodes (spec 021 User Story 3)
+        // These intermediate nodes will also stream their outputs to the client
+        let output_node_ids: std::collections::HashSet<String> = manifest
+            .nodes
+            .iter()
+            .filter(|n| n.is_output_node)
+            .map(|n| n.id.clone())
+            .collect();
+
         tokio::spawn(async move {
             tracing::info!("StreamSession {} started with {} nodes in execution order", session_id_clone, execution_order.len());
 
@@ -478,6 +487,7 @@ impl PipelineRunnerInner {
                         let graph_sinks_clone = graph_sinks.clone();
                         let graph_nodes_clone = graph_nodes.clone();
                         let manifest_for_exec = Arc::clone(&manifest_clone);
+                        let output_node_ids_clone = output_node_ids.clone();
 
                         tracing::info!("[SessionRunner] Session {} spawning background task to process input through {} nodes", session_id_clone, execution_order_clone.len());
                         tokio::spawn(async move {
@@ -554,13 +564,38 @@ impl PipelineRunnerInner {
                                 all_node_outputs.insert(node_id.clone(), node_outputs);
                             }
 
-                            // Send outputs from sink nodes (terminal nodes) to client
+                            // Send outputs from sink nodes (terminal nodes) AND nodes marked as output nodes
+                            // (spec 021 User Story 3: intermediate output nodes)
+                            //
+                            // By default only terminal nodes (sinks) send data to the client.
+                            // Nodes marked with `is_output_node: true` also stream their outputs,
+                            // enabling debugging, monitoring, or branching use cases.
+                            let mut sent_node_ids = std::collections::HashSet::new();
+
+                            // First send from terminal nodes (sinks)
                             for sink_id in &graph_sinks_clone {
                                 if let Some(outputs) = all_node_outputs.get(sink_id) {
                                     for output in outputs {
                                         tracing::debug!("Session {} sending output from sink '{}' to client", session_id_for_exec, sink_id);
                                         if let Err(e) = output_tx_clone.send(output.clone()) {
                                             tracing::warn!("Session {}: Failed to send output from sink {}: {}", session_id_for_exec, sink_id, e);
+                                        }
+                                    }
+                                }
+                                sent_node_ids.insert(sink_id.clone());
+                            }
+
+                            // Then send from intermediate nodes marked as output nodes
+                            // (avoid duplicates if a sink is also marked as output node)
+                            for output_node_id in &output_node_ids_clone {
+                                if sent_node_ids.contains(output_node_id) {
+                                    continue; // Already sent as a sink
+                                }
+                                if let Some(outputs) = all_node_outputs.get(output_node_id) {
+                                    for output in outputs {
+                                        tracing::debug!("Session {} sending output from intermediate output node '{}' to client", session_id_for_exec, output_node_id);
+                                        if let Err(e) = output_tx_clone.send(output.clone()) {
+                                            tracing::warn!("Session {}: Failed to send output from output node {}: {}", session_id_for_exec, output_node_id, e);
                                         }
                                     }
                                 }
@@ -1010,5 +1045,255 @@ mod tests {
         // B and C must come before D
         assert!(b_idx < d_idx);
         assert!(c_idx < d_idx);
+    }
+
+    /// Test is_output_node field parsing in manifest (spec 021 User Story 3)
+    #[test]
+    fn test_is_output_node_field_parsing() {
+        // Create A -> B -> C pipeline where B is marked as output node
+        let manifest = Manifest {
+            version: "v1".to_string(),
+            metadata: ManifestMetadata {
+                name: "output-node-test".to_string(),
+                description: None,
+                created_at: None,
+            },
+            nodes: vec![
+                NodeManifest {
+                    id: "A".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    is_output_node: false,
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "B".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    is_output_node: true, // Marked as intermediate output
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "C".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    is_output_node: false,
+                    ..Default::default()
+                },
+            ],
+            connections: vec![
+                Connection {
+                    from: "A".to_string(),
+                    to: "B".to_string(),
+                },
+                Connection {
+                    from: "B".to_string(),
+                    to: "C".to_string(),
+                },
+            ],
+        };
+
+        // Verify graph builds correctly
+        let graph = PipelineGraph::from_manifest(&manifest).unwrap();
+        assert_eq!(graph.node_count(), 3);
+        assert_eq!(graph.sources, vec!["A"]);
+        assert_eq!(graph.sinks, vec!["C"]);
+
+        // Verify B is intermediate (not a sink but marked as output)
+        assert!(!graph.sinks.contains(&"B".to_string()));
+
+        // Verify the is_output_node field is correctly set
+        assert!(!manifest.nodes[0].is_output_node); // A
+        assert!(manifest.nodes[1].is_output_node);  // B - marked as output
+        assert!(!manifest.nodes[2].is_output_node); // C
+    }
+
+    /// Test that output_node_ids collection correctly identifies output nodes
+    #[test]
+    fn test_output_node_ids_collection() {
+        use std::collections::HashSet;
+
+        // Create A -> B -> C pipeline where B is marked as output node
+        let manifest = Manifest {
+            version: "v1".to_string(),
+            metadata: ManifestMetadata {
+                name: "output-node-collection-test".to_string(),
+                description: None,
+                created_at: None,
+            },
+            nodes: vec![
+                NodeManifest {
+                    id: "A".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    is_output_node: false,
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "B".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    is_output_node: true, // Intermediate output
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "C".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    is_output_node: false,
+                    ..Default::default()
+                },
+            ],
+            connections: vec![
+                Connection {
+                    from: "A".to_string(),
+                    to: "B".to_string(),
+                },
+                Connection {
+                    from: "B".to_string(),
+                    to: "C".to_string(),
+                },
+            ],
+        };
+
+        // Collect output node IDs (same logic as in create_stream_session)
+        let output_node_ids: HashSet<String> = manifest
+            .nodes
+            .iter()
+            .filter(|n| n.is_output_node)
+            .map(|n| n.id.clone())
+            .collect();
+
+        // Only B should be in output_node_ids
+        assert_eq!(output_node_ids.len(), 1);
+        assert!(output_node_ids.contains("B"));
+        assert!(!output_node_ids.contains("A"));
+        assert!(!output_node_ids.contains("C"));
+    }
+
+    /// Test that unmarked nodes don't appear in output_node_ids
+    #[test]
+    fn test_unmarked_nodes_not_in_output_ids() {
+        use std::collections::HashSet;
+
+        // Create A -> B -> C pipeline with NO output nodes marked
+        let manifest = Manifest {
+            version: "v1".to_string(),
+            metadata: ManifestMetadata {
+                name: "no-output-nodes-test".to_string(),
+                description: None,
+                created_at: None,
+            },
+            nodes: vec![
+                NodeManifest {
+                    id: "A".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default() // is_output_node defaults to false
+                },
+                NodeManifest {
+                    id: "B".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "C".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+            ],
+            connections: vec![
+                Connection {
+                    from: "A".to_string(),
+                    to: "B".to_string(),
+                },
+                Connection {
+                    from: "B".to_string(),
+                    to: "C".to_string(),
+                },
+            ],
+        };
+
+        // Verify graph builds - C is the only sink
+        let graph = PipelineGraph::from_manifest(&manifest).unwrap();
+        assert_eq!(graph.sinks, vec!["C"]);
+
+        // Collect output node IDs
+        let output_node_ids: HashSet<String> = manifest
+            .nodes
+            .iter()
+            .filter(|n| n.is_output_node)
+            .map(|n| n.id.clone())
+            .collect();
+
+        // Should be empty - no nodes marked as output
+        assert!(output_node_ids.is_empty());
+    }
+
+    /// Test sink marked as output node doesn't cause duplicates
+    #[test]
+    fn test_sink_also_marked_as_output_node() {
+        use std::collections::HashSet;
+
+        // Create A -> B where B is both sink AND marked as output node
+        let manifest = Manifest {
+            version: "v1".to_string(),
+            metadata: ManifestMetadata {
+                name: "sink-output-node-test".to_string(),
+                description: None,
+                created_at: None,
+            },
+            nodes: vec![
+                NodeManifest {
+                    id: "A".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "B".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    is_output_node: true, // B is both sink and output node
+                    ..Default::default()
+                },
+            ],
+            connections: vec![Connection {
+                from: "A".to_string(),
+                to: "B".to_string(),
+            }],
+        };
+
+        let graph = PipelineGraph::from_manifest(&manifest).unwrap();
+
+        // B is the sink
+        assert_eq!(graph.sinks, vec!["B"]);
+
+        // B is also in output_node_ids
+        let output_node_ids: HashSet<String> = manifest
+            .nodes
+            .iter()
+            .filter(|n| n.is_output_node)
+            .map(|n| n.id.clone())
+            .collect();
+
+        assert!(output_node_ids.contains("B"));
+
+        // The deduplication logic should handle this:
+        // sent_node_ids.contains(sink_id) check prevents double-sending
+        let mut sent_node_ids = HashSet::new();
+        for sink_id in &graph.sinks {
+            sent_node_ids.insert(sink_id.clone());
+        }
+        // When iterating output_node_ids, B would be skipped because it's already sent
+        let would_send_from_output: Vec<_> = output_node_ids
+            .iter()
+            .filter(|id| !sent_node_ids.contains(*id))
+            .collect();
+
+        // B is already in sent_node_ids, so nothing extra to send
+        assert!(would_send_from_output.is_empty());
     }
 }

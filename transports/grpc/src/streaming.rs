@@ -538,13 +538,19 @@ async fn handle_stream(
                 // Create and start the SessionRouter for this session
                 let sess = session.as_ref().unwrap();
 
-                // Create the session router (without holding lock)
+                // Create the session router with graph validation (spec 021)
+                // This validates the pipeline graph (cycles, missing nodes) before streaming starts
                 let (mut router, shutdown_tx) = SessionRouter::new(
                     session_id.clone(),
                     streaming_registry.clone(),
                     sess.clone(),
                     tx.clone(),
-                );
+                )
+                .await
+                .map_err(|e| {
+                    error!("Failed to create session router: {}", e);
+                    ServiceError::Validation(format!("Pipeline graph validation failed: {}", e))
+                })?;
 
                 // Set multiprocess executor if available
                 #[cfg(feature = "multiprocess")]
