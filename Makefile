@@ -180,7 +180,7 @@ server-webrtc: ## Build WebRTC server binary
 # EXAMPLE/CLI TARGETS
 # =============================================================================
 
-.PHONY: cli cli-remotemedia cli-transcribe examples-all
+.PHONY: cli cli-remotemedia cli-transcribe cli-embed examples-all
 
 examples-all: cli ## Build all examples
 
@@ -191,6 +191,14 @@ cli-remotemedia: ## Build the main remotemedia CLI
 
 cli-transcribe: ## Build the transcribe-srt CLI tool
 	cd examples && cargo build -p transcribe-srt $(CARGO_FLAGS)
+
+cli-embed: ## Build pipeline-embed (set PIPELINE_YAML env var)
+	@if [ -z "$(PIPELINE_YAML)" ]; then \
+		echo "Usage: make cli-embed PIPELINE_YAML=/absolute/path/to/pipeline.yaml"; \
+		echo "       Output binary: examples/target/release/pipeline-runner"; \
+		exit 1; \
+	fi
+	cd examples && PIPELINE_YAML=$(PIPELINE_YAML) cargo build -p pipeline-embed $(CARGO_FLAGS)
 
 # =============================================================================
 # TEST TARGETS
