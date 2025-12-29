@@ -247,12 +247,48 @@ cli-transcribe: ## Build the transcribe-srt CLI tool
 	cd examples && cargo build -p transcribe-srt $(CARGO_FLAGS)
 
 cli-embed: setup-ffmpeg ## Build pipeline-embed (set PIPELINE_YAML env var)
-ifndef PIPELINE_YAML
-	@echo Usage: make cli-embed PIPELINE_YAML=/absolute/path/to/pipeline.yaml
-	@echo        Output binary: examples/target/release/pipeline-runner
-else
-	cd examples && cargo build -p pipeline-embed $(CARGO_FLAGS)
-endif
+	@if [ -z "$(PIPELINE_YAML)" ]; then \
+		echo "Usage: make cli-embed PIPELINE_YAML=/path/to/pipeline.yaml [PIPELINE_*=value ...]"; \
+		echo "       Binary is named after metadata.name (override with PIPELINE_BIN_NAME)"; \
+		exit 1; \
+	fi
+	cd examples && \
+		PIPELINE_YAML="$(PIPELINE_YAML)" \
+		PIPELINE_BIN_NAME="$(PIPELINE_BIN_NAME)" \
+		PIPELINE_STREAM="$(PIPELINE_STREAM)" \
+		PIPELINE_MIC="$(PIPELINE_MIC)" \
+		PIPELINE_SPEAKER="$(PIPELINE_SPEAKER)" \
+		PIPELINE_SAMPLE_RATE="$(PIPELINE_SAMPLE_RATE)" \
+		PIPELINE_CHANNELS="$(PIPELINE_CHANNELS)" \
+		PIPELINE_CHUNK_SIZE="$(PIPELINE_CHUNK_SIZE)" \
+		PIPELINE_TIMEOUT="$(PIPELINE_TIMEOUT)" \
+		PIPELINE_INPUT_DEVICE="$(PIPELINE_INPUT_DEVICE)" \
+		PIPELINE_OUTPUT_DEVICE="$(PIPELINE_OUTPUT_DEVICE)" \
+		PIPELINE_AUDIO_HOST="$(PIPELINE_AUDIO_HOST)" \
+		PIPELINE_BUFFER_MS="$(PIPELINE_BUFFER_MS)" \
+		cargo build -p pipeline-embed $(CARGO_FLAGS)
+	@# Rename binary to pipeline name (file is created by build.rs)
+	@BIN_NAME_FILE="examples/cli/pipeline-embed/target/pipeline-bin-name"; \
+	if [ -f "$$BIN_NAME_FILE" ]; then \
+		BIN_NAME=$$(cat "$$BIN_NAME_FILE"); \
+		if [ "$(PROFILE)" = "release" ]; then \
+			TARGET_DIR="examples/target/release"; \
+		else \
+			TARGET_DIR="examples/target/debug"; \
+		fi; \
+		if [ -n "$$BIN_NAME" ] && [ "$$BIN_NAME" != "pipeline-runner" ]; then \
+			mv -f "$$TARGET_DIR/pipeline-runner" "$$TARGET_DIR/$$BIN_NAME" 2>/dev/null || true; \
+			echo "Built: $$TARGET_DIR/$$BIN_NAME"; \
+		else \
+			echo "Built: $$TARGET_DIR/pipeline-runner"; \
+		fi; \
+	else \
+		if [ "$(PROFILE)" = "release" ]; then \
+			echo "Built: examples/target/release/pipeline-runner"; \
+		else \
+			echo "Built: examples/target/debug/pipeline-runner"; \
+		fi; \
+	fi
 
 # =============================================================================
 # TEST TARGETS
