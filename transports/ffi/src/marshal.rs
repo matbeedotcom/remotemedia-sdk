@@ -476,6 +476,39 @@ pub fn runtime_data_to_python(py: Python<'_>, data: &RuntimeData) -> PyResult<Py
             )?;
             Ok(dict.into())
         }
+        RuntimeData::File {
+            path,
+            filename,
+            mime_type,
+            size,
+            offset,
+            length,
+            stream_id,
+        } => {
+            // Convert file reference to Python dict (Spec 001)
+            let dict = PyDict::new(py);
+            dict.set_item("type", "file")?;
+            dict.set_item("path", path)?;
+            if let Some(f) = filename {
+                dict.set_item("filename", f)?;
+            }
+            if let Some(m) = mime_type {
+                dict.set_item("mime_type", m)?;
+            }
+            if let Some(s) = size {
+                dict.set_item("size", s)?;
+            }
+            if let Some(o) = offset {
+                dict.set_item("offset", o)?;
+            }
+            if let Some(l) = length {
+                dict.set_item("length", l)?;
+            }
+            if let Some(sid) = stream_id {
+                dict.set_item("stream_id", sid)?;
+            }
+            Ok(dict.into())
+        }
     }
 }
 
@@ -589,6 +622,44 @@ pub fn python_to_runtime_data(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResul
                         })?
                         .extract()?;
                     return Ok(RuntimeData::Binary(data));
+                }
+                "file" => {
+                    // Spec 001: File reference support
+                    let path: String = dict
+                        .get_item("path")?
+                        .ok_or_else(|| {
+                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                "File data missing 'path' field",
+                            )
+                        })?
+                        .extract()?;
+                    let filename: Option<String> = dict
+                        .get_item("filename")?
+                        .and_then(|v| v.extract().ok());
+                    let mime_type: Option<String> = dict
+                        .get_item("mime_type")?
+                        .and_then(|v| v.extract().ok());
+                    let size: Option<u64> = dict
+                        .get_item("size")?
+                        .and_then(|v| v.extract().ok());
+                    let offset: Option<u64> = dict
+                        .get_item("offset")?
+                        .and_then(|v| v.extract().ok());
+                    let length: Option<u64> = dict
+                        .get_item("length")?
+                        .and_then(|v| v.extract().ok());
+                    let stream_id: Option<String> = dict
+                        .get_item("stream_id")?
+                        .and_then(|v| v.extract().ok());
+                    return Ok(RuntimeData::File {
+                        path,
+                        filename,
+                        mime_type,
+                        size,
+                        offset,
+                        length,
+                        stream_id,
+                    });
                 }
                 _ => {
                     // Unknown type - fall through to JSON conversion

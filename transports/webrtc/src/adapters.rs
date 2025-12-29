@@ -9,7 +9,7 @@
 use crate::generated::data_buffer::DataType;
 use crate::generated::{
     AudioBuffer, AudioFormat, BatchHint, BinaryBuffer, CancelSpeculation, ControlMessage,
-    DataBuffer, DeadlineWarning, JsonData, NumpyBuffer, PixelFormat as ProtoPixelFormat,
+    DataBuffer, DeadlineWarning, FileBuffer, JsonData, NumpyBuffer, PixelFormat as ProtoPixelFormat,
     TensorBuffer, TextBuffer, VideoCodec as ProtoVideoCodec, VideoFrame,
 };
 use remotemedia_runtime_core::data::{PixelFormat, RuntimeData, VideoCodec};
@@ -172,6 +172,23 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
                 metadata: serde_json::to_string(metadata).unwrap_or_default(),
             })
         }
+        RuntimeData::File {
+            path,
+            filename,
+            mime_type,
+            size,
+            offset,
+            length,
+            stream_id,
+        } => DataType::File(FileBuffer {
+            path: path.clone(),
+            filename: filename.clone().unwrap_or_default(),
+            mime_type: mime_type.clone().unwrap_or_default(),
+            size: size.unwrap_or(0),
+            offset: offset.unwrap_or(0),
+            length: length.unwrap_or(0),
+            stream_id: stream_id.clone().unwrap_or_default(),
+        }),
     };
 
     DataBuffer {
@@ -229,6 +246,35 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
             c_contiguous: numpy.c_contiguous,
             f_contiguous: numpy.f_contiguous,
         }),
+        Some(DataType::File(file)) => Some(RuntimeData::File {
+            path: file.path.clone(),
+            filename: if file.filename.is_empty() {
+                None
+            } else {
+                Some(file.filename.clone())
+            },
+            mime_type: if file.mime_type.is_empty() {
+                None
+            } else {
+                Some(file.mime_type.clone())
+            },
+            size: if file.size == 0 { None } else { Some(file.size) },
+            offset: if file.offset == 0 {
+                None
+            } else {
+                Some(file.offset)
+            },
+            length: if file.length == 0 {
+                None
+            } else {
+                Some(file.length)
+            },
+            stream_id: if file.stream_id.is_empty() {
+                None
+            } else {
+                Some(file.stream_id.clone())
+            },
+        }),
         _ => None,
     }
 }
@@ -273,4 +319,148 @@ pub fn data_buffer_to_transport_data(buffer: &DataBuffer) -> Option<TransportDat
     }
 
     Some(transport_data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // File adapter roundtrip tests (Spec 001: RuntimeData.File)
+
+    #[test]
+    fn test_file_roundtrip_with_all_fields() {
+        let file = RuntimeData::File {
+            path: "/data/input/video.mp4".to_string(),
+            filename: Some("video.mp4".to_string()),
+            mime_type: Some("video/mp4".to_string()),
+            size: Some(104_857_600),
+            offset: Some(1_048_576),
+            length: Some(65_536),
+            stream_id: Some("video_track".to_string()),
+        };
+
+        let buffer = runtime_data_to_data_buffer(&file);
+        let recovered = data_buffer_to_runtime_data(&buffer).unwrap();
+
+        match recovered {
+            RuntimeData::File {
+                path,
+                filename,
+                mime_type,
+                size,
+                offset,
+                length,
+                stream_id,
+            } => {
+                assert_eq!(path, "/data/input/video.mp4");
+                assert_eq!(filename, Some("video.mp4".to_string()));
+                assert_eq!(mime_type, Some("video/mp4".to_string()));
+                assert_eq!(size, Some(104_857_600));
+                assert_eq!(offset, Some(1_048_576));
+                assert_eq!(length, Some(65_536));
+                assert_eq!(stream_id, Some("video_track".to_string()));
+            }
+            _ => panic!("Expected RuntimeData::File"),
+        }
+    }
+
+    #[test]
+    fn test_file_roundtrip_minimal() {
+        let file = RuntimeData::File {
+            path: "/tmp/output.bin".to_string(),
+            filename: None,
+            mime_type: None,
+            size: None,
+            offset: None,
+            length: None,
+            stream_id: None,
+        };
+
+        let buffer = runtime_data_to_data_buffer(&file);
+        let recovered = data_buffer_to_runtime_data(&buffer).unwrap();
+
+        match recovered {
+            RuntimeData::File {
+                path,
+                filename,
+                mime_type,
+                size,
+                offset,
+                length,
+                stream_id,
+            } => {
+                assert_eq!(path, "/tmp/output.bin");
+                assert_eq!(filename, None);
+                assert_eq!(mime_type, None);
+                assert_eq!(size, None);
+                assert_eq!(offset, None);
+                assert_eq!(length, None);
+                assert_eq!(stream_id, None);
+            }
+            _ => panic!("Expected RuntimeData::File"),
+        }
+    }
+
+    #[test]
+    fn test_file_roundtrip_byte_range() {
+        let file = RuntimeData::File {
+            path: "/data/large_file.bin".to_string(),
+            filename: None,
+            mime_type: None,
+            size: Some(1_073_741_824),
+            offset: Some(10 * 1024 * 1024),
+            length: Some(64 * 1024),
+            stream_id: None,
+        };
+
+        let buffer = runtime_data_to_data_buffer(&file);
+        let recovered = data_buffer_to_runtime_data(&buffer).unwrap();
+
+        match recovered {
+            RuntimeData::File {
+                path,
+                size,
+                offset,
+                length,
+                ..
+            } => {
+                assert_eq!(path, "/data/large_file.bin");
+                assert_eq!(size, Some(1_073_741_824));
+                assert_eq!(offset, Some(10 * 1024 * 1024));
+                assert_eq!(length, Some(64 * 1024));
+            }
+            _ => panic!("Expected RuntimeData::File"),
+        }
+    }
+
+    #[test]
+    fn test_file_transport_data_roundtrip() {
+        let file = RuntimeData::File {
+            path: "/data/video.mp4".to_string(),
+            filename: Some("video.mp4".to_string()),
+            mime_type: Some("video/mp4".to_string()),
+            size: Some(50_000_000),
+            offset: None,
+            length: None,
+            stream_id: None,
+        };
+
+        let mut transport = TransportData::new(file);
+        transport.sequence = Some(42);
+        transport.metadata.insert("source".to_string(), "webrtc".to_string());
+
+        let buffer = transport_data_to_data_buffer(&transport);
+        let recovered = data_buffer_to_transport_data(&buffer).unwrap();
+
+        assert_eq!(recovered.sequence, Some(42));
+        assert_eq!(recovered.metadata.get("source"), Some(&"webrtc".to_string()));
+
+        match recovered.data {
+            RuntimeData::File { path, size, .. } => {
+                assert_eq!(path, "/data/video.mp4");
+                assert_eq!(size, Some(50_000_000));
+            }
+            _ => panic!("Expected RuntimeData::File"),
+        }
+    }
 }

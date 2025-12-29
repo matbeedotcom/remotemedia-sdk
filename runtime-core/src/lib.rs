@@ -118,6 +118,8 @@ pub mod data {
         Binary = 6,
         /// Any type
         Any = 7,
+        /// File reference (spec 001)
+        File = 8,
     }
 
     // Note: PixelFormat moved to data::video module (spec 012)
@@ -206,6 +208,57 @@ pub mod data {
             /// Extensible metadata
             metadata: serde_json::Value,
         },
+        /// File reference with metadata and byte range support (spec 001)
+        ///
+        /// Represents a reference to a file on the local filesystem.
+        /// Does NOT contain file contents - only metadata for referencing.
+        ///
+        /// # Example
+        ///
+        /// ```
+        /// use remotemedia_runtime_core::data::RuntimeData;
+        ///
+        /// // Simple file reference
+        /// let file = RuntimeData::File {
+        ///     path: "/data/input/video.mp4".to_string(),
+        ///     filename: Some("video.mp4".to_string()),
+        ///     mime_type: Some("video/mp4".to_string()),
+        ///     size: Some(104_857_600),  // 100 MB
+        ///     offset: None,
+        ///     length: None,
+        ///     stream_id: None,
+        /// };
+        ///
+        /// assert_eq!(file.data_type(), "file");
+        /// ```
+        File {
+            /// File path (absolute or relative, UTF-8)
+            path: String,
+
+            /// Original filename (optional, preserved separately from path)
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            filename: Option<String>,
+
+            /// MIME type hint (optional)
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            mime_type: Option<String>,
+
+            /// File size in bytes (optional, None = unknown)
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            size: Option<u64>,
+
+            /// Byte offset for range read/write (optional)
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            offset: Option<u64>,
+
+            /// Number of bytes for range request (optional, None = to EOF)
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            length: Option<u64>,
+
+            /// Stream identifier for multi-track routing
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            stream_id: Option<String>,
+        },
     }
 
     impl RuntimeData {
@@ -220,6 +273,7 @@ pub mod data {
                 RuntimeData::Text(_) => "text",
                 RuntimeData::Binary(_) => "binary",
                 RuntimeData::ControlMessage { .. } => "control_message",
+                RuntimeData::File { .. } => "file",
             }
         }
 
@@ -238,6 +292,7 @@ pub mod data {
                 RuntimeData::Text(s) => s.len(),
                 RuntimeData::Binary(b) => b.len(),
                 RuntimeData::ControlMessage { .. } => 1,
+                RuntimeData::File { .. } => 1, // One file reference
             }
         }
 
@@ -269,6 +324,20 @@ pub mod data {
                         .map(|s| s.len())
                         .unwrap_or(0);
                     std::mem::size_of::<ControlMessageType>() + 8 + segment_id_size + metadata_size
+                }
+                RuntimeData::File {
+                    path,
+                    filename,
+                    mime_type,
+                    stream_id,
+                    ..
+                } => {
+                    // Approximate memory footprint of the reference (not file contents)
+                    path.len()
+                        + filename.as_ref().map(|s| s.len()).unwrap_or(0)
+                        + mime_type.as_ref().map(|s| s.len()).unwrap_or(0)
+                        + stream_id.as_ref().map(|s| s.len()).unwrap_or(0)
+                        + 24 // 3 u64 fields (size, offset, length)
                 }
             }
         }
@@ -574,5 +643,164 @@ mod tests {
         };
 
         assert!(frame.validate_video_frame().is_ok());
+    }
+
+    // T010-T013: Unit tests for RuntimeData::File (spec 001)
+    #[test]
+    fn test_file_data_type() {
+        let file = data::RuntimeData::File {
+            path: "/data/input/video.mp4".to_string(),
+            filename: Some("video.mp4".to_string()),
+            mime_type: Some("video/mp4".to_string()),
+            size: Some(104_857_600),
+            offset: None,
+            length: None,
+            stream_id: None,
+        };
+
+        assert_eq!(file.data_type(), "file");
+    }
+
+    #[test]
+    fn test_file_item_count() {
+        let file = data::RuntimeData::File {
+            path: "/data/input/video.mp4".to_string(),
+            filename: None,
+            mime_type: None,
+            size: None,
+            offset: None,
+            length: None,
+            stream_id: None,
+        };
+
+        assert_eq!(file.item_count(), 1);
+    }
+
+    #[test]
+    fn test_file_size_bytes() {
+        let file = data::RuntimeData::File {
+            path: "/data/input/video.mp4".to_string(),
+            filename: Some("video.mp4".to_string()),
+            mime_type: Some("video/mp4".to_string()),
+            size: Some(104_857_600),
+            offset: None,
+            length: None,
+            stream_id: Some("main".to_string()),
+        };
+
+        // path(21) + filename(9) + mime_type(9) + stream_id(4) + 24 (3 u64s) = 67
+        assert_eq!(file.size_bytes(), 67);
+    }
+
+    #[test]
+    fn test_file_with_all_fields() {
+        let file = data::RuntimeData::File {
+            path: "/data/input/video.mp4".to_string(),
+            filename: Some("video.mp4".to_string()),
+            mime_type: Some("video/mp4".to_string()),
+            size: Some(104_857_600),
+            offset: Some(1024 * 1024),      // 1 MB offset
+            length: Some(64 * 1024),        // 64 KB chunk
+            stream_id: Some("video_track".to_string()),
+        };
+
+        assert_eq!(file.data_type(), "file");
+        assert_eq!(file.item_count(), 1);
+    }
+
+    #[test]
+    fn test_file_with_only_path() {
+        // Minimal file reference with only required field
+        let file = data::RuntimeData::File {
+            path: "/tmp/output.bin".to_string(),
+            filename: None,
+            mime_type: None,
+            size: None,
+            offset: None,
+            length: None,
+            stream_id: None,
+        };
+
+        assert_eq!(file.data_type(), "file");
+        assert_eq!(file.item_count(), 1);
+        // path(15) + 24 (3 u64s) = 39
+        assert_eq!(file.size_bytes(), 39);
+    }
+
+    #[test]
+    fn test_file_serde_serialization() {
+        let file = data::RuntimeData::File {
+            path: "/data/input/video.mp4".to_string(),
+            filename: Some("video.mp4".to_string()),
+            mime_type: Some("video/mp4".to_string()),
+            size: Some(104_857_600),
+            offset: None,
+            length: None,
+            stream_id: None,
+        };
+
+        // Test serialization
+        let json = serde_json::to_string(&file).unwrap();
+        assert!(json.contains("File"));
+        assert!(json.contains("/data/input/video.mp4"));
+        assert!(json.contains("video.mp4"));
+        assert!(json.contains("video/mp4"));
+        assert!(json.contains("104857600"));
+
+        // Test deserialization roundtrip
+        let deserialized: data::RuntimeData = serde_json::from_str(&json).unwrap();
+        assert_eq!(file, deserialized);
+    }
+
+    #[test]
+    fn test_file_serde_skip_none_fields() {
+        // File with minimal fields should have compact serialization
+        let file = data::RuntimeData::File {
+            path: "/tmp/test.txt".to_string(),
+            filename: None,
+            mime_type: None,
+            size: None,
+            offset: None,
+            length: None,
+            stream_id: None,
+        };
+
+        let json = serde_json::to_string(&file).unwrap();
+        // None fields should be omitted due to skip_serializing_if
+        assert!(!json.contains("filename"));
+        assert!(!json.contains("mime_type"));
+        assert!(!json.contains("offset"));
+        assert!(!json.contains("length"));
+        assert!(!json.contains("stream_id"));
+
+        // Roundtrip should still work
+        let deserialized: data::RuntimeData = serde_json::from_str(&json).unwrap();
+        assert_eq!(file, deserialized);
+    }
+
+    #[test]
+    fn test_file_byte_range_fields() {
+        // Test byte range request
+        let range_request = data::RuntimeData::File {
+            path: "/data/large_file.bin".to_string(),
+            filename: None,
+            mime_type: None,
+            size: Some(1_073_741_824), // 1 GB
+            offset: Some(10 * 1024 * 1024), // 10 MB offset
+            length: Some(64 * 1024),        // 64 KB chunk
+            stream_id: None,
+        };
+
+        assert_eq!(range_request.data_type(), "file");
+
+        // Verify serialization includes offset and length
+        let json = serde_json::to_string(&range_request).unwrap();
+        assert!(json.contains("10485760"));  // offset
+        assert!(json.contains("65536"));     // length
+    }
+
+    #[test]
+    fn test_data_type_hint_file() {
+        assert_eq!(data::DataTypeHint::File as i32, 8);
     }
 }

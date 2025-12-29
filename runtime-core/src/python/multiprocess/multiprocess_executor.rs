@@ -777,6 +777,27 @@ impl MultiprocessExecutor {
                     session_id,
                 )
             }
+            MainRD::File {
+                path,
+                filename,
+                mime_type,
+                size,
+                offset,
+                length,
+                stream_id,
+            } => {
+                // Spec 001: File reference with metadata
+                IPCRuntimeData::file(
+                    path,
+                    filename.as_deref(),
+                    mime_type.as_deref(),
+                    *size,
+                    *offset,
+                    *length,
+                    stream_id.as_deref(),
+                    session_id,
+                )
+            }
             _ => {
                 // For now, convert unsupported types to text representation
                 IPCRuntimeData::text(&format!("{:?}", data), session_id)
@@ -983,6 +1004,22 @@ impl MultiprocessExecutor {
                     strides,
                     c_contiguous,
                     f_contiguous,
+                })
+            }
+            DataType::File => {
+                // Spec 001: Deserialize file reference from IPC payload
+                let (path, filename, mime_type, size, offset, length, stream_id) = ipc_data
+                    .file_metadata()
+                    .map_err(|e| Error::Execution(format!("Invalid file payload: {}", e)))?;
+
+                Ok(MainRD::File {
+                    path,
+                    filename,
+                    mime_type,
+                    size,
+                    offset,
+                    length,
+                    stream_id,
                 })
             }
             _ => Err(Error::Execution(format!(

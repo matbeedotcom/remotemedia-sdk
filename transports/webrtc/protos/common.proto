@@ -46,6 +46,7 @@ message DataBuffer {
     BinaryBuffer binary = 6;
     ControlMessage control = 7;  // Spec 007: Control messages for low-latency streaming
     NumpyBuffer numpy = 8;  // NumPy array data with full metadata
+    FileBuffer file = 9;  // Spec 001: File reference with metadata
   }
 
   // Optional metadata for extensibility
@@ -364,6 +365,71 @@ message NumpyBuffer {
 }
 
 // ============================================================================
+// File Types (Spec 001: RuntimeData.File)
+// ============================================================================
+
+// File reference with metadata and byte range support
+//
+// Represents a reference to a file on the local filesystem.
+// Does NOT contain file contents - only metadata for referencing.
+//
+// Usage patterns:
+// 1. Simple reference: path only, metadata optional
+// 2. Byte range read: path + offset + length
+// 3. Output file: path + stream_id for multi-track routing
+//
+// Example (input file reference):
+//   FileBuffer {
+//     path: "/data/input/video.mp4",
+//     filename: "video.mp4",
+//     mime_type: "video/mp4",
+//     size: 104857600  // 100 MB
+//   }
+//
+// Example (byte range request):
+//   FileBuffer {
+//     path: "/data/input/video.mp4",
+//     offset: 1048576,  // 1 MB offset
+//     length: 65536     // 64 KB chunk
+//   }
+message FileBuffer {
+  // File path (required, UTF-8)
+  // May be absolute (/path/to/file) or relative (./file)
+  // Path resolution is responsibility of processing node
+  string path = 1;
+
+  // Original filename (optional)
+  // Preserved separately from path for cases where the filename
+  // should be maintained independent of storage location
+  // Empty string = not specified (use path basename)
+  string filename = 2;
+
+  // MIME type hint (optional)
+  // RFC 6838 format: type/subtype (e.g., "video/mp4", "image/png")
+  // Empty string = not specified (node may auto-detect)
+  string mime_type = 3;
+
+  // File size in bytes (optional)
+  // 0 = unknown (common for output files before writing)
+  uint64 size = 4;
+
+  // Byte offset for range read/write (optional)
+  // 0 = start of file (default behavior)
+  // Used for seeking to specific positions in media files
+  uint64 offset = 5;
+
+  // Length for range requests (optional)
+  // 0 = read/write to end of file (default behavior)
+  // Used with offset for partial file I/O
+  uint64 length = 6;
+
+  // Stream identifier for multi-track routing (optional)
+  // Follows same pattern as Audio/Video stream_id (spec 013)
+  // Empty string = default track
+  string stream_id = 7;
+}
+
+// ============================================================================
 // Control Message Types (Spec 007)
 // ============================================================================
 
@@ -451,6 +517,9 @@ enum DataTypeHint {
   // Accept any type (polymorphic node)
   // Example: generic logger, passthrough, inspector
   DATA_TYPE_HINT_ANY = 7;
+
+  // File reference (Spec 001: RuntimeData.File)
+  DATA_TYPE_HINT_FILE = 8;
 }
 
 // ============================================================================
