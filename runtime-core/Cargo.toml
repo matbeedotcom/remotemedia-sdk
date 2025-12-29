@@ -41,8 +41,8 @@ bytemuck = { workspace = true }
 ort = { workspace = true, optional = true }
 ndarray = { workspace = true }
 
-# Whisper transcription support
-rwhisper = { version = "0.4", features = ["cuda"] }
+# Whisper transcription support (CPU by default, use 'cuda' feature for GPU)
+rwhisper = { version = "0.4" }
 rodio = "0.20"  # Match rwhisper's rodio version
 base64 = "0.22"
 
@@ -144,6 +144,8 @@ docker = ["dep:bollard", "dep:tar", "dep:chrono", "dep:bytes", "dep:hyper", "dep
 # Video codec support (spec 012)
 video = ["dep:ac-ffmpeg"]
 video-pure-rust = ["video", "dep:rav1e", "dep:dav1d"]
+# CUDA acceleration for whisper (requires CUDA 12.x toolkit installed)
+cuda = ["rwhisper/cuda"]
 
 # NOTE: grpc-client is for RemotePipelineNode client functionality only
 # Full transport implementations belong in separate transport crates
