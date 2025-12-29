@@ -1,10 +1,12 @@
 //! Core pipeline execution engine exposed to transports
 
+use crate::executor::PipelineGraph;
 use crate::nodes::schema::collect_registered_configs;
 use crate::nodes::streaming_node::StreamingNodeFactory;
 use crate::transport::{StreamSessionHandle, TransportData};
 use crate::validation::{validate_manifest, SchemaValidator, ValidationResult};
 use crate::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
@@ -345,6 +347,16 @@ impl PipelineRunnerInner {
         // Validate manifest parameters before session creation
         self.validate(&manifest)?;
 
+        // Build pipeline graph - validates connections, detects cycles, computes execution order
+        let graph = PipelineGraph::from_manifest(&manifest)?;
+        tracing::info!(
+            "Built pipeline graph with {} nodes, execution_order: {:?}, sources: {:?}, sinks: {:?}",
+            graph.node_count(),
+            graph.execution_order,
+            graph.sources,
+            graph.sinks
+        );
+
         // Generate unique session ID
         let session_num = self
             .session_counter
@@ -363,21 +375,22 @@ impl PipelineRunnerInner {
         let session_id_clone = session_id.clone();
         let manifest_clone = Arc::clone(&manifest);
 
-        tokio::spawn(async move {
-            tracing::info!("StreamSession {} started", session_id_clone);
+        // Extract graph data for the spawned task
+        let execution_order = graph.execution_order.clone();
+        let graph_sinks = graph.sinks.clone();
+        let graph_nodes = graph.nodes.clone();
 
-            // Find first node ID for routing
-            let first_node_id = match manifest_clone.nodes.first() {
-                Some(n) => n.id.clone(),
-                None => {
-                    tracing::error!("Session {}: No nodes in manifest", session_id_clone);
-                    return;
-                }
-            };
+        tokio::spawn(async move {
+            tracing::info!("StreamSession {} started with {} nodes in execution order", session_id_clone, execution_order.len());
+
+            // Validate we have nodes to execute
+            if execution_order.is_empty() {
+                tracing::error!("Session {}: No nodes in execution order", session_id_clone);
+                return;
+            }
 
             // Create nodes ONCE at session creation and cache them for reuse
             // This prevents recreating Python processes and reloading models for each request
-            use std::collections::HashMap;
             let cached_nodes: Arc<HashMap<String, Box<dyn crate::nodes::StreamingNode>>> = {
                 let mut n = HashMap::new();
                 for node_spec in &manifest_clone.nodes {
@@ -458,50 +471,102 @@ impl PipelineRunnerInner {
                         // Spawn execution as a background task so the select loop can continue
                         // processing new inputs while this one executes
                         let output_tx_clone = output_tx.clone();
-                        let first_node_clone = first_node_id.clone();
                         let session_id_for_exec = session_id_clone.clone();
                         let session_id_for_log = session_id_clone.clone();
                         let cached_nodes_clone = Arc::clone(&cached_nodes);
+                        let execution_order_clone = execution_order.clone();
+                        let graph_sinks_clone = graph_sinks.clone();
+                        let graph_nodes_clone = graph_nodes.clone();
+                        let manifest_for_exec = Arc::clone(&manifest_clone);
 
-                        tracing::info!("[SessionRunner] Session {} spawning background task to process input on node '{}'", session_id_clone, first_node_clone);
+                        tracing::info!("[SessionRunner] Session {} spawning background task to process input through {} nodes", session_id_clone, execution_order_clone.len());
                         tokio::spawn(async move {
-                            tracing::info!("[SessionRunner] Session {} background task started for node '{}'", session_id_for_exec, first_node_clone);
-                            let session_id_for_callback = session_id_for_exec.clone();
+                            tracing::info!("[SessionRunner] Session {} background task started, processing through graph", session_id_for_exec);
 
-                            // Get reference to the cached node
-                            tracing::debug!("Session {} looking up cached node '{}'", session_id_for_exec, first_node_clone);
-                            let node = match cached_nodes_clone.get(&first_node_clone) {
-                                Some(n) => {
-                                    tracing::debug!("Session {} found cached node '{}', type: {}", session_id_for_exec, first_node_clone, n.node_type());
-                                    n
-                                },
-                                None => {
-                                    tracing::error!("Session {}: Node {} not found in cached nodes", session_id_for_exec, first_node_clone);
-                                    return;
-                                }
-                            };
+                            // Track outputs from each node for routing to dependents
+                            let mut all_node_outputs: HashMap<String, Vec<crate::data::RuntimeData>> = HashMap::new();
 
-                            // Use the cached node directly instead of calling execute_with_streaming_callback
-                            // which would create new nodes each time
-                            let callback = Box::new(move |output| {
-                                tracing::debug!("Session {} received streaming output, sending to client", session_id_for_callback);
-                                if let Err(e) = output_tx_clone.send(output) {
-                                    tracing::warn!("Session {}: Failed to send streaming output: {}", session_id_for_callback, e);
-                                }
-                                Ok(())
-                            });
-
-                            let input_data_type = input_data.data_type();
-                            tracing::info!("[SessionRunner] Session {} calling process_streaming_async on node '{}' with data type {}", session_id_for_exec, first_node_clone, input_data_type);
-                            match node.process_streaming_async(input_data, Some(session_id_for_exec.clone()), callback).await {
-                                Ok(_) => {
-                                    tracing::info!("[SessionRunner] Session {} execution completed successfully for node '{}'", session_id_for_log, first_node_clone);
-                                }
-                                Err(e) => {
-                                    tracing::error!("[SessionRunner] Session {}: Pipeline execution error on node '{}': {}", session_id_for_log, first_node_clone, e);
+                            // Source nodes receive the input data
+                            // Find which nodes have no inputs (sources) and give them the input
+                            for node_id in &execution_order_clone {
+                                if let Some(graph_node) = graph_nodes_clone.get(node_id) {
+                                    if graph_node.inputs.is_empty() {
+                                        // This is a source node - it gets the original input
+                                        all_node_outputs.insert(node_id.clone(), vec![input_data.clone()]);
+                                    }
                                 }
                             }
-                            tracing::info!("[SessionRunner] Session {} background task finished for node '{}'", session_id_for_log, first_node_clone);
+
+                            // Process nodes in topological order
+                            for node_id in &execution_order_clone {
+                                let node = match cached_nodes_clone.get(node_id) {
+                                    Some(n) => n,
+                                    None => {
+                                        tracing::error!("Session {}: Node {} not found in cached nodes", session_id_for_exec, node_id);
+                                        return;
+                                    }
+                                };
+
+                                // Collect inputs for this node
+                                let inputs: Vec<crate::data::RuntimeData> = if all_node_outputs.contains_key(node_id) {
+                                    // Source node - already has input
+                                    all_node_outputs.get(node_id).cloned().unwrap_or_default()
+                                } else {
+                                    // Collect inputs from predecessor nodes via connections
+                                    let mut collected_inputs = Vec::new();
+                                    for conn in manifest_for_exec.connections.iter().filter(|c| c.to == *node_id) {
+                                        if let Some(predecessor_outputs) = all_node_outputs.get(&conn.from) {
+                                            collected_inputs.extend(predecessor_outputs.clone());
+                                        }
+                                    }
+                                    collected_inputs
+                                };
+
+                                if inputs.is_empty() {
+                                    tracing::warn!("Session {}: Node {} has no inputs, skipping", session_id_for_exec, node_id);
+                                    continue;
+                                }
+
+                                tracing::debug!("Session {} processing node '{}' with {} input(s)", session_id_for_exec, node_id, inputs.len());
+
+                                // Collect outputs from this node using a shared buffer
+                                let node_outputs_ref = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+                                // Process each input through the node
+                                for input in inputs {
+                                    let node_outputs_clone = node_outputs_ref.clone();
+                                    let callback = Box::new(move |output: crate::data::RuntimeData| {
+                                        node_outputs_clone.lock().unwrap().push(output);
+                                        Ok(())
+                                    });
+
+                                    if let Err(e) = node.process_streaming_async(input, Some(session_id_for_exec.clone()), callback).await {
+                                        tracing::error!("Session {}: Node {} execution error: {}", session_id_for_exec, node_id, e);
+                                        // Continue with other nodes - don't fail entire pipeline
+                                    }
+                                }
+
+                                // Get collected outputs
+                                let node_outputs = node_outputs_ref.lock().unwrap().clone();
+                                tracing::debug!("Session {} node '{}' produced {} output(s)", session_id_for_exec, node_id, node_outputs.len());
+
+                                // Store outputs for downstream nodes
+                                all_node_outputs.insert(node_id.clone(), node_outputs);
+                            }
+
+                            // Send outputs from sink nodes (terminal nodes) to client
+                            for sink_id in &graph_sinks_clone {
+                                if let Some(outputs) = all_node_outputs.get(sink_id) {
+                                    for output in outputs {
+                                        tracing::debug!("Session {} sending output from sink '{}' to client", session_id_for_exec, sink_id);
+                                        if let Err(e) = output_tx_clone.send(output.clone()) {
+                                            tracing::warn!("Session {}: Failed to send output from sink {}: {}", session_id_for_exec, sink_id, e);
+                                        }
+                                    }
+                                }
+                            }
+
+                            tracing::info!("[SessionRunner] Session {} background task finished, processed {} nodes", session_id_for_log, execution_order_clone.len());
                         });
                     }
                     _ = shutdown_rx.recv() => {
@@ -520,5 +585,430 @@ impl PipelineRunnerInner {
             output_rx,
             shutdown_tx,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::{Connection, Manifest, ManifestMetadata, NodeManifest};
+
+    /// Test that PipelineGraph is correctly built from manifest with connections
+    #[test]
+    fn test_graph_building_from_manifest() {
+        // Create a 2-node pipeline: A -> B
+        let manifest = Manifest {
+            version: "v1".to_string(),
+            metadata: ManifestMetadata {
+                name: "test-pipeline".to_string(),
+                description: None,
+                created_at: None,
+            },
+            nodes: vec![
+                NodeManifest {
+                    id: "A".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "B".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+            ],
+            connections: vec![Connection {
+                from: "A".to_string(),
+                to: "B".to_string(),
+            }],
+        };
+
+        let graph = PipelineGraph::from_manifest(&manifest).unwrap();
+
+        // Verify graph structure
+        assert_eq!(graph.node_count(), 2);
+        assert_eq!(graph.execution_order, vec!["A", "B"]);
+        assert_eq!(graph.sources, vec!["A"]);
+        assert_eq!(graph.sinks, vec!["B"]);
+    }
+
+    /// Test 3-node linear pipeline graph building
+    #[test]
+    fn test_three_node_linear_pipeline() {
+        // Create A -> B -> C pipeline
+        let manifest = Manifest {
+            version: "v1".to_string(),
+            metadata: ManifestMetadata {
+                name: "three-node-pipeline".to_string(),
+                description: None,
+                created_at: None,
+            },
+            nodes: vec![
+                NodeManifest {
+                    id: "A".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "B".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "C".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+            ],
+            connections: vec![
+                Connection {
+                    from: "A".to_string(),
+                    to: "B".to_string(),
+                },
+                Connection {
+                    from: "B".to_string(),
+                    to: "C".to_string(),
+                },
+            ],
+        };
+
+        let graph = PipelineGraph::from_manifest(&manifest).unwrap();
+
+        // Verify graph structure
+        assert_eq!(graph.node_count(), 3);
+        assert_eq!(graph.execution_order, vec!["A", "B", "C"]);
+        assert_eq!(graph.sources, vec!["A"]);
+        assert_eq!(graph.sinks, vec!["C"]);
+
+        // Verify node connections
+        let node_a = graph.nodes.get("A").unwrap();
+        assert!(node_a.inputs.is_empty());
+        assert_eq!(node_a.outputs, vec!["B"]);
+
+        let node_b = graph.nodes.get("B").unwrap();
+        assert_eq!(node_b.inputs, vec!["A"]);
+        assert_eq!(node_b.outputs, vec!["C"]);
+
+        let node_c = graph.nodes.get("C").unwrap();
+        assert_eq!(node_c.inputs, vec!["B"]);
+        assert!(node_c.outputs.is_empty());
+    }
+
+    /// Test single-node pipeline (backward compatibility)
+    #[test]
+    fn test_single_node_pipeline() {
+        let manifest = Manifest {
+            version: "v1".to_string(),
+            metadata: ManifestMetadata {
+                name: "single-node-pipeline".to_string(),
+                description: None,
+                created_at: None,
+            },
+            nodes: vec![NodeManifest {
+                id: "only_node".to_string(),
+                node_type: "TestNode".to_string(),
+                params: serde_json::json!({}),
+                ..Default::default()
+            }],
+            connections: vec![],
+        };
+
+        let graph = PipelineGraph::from_manifest(&manifest).unwrap();
+
+        // Single node should be both source and sink
+        assert_eq!(graph.node_count(), 1);
+        assert_eq!(graph.execution_order, vec!["only_node"]);
+        assert_eq!(graph.sources, vec!["only_node"]);
+        assert_eq!(graph.sinks, vec!["only_node"]);
+    }
+
+    /// Test cycle detection - should fail for A -> B -> C -> A
+    #[test]
+    fn test_cycle_detection() {
+        let manifest = Manifest {
+            version: "v1".to_string(),
+            metadata: ManifestMetadata {
+                name: "cyclic-pipeline".to_string(),
+                description: None,
+                created_at: None,
+            },
+            nodes: vec![
+                NodeManifest {
+                    id: "A".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "B".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "C".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+            ],
+            connections: vec![
+                Connection {
+                    from: "A".to_string(),
+                    to: "B".to_string(),
+                },
+                Connection {
+                    from: "B".to_string(),
+                    to: "C".to_string(),
+                },
+                Connection {
+                    from: "C".to_string(),
+                    to: "A".to_string(), // Creates cycle!
+                },
+            ],
+        };
+
+        let result = PipelineGraph::from_manifest(&manifest);
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("cycle"), "Error should mention cycle: {}", error);
+    }
+
+    /// Test invalid connection to non-existent node
+    #[test]
+    fn test_invalid_connection_to_missing_node() {
+        let manifest = Manifest {
+            version: "v1".to_string(),
+            metadata: ManifestMetadata {
+                name: "invalid-connection".to_string(),
+                description: None,
+                created_at: None,
+            },
+            nodes: vec![NodeManifest {
+                id: "A".to_string(),
+                node_type: "TestNode".to_string(),
+                params: serde_json::json!({}),
+                ..Default::default()
+            }],
+            connections: vec![Connection {
+                from: "A".to_string(),
+                to: "NonExistent".to_string(), // This node doesn't exist!
+            }],
+        };
+
+        let result = PipelineGraph::from_manifest(&manifest);
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("NonExistent") || error.contains("unknown"),
+            "Error should identify missing node: {}",
+            error
+        );
+    }
+
+    /// Test fan-out pipeline (A -> B, A -> C)
+    #[test]
+    fn test_fan_out_pipeline() {
+        let manifest = Manifest {
+            version: "v1".to_string(),
+            metadata: ManifestMetadata {
+                name: "fan-out-pipeline".to_string(),
+                description: None,
+                created_at: None,
+            },
+            nodes: vec![
+                NodeManifest {
+                    id: "A".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "B".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "C".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+            ],
+            connections: vec![
+                Connection {
+                    from: "A".to_string(),
+                    to: "B".to_string(),
+                },
+                Connection {
+                    from: "A".to_string(),
+                    to: "C".to_string(),
+                },
+            ],
+        };
+
+        let graph = PipelineGraph::from_manifest(&manifest).unwrap();
+
+        // A is source, B and C are sinks
+        assert_eq!(graph.node_count(), 3);
+        assert_eq!(graph.sources, vec!["A"]);
+        assert_eq!(graph.sinks.len(), 2);
+        assert!(graph.sinks.contains(&"B".to_string()));
+        assert!(graph.sinks.contains(&"C".to_string()));
+
+        // A should come before both B and C
+        let a_idx = graph.execution_order.iter().position(|x| x == "A").unwrap();
+        let b_idx = graph.execution_order.iter().position(|x| x == "B").unwrap();
+        let c_idx = graph.execution_order.iter().position(|x| x == "C").unwrap();
+        assert!(a_idx < b_idx);
+        assert!(a_idx < c_idx);
+    }
+
+    /// Test fan-in pipeline (A -> C, B -> C)
+    #[test]
+    fn test_fan_in_pipeline() {
+        let manifest = Manifest {
+            version: "v1".to_string(),
+            metadata: ManifestMetadata {
+                name: "fan-in-pipeline".to_string(),
+                description: None,
+                created_at: None,
+            },
+            nodes: vec![
+                NodeManifest {
+                    id: "A".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "B".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "C".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+            ],
+            connections: vec![
+                Connection {
+                    from: "A".to_string(),
+                    to: "C".to_string(),
+                },
+                Connection {
+                    from: "B".to_string(),
+                    to: "C".to_string(),
+                },
+            ],
+        };
+
+        let graph = PipelineGraph::from_manifest(&manifest).unwrap();
+
+        // A and B are sources, C is sink
+        assert_eq!(graph.node_count(), 3);
+        assert_eq!(graph.sources.len(), 2);
+        assert!(graph.sources.contains(&"A".to_string()));
+        assert!(graph.sources.contains(&"B".to_string()));
+        assert_eq!(graph.sinks, vec!["C"]);
+
+        // C should have both A and B as inputs
+        let node_c = graph.nodes.get("C").unwrap();
+        assert_eq!(node_c.inputs.len(), 2);
+        assert!(node_c.inputs.contains(&"A".to_string()));
+        assert!(node_c.inputs.contains(&"B".to_string()));
+
+        // Both A and B should come before C
+        let a_idx = graph.execution_order.iter().position(|x| x == "A").unwrap();
+        let b_idx = graph.execution_order.iter().position(|x| x == "B").unwrap();
+        let c_idx = graph.execution_order.iter().position(|x| x == "C").unwrap();
+        assert!(a_idx < c_idx);
+        assert!(b_idx < c_idx);
+    }
+
+    /// Test diamond pipeline (A -> B, A -> C, B -> D, C -> D)
+    #[test]
+    fn test_diamond_pipeline() {
+        let manifest = Manifest {
+            version: "v1".to_string(),
+            metadata: ManifestMetadata {
+                name: "diamond-pipeline".to_string(),
+                description: None,
+                created_at: None,
+            },
+            nodes: vec![
+                NodeManifest {
+                    id: "A".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "B".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "C".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+                NodeManifest {
+                    id: "D".to_string(),
+                    node_type: "TestNode".to_string(),
+                    params: serde_json::json!({}),
+                    ..Default::default()
+                },
+            ],
+            connections: vec![
+                Connection {
+                    from: "A".to_string(),
+                    to: "B".to_string(),
+                },
+                Connection {
+                    from: "A".to_string(),
+                    to: "C".to_string(),
+                },
+                Connection {
+                    from: "B".to_string(),
+                    to: "D".to_string(),
+                },
+                Connection {
+                    from: "C".to_string(),
+                    to: "D".to_string(),
+                },
+            ],
+        };
+
+        let graph = PipelineGraph::from_manifest(&manifest).unwrap();
+
+        // A is source, D is sink
+        assert_eq!(graph.node_count(), 4);
+        assert_eq!(graph.sources, vec!["A"]);
+        assert_eq!(graph.sinks, vec!["D"]);
+
+        // Verify execution order respects dependencies
+        let exec_order = &graph.execution_order;
+        let a_idx = exec_order.iter().position(|x| x == "A").unwrap();
+        let b_idx = exec_order.iter().position(|x| x == "B").unwrap();
+        let c_idx = exec_order.iter().position(|x| x == "C").unwrap();
+        let d_idx = exec_order.iter().position(|x| x == "D").unwrap();
+
+        // A must come before B and C
+        assert!(a_idx < b_idx);
+        assert!(a_idx < c_idx);
+        // B and C must come before D
+        assert!(b_idx < d_idx);
+        assert!(c_idx < d_idx);
     }
 }
