@@ -5,6 +5,7 @@
 //!
 //! Schema specification: ../schemas/manifest.v1.json
 
+use crate::capabilities::MediaCapabilities;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 
@@ -25,9 +26,10 @@ pub struct Manifest {
 }
 
 /// Pipeline metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ManifestMetadata {
     /// Pipeline name
+    #[serde(default)]
     pub name: String,
 
     /// Optional description
@@ -37,6 +39,14 @@ pub struct ManifestMetadata {
     /// Creation timestamp
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+
+    /// Enable automatic capability negotiation (spec 022, FR-014).
+    ///
+    /// When true, the system automatically inserts conversion nodes
+    /// to resolve capability mismatches. When false, mismatches result
+    /// in validation errors.
+    #[serde(default)]
+    pub auto_negotiate: bool,
 }
 
 /// Node manifest entry
@@ -69,9 +79,16 @@ pub struct NodeManifest {
     #[serde(default)]
     pub is_output_node: bool,
 
-    /// Optional capability requirements
+    /// Optional capability requirements (GPU, CPU, memory)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<CapabilityRequirements>,
+
+    /// Media format capabilities for input/output constraints (spec 022).
+    ///
+    /// Declares what media formats this node accepts as input and produces
+    /// as output. Used for capability negotiation and pipeline validation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_capabilities: Option<MediaCapabilities>,
 
     /// Optional execution host
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -269,8 +286,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "test".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![],
             connections: vec![],

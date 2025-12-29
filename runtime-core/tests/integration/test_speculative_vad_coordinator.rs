@@ -17,7 +17,7 @@ fn create_coordinator_manifest() -> Manifest {
         metadata: ManifestMetadata {
             name: "speculative_vad_coordinator_test".to_string(),
             description: Some("Test pipeline for SpeculativeVADCoordinator".to_string()),
-            created_at: None,
+            ..Default::default()
         },
         nodes: vec![NodeManifest {
             id: "vad_coordinator".to_string(),
@@ -47,7 +47,7 @@ fn create_coordinator_manifest_with_config(
         metadata: ManifestMetadata {
             name: "custom_coordinator_test".to_string(),
             description: Some("Custom config test".to_string()),
-            created_at: None,
+            ..Default::default()
         },
         nodes: vec![NodeManifest {
             id: "vad_coordinator".to_string(),

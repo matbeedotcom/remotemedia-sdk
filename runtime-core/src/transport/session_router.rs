@@ -427,8 +427,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "test-pipeline".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: nodes
                 .into_iter()

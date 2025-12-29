@@ -89,8 +89,7 @@ async fn test_transport(registry: &TransportPluginRegistry, transport_name: &str
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "test-transport-pipeline".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![NodeManifest {
                 id: "test".to_string(),

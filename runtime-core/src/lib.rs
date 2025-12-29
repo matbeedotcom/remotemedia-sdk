@@ -40,6 +40,7 @@ extern crate self as remotemedia_runtime_core;
 
 // Core execution modules
 pub mod audio;
+pub mod capabilities;
 pub mod executor;
 pub mod nodes;
 pub mod python;

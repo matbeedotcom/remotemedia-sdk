@@ -1604,8 +1604,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "linear-test".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 crate::manifest::NodeManifest {
@@ -1694,8 +1693,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "dag-test".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 crate::manifest::NodeManifest {
@@ -1792,8 +1790,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "cycle-test".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 crate::manifest::NodeManifest {
@@ -1858,7 +1855,7 @@ mod tests {
             metadata: ManifestMetadata {
                 name: "exec-test".to_string(),
                 description: Some("Test execution".to_string()),
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 crate::manifest::NodeManifest {
@@ -1918,8 +1915,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "execution-test".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 crate::manifest::NodeManifest {

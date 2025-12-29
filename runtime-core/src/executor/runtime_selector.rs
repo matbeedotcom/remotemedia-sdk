@@ -243,8 +243,7 @@ mod tests {
             host: None,
             runtime_hint,
             execution: None,
-            #[cfg(feature = "docker")]
-            docker: None,
+            ..Default::default()
         }
     }
 

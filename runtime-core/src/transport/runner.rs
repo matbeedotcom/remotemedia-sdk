@@ -636,8 +636,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "test-pipeline".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 NodeManifest {
@@ -676,8 +675,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "three-node-pipeline".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 NodeManifest {
@@ -740,8 +738,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "single-node-pipeline".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![NodeManifest {
                 id: "only_node".to_string(),
@@ -768,8 +765,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "cyclic-pipeline".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 NodeManifest {
@@ -820,8 +816,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "invalid-connection".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![NodeManifest {
                 id: "A".to_string(),
@@ -852,8 +847,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "fan-out-pipeline".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 NodeManifest {
@@ -911,8 +905,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "fan-in-pipeline".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 NodeManifest {
@@ -976,8 +969,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "diamond-pipeline".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 NodeManifest {
@@ -1055,8 +1047,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "output-node-test".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 NodeManifest {
@@ -1118,8 +1109,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "output-node-collection-test".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 NodeManifest {
@@ -1181,8 +1171,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "no-output-nodes-test".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 NodeManifest {
@@ -1242,8 +1231,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "sink-output-node-test".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 NodeManifest {

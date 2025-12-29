@@ -12,9 +12,8 @@ fn test_manifest(nodes: Vec<NodeManifest>) -> Manifest {
         version: "1.0".to_string(),
         metadata: ManifestMetadata {
             name: "test".to_string(),
-            description: None,
-            created_at: None,
-        },
+                ..Default::default()
+            },
         nodes,
         connections: vec![],
     }

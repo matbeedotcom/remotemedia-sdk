@@ -1,0 +1,52 @@
+# SRT Subtitle Transcription Pipeline
+# Usage: remotemedia run transcribe-srt.yaml -i audio.wav -O subtitles.srt
+#
+# Or use the standalone binary:
+#   transcribe-srt -i input.mp4 -o subtitles.srt
+#
+# Outputs SRT format subtitles with timestamps:
+#   1
+#   00:00:01,000 --> 00:00:04,500
+#   Hello, this is the first subtitle.
+#
+#   2
+#   00:00:05,000 --> 00:00:08,200
+#   And this is the second one.
+
+version: v1
+metadata:
+  name: transcribe-srt
+  description: Audio transcription to SRT subtitle format using Whisper
+
+nodes:
+  - id: mic-input
+    node_type: MicInput
+    params:
+      sample_rate: 16000
+      channels: 1
+      device: "default"
+      chunk_size: 4000
+
+  # Whisper speech-to-text (input is provided by CLI as RuntimeData::Audio)
+  # NOTE: Must use QUANTIZED model for word-level timestamps (DTW alignment)
+  # Options with word timestamps: quantized_tiny, quantized_tiny_en, large-v3-turbo
+  # Options without word timestamps: tiny, base, small, medium, large
+  - id: whisper
+    node_type: RustWhisperNode
+    params:
+      # These can be overridden via CLI: --model, --language, --threads
+      model_source: ${MODEL:-large-v3-turbo}
+      language: ${LANGUAGE:-en}
+      n_threads: ${THREADS:-4}
+      accumulate_chunks: false
+
+  # Convert Whisper JSON output to SRT format
+  - id: srt
+    node_type: SrtOutput
+    params:
+      include_numbers: true
+      max_line_length: 42
+
+connections:
+  - from: whisper
+    to: srt

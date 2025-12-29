@@ -30,6 +30,9 @@
 //! ```
 
 use async_trait::async_trait;
+use remotemedia_runtime_core::capabilities::{
+    ConstraintValue, MediaCapabilities, MediaConstraints, TextConstraints,
+};
 use remotemedia_runtime_core::executor::node_executor::{NodeContext, NodeExecutor};
 use remotemedia_runtime_core::Result;
 use serde::{Deserialize, Serialize};
@@ -84,6 +87,28 @@ impl SrtOutputNode {
             config,
             segment_counter: 0,
         }
+    }
+
+    /// Returns the media capabilities for this node (spec 022).
+    ///
+    /// **Input requirements:**
+    /// - Text: UTF-8 JSON format (Whisper output with segments)
+    ///
+    /// **Output capabilities:**
+    /// - Text: UTF-8 plain text (SRT subtitle format)
+    pub fn media_capabilities() -> MediaCapabilities {
+        MediaCapabilities::with_input_output(
+            // Input: JSON from Whisper
+            MediaConstraints::Text(TextConstraints {
+                encoding: Some(ConstraintValue::Exact("utf-8".to_string())),
+                format: Some(ConstraintValue::Exact("json".to_string())),
+            }),
+            // Output: SRT plain text
+            MediaConstraints::Text(TextConstraints {
+                encoding: Some(ConstraintValue::Exact("utf-8".to_string())),
+                format: Some(ConstraintValue::Exact("srt".to_string())),
+            }),
+        )
     }
 
     /// Format a single segment as SRT
@@ -282,5 +307,42 @@ mod tests {
         assert!(srt.contains("Hello world."));
         assert!(srt.contains("2\n00:00:02,000 --> 00:00:04,000"));
         assert!(srt.contains("How are you?"));
+    }
+
+    #[test]
+    fn test_media_capabilities() {
+        let caps = SrtOutputNode::media_capabilities();
+
+        // Check input constraints (JSON from Whisper)
+        let input = caps.default_input().expect("Should have default input");
+        match input {
+            MediaConstraints::Text(text) => {
+                assert_eq!(
+                    text.encoding,
+                    Some(ConstraintValue::Exact("utf-8".to_string()))
+                );
+                assert_eq!(
+                    text.format,
+                    Some(ConstraintValue::Exact("json".to_string()))
+                );
+            }
+            _ => panic!("Expected Text input constraints"),
+        }
+
+        // Check output constraints (SRT text)
+        let output = caps.default_output().expect("Should have default output");
+        match output {
+            MediaConstraints::Text(text) => {
+                assert_eq!(
+                    text.encoding,
+                    Some(ConstraintValue::Exact("utf-8".to_string()))
+                );
+                assert_eq!(
+                    text.format,
+                    Some(ConstraintValue::Exact("srt".to_string()))
+                );
+            }
+            _ => panic!("Expected Text output constraints"),
+        }
     }
 }

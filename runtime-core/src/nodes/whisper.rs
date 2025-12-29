@@ -3,6 +3,10 @@
 //! This module provides a Rust-native Whisper transcription implementation
 //! using the rwhisper crate for high-performance audio transcription.
 
+use crate::capabilities::{
+    AudioConstraints, AudioSampleFormat, ConstraintValue, MediaCapabilities, MediaConstraints,
+    TextConstraints,
+};
 use crate::nodes::{NodeContext, NodeExecutor, NodeInfo};
 use crate::{Error, Result};
 use async_trait::async_trait;
@@ -49,6 +53,30 @@ impl RustWhisperNode {
             accumulate_chunks: true,
             accumulated_audio: Vec::new(),
         }
+    }
+
+    /// Returns the media capabilities for this node (spec 022).
+    ///
+    /// **Input requirements:**
+    /// - Audio: 16kHz sample rate, mono (1 channel), f32 format
+    ///
+    /// **Output capabilities:**
+    /// - Text: UTF-8 JSON format containing transcription results
+    ///
+    /// Whisper requires 16kHz mono audio. Multi-channel or different sample rate
+    /// audio should be converted before being passed to this node.
+    pub fn media_capabilities() -> MediaCapabilities {
+        MediaCapabilities::with_input_output(
+            MediaConstraints::Audio(AudioConstraints {
+                sample_rate: Some(ConstraintValue::Exact(16000)),
+                channels: Some(ConstraintValue::Exact(1)),
+                format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+            }),
+            MediaConstraints::Text(TextConstraints {
+                encoding: Some(ConstraintValue::Exact("utf-8".to_string())),
+                format: Some(ConstraintValue::Exact("json".to_string())),
+            }),
+        )
     }
 
     /// Get reference to the Whisper context (for streaming node use)
@@ -694,5 +722,40 @@ mod tests {
         let node = RustWhisperNode::new();
         let info = node.info();
         assert_eq!(info.name, "RustWhisperTranscriber");
+    }
+
+    #[test]
+    fn test_media_capabilities() {
+        let caps = RustWhisperNode::media_capabilities();
+
+        // Check input constraints
+        let input = caps.default_input().expect("Should have default input");
+        match input {
+            MediaConstraints::Audio(audio) => {
+                assert_eq!(audio.sample_rate, Some(ConstraintValue::Exact(16000)));
+                assert_eq!(audio.channels, Some(ConstraintValue::Exact(1)));
+                assert_eq!(
+                    audio.format,
+                    Some(ConstraintValue::Exact(AudioSampleFormat::F32))
+                );
+            }
+            _ => panic!("Expected Audio input constraints"),
+        }
+
+        // Check output constraints
+        let output = caps.default_output().expect("Should have default output");
+        match output {
+            MediaConstraints::Text(text) => {
+                assert_eq!(
+                    text.encoding,
+                    Some(ConstraintValue::Exact("utf-8".to_string()))
+                );
+                assert_eq!(
+                    text.format,
+                    Some(ConstraintValue::Exact("json".to_string()))
+                );
+            }
+            _ => panic!("Expected Text output constraints"),
+        }
     }
 }

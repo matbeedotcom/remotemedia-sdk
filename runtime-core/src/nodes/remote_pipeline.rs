@@ -1302,7 +1302,7 @@ const MAX_RECURSION_DEPTH: usize = 10;
 ///
 /// let manifest = Manifest {
 ///     version: "v1".into(),
-///     metadata: ManifestMetadata { name: "test".into(), description: None, created_at: None },
+///     metadata: ManifestMetadata { name: "test".into(), ..Default::default() },
 ///     nodes: vec![],
 ///     connections: vec![],
 /// };
