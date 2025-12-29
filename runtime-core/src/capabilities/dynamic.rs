@@ -1,4 +1,4 @@
-//! Dynamic capability resolution (spec 022 extension)
+//! Dynamic capability resolution (spec 022 extension, spec 023 pipeline resolution)
 //!
 //! This module extends the static capability system to support nodes with
 //! runtime-dependent capabilities. Many nodes have capabilities that depend on:
@@ -8,12 +8,19 @@
 //! - **Target requirements** (e.g., Resample outputs what downstream needs)
 //! - **Runtime discovery** (e.g., actual device capabilities)
 //!
-//! # Capability Resolution Order
+//! # Capability Resolution Order (spec 023)
 //!
 //! 1. **Static** - Fixed at compile time (e.g., Whisper requires 16kHz mono)
 //! 2. **Configured** - Resolved from node params after manifest parsing
 //! 3. **Passthrough** - Output inherits from input (resolved during graph traversal)
-//! 4. **Negotiated** - Output adapts to downstream requirements
+//! 4. **Adaptive** - Output adapts to downstream requirements (reverse pass)
+//! 5. **RuntimeDiscovered** - Two-phase: potential_capabilities() then actual_capabilities()
+//!
+//! # Two-Phase Resolution (spec 023)
+//!
+//! For RuntimeDiscovered nodes (e.g., hardware devices):
+//! - **Phase 1**: Use `potential_capabilities()` for early validation (before device init)
+//! - **Phase 2**: Call `actual_capabilities()` after `node.initialize()` completes
 //!
 //! # Example
 //!
@@ -33,6 +40,111 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::constraints::{AudioConstraints, MediaCapabilities, MediaConstraints, ConstraintValue};
+use super::validation::CapabilityMismatch;
+
+// =============================================================================
+// Capability Behavior (spec 023)
+// =============================================================================
+
+/// Describes how a node's capabilities are determined.
+///
+/// This enum is used by the pipeline resolver to determine the resolution
+/// strategy for each node during capability resolution.
+///
+/// # Resolution Order
+///
+/// 1. Forward pass (topological order): Static → Configured → Passthrough → RuntimeDiscovered
+/// 2. Reverse pass (reverse topological): Adaptive nodes get output from downstream
+///
+/// # Example
+///
+/// ```ignore
+/// // Static: Whisper always requires 16kHz mono
+/// fn capability_behavior(&self) -> CapabilityBehavior {
+///     CapabilityBehavior::Static
+/// }
+///
+/// // Passthrough: SpeakerOutput matches whatever it receives
+/// fn capability_behavior(&self) -> CapabilityBehavior {
+///     CapabilityBehavior::Passthrough
+/// }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CapabilityBehavior {
+    /// Fixed at compile time, never changes (e.g., Whisper: 16kHz mono f32)
+    ///
+    /// Nodes return their capabilities from `media_capabilities()` and they
+    /// never change regardless of configuration or connections.
+    Static,
+
+    /// Resolved from node params during manifest parsing (e.g., MicInput with explicit sample_rate)
+    ///
+    /// The factory's `media_capabilities(params)` is called with the node's
+    /// configuration to determine capabilities before node instantiation.
+    Configured,
+
+    /// Output inherits from upstream node's output (e.g., SpeakerOutput matches input)
+    ///
+    /// During forward pass, the node's output capabilities are set to match
+    /// the upstream node's resolved output capabilities.
+    Passthrough,
+
+    /// Output adapts to downstream node's requirements (e.g., AudioResample)
+    ///
+    /// During reverse pass, the node's output capabilities are set to match
+    /// the downstream node's resolved input requirements.
+    Adaptive,
+
+    /// Capabilities discovered at device init time (e.g., MicInput with device="default")
+    ///
+    /// Two-phase resolution:
+    /// - Phase 1: Use `potential_capabilities()` for broad validation
+    /// - Phase 2: After `initialize()`, use `actual_capabilities()` for re-validation
+    RuntimeDiscovered,
+}
+
+impl Default for CapabilityBehavior {
+    fn default() -> Self {
+        CapabilityBehavior::Passthrough
+    }
+}
+
+// =============================================================================
+// Resolution State (spec 023)
+// =============================================================================
+
+/// Tracks the resolution status of a node during graph traversal.
+///
+/// Used internally by `CapabilityResolver` to track which nodes have been
+/// processed and what state they're in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolutionState {
+    /// Not yet processed
+    Pending,
+
+    /// Resolved during forward pass
+    ///
+    /// For RuntimeDiscovered nodes, this is provisional until Phase 2.
+    ResolvedForward,
+
+    /// Needs reverse pass (Adaptive nodes only)
+    ///
+    /// The node was visited during forward pass but its output capabilities
+    /// depend on downstream requirements that weren't yet resolved.
+    NeedsReverse,
+
+    /// Fully resolved (including reverse pass if needed)
+    Complete,
+
+    /// Resolution failed with error message
+    Failed(String),
+}
+
+impl Default for ResolutionState {
+    fn default() -> Self {
+        ResolutionState::Pending
+    }
+}
 
 // =============================================================================
 // Capability Source (for introspection)
@@ -73,6 +185,14 @@ pub struct ResolvedCapabilities {
     pub sources: HashMap<String, CapabilitySource>,
     /// Node ID this was resolved for
     pub node_id: String,
+    /// Resolution state (spec 023)
+    #[serde(skip)]
+    pub state: ResolutionState,
+    /// Whether this is provisional (RuntimeDiscovered Phase 1)
+    ///
+    /// Provisional capabilities were determined using `potential_capabilities()`
+    /// and will be re-validated after `node.initialize()` completes.
+    pub provisional: bool,
 }
 
 impl ResolvedCapabilities {
@@ -86,6 +206,8 @@ impl ResolvedCapabilities {
             capabilities: caps,
             sources,
             node_id: node_id.to_string(),
+            state: ResolutionState::Complete,
+            provisional: false,
         }
     }
 
@@ -99,6 +221,8 @@ impl ResolvedCapabilities {
             capabilities: caps,
             sources,
             node_id: node_id.to_string(),
+            state: ResolutionState::Complete,
+            provisional: false,
         }
     }
 
@@ -111,12 +235,70 @@ impl ResolvedCapabilities {
             capabilities: caps,
             sources,
             node_id: node_id.to_string(),
+            state: ResolutionState::Complete,
+            provisional: false,
         }
+    }
+
+    /// Create provisional capabilities for RuntimeDiscovered nodes (Phase 1).
+    ///
+    /// These capabilities are based on `potential_capabilities()` and will
+    /// be re-validated after device initialization.
+    pub fn provisional(node_id: &str, caps: MediaCapabilities) -> Self {
+        let mut sources = HashMap::new();
+        for port in caps.inputs.keys().chain(caps.outputs.keys()) {
+            sources.insert(port.clone(), CapabilitySource::RuntimeDiscovered);
+        }
+        Self {
+            capabilities: caps,
+            sources,
+            node_id: node_id.to_string(),
+            state: ResolutionState::ResolvedForward,
+            provisional: true,
+        }
+    }
+
+    /// Create adaptive capabilities that need reverse pass resolution.
+    pub fn needs_reverse(node_id: &str, input_caps: MediaCapabilities) -> Self {
+        let mut sources = HashMap::new();
+        for port in input_caps.inputs.keys() {
+            sources.insert(port.clone(), CapabilitySource::Static);
+        }
+        // Output source will be set during reverse pass
+        Self {
+            capabilities: input_caps,
+            sources,
+            node_id: node_id.to_string(),
+            state: ResolutionState::NeedsReverse,
+            provisional: false,
+        }
+    }
+
+    /// Mark as complete after reverse pass resolution.
+    pub fn mark_complete(&mut self) {
+        self.state = ResolutionState::Complete;
+    }
+
+    /// Mark as no longer provisional after Phase 2 validation.
+    pub fn confirm_actual(&mut self, actual_caps: MediaCapabilities) {
+        self.capabilities = actual_caps;
+        self.provisional = false;
+        self.state = ResolutionState::Complete;
     }
 
     /// Get the capability source for a port.
     pub fn source(&self, port: &str) -> Option<&CapabilitySource> {
         self.sources.get(port)
+    }
+
+    /// Check if this resolution is complete.
+    pub fn is_complete(&self) -> bool {
+        matches!(self.state, ResolutionState::Complete)
+    }
+
+    /// Check if this resolution needs reverse pass.
+    pub fn needs_reverse_pass(&self) -> bool {
+        matches!(self.state, ResolutionState::NeedsReverse)
     }
 }
 
@@ -214,16 +396,28 @@ pub trait DynamicCapabilityProvider {
 // =============================================================================
 
 /// Context for resolving capabilities during graph traversal.
+///
+/// This struct maintains all state needed during capability resolution,
+/// including the resolved capabilities, connection graph, and any errors
+/// encountered during resolution.
 #[derive(Debug, Clone)]
 pub struct ResolutionContext {
     /// Resolved capabilities for each node (node_id -> capabilities)
     pub resolved: HashMap<String, ResolvedCapabilities>,
     /// Node parameters (node_id -> params)
     pub params: HashMap<String, serde_json::Value>,
+    /// Node types (node_id -> node_type) (spec 023)
+    pub node_types: HashMap<String, String>,
     /// Graph connections (source_id -> vec of target_ids)
     pub connections: HashMap<String, Vec<String>>,
     /// Reverse connections (target_id -> vec of source_ids)
     pub reverse_connections: HashMap<String, Vec<String>>,
+    /// Node capability behaviors (node_id -> behavior) (spec 023)
+    pub behaviors: HashMap<String, CapabilityBehavior>,
+    /// Resolution states (node_id -> state) (spec 023)
+    pub states: HashMap<String, ResolutionState>,
+    /// Errors accumulated during resolution (spec 023)
+    pub errors: Vec<CapabilityMismatch>,
 }
 
 impl ResolutionContext {
@@ -232,9 +426,18 @@ impl ResolutionContext {
         Self {
             resolved: HashMap::new(),
             params: HashMap::new(),
+            node_types: HashMap::new(),
             connections: HashMap::new(),
             reverse_connections: HashMap::new(),
+            behaviors: HashMap::new(),
+            states: HashMap::new(),
+            errors: Vec::new(),
         }
+    }
+
+    /// Get node type for a node_id.
+    pub fn get_node_type(&self, node_id: &str) -> Option<&str> {
+        self.node_types.get(node_id).map(|s| s.as_str())
     }
 
     /// Add a connection to the context.
@@ -277,6 +480,63 @@ impl ResolutionContext {
         self.resolved
             .get(node_id)
             .and_then(|r| r.capabilities.default_input())
+    }
+
+    /// Set the capability behavior for a node. (spec 023)
+    pub fn set_behavior(&mut self, node_id: &str, behavior: CapabilityBehavior) {
+        self.behaviors.insert(node_id.to_string(), behavior);
+    }
+
+    /// Get the capability behavior for a node. (spec 023)
+    pub fn get_behavior(&self, node_id: &str) -> CapabilityBehavior {
+        self.behaviors
+            .get(node_id)
+            .copied()
+            .unwrap_or(CapabilityBehavior::Passthrough)
+    }
+
+    /// Set the resolution state for a node. (spec 023)
+    pub fn set_state(&mut self, node_id: &str, state: ResolutionState) {
+        self.states.insert(node_id.to_string(), state);
+    }
+
+    /// Get the resolution state for a node. (spec 023)
+    pub fn get_state(&self, node_id: &str) -> &ResolutionState {
+        self.states.get(node_id).unwrap_or(&ResolutionState::Pending)
+    }
+
+    /// Add an error to the context. (spec 023)
+    pub fn add_error(&mut self, error: CapabilityMismatch) {
+        self.errors.push(error);
+    }
+
+    /// Check if resolution has any errors. (spec 023)
+    pub fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
+    }
+
+    /// Get all nodes that need reverse pass. (spec 023)
+    pub fn nodes_needing_reverse(&self) -> Vec<&str> {
+        self.states
+            .iter()
+            .filter(|(_, state)| matches!(state, ResolutionState::NeedsReverse))
+            .map(|(id, _)| id.as_str())
+            .collect()
+    }
+
+    /// Get all provisional (RuntimeDiscovered Phase 1) nodes. (spec 023)
+    pub fn provisional_nodes(&self) -> Vec<&str> {
+        self.resolved
+            .iter()
+            .filter(|(_, caps)| caps.provisional)
+            .map(|(id, _)| id.as_str())
+            .collect()
+    }
+
+    /// Check if all nodes are fully resolved. (spec 023)
+    pub fn is_complete(&self) -> bool {
+        self.states.values().all(|s| matches!(s, ResolutionState::Complete))
+            && self.errors.is_empty()
     }
 }
 

@@ -53,6 +53,9 @@ pub mod registry;
 // Dynamic capability resolution (runtime-dependent capabilities)
 pub mod dynamic;
 
+// Pipeline capability resolver (spec 023)
+pub mod resolver;
+
 // Re-export main types for convenience
 pub use constraints::{
     AudioConstraints, AudioSampleFormat, ConstraintValue, FileConstraints, JsonConstraints,
@@ -69,5 +72,8 @@ pub use negotiation::{
 pub use registry::{ConversionRegistry, ConverterInfo, DefaultConversionRegistry};
 
 pub use dynamic::{
-    CapabilitySource, DynamicCapabilityProvider, ResolutionContext, ResolvedCapabilities,
+    CapabilityBehavior, CapabilitySource, DynamicCapabilityProvider, ResolutionContext,
+    ResolutionState, ResolvedCapabilities,
 };
+
+pub use resolver::{CapabilityHints, CapabilityResolver, NodeHints};

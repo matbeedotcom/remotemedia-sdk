@@ -1,5 +1,9 @@
 //! Default streaming node registry with built-in node factories
 
+use crate::capabilities::{
+    AudioConstraints, AudioSampleFormat, CapabilityBehavior, ConstraintValue, MediaCapabilities,
+    MediaConstraints,
+};
 use crate::nodes::calculator::CalculatorNode;
 use crate::nodes::passthrough::PassThroughNode;
 use crate::nodes::python_streaming::PythonStreamingNode;
@@ -610,6 +614,15 @@ impl StreamingNodeFactory for RustWhisperNodeFactory {
                 .accepts([RuntimeDataType::Audio])
                 .produces([RuntimeDataType::Json, RuntimeDataType::Text])
         )
+    }
+
+    fn media_capabilities(&self, _params: &Value) -> Option<MediaCapabilities> {
+        // Whisper has static capabilities regardless of params
+        Some(RustWhisperNode::media_capabilities())
+    }
+
+    fn capability_behavior(&self) -> CapabilityBehavior {
+        CapabilityBehavior::Static
     }
 }
 
@@ -1378,6 +1391,26 @@ impl StreamingNodeFactory for FastResampleNodeFactory {
                     }
                 })),
         )
+    }
+
+    fn media_capabilities(&self, _params: &Value) -> Option<MediaCapabilities> {
+        // FastResampleNode has Adaptive capabilities:
+        // - Input: accepts a wide range of sample rates (8kHz - 192kHz)
+        // - Output: None initially - adapts to downstream requirements during reverse pass
+        Some(MediaCapabilities::with_input(MediaConstraints::Audio(
+            AudioConstraints {
+                sample_rate: Some(ConstraintValue::Range {
+                    min: 8000,
+                    max: 192000,
+                }),
+                channels: Some(ConstraintValue::Range { min: 1, max: 8 }),
+                format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+            },
+        )))
+    }
+
+    fn capability_behavior(&self) -> CapabilityBehavior {
+        CapabilityBehavior::Adaptive
     }
 }
 

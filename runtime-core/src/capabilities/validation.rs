@@ -37,6 +37,8 @@ pub struct CapabilityMismatch {
     pub source_value: String,
     /// Human-readable representation of target's requirement
     pub target_requirement: String,
+    /// Optional suggestion for resolving the mismatch (spec 023)
+    pub suggestion: Option<String>,
 }
 
 impl CapabilityMismatch {
@@ -45,7 +47,7 @@ impl CapabilityMismatch {
     /// The message format is designed to be understood on first reading
     /// without needing additional documentation lookup.
     pub fn display_message(&self) -> String {
-        format!(
+        let base = format!(
             "Capability mismatch: {} → {}\n\
              \x20 Media type: {}\n\
              \x20 Constraint: {}\n\
@@ -57,7 +59,56 @@ impl CapabilityMismatch {
             self.constraint_name,
             self.source_value,
             self.target_requirement
-        )
+        );
+
+        if let Some(ref suggestion) = self.suggestion {
+            format!("{}\n\x20 Suggestion: {}", base, suggestion)
+        } else {
+            base
+        }
+    }
+
+    /// Generate a suggestion for resolving this mismatch.
+    ///
+    /// Returns a human-readable suggestion string based on the mismatch type.
+    pub fn generate_suggestion(&self) -> Option<String> {
+        match (self.media_type.as_str(), self.constraint_name.as_str()) {
+            ("audio", "sample_rate") => Some(format!(
+                "Insert AudioResample node between '{}' and '{}' to convert {} Hz to {} Hz",
+                self.source_node, self.target_node, self.source_value, self.target_requirement
+            )),
+            ("audio", "channels") => Some(format!(
+                "Insert ChannelMixer node between '{}' and '{}' to convert {} channel(s) to {} channel(s)",
+                self.source_node, self.target_node, self.source_value, self.target_requirement
+            )),
+            ("audio", "format") => Some(format!(
+                "Insert AudioFormatConvert node between '{}' and '{}' to convert {} to {}",
+                self.source_node, self.target_node, self.source_value, self.target_requirement
+            )),
+            ("video", "width" | "height") => Some(format!(
+                "Insert VideoResize node between '{}' and '{}' to resize video",
+                self.source_node, self.target_node
+            )),
+            ("video", "framerate") => Some(format!(
+                "Insert FrameRateConvert node between '{}' and '{}' to change framerate",
+                self.source_node, self.target_node
+            )),
+            ("video", "pixel_format") => Some(format!(
+                "Insert PixelFormatConvert node between '{}' and '{}' to convert pixel format",
+                self.source_node, self.target_node
+            )),
+            ("type", "media_type") => Some(format!(
+                "Cannot connect {} ({}) to {} ({}). These nodes have incompatible media types.",
+                self.source_node, self.source_value, self.target_node, self.target_requirement
+            )),
+            _ => None,
+        }
+    }
+
+    /// Create a mismatch with auto-generated suggestion.
+    pub fn with_auto_suggestion(mut self) -> Self {
+        self.suggestion = self.generate_suggestion();
+        self
     }
 }
 
@@ -350,7 +401,7 @@ pub fn validate_connection(
 
     // Check media type compatibility first
     if source.media_type() != target.media_type() {
-        mismatches.push(CapabilityMismatch {
+        let mismatch = CapabilityMismatch {
             source_node: source_id.to_string(),
             target_node: target_id.to_string(),
             source_port: source_port.to_string(),
@@ -359,7 +410,9 @@ pub fn validate_connection(
             constraint_name: "media_type".to_string(),
             source_value: source.media_type().to_string(),
             target_requirement: target.media_type().to_string(),
-        });
+            suggestion: None,
+        }.with_auto_suggestion();
+        mismatches.push(mismatch);
         return mismatches;
     }
 
@@ -387,9 +440,9 @@ pub fn validate_connection(
         _ => Vec::new(), // Already handled by media type check above
     };
 
-    // Convert constraint mismatches to CapabilityMismatch structs
+    // Convert constraint mismatches to CapabilityMismatch structs with auto-suggestions
     for (constraint_name, source_value, target_requirement) in constraint_mismatches {
-        mismatches.push(CapabilityMismatch {
+        let mismatch = CapabilityMismatch {
             source_node: source_id.to_string(),
             target_node: target_id.to_string(),
             source_port: source_port.to_string(),
@@ -398,7 +451,9 @@ pub fn validate_connection(
             constraint_name,
             source_value,
             target_requirement,
-        });
+            suggestion: None,
+        }.with_auto_suggestion();
+        mismatches.push(mismatch);
     }
 
     mismatches
@@ -647,6 +702,7 @@ mod tests {
             constraint_name: "sample_rate".to_string(),
             source_value: "48000".to_string(),
             target_requirement: "16000".to_string(),
+            suggestion: None,
         }];
 
         let output = format_validation_errors(&mismatches);
@@ -654,5 +710,47 @@ mod tests {
         assert!(output.contains("audio_input"));
         assert!(output.contains("whisper"));
         assert!(output.contains("sample_rate"));
+    }
+
+    #[test]
+    fn test_mismatch_suggestion_generation() {
+        let mismatch = CapabilityMismatch {
+            source_node: "mic".to_string(),
+            target_node: "whisper".to_string(),
+            source_port: "default".to_string(),
+            target_port: "default".to_string(),
+            media_type: "audio".to_string(),
+            constraint_name: "sample_rate".to_string(),
+            source_value: "48000".to_string(),
+            target_requirement: "16000".to_string(),
+            suggestion: None,
+        }.with_auto_suggestion();
+
+        assert!(mismatch.suggestion.is_some());
+        let suggestion = mismatch.suggestion.unwrap();
+        assert!(suggestion.contains("AudioResample"));
+        assert!(suggestion.contains("mic"));
+        assert!(suggestion.contains("whisper"));
+        assert!(suggestion.contains("48000"));
+        assert!(suggestion.contains("16000"));
+    }
+
+    #[test]
+    fn test_mismatch_display_with_suggestion() {
+        let mismatch = CapabilityMismatch {
+            source_node: "mic".to_string(),
+            target_node: "whisper".to_string(),
+            source_port: "default".to_string(),
+            target_port: "default".to_string(),
+            media_type: "audio".to_string(),
+            constraint_name: "sample_rate".to_string(),
+            source_value: "48000".to_string(),
+            target_requirement: "16000".to_string(),
+            suggestion: None,
+        }.with_auto_suggestion();
+
+        let display = mismatch.display_message();
+        assert!(display.contains("Suggestion:"));
+        assert!(display.contains("AudioResample"));
     }
 }

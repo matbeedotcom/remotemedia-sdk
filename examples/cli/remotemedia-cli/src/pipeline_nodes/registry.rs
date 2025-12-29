@@ -4,6 +4,10 @@
 //! registered with the streaming node registry.
 
 use crate::audio::{AudioCapture, AudioPlayback, CaptureConfig, DeviceSelector, PlaybackConfig};
+use remotemedia_runtime_core::capabilities::{
+    AudioConstraints, AudioSampleFormat, CapabilityBehavior, ConstraintValue, MediaCapabilities,
+    MediaConstraints,
+};
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::nodes::streaming_node::{
     AsyncStreamingNode, AsyncNodeWrapper,
@@ -11,6 +15,7 @@ use remotemedia_runtime_core::nodes::streaming_node::{
 };
 use remotemedia_runtime_core::nodes::streaming_registry::create_default_streaming_registry;
 use remotemedia_runtime_core::Error;
+use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -156,6 +161,25 @@ impl StreamingNodeFactory for MicInputNodeFactory {
     fn node_type(&self) -> &str {
         "MicInput"
     }
+
+    fn media_capabilities(&self, params: &Value) -> Option<MediaCapabilities> {
+        // Parse config to get sample rate and channels
+        let config: MicInputConfig = serde_json::from_value(params.clone()).unwrap_or_default();
+
+        // MicInput produces audio output based on configured sample_rate and channels
+        Some(MediaCapabilities::with_output(MediaConstraints::Audio(
+            AudioConstraints {
+                sample_rate: Some(ConstraintValue::Exact(config.sample_rate)),
+                channels: Some(ConstraintValue::Exact(config.channels as u32)),
+                format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+            },
+        )))
+    }
+
+    fn capability_behavior(&self) -> CapabilityBehavior {
+        // MicInput capabilities are determined by its configuration parameters
+        CapabilityBehavior::Configured
+    }
 }
 
 // ============================================================================
@@ -241,6 +265,17 @@ impl StreamingNodeFactory for SpeakerOutputNodeFactory {
 
     fn node_type(&self) -> &str {
         "SpeakerOutput"
+    }
+
+    fn media_capabilities(&self, _params: &Value) -> Option<MediaCapabilities> {
+        // SpeakerOutput is a passthrough sink - it accepts whatever audio it receives
+        // Capabilities are inherited from upstream during resolution
+        None
+    }
+
+    fn capability_behavior(&self) -> CapabilityBehavior {
+        // Output matches input (passthrough behavior)
+        CapabilityBehavior::Passthrough
     }
 }
 
