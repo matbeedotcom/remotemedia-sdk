@@ -60,6 +60,7 @@
 include!(concat!(env!("OUT_DIR"), "/embedded_pipeline.rs"));
 
 use anyhow::{Context, Result};
+use std::env;
 
 /// Generate the about text from embedded pipeline metadata
 const fn get_about_text() -> &'static str {
@@ -69,6 +70,64 @@ const fn get_about_text() -> &'static str {
         // Can't concatenate at const time, so we use the description if available
         PIPELINE_DESCRIPTION
     }
+}
+
+/// Expand shell-style template variables in a string
+/// 
+/// Supports:
+/// - `${VAR}` - Replace with env var VAR, or empty string if not set
+/// - `${VAR:-default}` - Replace with env var VAR, or "default" if not set
+/// - `${VAR:=default}` - Same as above (assignment syntax)
+fn expand_template_variables(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    
+    while let Some(c) = chars.next() {
+        if c == '$' && chars.peek() == Some(&'{') {
+            chars.next(); // consume '{'
+            
+            // Read variable name and optional default
+            let mut var_content = String::new();
+            let mut brace_depth = 1;
+            
+            while let Some(c) = chars.next() {
+                if c == '{' {
+                    brace_depth += 1;
+                    var_content.push(c);
+                } else if c == '}' {
+                    brace_depth -= 1;
+                    if brace_depth == 0 {
+                        break;
+                    }
+                    var_content.push(c);
+                } else {
+                    var_content.push(c);
+                }
+            }
+            
+            // Parse VAR:-default or VAR:=default syntax
+            let (var_name, default_value) = if let Some(idx) = var_content.find(":-") {
+                (&var_content[..idx], Some(&var_content[idx + 2..]))
+            } else if let Some(idx) = var_content.find(":=") {
+                (&var_content[..idx], Some(&var_content[idx + 2..]))
+            } else {
+                (var_content.as_str(), None)
+            };
+            
+            // Get the value
+            let value = env::var(var_name)
+                .ok()
+                .filter(|s| !s.is_empty())
+                .or_else(|| default_value.map(String::from))
+                .unwrap_or_default();
+            
+            result.push_str(&value);
+        } else {
+            result.push(c);
+        }
+    }
+    
+    result
 }
 use clap::Parser;
 use remotemedia_cli::{
@@ -82,6 +141,7 @@ use remotemedia_cli::{
     pipeline,
 };
 use remotemedia_runtime_core::data::RuntimeData;
+use remotemedia_runtime_core::manifest::{Manifest, NodeManifest, Connection};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -153,6 +213,99 @@ struct EffectiveConfig {
     output_device: Option<String>,
     audio_host: Option<String>,
     buffer_ms: u32,
+}
+
+/// Inject audio source/sink nodes into the pipeline based on CLI flags
+fn inject_audio_nodes(manifest: &Manifest, config: &EffectiveConfig) -> Manifest {
+    let mut new_manifest = manifest.clone();
+    
+    // Find source nodes (nodes with no incoming connections)
+    let target_nodes: std::collections::HashSet<_> = manifest.connections.iter()
+        .map(|c| c.to.as_str())
+        .collect();
+    
+    let source_nodes: Vec<_> = manifest.nodes.iter()
+        .filter(|n| !target_nodes.contains(n.id.as_str()))
+        .map(|n| n.id.clone())
+        .collect();
+    
+    // Find sink nodes (nodes with no outgoing connections)
+    let from_nodes: std::collections::HashSet<_> = manifest.connections.iter()
+        .map(|c| c.from.as_str())
+        .collect();
+    
+    let sink_nodes: Vec<_> = manifest.nodes.iter()
+        .filter(|n| !from_nodes.contains(n.id.as_str()))
+        .map(|n| n.id.clone())
+        .collect();
+    
+    // Inject MicInput if --mic is set
+    if config.mic {
+        let mic_node = NodeManifest {
+            id: "_cli_mic_input".to_string(),
+            node_type: "MicInput".to_string(),
+            params: serde_json::json!({
+                "sample_rate": config.sample_rate,
+                "channels": config.channels,
+                "chunk_size": config.chunk_size,
+                "buffer_ms": config.buffer_ms,
+                "device": config.input_device,
+                "host": config.audio_host,
+            }),
+            is_streaming: true,
+            ..Default::default()
+        };
+        
+        // Add MicInput node
+        new_manifest.nodes.insert(0, mic_node);
+        
+        // Connect MicInput to all source nodes
+        for source_id in &source_nodes {
+            new_manifest.connections.insert(0, Connection {
+                from: "_cli_mic_input".to_string(),
+                to: source_id.clone(),
+            });
+        }
+        
+        tracing::info!(
+            "Injected MicInput node connected to: {:?}",
+            source_nodes
+        );
+    }
+    
+    // Inject SpeakerOutput if --speaker is set
+    if config.speaker {
+        let speaker_node = NodeManifest {
+            id: "_cli_speaker_output".to_string(),
+            node_type: "SpeakerOutput".to_string(),
+            params: serde_json::json!({
+                "sample_rate": config.sample_rate,
+                "channels": config.channels,
+                "device": config.output_device,
+                "host": config.audio_host,
+            }),
+            is_streaming: true,
+            ..Default::default()
+        };
+        
+        // Add SpeakerOutput node
+        new_manifest.nodes.push(speaker_node);
+        
+        // Connect all sink nodes to SpeakerOutput
+        for sink_id in &sink_nodes {
+            new_manifest.connections.push(Connection {
+                from: sink_id.clone(),
+                to: "_cli_speaker_output".to_string(),
+            });
+        }
+        
+        tracing::info!(
+            "Injected SpeakerOutput node connected from: {:?}",
+            sink_nodes
+        );
+    }
+    
+    new_manifest
 }
 
 impl EffectiveConfig {
@@ -315,8 +468,16 @@ async fn main() -> Result<()> {
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| filter.into()))
         .init();
 
-    // Parse the embedded manifest
-    let manifest = Arc::new(pipeline::parse_manifest(PIPELINE_YAML)?);
+    // Expand template variables in the embedded manifest (e.g., ${MODEL:-large-v3-turbo})
+    let expanded_yaml = expand_template_variables(PIPELINE_YAML);
+    
+    // Parse the expanded manifest
+    let base_manifest = pipeline::parse_manifest(&expanded_yaml)?;
+    
+    // Inject audio nodes based on CLI flags
+    let manifest = inject_audio_nodes(&base_manifest, &config);
+    let manifest = Arc::new(manifest);
+    
     tracing::info!("Running pipeline: {}", manifest.metadata.name);
 
     // Log effective configuration
@@ -390,8 +551,8 @@ async fn run_unary_mode(
         RuntimeData::Json(serde_json::json!({}))
     };
 
-    // Execute pipeline
-    let runner = pipeline::create_runner()?;
+    // Execute pipeline (use CLI nodes for MicInput, SpeakerOutput support)
+    let runner = pipeline::create_runner_with_cli_nodes().await?;
     
     tracing::info!("Executing pipeline (timeout: {:?})", config.timeout);
     
@@ -461,7 +622,8 @@ async fn run_streaming_mode(
     config: &EffectiveConfig,
     manifest: Arc<remotemedia_runtime_core::manifest::Manifest>,
 ) -> Result<()> {
-    let runner = pipeline::create_runner()?;
+    // Use CLI nodes for MicInput, SpeakerOutput support
+    let runner = pipeline::create_runner_with_cli_nodes().await?;
     let mut session = pipeline::StreamingSession::new(&runner, manifest.clone())
         .await
         .context("Failed to create streaming session")?;

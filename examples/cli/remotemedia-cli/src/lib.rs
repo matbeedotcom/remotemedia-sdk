@@ -61,6 +61,7 @@ pub mod ffmpeg;
 pub mod io;
 pub mod output;
 pub mod pipeline;
+pub mod pipeline_nodes;
 
 // Re-export commonly used types from audio
 pub use audio::{
@@ -100,6 +101,17 @@ pub use output::{OutputFormat, Outputter};
 
 // Re-export pipeline utilities
 pub use pipeline::{
-    create_runner, execute_unary,
+    create_runner, create_runner_with_cli_nodes, execute_unary,
     parse_manifest, StreamingSession,
+};
+
+// Re-export pipeline nodes for use in embedded pipelines
+pub use pipeline_nodes::{
+    // Node types
+    MicInputNode, MicInputConfig,
+    SpeakerOutputNode, SpeakerOutputConfig,
+    SrtOutputNode, SrtOutputConfig,
+    // Streaming registry and factories
+    register_cli_nodes, create_cli_streaming_registry, get_cli_node_factories,
+    MicInputNodeFactory, SpeakerOutputNodeFactory, SrtOutputNodeFactory,
 };

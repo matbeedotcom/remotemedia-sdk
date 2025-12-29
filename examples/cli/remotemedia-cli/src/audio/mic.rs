@@ -75,14 +75,24 @@ impl CaptureConfig {
     }
 }
 
-/// Audio capture handle
+/// Audio capture handle (Send + Sync safe)
+/// 
+/// The actual cpal::Stream runs on a dedicated thread, and this handle
+/// communicates via channels. This makes it safe to use in async contexts.
 pub struct AudioCapture {
-    #[allow(dead_code)]
-    stream: cpal::Stream,
+    /// Receiver for audio data from the capture thread
     receiver: broadcast::Receiver<Vec<f32>>,
+    /// Device name for logging
     device_name: String,
+    /// Original config
     config: CaptureConfig,
+    /// Handle to stop the capture thread
+    _stop_tx: mpsc::Sender<()>,
 }
+
+// Ensure AudioCapture is Send + Sync
+unsafe impl Send for AudioCapture {}
+unsafe impl Sync for AudioCapture {}
 
 impl AudioCapture {
     /// Start capturing from the specified or default input device
@@ -109,26 +119,48 @@ impl AudioCapture {
             })?
             .with_sample_rate(cpal::SampleRate(config.sample_rate));
 
-        let (tx, rx) = broadcast::channel(100);
+        let (audio_tx, audio_rx) = broadcast::channel(100);
+        let (stop_tx, stop_rx) = mpsc::channel();
 
-        let stream = device.build_input_stream(
-            &supported_config.into(),
-            move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                let _ = tx.send(data.to_vec());
-            },
-            |err| {
-                tracing::error!("Audio capture error: {}", err);
-            },
-            None,
-        )?;
+        // Spawn a dedicated thread to own the cpal::Stream (which is !Send)
+        let device_name_clone = device_name.clone();
+        std::thread::spawn(move || {
+            let stream = match device.build_input_stream(
+                &supported_config.into(),
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    let _ = audio_tx.send(data.to_vec());
+                },
+                |err| {
+                    tracing::error!("Audio capture error: {}", err);
+                },
+                None,
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to build input stream: {}", e);
+                    return;
+                }
+            };
 
-        stream.play()?;
+            if let Err(e) = stream.play() {
+                tracing::error!("Failed to start stream: {}", e);
+                return;
+            }
+
+            tracing::debug!("Audio capture thread started for '{}'", device_name_clone);
+
+            // Keep the thread alive until stop signal
+            let _ = stop_rx.recv();
+
+            tracing::debug!("Audio capture thread stopping for '{}'", device_name_clone);
+            // Stream is dropped here, stopping capture
+        });
 
         Ok(Self {
-            stream,
-            receiver: rx,
+            receiver: audio_rx,
             device_name,
             config,
+            _stop_tx: stop_tx,
         })
     }
 
@@ -144,9 +176,14 @@ impl AudioCapture {
         }
     }
 
-    /// Receive the next audio buffer
+    /// Receive the next audio buffer (async)
     pub async fn recv(&mut self) -> Option<Vec<f32>> {
         self.receiver.recv().await.ok()
+    }
+
+    /// Try to receive audio without blocking
+    pub fn try_recv(&mut self) -> Option<Vec<f32>> {
+        self.receiver.try_recv().ok()
     }
 
     /// Get the device name being used

@@ -74,15 +74,26 @@ impl PlaybackConfig {
     }
 }
 
-/// Audio playback handle
+/// Audio playback handle (Send + Sync safe)
+/// 
+/// The actual cpal::Stream runs on a dedicated thread, and this handle
+/// communicates via channels. This makes it safe to use in async contexts.
 pub struct AudioPlayback {
-    #[allow(dead_code)]
-    stream: cpal::Stream,
+    /// Shared buffer for samples to play
     buffer: Arc<Mutex<Vec<f32>>>,
+    /// Current playback position
     position: Arc<Mutex<usize>>,
+    /// Device name for logging
     device_name: String,
+    /// Original config
     config: PlaybackConfig,
+    /// Handle to stop the playback thread
+    _stop_tx: std::sync::mpsc::Sender<()>,
 }
+
+// Ensure AudioPlayback is Send + Sync
+unsafe impl Send for AudioPlayback {}
+unsafe impl Sync for AudioPlayback {}
 
 impl AudioPlayback {
     /// Start playback on the specified or default output device
@@ -111,39 +122,61 @@ impl AudioPlayback {
 
         let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
         let position = Arc::new(Mutex::new(0usize));
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel();
 
         let buffer_clone = buffer.clone();
         let position_clone = position.clone();
+        let device_name_clone = device_name.clone();
 
-        let stream = device.build_output_stream(
-            &supported_config.into(),
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                let buf = buffer_clone.lock().unwrap();
-                let mut pos = position_clone.lock().unwrap();
+        // Spawn a dedicated thread to own the cpal::Stream (which is !Send)
+        std::thread::spawn(move || {
+            let stream = match device.build_output_stream(
+                &supported_config.into(),
+                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let buf = buffer_clone.lock().unwrap();
+                    let mut pos = position_clone.lock().unwrap();
 
-                for sample in data.iter_mut() {
-                    if *pos < buf.len() {
-                        *sample = buf[*pos];
-                        *pos += 1;
-                    } else {
-                        *sample = 0.0;
+                    for sample in data.iter_mut() {
+                        if *pos < buf.len() {
+                            *sample = buf[*pos];
+                            *pos += 1;
+                        } else {
+                            *sample = 0.0;
+                        }
                     }
+                },
+                |err| {
+                    tracing::error!("Audio playback error: {}", err);
+                },
+                None,
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to build output stream: {}", e);
+                    return;
                 }
-            },
-            |err| {
-                tracing::error!("Audio playback error: {}", err);
-            },
-            None,
-        )?;
+            };
 
-        stream.play()?;
+            if let Err(e) = stream.play() {
+                tracing::error!("Failed to start stream: {}", e);
+                return;
+            }
+
+            tracing::debug!("Audio playback thread started for '{}'", device_name_clone);
+
+            // Keep the thread alive until stop signal
+            let _ = stop_rx.recv();
+
+            tracing::debug!("Audio playback thread stopping for '{}'", device_name_clone);
+            // Stream is dropped here, stopping playback
+        });
 
         Ok(Self {
-            stream,
             buffer,
             position,
             device_name,
             config,
+            _stop_tx: stop_tx,
         })
     }
 

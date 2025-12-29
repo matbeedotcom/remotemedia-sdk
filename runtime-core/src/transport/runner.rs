@@ -1,11 +1,12 @@
 //! Core pipeline execution engine exposed to transports
 
 use crate::nodes::schema::collect_registered_configs;
+use crate::nodes::streaming_node::StreamingNodeFactory;
 use crate::transport::{StreamSessionHandle, TransportData};
 use crate::validation::{validate_manifest, SchemaValidator, ValidationResult};
 use crate::Result;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 
 /// Core pipeline execution engine exposed to transports
 ///
@@ -166,6 +167,43 @@ impl PipelineRunner {
     pub fn validate(&self, manifest: &crate::manifest::Manifest) -> Result<()> {
         self.inner.validate(manifest)
     }
+
+    /// Register a custom streaming node factory
+    ///
+    /// Use this to add application-specific nodes (e.g., MicInput, SpeakerOutput)
+    /// that will be available in streaming pipelines.
+    ///
+    /// # Arguments
+    ///
+    /// * `factory` - The streaming node factory to register
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use remotemedia_runtime_core::transport::PipelineRunner;
+    /// 
+    /// let runner = PipelineRunner::new().unwrap();
+    /// runner.register_streaming_factory(Arc::new(MyCustomNodeFactory)).await;
+    /// ```
+    pub async fn register_streaming_factory(&self, factory: Arc<dyn StreamingNodeFactory>) {
+        self.inner.add_streaming_factory(factory).await;
+    }
+
+    /// Register multiple streaming node factories at once
+    ///
+    /// Convenience method for registering multiple factories.
+    ///
+    /// # Arguments
+    ///
+    /// * `factories` - Iterator of streaming node factories to register
+    pub async fn register_streaming_factories(
+        &self,
+        factories: impl IntoIterator<Item = Arc<dyn StreamingNodeFactory>>,
+    ) {
+        for factory in factories {
+            self.inner.add_streaming_factory(factory).await;
+        }
+    }
 }
 
 // Clone is cheap (Arc-wrapped)
@@ -187,6 +225,9 @@ struct PipelineRunnerInner {
 
     /// Pre-compiled schema validator for node parameter validation
     schema_validator: SchemaValidator,
+
+    /// Custom streaming node factories (registered via add_streaming_factory)
+    custom_factories: RwLock<Vec<Arc<dyn StreamingNodeFactory>>>,
 }
 
 impl PipelineRunnerInner {
@@ -207,7 +248,30 @@ impl PipelineRunnerInner {
             executor,
             session_counter: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             schema_validator,
+            custom_factories: RwLock::new(Vec::new()),
         })
+    }
+
+    /// Add a custom streaming node factory
+    async fn add_streaming_factory(&self, factory: Arc<dyn StreamingNodeFactory>) {
+        let mut factories = self.custom_factories.write().await;
+        tracing::info!("Registered custom streaming node factory: {}", factory.node_type());
+        factories.push(factory);
+    }
+
+    /// Create a streaming registry with default + custom factories
+    async fn create_streaming_registry_with_custom(&self) -> crate::nodes::streaming_node::StreamingNodeRegistry {
+        use crate::nodes::streaming_registry::create_default_streaming_registry;
+        
+        let mut registry = create_default_streaming_registry();
+        
+        // Add custom factories
+        let custom = self.custom_factories.read().await;
+        for factory in custom.iter() {
+            registry.register(Arc::clone(factory));
+        }
+        
+        registry
     }
 
     /// Validate manifest parameters
@@ -292,6 +356,9 @@ impl PipelineRunnerInner {
         let (output_tx, output_rx) = mpsc::unbounded_channel::<crate::data::RuntimeData>();
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
 
+        // Create streaming registry with custom factories BEFORE spawning the task
+        let streaming_registry = self.create_streaming_registry_with_custom().await;
+
         // Create streaming session router task
         let session_id_clone = session_id.clone();
         let manifest_clone = Arc::clone(&manifest);
@@ -310,10 +377,7 @@ impl PipelineRunnerInner {
 
             // Create nodes ONCE at session creation and cache them for reuse
             // This prevents recreating Python processes and reloading models for each request
-            use crate::nodes::streaming_registry::create_default_streaming_registry;
             use std::collections::HashMap;
-
-            let streaming_registry = create_default_streaming_registry();
             let cached_nodes: Arc<HashMap<String, Box<dyn crate::nodes::StreamingNode>>> = {
                 let mut n = HashMap::new();
                 for node_spec in &manifest_clone.nodes {

@@ -10,6 +10,8 @@ use remotemedia_runtime_core::transport::{PipelineRunner, TransportData};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::pipeline_nodes::get_cli_node_factories;
+
 /// Initialize a PipelineRunner instance
 ///
 /// Creates a new PipelineRunner with all built-in nodes registered.
@@ -17,6 +19,29 @@ use std::sync::Arc;
 /// reused across multiple pipeline executions when possible.
 pub fn create_runner() -> Result<PipelineRunner> {
     PipelineRunner::new().map_err(|e| anyhow::anyhow!("Failed to create pipeline runner: {}", e))
+}
+
+/// Initialize a PipelineRunner with CLI-specific nodes (MicInput, SpeakerOutput, etc.)
+///
+/// Creates a new PipelineRunner with both built-in and CLI-specific streaming nodes.
+/// Use this when your pipeline needs audio I/O nodes.
+///
+/// # Examples
+///
+/// ```ignore
+/// use remotemedia_cli::pipeline::create_runner_with_cli_nodes;
+///
+/// let runner = create_runner_with_cli_nodes().await?;
+/// // Now you can use MicInput, SpeakerOutput, SrtOutput nodes in pipelines
+/// ```
+pub async fn create_runner_with_cli_nodes() -> Result<PipelineRunner> {
+    let runner = PipelineRunner::new()
+        .map_err(|e| anyhow::anyhow!("Failed to create pipeline runner: {}", e))?;
+
+    // Register CLI-specific streaming node factories
+    runner.register_streaming_factories(get_cli_node_factories()).await;
+
+    Ok(runner)
 }
 
 /// Parse a manifest from YAML content
