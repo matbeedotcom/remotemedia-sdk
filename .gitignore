@@ -209,3 +209,5 @@ specs/
 .claude/settings.local.json
 .claude/
 .specify/
+
+**/vendor/*

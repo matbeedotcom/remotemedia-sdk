@@ -1,15 +1,9 @@
 # RemoteMedia SDK - Top-Level Makefile
 # =====================================
 # Build configurations for runtime-core, transports, and examples.
+# Works on both Windows (PowerShell/cmd) and Unix (bash).
 
-SHELL := /bin/bash
 .DEFAULT_GOAL := help
-
-# Colors for pretty output
-CYAN := \033[36m
-GREEN := \033[32m
-YELLOW := \033[33m
-RESET := \033[0m
 
 # Build profiles
 RELEASE_FLAGS := --release
@@ -29,30 +23,71 @@ endif
 
 .PHONY: help
 help: ## Show this help message
-	@echo ""
-	@echo "$(CYAN)RemoteMedia SDK Build System$(RESET)"
-	@echo "=============================="
-	@echo ""
-	@echo "$(YELLOW)Usage:$(RESET) make [target] [PROFILE=dev|release|fast]"
-	@echo ""
-	@echo "$(GREEN)Runtime Core Targets:$(RESET)"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -E '^core' | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(CYAN)%-30s$(RESET) %s\n", $$1, $$2}'
-	@echo ""
-	@echo "$(GREEN)Transport Targets:$(RESET)"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -E '^transport' | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(CYAN)%-30s$(RESET) %s\n", $$1, $$2}'
-	@echo ""
-	@echo "$(GREEN)Example/CLI Targets:$(RESET)"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -E '^(example|cli)' | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(CYAN)%-30s$(RESET) %s\n", $$1, $$2}'
-	@echo ""
-	@echo "$(GREEN)Server Targets:$(RESET)"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -E '^server' | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(CYAN)%-30s$(RESET) %s\n", $$1, $$2}'
-	@echo ""
-	@echo "$(GREEN)Test & Bench Targets:$(RESET)"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -E '^(test|bench)' | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(CYAN)%-30s$(RESET) %s\n", $$1, $$2}'
-	@echo ""
-	@echo "$(GREEN)Utility Targets:$(RESET)"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -E '^(clean|check|doc|all|build)' | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(CYAN)%-30s$(RESET) %s\n", $$1, $$2}'
-	@echo ""
+	@echo.
+	@echo RemoteMedia SDK Build System
+	@echo ==============================
+	@echo.
+	@echo Usage: make [target] [PROFILE=dev/release/fast]
+	@echo.
+	@echo Runtime Core Targets:
+	@echo   core-default                   Build runtime-core with default features
+	@echo   core-cuda                      Build with CUDA support (requires CUDA 12.x)
+	@echo   core-minimal                   Build with no default features
+	@echo   core-multiprocess              Build with only multiprocess feature
+	@echo   core-silero                    Build with only silero-vad feature
+	@echo   core-docker                    Build with only docker feature
+	@echo   core-video                     Build with video feature (FFmpeg-based)
+	@echo   core-video-pure-rust           Build with pure-Rust video codecs
+	@echo   core-grpc-client               Build with gRPC client
+	@echo   core-all-features              Build with all features enabled
+	@echo.
+	@echo Transport Targets:
+	@echo   transports-all                 Build all transports
+	@echo   transport-grpc                 Build gRPC transport
+	@echo   transport-grpc-server          Build gRPC transport with server
+	@echo   transport-http                 Build HTTP transport
+	@echo   transport-http-server          Build HTTP transport with server
+	@echo   transport-webrtc               Build WebRTC transport
+	@echo   transport-webrtc-full          Build WebRTC with all features
+	@echo   transport-ffi                  Build FFI transport (Python)
+	@echo   transport-ffi-napi             Build FFI transport (Node.js)
+	@echo.
+	@echo Server Targets:
+	@echo   servers-all                    Build all server binaries
+	@echo   server-grpc                    Build gRPC server binary
+	@echo   server-http                    Build HTTP server binary
+	@echo   server-webrtc                  Build WebRTC server binary
+	@echo.
+	@echo CLI Targets:
+	@echo   cli                            Build all CLI tools
+	@echo   cli-remotemedia                Build main remotemedia CLI
+	@echo   cli-transcribe                 Build transcribe-srt CLI
+	@echo   cli-embed                      Build pipeline-embed (set PIPELINE_YAML)
+	@echo.
+	@echo Test Targets:
+	@echo   test                           Run all tests
+	@echo   test-core                      Run runtime-core tests
+	@echo   test-core-unit                 Run runtime-core unit tests
+	@echo   test-core-integration          Run runtime-core integration tests
+	@echo   test-core-docker               Run Docker-specific tests
+	@echo   test-core-vad                  Run VAD-specific tests
+	@echo   test-transports                Run all transport tests
+	@echo.
+	@echo Benchmark Targets:
+	@echo   bench                          Run all benchmarks
+	@echo   bench-latency                  Run latency benchmarks
+	@echo   bench-vad                      Run VAD benchmarks
+	@echo   bench-docker                   Run Docker benchmarks
+	@echo   bench-pipeline                 Run pipeline benchmarks
+	@echo.
+	@echo Utility Targets:
+	@echo   check                          Check all packages compile
+	@echo   clippy                         Run clippy on all packages
+	@echo   fmt                            Format all Rust code
+	@echo   doc                            Build documentation
+	@echo   clean                          Clean build artifacts
+	@echo   clean-all                      Clean everything including examples
+	@echo.
 
 # =============================================================================
 # BUILD ALL
@@ -70,10 +105,13 @@ build-release: ## Build everything in release mode
 # RUNTIME-CORE TARGETS
 # =============================================================================
 
-.PHONY: core-default core-minimal core-multiprocess core-silero core-docker core-video core-video-pure-rust core-grpc-client core-all-features
+.PHONY: core-default core-minimal core-multiprocess core-silero core-docker core-video core-video-pure-rust core-grpc-client core-cuda core-all-features
 
 core-default: ## Build runtime-core with default features (multiprocess, silero-vad, docker, video)
 	cargo build -p remotemedia-runtime-core $(CARGO_FLAGS)
+
+core-cuda: ## Build runtime-core with CUDA support (requires CUDA 12.x toolkit)
+	cargo build -p remotemedia-runtime-core --features cuda $(CARGO_FLAGS)
 
 core-minimal: ## Build runtime-core with no default features
 	cargo build -p remotemedia-runtime-core --no-default-features $(CARGO_FLAGS)
