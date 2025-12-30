@@ -85,18 +85,29 @@ FFMPEG_LIBS_MODE = "static"
     Write-Host "  Cargo config updated: $configPath" -ForegroundColor Gray
 }
 
-# Check if already built (look for MSVC .lib files)
+# Check if already built (look for .lib files)
 if (Test-Path (Join-Path $libDir "avcodec.lib")) {
     Write-Host "FFmpeg static libraries already built at $ffmpegDir" -ForegroundColor Green
     Update-CargoConfig
     exit 0
 }
 
-# Clean up old MinGW build if present
+# Check if .a files exist (needs renaming)
 if (Test-Path (Join-Path $libDir "libavcodec.a")) {
-    Write-Host "Removing old MinGW build..." -ForegroundColor Yellow
-    Remove-Item -Recurse -Force $ffmpegDir
+    Write-Host "FFmpeg libraries need renaming from .a to .lib..." -ForegroundColor Yellow
+    $libsToRename = @("libavcodec", "libavdevice", "libavfilter", "libavformat", "libavutil", "libpostproc", "libswresample", "libswscale")
+    foreach ($lib in $libsToRename) {
+        $aFile = Join-Path $libDir "$lib.a"
+        $libFile = Join-Path $libDir "$($lib -replace '^lib', '').lib"
+        if (Test-Path $aFile) {
+            Move-Item -Force $aFile $libFile
+            Write-Host "  $lib.a -> $($lib -replace '^lib', '').lib" -ForegroundColor Gray
+        }
+    }
+    Update-CargoConfig
+    exit 0
 }
+
 
 Write-Host "Building FFmpeg $FFMPEG_VERSION from source (STATIC, MSVC)..." -ForegroundColor Cyan
 Write-Host ""
@@ -302,14 +313,23 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Verify build - MSVC produces .lib files
-if (-not (Test-Path (Join-Path $libDir "avcodec.lib"))) {
-    # Check if it produced libavcodec.a (wrong toolchain)
-    if (Test-Path (Join-Path $libDir "libavcodec.a")) {
-        Write-Error "Build produced MinGW libraries (.a) instead of MSVC (.lib). Toolchain configuration failed."
-    } else {
-        Write-Error "Build completed but avcodec.lib not found. Check build output."
+# FFmpeg with --toolchain=msvc produces .a files (Unix naming) but they are MSVC-compatible
+# Rename them to .lib for Windows toolchain compatibility
+Write-Host "Renaming libraries from .a to .lib format..." -ForegroundColor Gray
+
+$libsToRename = @("libavcodec", "libavdevice", "libavfilter", "libavformat", "libavutil", "libpostproc", "libswresample", "libswscale")
+foreach ($lib in $libsToRename) {
+    $aFile = Join-Path $libDir "$lib.a"
+    $libFile = Join-Path $libDir "$($lib -replace '^lib', '').lib"
+    if (Test-Path $aFile) {
+        Move-Item -Force $aFile $libFile
+        Write-Host "  $lib.a -> $($lib -replace '^lib', '').lib" -ForegroundColor Gray
     }
+}
+
+# Verify build
+if (-not (Test-Path (Join-Path $libDir "avcodec.lib"))) {
+    Write-Error "Build completed but avcodec.lib not found. Check build output."
     exit 1
 }
 

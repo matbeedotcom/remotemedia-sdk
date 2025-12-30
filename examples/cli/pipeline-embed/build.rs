@@ -333,6 +333,20 @@ pub const BINARY_NAME: &str = "{binary_name}";
 
     fs::write(&dest_path, generated).unwrap();
 
+    // Link Windows Media Foundation libraries for FFmpeg's hardware acceleration
+    #[cfg(target_os = "windows")]
+    {
+        // Required for FFmpeg's MediaFoundation encoder/decoder support
+        println!("cargo:rustc-link-lib=mfuuid");
+        println!("cargo:rustc-link-lib=mfplat");
+        println!("cargo:rustc-link-lib=ole32");
+        println!("cargo:rustc-link-lib=strmiids");
+        // Additional Windows libraries that FFmpeg may need
+        println!("cargo:rustc-link-lib=bcrypt");
+        println!("cargo:rustc-link-lib=user32");
+        println!("cargo:rustc-link-lib=secur32");
+    }
+
     // Rerun if build script changes or relevant env vars change
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=PIPELINE_YAML");
