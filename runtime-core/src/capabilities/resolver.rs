@@ -1478,4 +1478,311 @@ mod tests {
             err_msg
         );
     }
+
+    // =========================================================================
+    // Spec 025 - User Story 4: Passthrough Node Support Tests
+    // =========================================================================
+
+    #[test]
+    fn test_passthrough_inherits_discovered_caps() {
+        // T031 [US4]: Test that Passthrough nodes receive pending updates
+        // Scenario: source (RuntimeDiscovered) -> passthrough (Passthrough) -> sink (Static)
+        use super::super::constraints::{AudioConstraints, AudioSampleFormat, ConstraintValue, MediaConstraints};
+        use super::super::dynamic::{CapabilityBehavior, ResolvedCapabilities};
+
+        let registry = StreamingNodeRegistry::new();
+        let resolver = CapabilityResolver::new(&registry);
+
+        let mut ctx = ResolutionContext::new();
+
+        // Set up: source -> passthrough -> sink
+        ctx.set_behavior("source", CapabilityBehavior::RuntimeDiscovered);
+        ctx.set_behavior("passthrough", CapabilityBehavior::Passthrough);
+        ctx.set_behavior("sink", CapabilityBehavior::Static);
+
+        ctx.node_types.insert("source".to_string(), "MicInput".to_string());
+        ctx.node_types.insert("passthrough".to_string(), "SpeakerOutput".to_string());
+        ctx.node_types.insert("sink".to_string(), "AudioSink".to_string());
+
+        ctx.add_connection("source", "passthrough");
+        ctx.add_connection("passthrough", "sink");
+
+        // Set up source's provisional capabilities
+        let potential_caps = MediaCapabilities::with_output(
+            MediaConstraints::Audio(AudioConstraints {
+                sample_rate: Some(ConstraintValue::Range { min: 8000, max: 192000 }),
+                channels: Some(ConstraintValue::Range { min: 1, max: 8 }),
+                format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+            })
+        );
+        ctx.resolved.insert("source".to_string(), ResolvedCapabilities::provisional("source", potential_caps));
+
+        // Source discovers actual 44100Hz
+        let actual_caps = MediaCapabilities::with_output(
+            MediaConstraints::Audio(AudioConstraints {
+                sample_rate: Some(ConstraintValue::Exact(44100)),
+                channels: Some(ConstraintValue::Exact(2)),
+                format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+            })
+        );
+
+        // Propagate
+        let result = resolver.revalidate_and_propagate(&mut ctx, "source", actual_caps);
+        assert!(result.is_ok());
+
+        // Passthrough should have a pending update
+        let pending = ctx.get_pending_update("passthrough");
+        assert!(pending.is_some(), "Passthrough should receive pending update");
+
+        let update = pending.unwrap();
+        assert_eq!(update.upstream_node_id, "source");
+        assert_eq!(update.node_id, "passthrough");
+
+        // Verify the update contains the actual 44100Hz
+        if let Some(MediaConstraints::Audio(audio)) = update.upstream_output.default_output() {
+            assert_eq!(audio.sample_rate, Some(ConstraintValue::Exact(44100)));
+        } else {
+            panic!("Expected audio constraints in pending update");
+        }
+    }
+
+    #[test]
+    fn test_passthrough_after_adaptive_receives_update() {
+        // T035 [US4]: Test Passthrough after Adaptive: Source -> Adaptive -> Passthrough
+        use super::super::dynamic::CapabilityBehavior;
+
+        let registry = StreamingNodeRegistry::new();
+        let resolver = CapabilityResolver::new(&registry);
+
+        let mut ctx = ResolutionContext::new();
+
+        // Set up: source -> adaptive -> passthrough -> sink
+        ctx.set_behavior("source", CapabilityBehavior::RuntimeDiscovered);
+        ctx.set_behavior("adaptive", CapabilityBehavior::Adaptive);
+        ctx.set_behavior("passthrough", CapabilityBehavior::Passthrough);
+        ctx.set_behavior("sink", CapabilityBehavior::Static);
+
+        ctx.add_connection("source", "adaptive");
+        ctx.add_connection("adaptive", "passthrough");
+        ctx.add_connection("passthrough", "sink");
+
+        // Compute propagation order
+        let order = resolver.compute_propagation_order(&ctx, "source");
+
+        // Both adaptive and passthrough should be in propagation order
+        assert_eq!(order.len(), 2);
+        assert!(order.contains(&"adaptive".to_string()));
+        assert!(order.contains(&"passthrough".to_string()));
+
+        // Adaptive should come before passthrough
+        let adaptive_idx = order.iter().position(|x| x == "adaptive").unwrap();
+        let passthrough_idx = order.iter().position(|x| x == "passthrough").unwrap();
+        assert!(adaptive_idx < passthrough_idx, "Adaptive should come before Passthrough in propagation order");
+    }
+
+    // =========================================================================
+    // Spec 025 - Phase 7: Edge Case Tests
+    // =========================================================================
+
+    #[test]
+    fn test_update_queuing_during_processing() {
+        // T038: Test update queuing when node already processing (batch boundary application)
+        // Scenario: Updates can be added while a node is "processing", and new updates
+        // replace old ones. The SessionRouter would apply updates at batch boundaries.
+        use super::super::constraints::{AudioConstraints, AudioSampleFormat, ConstraintValue, MediaConstraints};
+        use super::super::dynamic::CapabilityBehavior;
+
+        let registry = StreamingNodeRegistry::new();
+        let resolver = CapabilityResolver::new(&registry);
+
+        let mut ctx = ResolutionContext::new();
+
+        // Set up: source1 -> resample, source2 -> resample (fan-in)
+        // Both sources are RuntimeDiscovered and may report capabilities at different times
+        ctx.set_behavior("source1", CapabilityBehavior::RuntimeDiscovered);
+        ctx.set_behavior("source2", CapabilityBehavior::RuntimeDiscovered);
+        ctx.set_behavior("resample", CapabilityBehavior::Adaptive);
+
+        ctx.add_connection("source1", "resample");
+        ctx.add_connection("source2", "resample");
+
+        // Set up provisional capabilities for sources
+        let potential_caps = MediaCapabilities::with_output(MediaConstraints::Audio(AudioConstraints {
+            sample_rate: Some(ConstraintValue::Range { min: 8000, max: 192000 }),
+            channels: Some(ConstraintValue::Range { min: 1, max: 8 }),
+            format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+        }));
+        ctx.resolved.insert("source1".to_string(), ResolvedCapabilities::provisional("source1", potential_caps.clone()));
+        ctx.resolved.insert("source2".to_string(), ResolvedCapabilities::provisional("source2", potential_caps));
+
+        // Simulate: source1 discovers 44100Hz while resample is "busy"
+        let actual1 = MediaCapabilities::with_output(MediaConstraints::Audio(AudioConstraints {
+            sample_rate: Some(ConstraintValue::Exact(44100)),
+            channels: Some(ConstraintValue::Exact(2)),
+            format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+        }));
+        resolver.revalidate_and_propagate(&mut ctx, "source1", actual1).unwrap();
+
+        // Verify: resample has pending update from source1
+        assert!(ctx.has_pending_updates(), "Should have pending update after source1");
+        let update1 = ctx.get_pending_update("resample").unwrap();
+        assert_eq!(update1.upstream_node_id, "source1");
+        if let Some(MediaConstraints::Audio(audio)) = update1.upstream_output.default_output() {
+            assert_eq!(audio.sample_rate, Some(ConstraintValue::Exact(44100)));
+        }
+
+        // Simulate: source2 discovers 48000Hz before resample consumed update1
+        // (simulates concurrent initialization or re-discovery)
+        let actual2 = MediaCapabilities::with_output(MediaConstraints::Audio(AudioConstraints {
+            sample_rate: Some(ConstraintValue::Exact(48000)),
+            channels: Some(ConstraintValue::Exact(1)),
+            format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+        }));
+        resolver.revalidate_and_propagate(&mut ctx, "source2", actual2).unwrap();
+
+        // Verify: resample's pending update was REPLACED by source2's (newer wins)
+        // This is the expected behavior - only one pending update per node
+        assert!(ctx.has_pending_updates(), "Should still have pending update");
+        let update2 = ctx.get_pending_update("resample").unwrap();
+        assert_eq!(update2.upstream_node_id, "source2", "Newer update should replace older");
+        if let Some(MediaConstraints::Audio(audio)) = update2.upstream_output.default_output() {
+            assert_eq!(audio.sample_rate, Some(ConstraintValue::Exact(48000)),
+                "Should have 48kHz from source2, not 44.1kHz from source1");
+        }
+
+        // Simulate: SessionRouter.apply_pending_updates() at batch boundary
+        // Takes the update and applies it to the node
+        let taken = ctx.take_pending_update("resample");
+        assert!(taken.is_some(), "Should be able to take the pending update");
+        assert!(!ctx.has_pending_updates(), "No pending updates after taking");
+
+        // After applying, the node is ready for new updates
+        // If another source re-discovers, it can queue a new update
+        let actual3 = MediaCapabilities::with_output(MediaConstraints::Audio(AudioConstraints {
+            sample_rate: Some(ConstraintValue::Exact(96000)),
+            channels: Some(ConstraintValue::Exact(2)),
+            format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+        }));
+        resolver.revalidate_and_propagate(&mut ctx, "source1", actual3).unwrap();
+
+        // New update queued
+        assert!(ctx.has_pending_updates(), "New update should be queued");
+        let update3 = ctx.get_pending_update("resample").unwrap();
+        assert_eq!(update3.upstream_node_id, "source1");
+        if let Some(MediaConstraints::Audio(audio)) = update3.upstream_output.default_output() {
+            assert_eq!(audio.sample_rate, Some(ConstraintValue::Exact(96000)));
+        }
+    }
+
+    #[test]
+    fn test_repropagation_performance_10_nodes() {
+        // T039: Verify re-propagation performance < 10ms for 10 nodes
+        // Note: revalidate_and_propagate only creates pending updates for IMMEDIATE downstream nodes.
+        // For a full cascade, SessionRouter.apply_pending_updates() iteratively applies updates.
+        // This test measures the resolver's portion: computing propagation order and initial update.
+        use super::super::constraints::{AudioConstraints, AudioSampleFormat, ConstraintValue, MediaCapabilities, MediaConstraints};
+        use super::super::dynamic::CapabilityBehavior;
+        use std::time::Instant;
+
+        let registry = StreamingNodeRegistry::new();
+        let resolver = CapabilityResolver::new(&registry);
+
+        let mut ctx = ResolutionContext::new();
+
+        // Set up a chain of 10 nodes: source -> node1 -> node2 -> ... -> node9
+        ctx.set_behavior("source", CapabilityBehavior::RuntimeDiscovered);
+        for i in 1..=9 {
+            ctx.set_behavior(&format!("node{}", i), CapabilityBehavior::Adaptive);
+        }
+
+        // Create connections
+        ctx.add_connection("source", "node1");
+        for i in 1..9 {
+            ctx.add_connection(&format!("node{}", i), &format!("node{}", i + 1));
+        }
+
+        // Set up initial resolved capabilities for source (provisional)
+        let source_caps = MediaCapabilities::with_output(MediaConstraints::Audio(AudioConstraints {
+            sample_rate: Some(ConstraintValue::Range { min: 8000, max: 192000 }),
+            channels: Some(ConstraintValue::Range { min: 1, max: 8 }),
+            format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+        }));
+        ctx.resolved.insert("source".to_string(), ResolvedCapabilities::provisional("source", source_caps));
+
+        // Set up resolved capabilities for each adaptive node
+        for i in 1..=9 {
+            let node_caps = MediaCapabilities::with_input_output(
+                MediaConstraints::Audio(AudioConstraints {
+                    sample_rate: Some(ConstraintValue::Range { min: 8000, max: 192000 }),
+                    channels: Some(ConstraintValue::Range { min: 1, max: 8 }),
+                    format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+                }),
+                MediaConstraints::Audio(AudioConstraints {
+                    sample_rate: Some(ConstraintValue::Range { min: 8000, max: 192000 }),
+                    channels: Some(ConstraintValue::Range { min: 1, max: 8 }),
+                    format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+                }),
+            );
+            ctx.resolved.insert(format!("node{}", i), ResolvedCapabilities::needs_reverse(&format!("node{}", i), node_caps));
+        }
+
+        // Actual capabilities discovered by source
+        let actual_caps = MediaCapabilities::with_output(MediaConstraints::Audio(AudioConstraints {
+            sample_rate: Some(ConstraintValue::Exact(48000)),
+            channels: Some(ConstraintValue::Exact(2)),
+            format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+        }));
+
+        // Test 1: Verify compute_propagation_order includes all 9 adaptive nodes
+        let order = resolver.compute_propagation_order(&ctx, "source");
+        assert_eq!(order.len(), 9, "Propagation order should include all 9 adaptive nodes");
+
+        // Test 2: Measure re-propagation time for a single step (source -> node1)
+        let start = Instant::now();
+        let result = resolver.revalidate_and_propagate(&mut ctx, "source", actual_caps.clone());
+        let elapsed = start.elapsed();
+
+        // Verify success
+        assert!(result.is_ok(), "Re-propagation should succeed: {:?}", result);
+
+        // Verify immediate downstream (node1) received pending update
+        assert!(
+            ctx.get_pending_update("node1").is_some(),
+            "node1 should have pending update from source"
+        );
+
+        // Test 3: Simulate full cascade (9 steps) and measure total time
+        // Each step would be triggered when the Adaptive node is configured
+        let mut total_time = elapsed;
+        for i in 1..9 {
+            let node_id = format!("node{}", i);
+            let next_node = format!("node{}", i + 1);
+
+            // Clear pending and simulate this node being configured
+            ctx.take_pending_update(&node_id);
+
+            // Simulate the node re-propagating to its downstream
+            let node_actual = actual_caps.clone(); // In reality, this would be computed
+            let start = Instant::now();
+            let _result = resolver.revalidate_and_propagate(&mut ctx, &node_id, node_actual);
+            total_time += start.elapsed();
+
+            // Verify next node gets update
+            assert!(
+                ctx.get_pending_update(&next_node).is_some(),
+                "{} should have pending update from {}",
+                next_node,
+                node_id
+            );
+        }
+
+        // Verify performance: total cascade < 10ms for 10 nodes
+        assert!(
+            total_time.as_millis() < 10,
+            "Full cascade re-propagation should complete in < 10ms, took {}ms",
+            total_time.as_millis()
+        );
+
+        println!("Full cascade re-propagation for 10 nodes completed in {:?}", total_time);
+    }
 }
