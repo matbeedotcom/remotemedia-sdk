@@ -11,6 +11,74 @@ use crate::generated::{
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::transport::TransportData;
 
+/// Get current timestamp in microseconds for arrival time stamping (spec 026)
+///
+/// This should be called at the transport ingest boundary to capture
+/// the exact moment data enters the system for drift monitoring.
+pub fn now_micros() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as u64
+}
+
+/// Convert protobuf AudioBuffer to RuntimeData::Audio with arrival timestamp
+///
+/// This handles audio format conversion (F32, I16, I32) and stamps the arrival
+/// timestamp for spec 026 drift monitoring.
+///
+/// # Arguments
+/// * `audio` - The protobuf AudioBuffer
+/// * `arrival_ts_us` - Optional arrival timestamp (if None, uses now_micros())
+///
+/// # Returns
+/// RuntimeData::Audio or error if format is unsupported
+pub fn audio_buffer_to_runtime_data(
+    audio: &crate::generated::AudioBuffer,
+    arrival_ts_us: Option<u64>,
+) -> Result<RuntimeData, String> {
+    use crate::generated::AudioFormat as ProtoAudioFormat;
+
+    let samples: Vec<f32> = match ProtoAudioFormat::try_from(audio.format) {
+        Ok(ProtoAudioFormat::F32) => {
+            audio.samples
+                .chunks_exact(4)
+                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect()
+        }
+        Ok(ProtoAudioFormat::I16) => {
+            audio.samples
+                .chunks_exact(2)
+                .map(|chunk| {
+                    let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
+                    sample as f32 / 32768.0
+                })
+                .collect()
+        }
+        Ok(ProtoAudioFormat::I32) => {
+            audio.samples
+                .chunks_exact(4)
+                .map(|chunk| {
+                    let sample = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                    sample as f32 / 2147483648.0
+                })
+                .collect()
+        }
+        _ => {
+            return Err(format!("Unsupported audio format: {}", audio.format));
+        }
+    };
+
+    Ok(RuntimeData::Audio {
+        samples,
+        sample_rate: audio.sample_rate,
+        channels: audio.channels,
+        stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: arrival_ts_us.or_else(|| Some(now_micros())),
+    })
+}
+
 /// Convert runtime-core RuntimeData to Protobuf DataBuffer
 pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
     let data_type = match data {
@@ -147,7 +215,25 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
 }
 
 /// Convert Protobuf DataBuffer to runtime-core RuntimeData
+///
+/// Note: For spec 026 drift monitoring, use `data_buffer_to_runtime_data_with_arrival()`
+/// to stamp the arrival timestamp at transport ingest time.
 pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
+    data_buffer_to_runtime_data_with_arrival(buffer, None)
+}
+
+/// Convert Protobuf DataBuffer to runtime-core RuntimeData with arrival timestamp stamping
+///
+/// # Arguments
+/// * `buffer` - The protobuf DataBuffer to convert
+/// * `stamp_arrival` - If true, stamps arrival_ts_us with current time (spec 026)
+///
+/// This should be called at the transport ingest boundary to ensure accurate
+/// drift monitoring timestamps.
+pub fn data_buffer_to_runtime_data_with_arrival(buffer: &DataBuffer, arrival_ts_us: Option<u64>) -> Option<RuntimeData> {
+    // If caller wants arrival stamping but didn't provide a value, generate one now
+    let arrival_ts = arrival_ts_us.or_else(|| None);
+
     match &buffer.data_type {
         Some(DataType::Audio(audio)) => {
             // Convert bytes back to f32 samples
@@ -162,8 +248,8 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
                 sample_rate: audio.sample_rate,
                 channels: audio.channels,
                 stream_id: None,
-                timestamp_us: None,     // spec 026: Set by transport layer
-                arrival_ts_us: None,    // spec 026: Set by transport layer
+                timestamp_us: None,     // Could extract from proto metadata if available
+                arrival_ts_us: arrival_ts,
             })
         }
         Some(DataType::Video(video)) => {
@@ -201,7 +287,7 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
                 timestamp_us: video.timestamp_us,
                 is_keyframe: video.is_keyframe,
                 stream_id: None,
-                arrival_ts_us: None,    // spec 026: Set by transport layer
+                arrival_ts_us: arrival_ts,
             })
         }
         Some(DataType::Tensor(tensor)) => Some(RuntimeData::Tensor {

@@ -933,23 +933,25 @@ impl WebRtcTransport {
 
 use async_trait::async_trait;
 use remotemedia_runtime_core::manifest::Manifest;
-use remotemedia_runtime_core::transport::{PipelineRunner, PipelineTransport, TransportData};
+use remotemedia_runtime_core::transport::{PipelineTransport, TransportData};
 
 #[async_trait]
 impl PipelineTransport for WebRtcTransport {
     /// Execute a pipeline with unary semantics (T133)
     ///
-    /// This uses PipelineRunner directly for pipeline execution.
+    /// This uses PipelineExecutor directly for pipeline execution (spec 026 migration).
     async fn execute(
         &self,
         manifest: Arc<Manifest>,
         input: TransportData,
     ) -> remotemedia_runtime_core::Result<TransportData> {
-        // Create pipeline runner
-        let runner = PipelineRunner::new()?;
+        use remotemedia_runtime_core::transport::PipelineExecutor;
+
+        // Create pipeline executor (spec 026)
+        let executor = PipelineExecutor::new()?;
 
         // Execute directly
-        runner.execute_unary(manifest, input).await
+        executor.execute_unary(manifest, input).await
     }
 
     /// Start a streaming pipeline session (T134)
@@ -960,14 +962,50 @@ impl PipelineTransport for WebRtcTransport {
         manifest: Arc<Manifest>,
     ) -> remotemedia_runtime_core::Result<Box<dyn remotemedia_runtime_core::transport::StreamSession>>
     {
-        // Create pipeline runner
-        let runner = PipelineRunner::new()?;
+        use remotemedia_runtime_core::transport::PipelineExecutor;
 
-        // Create streaming session
-        let session = runner.create_stream_session(manifest).await?;
+        // Create pipeline executor (spec 026)
+        let executor = PipelineExecutor::new()?;
 
-        // Return as boxed trait object
-        Ok(Box::new(session))
+        // Create streaming session using SessionHandle (spec 026)
+        let session = executor.create_session(manifest).await?;
+
+        // Wrap SessionHandle in StreamSession adapter
+        Ok(Box::new(SessionHandleWrapper::new(session)))
+    }
+}
+
+/// Wrapper to adapt SessionHandle to StreamSession trait (spec 026)
+struct SessionHandleWrapper {
+    handle: remotemedia_runtime_core::transport::SessionHandle,
+}
+
+impl SessionHandleWrapper {
+    fn new(handle: remotemedia_runtime_core::transport::SessionHandle) -> Self {
+        Self { handle }
+    }
+}
+
+#[async_trait::async_trait]
+impl remotemedia_runtime_core::transport::StreamSession for SessionHandleWrapper {
+    fn session_id(&self) -> &str {
+        &self.handle.session_id
+    }
+
+    async fn send_input(&mut self, data: TransportData) -> remotemedia_runtime_core::Result<()> {
+        self.handle.send_input(data).await
+    }
+
+    async fn recv_output(&mut self) -> remotemedia_runtime_core::Result<Option<TransportData>> {
+        self.handle.recv_output().await
+    }
+
+    async fn close(&mut self) -> remotemedia_runtime_core::Result<()> {
+        self.handle.close().await
+    }
+
+    fn is_active(&self) -> bool {
+        self.handle.is_active()
     }
 }
 

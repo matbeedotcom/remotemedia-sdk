@@ -16,7 +16,7 @@
 
 use async_trait::async_trait;
 use remotemedia_runtime_core::transport::{
-    ClientConfig, PipelineClient, PipelineRunner, PipelineTransport, ServerConfig, TransportPlugin,
+    ClientConfig, PipelineClient, PipelineExecutor, PipelineTransport, ServerConfig, TransportPlugin,
 };
 use remotemedia_runtime_core::Result;
 use std::sync::Arc;
@@ -76,7 +76,7 @@ impl TransportPlugin for HttpTransportPlugin {
     /// # Arguments
     ///
     /// * `config` - Server configuration containing bind address
-    /// * `runner` - Pipeline runner instance for executing pipelines
+    /// * `executor` - Pipeline executor for executing pipelines (spec 026 migration)
     ///
     /// # Returns
     ///
@@ -90,11 +90,11 @@ impl TransportPlugin for HttpTransportPlugin {
     async fn create_server(
         &self,
         config: &ServerConfig,
-        runner: Arc<PipelineRunner>,
+        executor: Arc<PipelineExecutor>,
     ) -> Result<Box<dyn PipelineTransport>> {
         use crate::server::HttpServer;
 
-        let server = HttpServer::new(config.address.clone(), runner)
+        let server = HttpServer::new(config.address.clone(), executor)
             .await
             .map_err(|e| remotemedia_runtime_core::Error::Transport(e.to_string()))?;
 

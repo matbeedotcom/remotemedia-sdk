@@ -12,12 +12,12 @@
 //! # Example
 //!
 //! ```
-//! use remotemedia_runtime_core::transport::{PipelineRunner, TransportData};
+//! use remotemedia_runtime_core::transport::{PipelineExecutor, TransportData};
 //! use remotemedia_runtime_core::data::RuntimeData;
 //!
-//! let runner = PipelineRunner::new().unwrap();
+//! let executor = PipelineExecutor::new().unwrap();
 //! let input = TransportData::new(RuntimeData::Text("hello".into()));
-//! // Use runner.execute_unary(manifest, input).await for execution
+//! // Use executor.execute_unary(manifest, input).await for execution
 //! ```
 
 use crate::Result;
@@ -29,27 +29,21 @@ use std::sync::Arc;
 pub mod client;
 pub mod data;
 pub mod plugin_registry;
-pub mod runner;
 pub mod session;
 pub mod session_router;
 
 // PipelineExecutor facade (spec 026)
 pub mod executor;
 
+
 // Re-export key types for convenience
 pub use client::{ClientStreamSession, PipelineClient, TransportType};
 pub use data::TransportData;
 pub use executor::{ExecutorConfig, PipelineExecutor, SessionHandle};
 pub use plugin_registry::TransportPluginRegistry;
-pub use runner::PipelineRunner;
 pub use session::{StreamSession, StreamSessionHandle};
 pub use session_router::{DataPacket, SessionRouter};
 
-/// Deprecated alias for PipelineExecutor
-///
-/// Use `PipelineExecutor` instead. This alias exists for backward compatibility.
-#[deprecated(since = "0.5.0", note = "Use PipelineExecutor instead")]
-pub type PipelineRunnerDeprecated = PipelineExecutor;
 
 /// Configuration for creating a transport client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,7 +150,7 @@ pub trait TransportPlugin: Send + Sync {
     /// # Arguments
     ///
     /// * `config` - Server configuration including bind address
-    /// * `runner` - Pipeline runner for executing pipelines
+    /// * `executor` - Pipeline executor for executing pipelines (spec 026 migration)
     ///
     /// # Returns
     ///
@@ -165,7 +159,7 @@ pub trait TransportPlugin: Send + Sync {
     async fn create_server(
         &self,
         config: &ServerConfig,
-        runner: Arc<PipelineRunner>,
+        executor: Arc<PipelineExecutor>,
     ) -> Result<Box<dyn PipelineTransport>>;
 
     /// Validate transport-specific configuration

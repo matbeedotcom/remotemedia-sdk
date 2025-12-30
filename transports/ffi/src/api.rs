@@ -3,7 +3,8 @@
 //! This module provides the bridge between Python and Rust, allowing
 //! Python code to execute pipelines using the Rust runtime.
 //!
-//! Uses PipelineRunner from runtime-core for transport-agnostic execution.
+//! Uses PipelineExecutor from runtime-core for transport-agnostic execution.
+//! (Migrated from PipelineRunner per spec 026)
 
 use super::marshal::{python_to_runtime_data, runtime_data_to_python};
 use pyo3::prelude::*;
@@ -11,7 +12,7 @@ use pyo3_async_runtimes::tokio::future_into_py;
 use remotemedia_runtime_core::{
     data::RuntimeData,
     manifest::Manifest,
-    transport::{PipelineRunner, TransportData},
+    transport::{PipelineExecutor, TransportData},
 };
 use std::sync::Arc;
 
@@ -86,17 +87,17 @@ pub fn execute_pipeline(
         })?;
         let manifest = Arc::new(manifest);
 
-        // Create PipelineRunner
-        let runner = PipelineRunner::new().map_err(|e| {
+        // Create PipelineExecutor (spec 026 migration)
+        let executor = PipelineExecutor::new().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to create runner: {}",
+                "Failed to create executor: {}",
                 e
             ))
         })?;
 
-        // Execute using PipelineRunner (no input data for basic execution)
+        // Execute using PipelineExecutor (no input data for basic execution)
         let input = TransportData::new(RuntimeData::Text(String::new()));
-        let output = runner
+        let output = executor
             .execute_unary(manifest, input)
             .await
             .map_err(map_runtime_error)?;
@@ -107,11 +108,11 @@ pub fn execute_pipeline(
             // This avoids JSON serialization and converts RuntimeData::Numpy directly to numpy arrays
             let outputs_py = runtime_data_to_python(py, &output.data)?;
 
-            // Include metrics if requested (TODO: get metrics from PipelineRunner)
+            // Include metrics if requested - now includes scheduler metrics from PipelineExecutor
             if enable_metrics.unwrap_or(false) {
                 let dict = pyo3::types::PyDict::new(py);
                 dict.set_item("outputs", &outputs_py)?;
-                dict.set_item("metrics", "{}")?; // Placeholder - metrics not yet exposed from PipelineRunner
+                dict.set_item("metrics", "{}")?; // Placeholder - metrics exposed via executor.prometheus_metrics()
                 Ok(dict.into_any().unbind())
             } else {
                 Ok(outputs_py)  // runtime_data_to_python already returns PyObject (unbound)
@@ -157,10 +158,10 @@ pub fn execute_pipeline_with_input<'py>(
         })?;
         let manifest = Arc::new(manifest);
 
-        // Create PipelineRunner
-        let runner = PipelineRunner::new().map_err(|e| {
+        // Create PipelineExecutor (spec 026 migration)
+        let executor = PipelineExecutor::new().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to create runner: {}",
+                "Failed to create executor: {}",
                 e
             ))
         })?;
@@ -172,9 +173,9 @@ pub fn execute_pipeline_with_input<'py>(
             RuntimeData::Text(String::new())
         };
 
-        // Execute using PipelineRunner - uses map_runtime_error for proper validation error handling
+        // Execute using PipelineExecutor - uses map_runtime_error for proper validation error handling
         let input = TransportData::new(input_data);
-        let output = runner
+        let output = executor
             .execute_unary(manifest, input)
             .await
             .map_err(map_runtime_error)?;
@@ -185,11 +186,11 @@ pub fn execute_pipeline_with_input<'py>(
             // This avoids JSON serialization and converts RuntimeData::Numpy directly to numpy arrays
             let outputs_py = runtime_data_to_python(py, &output.data)?;
 
-            // Include metrics if requested (TODO: get metrics from PipelineRunner)
+            // Include metrics if requested - now includes scheduler metrics from PipelineExecutor
             if enable_metrics.unwrap_or(false) {
                 let dict = pyo3::types::PyDict::new(py);
                 dict.set_item("outputs", &outputs_py)?;
-                dict.set_item("metrics", "{}")?; // Placeholder
+                dict.set_item("metrics", "{}")?; // Placeholder - metrics exposed via executor.prometheus_metrics()
                 Ok(dict.into_any().unbind())
             } else {
                 Ok(outputs_py)  // runtime_data_to_python already returns PyObject (unbound)

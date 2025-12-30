@@ -1,7 +1,8 @@
 //! Unary RPC handler for pipeline execution
 //!
 //! Implements PipelineExecutionService trait for ExecutePipeline RPC.
-//! Provides manifest-to-runtime conversion and result serialization using PipelineRunner.
+//! Provides manifest-to-runtime conversion and result serialization using PipelineExecutor.
+//! (Migrated from PipelineRunner per spec 026)
 
 // Internal infrastructure - some fields reserved for future use
 #![allow(dead_code)]
@@ -22,7 +23,7 @@ use crate::{
 
 use remotemedia_runtime_core::{
     manifest::Manifest,
-    transport::{PipelineRunner, TransportData},
+    transport::{PipelineExecutor, TransportData},
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,25 +35,25 @@ pub struct ExecutionServiceImpl {
     auth_config: AuthConfig,
     limits: ResourceLimits,
     metrics: Arc<ServiceMetrics>,
-    /// Pipeline runner encapsulates executor and all runtime details
-    runner: Arc<PipelineRunner>,
+    /// Pipeline executor encapsulates scheduler, node registry, and drift metrics
+    executor: Arc<PipelineExecutor>,
 }
 
 impl ExecutionServiceImpl {
-    /// Create new execution service with pipeline runner
+    /// Create new execution service with pipeline executor (spec 026 migration)
     pub fn new(
         auth_config: AuthConfig,
         limits: ResourceLimits,
         metrics: Arc<ServiceMetrics>,
-        runner: Arc<PipelineRunner>,
+        executor: Arc<PipelineExecutor>,
     ) -> Self {
-        tracing::info!("ExecutionServiceImpl initialized with PipelineRunner");
+        tracing::info!("ExecutionServiceImpl initialized with PipelineExecutor");
 
         Self {
             auth_config,
             limits,
             metrics,
-            runner,
+            executor,
         }
     }
 
@@ -100,11 +101,11 @@ impl ExecutionServiceImpl {
 
     /// Validate manifest structure
     ///
-    /// Note: Node parameter validation is performed by PipelineRunner during execution.
+    /// Note: Node parameter validation is performed by PipelineExecutor during execution.
     /// This method handles transport-specific validation only (e.g., size limits).
     fn validate_manifest(&self, _manifest: &Manifest) -> Result<(), ServiceError> {
         // Transport-specific validation (size limits, rate limits, etc.)
-        // Node parameter validation is performed by PipelineRunner
+        // Node parameter validation is performed by PipelineExecutor
         Ok(())
     }
 
@@ -244,14 +245,14 @@ impl PipelineExecutionService for ExecutionServiceImpl {
             return Ok(Response::new(response));
         };
 
-        // Execute pipeline using PipelineRunner
+        // Execute pipeline using PipelineExecutor (spec 026 migration)
         info!(
             nodes = manifest.nodes.len(),
             connections = manifest.connections.len(),
             "Executing pipeline"
         );
 
-        let output = match self.runner.execute_unary(manifest.clone(), input).await {
+        let output = match self.executor.execute_unary(manifest.clone(), input).await {
             Ok(result) => result,
             Err(e) => {
                 error!(error = %e, "Pipeline execution failed");
@@ -341,7 +342,7 @@ impl PipelineExecutionService for ExecutionServiceImpl {
         let version_info = VersionInfo {
             protocol_version: "v1".to_string(),
             runtime_version: env!("CARGO_PKG_VERSION").to_string(),
-            supported_node_types: vec![], // TODO: Get from PipelineRunner
+            supported_node_types: vec![], // TODO: Get from PipelineExecutor
             supported_protocols: vec!["v1".to_string()],
             build_timestamp: "unknown".to_string(), // TODO: Add actual build timestamp
         };

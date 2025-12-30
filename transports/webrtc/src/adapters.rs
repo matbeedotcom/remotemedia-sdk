@@ -71,7 +71,9 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             samples,
             sample_rate,
             channels,
-            stream_id: _, // stream_id not included in protobuf (yet)
+            stream_id: _,      // stream_id not included in protobuf (yet)
+            timestamp_us: _,   // spec 026: not included in protobuf
+            arrival_ts_us: _,  // spec 026: not included in protobuf
         } => DataType::Audio(AudioBuffer {
             samples: samples.iter().flat_map(|f| f.to_le_bytes()).collect(),
             sample_rate: *sample_rate,
@@ -88,7 +90,8 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             timestamp_us,
             codec,
             is_keyframe,
-            stream_id: _, // stream_id not included in protobuf (yet)
+            stream_id: _,      // stream_id not included in protobuf (yet)
+            arrival_ts_us: _,  // spec 026: not included in protobuf
         } => DataType::Video(VideoFrame {
             pixel_data: pixel_data.clone(),
             width: *width,
@@ -197,8 +200,21 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
     }
 }
 
+/// Get current timestamp in microseconds for arrival time stamping (spec 026)
+fn now_micros() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as u64
+}
+
 /// Convert Protobuf DataBuffer to runtime-core RuntimeData
+///
+/// Note: arrival_ts_us is stamped at conversion time per spec 026
 pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
+    // Stamp arrival time at transport ingest (spec 026)
+    let arrival_ts_us = Some(now_micros());
+
     match &buffer.data_type {
         Some(DataType::Audio(audio)) => {
             // Convert bytes back to f32 samples
@@ -213,6 +229,8 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
                 sample_rate: audio.sample_rate,
                 channels: audio.channels,
                 stream_id: None, // stream_id not in protobuf (yet)
+                timestamp_us: None,
+                arrival_ts_us,
             })
         }
         Some(DataType::Video(video)) => Some(RuntimeData::Video {
@@ -225,6 +243,7 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
             codec: proto_to_video_codec(video.codec),
             is_keyframe: video.is_keyframe,
             stream_id: None, // stream_id not in protobuf (yet)
+            arrival_ts_us,
         }),
         Some(DataType::Tensor(tensor)) => Some(RuntimeData::Tensor {
             data: tensor.data.clone(),

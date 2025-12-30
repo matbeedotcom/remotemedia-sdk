@@ -27,7 +27,7 @@
 
 use crate::generated::{
     stream_control::Command, stream_request::Request as StreamRequestType,
-    stream_response::Response as StreamResponseType, AudioBuffer as ProtoAudioBuffer, AudioChunk,
+    stream_response::Response as StreamResponseType,
     ChunkResult, ErrorResponse, ErrorType, ExecutionMetrics, StreamClosed, StreamControl,
     StreamInit, StreamMetrics, StreamReady, StreamRequest, StreamResponse,
 };
@@ -35,11 +35,10 @@ use crate::metrics::ServiceMetrics;
 use crate::session_router::{DataPacket, SessionRouter};
 use crate::ServiceError;
 use remotemedia_runtime_core::{
-    audio::AudioBuffer as RuntimeAudioBuffer,
     data::RuntimeData,
     manifest::Manifest,
     nodes::{python_streaming::PythonStreamingNode, StreamingNode, StreamingNodeRegistry},
-    transport::PipelineRunner,
+    transport::PipelineExecutor,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -87,8 +86,9 @@ pub struct StreamingServiceImpl {
     /// Prometheus metrics
     metrics: Arc<ServiceMetrics>,
 
-    /// Pipeline runner (encapsulates executor and registries)
-    runner: Arc<PipelineRunner>,
+    /// Pipeline executor (encapsulates scheduler, node registry, and drift metrics)
+    /// (Migrated from PipelineRunner per spec 026)
+    executor: Arc<PipelineExecutor>,
 
     /// Global node cache (shared across all sessions)
     /// Key: "{node_type}:{json_params_hash}", Value: cached node with timestamp
@@ -101,7 +101,7 @@ impl StreamingServiceImpl {
         auth_config: crate::auth::AuthConfig,
         limits: crate::limits::ResourceLimits,
         metrics: Arc<ServiceMetrics>,
-        runner: Arc<PipelineRunner>,
+        executor: Arc<PipelineExecutor>,
     ) -> Self {
         let global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>> =
             Arc::new(RwLock::new(HashMap::new()));
@@ -144,7 +144,7 @@ impl StreamingServiceImpl {
             auth_config,
             limits,
             metrics,
-            runner,
+            executor,
             global_node_cache,
         }
     }
@@ -444,9 +444,13 @@ impl crate::StreamingPipelineService for StreamingServiceImpl {
         #[cfg(feature = "multiprocess")]
         let multiprocess_executor = self.multiprocess_executor.clone();
 
-        // Get executor and registry from PipelineRunner
-        let executor = self.runner.executor();
-        let streaming_registry = self.runner.create_streaming_registry();
+        // Get registry from PipelineExecutor (spec 026 migration)
+        // Note: streaming_registry is created from executor's internal registry
+        let streaming_registry = {
+            let registry_guard = self.executor.registry();
+            let registry = futures::executor::block_on(registry_guard.read());
+            Arc::new(registry.clone())
+        };
         let global_node_cache = self.global_node_cache.clone();
 
         // Spawn async task to handle bidirectional streaming
@@ -456,7 +460,6 @@ impl crate::StreamingPipelineService for StreamingServiceImpl {
                 &mut stream,
                 tx.clone(),
                 sessions,
-                executor,
                 metrics,
                 streaming_registry,
                 global_node_cache,
@@ -469,7 +472,6 @@ impl crate::StreamingPipelineService for StreamingServiceImpl {
                 &mut stream,
                 tx.clone(),
                 sessions,
-                executor,
                 metrics,
                 streaming_registry,
                 global_node_cache,
@@ -499,11 +501,14 @@ impl crate::StreamingPipelineService for StreamingServiceImpl {
 }
 
 /// Handle bidirectional stream (runs in async task)
+///
+/// Note: Audio chunks are now processed through the session router like data chunks,
+/// rather than using the legacy execute_fast_pipeline path. This aligns with spec 026
+/// PipelineExecutor migration.
 async fn handle_stream(
     stream: &mut Streaming<StreamRequest>,
     tx: tokio::sync::mpsc::Sender<Result<StreamResponse, Status>>,
     sessions: Arc<RwLock<HashMap<String, Arc<Mutex<StreamSession>>>>>,
-    executor: Arc<remotemedia_runtime_core::executor::Executor>,
     metrics: Arc<ServiceMetrics>,
     streaming_registry: Arc<StreamingNodeRegistry>,
     global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>>,
@@ -531,7 +536,7 @@ async fn handle_stream(
 
                 debug!("Processing StreamInit");
                 let (new_session_id, ready) =
-                    handle_stream_init(init, &sessions, executor.clone()).await?;
+                    handle_stream_init(init, &sessions).await?;
                 session_id = new_session_id.clone();
                 session = Some(sessions.read().await.get(&session_id).unwrap().clone());
 
@@ -601,77 +606,73 @@ async fn handle_stream(
             }
 
             Some(StreamRequestType::AudioChunk(chunk)) => {
-                // Handle AudioChunk
+                // Handle AudioChunk - route through session router (spec 026 migration)
+                // Previously used executor.execute_fast_pipeline(), now uses unified router approach
                 let sess = session.as_ref().ok_or_else(|| {
                     ServiceError::Validation("StreamInit required before AudioChunk".to_string())
                 })?;
 
                 let chunk_start = Instant::now();
-                debug!(sequence = chunk.sequence, "Processing AudioChunk");
+                debug!(sequence = chunk.sequence, "Processing AudioChunk via session router");
 
-                let result = handle_audio_chunk(chunk, sess.clone(), executor.clone()).await;
+                // Convert AudioBuffer to RuntimeData and feed to session router
+                let mut sess_guard = sess.lock().await;
+                if let Some(router_input) = &sess_guard.router_input {
+                    // Get audio buffer from chunk
+                    let buffer_proto = chunk.buffer.ok_or_else(|| {
+                        ServiceError::Validation("AudioChunk.buffer required".to_string())
+                    })?;
 
-                match result {
-                    Ok(chunk_result) => {
-                        let latency = chunk_start.elapsed().as_secs_f64();
-                        metrics.record_chunk_processed(&session_id, latency);
+                    // Use adapter for conversion with arrival timestamp stamping (spec 026)
+                    // Stamp arrival time NOW at transport ingest for drift monitoring
+                    use crate::adapters::{audio_buffer_to_runtime_data, now_micros};
+                    let arrival_ts = Some(now_micros());
 
-                        // Log ChunkResult details before sending
-                        info!(
-                            "Sending ChunkResult: sequence={}, data_outputs count={}",
-                            chunk_result.sequence,
-                            chunk_result.data_outputs.len()
-                        );
-                        for (node_id, data_buffer) in &chunk_result.data_outputs {
-                            use crate::generated::data_buffer::DataType;
-                            match &data_buffer.data_type {
-                                Some(DataType::Audio(audio)) => {
-                                    info!(
-                                        "ChunkResult output[{}]: Audio with {} bytes",
-                                        node_id,
-                                        audio.samples.len()
-                                    );
-                                }
-                                Some(DataType::Text(text)) => {
-                                    info!(
-                                        "ChunkResult output[{}]: Text with {} bytes",
-                                        node_id,
-                                        text.text_data.len()
-                                    );
-                                }
-                                _ => {
-                                    info!("ChunkResult output[{}]: Other type", node_id);
-                                }
-                            }
-                        }
+                    let runtime_data = audio_buffer_to_runtime_data(&buffer_proto, arrival_ts)
+                        .map_err(|e| ServiceError::Validation(e))?;
 
-                        // Send ChunkResult response
-                        let response = StreamResponse {
-                            response: Some(StreamResponseType::Result(chunk_result.clone())),
-                        };
-                        tx.send(Ok(response)).await.map_err(|_| {
-                            ServiceError::Internal("Failed to send ChunkResult".to_string())
-                        })?;
+                    // Create DataPacket for the session router
+                    let packet = DataPacket {
+                        data: runtime_data,
+                        from_node: "client".to_string(),
+                        to_node: Some(chunk.node_id.clone()),
+                        session_id: session_id.clone(),
+                        sequence: chunk.sequence,
+                        sub_sequence: 0,
+                    };
 
-                        // Send periodic metrics
+                    // Send to router (outputs will be sent back via the router's tx channel)
+                    router_input.send(packet).map_err(|e| {
+                        ServiceError::Internal(format!("Failed to send audio to router: {}", e))
+                    })?;
+
+                    sess_guard.chunks_processed += 1;
+                    let chunks_processed = sess_guard.chunks_processed;
+                    drop(sess_guard);
+
+                    let latency = chunk_start.elapsed().as_secs_f64();
+                    metrics.record_chunk_processed(&session_id, latency);
+
+                    debug!("Fed AudioChunk to session router");
+
+                    // Send periodic metrics
+                    if chunks_processed % METRICS_UPDATE_INTERVAL == 0 {
                         let sess_lock = sess.lock().await;
-                        if sess_lock.chunks_processed % METRICS_UPDATE_INTERVAL == 0 {
-                            let cached_nodes_count = global_node_cache.read().await.len() as u64;
-                            let stream_metrics = sess_lock.create_metrics(cached_nodes_count);
-                            drop(sess_lock);
+                        let cached_nodes_count = global_node_cache.read().await.len() as u64;
+                        let stream_metrics = sess_lock.create_metrics(cached_nodes_count);
+                        drop(sess_lock);
 
-                            let metrics_response = StreamResponse {
-                                response: Some(StreamResponseType::Metrics(stream_metrics)),
-                            };
-                            tx.send(Ok(metrics_response)).await.map_err(|_| {
-                                ServiceError::Internal("Failed to send StreamMetrics".to_string())
-                            })?;
-                        }
+                        let metrics_response = StreamResponse {
+                            response: Some(StreamResponseType::Metrics(stream_metrics)),
+                        };
+                        tx.send(Ok(metrics_response)).await.map_err(|_| {
+                            ServiceError::Internal("Failed to send StreamMetrics".to_string())
+                        })?;
                     }
-                    Err(e) => {
-                        metrics.record_chunk_error(&session_id);
-                        return Err(e);
-                    }
+                } else {
+                    return Err(ServiceError::Internal(
+                        "Session router not initialized".to_string(),
+                    ));
                 }
             }
 
@@ -687,11 +688,12 @@ async fn handle_stream(
                 // Feed the chunk to the session router
                 let mut sess_guard = sess.lock().await;
                 if let Some(router_input) = &sess_guard.router_input {
-                    // Convert DataBuffer to RuntimeData
-                    use crate::adapters::data_buffer_to_runtime_data;
+                    // Convert DataBuffer to RuntimeData with arrival timestamp (spec 026)
+                    use crate::adapters::{data_buffer_to_runtime_data_with_arrival, now_micros};
+                    let arrival_ts = Some(now_micros());
 
                     let runtime_data = if let Some(buffer) = data_chunk.buffer {
-                        data_buffer_to_runtime_data(&buffer).ok_or_else(|| {
+                        data_buffer_to_runtime_data_with_arrival(&buffer, arrival_ts).ok_or_else(|| {
                             ServiceError::Validation("Data conversion failed".to_string())
                         })?
                     } else if !data_chunk.named_buffers.is_empty() {
@@ -700,7 +702,7 @@ async fn handle_stream(
                             data_chunk.named_buffers.into_iter().next().ok_or_else(|| {
                                 ServiceError::Validation("No input data provided".to_string())
                             })?;
-                        data_buffer_to_runtime_data(&buffer).ok_or_else(|| {
+                        data_buffer_to_runtime_data_with_arrival(&buffer, arrival_ts).ok_or_else(|| {
                             ServiceError::Validation("Data conversion failed".to_string())
                         })?
                     } else {
@@ -808,7 +810,6 @@ async fn handle_stream(
 async fn handle_stream_init(
     init: StreamInit,
     sessions: &Arc<RwLock<HashMap<String, Arc<Mutex<StreamSession>>>>>,
-    _executor: Arc<remotemedia_runtime_core::executor::Executor>,
 ) -> Result<(String, StreamReady), ServiceError> {
     // Validate client version (basic check)
     if init.client_version.is_empty() {
@@ -858,76 +859,6 @@ async fn handle_stream_init(
     };
 
     Ok((session_id, ready))
-}
-
-/// Handle AudioChunk message
-async fn handle_audio_chunk(
-    chunk: AudioChunk,
-    session: Arc<Mutex<StreamSession>>,
-    executor: Arc<remotemedia_runtime_core::executor::Executor>,
-) -> Result<ChunkResult, ServiceError> {
-    let start_time = Instant::now();
-
-    // Lock session to get manifest and validate
-    let manifest = {
-        let mut sess = session.lock().await;
-
-        // Validate sequence number
-        sess.validate_sequence(chunk.sequence)?;
-
-        // Clone manifest for execution
-        sess.manifest.clone()
-    };
-
-    // Deserialize audio buffer
-    let buffer_proto = chunk
-        .buffer
-        .ok_or_else(|| ServiceError::Validation("AudioChunk.buffer required".to_string()))?;
-
-    let audio_buffer = convert_proto_to_runtime_audio(&buffer_proto)?;
-    let samples = buffer_proto.num_samples;
-
-    // Build audio inputs map for the chunk
-    // The chunk's node_id tells us which node should receive this audio
-    let mut audio_inputs = HashMap::new();
-    audio_inputs.insert(chunk.node_id.clone(), audio_buffer);
-
-    // Execute pipeline with fast audio path
-    let result_buffers = executor
-        .execute_fast_pipeline(&manifest, audio_inputs)
-        .await
-        .map_err(|e| ServiceError::Internal(format!("Pipeline execution failed: {}", e)))?;
-
-    let processing_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
-
-    // Lock session again to record metrics and get total items
-    let total_items = {
-        let mut sess = session.lock().await;
-        sess.record_chunk_metrics(processing_time_ms, samples, 0, "audio"); // TODO: Track memory
-        sess.total_items
-    };
-
-    // Convert result buffers to proto format
-    // Convert audio buffers to DataBuffer format
-    let mut data_outputs = HashMap::new();
-    for (node_id, buffer) in result_buffers {
-        let proto_buffer = convert_runtime_to_proto_audio(&buffer);
-        // Wrap audio buffer in DataBuffer
-        let data_buffer = crate::generated::DataBuffer {
-            data_type: Some(crate::generated::data_buffer::DataType::Audio(proto_buffer)),
-            metadata: HashMap::new(),
-        };
-        data_outputs.insert(node_id, data_buffer);
-    }
-
-    let result = ChunkResult {
-        sequence: chunk.sequence,
-        data_outputs,
-        processing_time_ms,
-        total_items_processed: total_items,
-    };
-
-    Ok(result)
 }
 
 /// Recursively route output data through the pipeline
@@ -1400,113 +1331,3 @@ fn deserialize_manifest_from_proto(
         .map_err(|e| ServiceError::Validation(format!("Failed to parse manifest: {}", e)))
 }
 
-/// Helper: Convert protobuf AudioBuffer to runtime AudioBuffer
-fn convert_proto_to_runtime_audio(
-    proto: &ProtoAudioBuffer,
-) -> Result<RuntimeAudioBuffer, ServiceError> {
-    use crate::generated::AudioFormat as ProtoAudioFormat;
-    use remotemedia_runtime_core::audio::AudioFormat;
-
-    // Convert format and decode bytes to f32 samples
-    let samples: Vec<f32> = match ProtoAudioFormat::try_from(proto.format) {
-        Ok(ProtoAudioFormat::F32) => {
-            // Convert bytes to f32 (little-endian)
-            proto
-                .samples
-                .chunks_exact(4)
-                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                .collect()
-        }
-        Ok(ProtoAudioFormat::I16) => {
-            // Convert bytes to i16, then to f32 normalized (-1.0 to 1.0)
-            proto
-                .samples
-                .chunks_exact(2)
-                .map(|chunk| {
-                    let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
-                    sample as f32 / 32768.0
-                })
-                .collect()
-        }
-        Ok(ProtoAudioFormat::I32) => {
-            // Convert bytes to i32, then to f32 normalized
-            proto
-                .samples
-                .chunks_exact(4)
-                .map(|chunk| {
-                    let sample = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                    sample as f32 / 2147483648.0
-                })
-                .collect()
-        }
-        _ => {
-            return Err(ServiceError::Validation(format!(
-                "Unsupported audio format: {}",
-                proto.format
-            )));
-        }
-    };
-
-    // Create runtime AudioBuffer
-    Ok(RuntimeAudioBuffer::new(
-        Arc::new(samples),
-        proto.sample_rate,
-        proto.channels as u16,
-        AudioFormat::F32,
-    ))
-}
-
-/// Helper: Convert runtime AudioBuffer to protobuf AudioBuffer
-fn convert_runtime_to_proto_audio(buffer: &RuntimeAudioBuffer) -> ProtoAudioBuffer {
-    use crate::generated::AudioFormat as ProtoAudioFormat;
-    use remotemedia_runtime_core::audio::AudioFormat;
-
-    let format = match buffer.format() {
-        AudioFormat::F32 => ProtoAudioFormat::F32 as i32,
-        AudioFormat::I16 => ProtoAudioFormat::I16 as i32,
-        AudioFormat::I32 => ProtoAudioFormat::I32 as i32,
-    };
-
-    // Convert f32 samples to bytes based on format
-    let samples: Vec<u8> = match buffer.format() {
-        AudioFormat::F32 => {
-            // Convert f32 to bytes (little-endian)
-            buffer
-                .as_slice()
-                .iter()
-                .flat_map(|&sample| sample.to_le_bytes())
-                .collect()
-        }
-        AudioFormat::I16 => {
-            // Convert f32 to i16, then to bytes
-            buffer
-                .as_slice()
-                .iter()
-                .flat_map(|&sample| {
-                    let i_sample = (sample * 32768.0).clamp(-32768.0, 32767.0) as i16;
-                    i_sample.to_le_bytes()
-                })
-                .collect()
-        }
-        AudioFormat::I32 => {
-            // Convert f32 to i32, then to bytes
-            buffer
-                .as_slice()
-                .iter()
-                .flat_map(|&sample| {
-                    let i_sample =
-                        (sample * 2147483648.0).clamp(-2147483648.0, 2147483647.0) as i32;
-                    i_sample.to_le_bytes()
-                })
-                .collect()
-        }
-    };
-
-    ProtoAudioBuffer {
-        samples,
-        sample_rate: buffer.sample_rate(),
-        channels: buffer.channels() as u32,
-        format,
-        num_samples: buffer.len_samples() as u64,
-    }
-}

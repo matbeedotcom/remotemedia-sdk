@@ -612,6 +612,14 @@ pub async fn runtime_data_to_rtp(
     }
 }
 
+/// Get current timestamp in microseconds for arrival time stamping (spec 026)
+fn now_micros() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as u64
+}
+
 /// Convert RTP payload to RuntimeData (T073)
 ///
 /// # Arguments
@@ -623,17 +631,21 @@ pub async fn runtime_data_to_rtp(
 ///
 /// # Returns
 ///
-/// Decoded RuntimeData (Audio or Video)
+/// Decoded RuntimeData (Audio or Video) with arrival_ts_us stamped (spec 026)
 ///
 /// # Note
 ///
 /// This function decodes RTP payloads (Opus or VP9) back to RuntimeData format.
+/// The arrival_ts_us is stamped at transport ingest for drift monitoring.
 pub async fn rtp_to_runtime_data(
     payload: &[u8],
     is_audio: bool,
     audio_track: Option<&AudioTrack>,
     video_track: Option<&VideoTrack>,
 ) -> Result<RuntimeData> {
+    // Stamp arrival time at transport ingest (spec 026)
+    let arrival_ts_us = Some(now_micros());
+
     if is_audio {
         let audio_track = audio_track.ok_or_else(|| {
             Error::MediaTrackError("No audio track available for decoding".to_string())
@@ -648,7 +660,7 @@ pub async fn rtp_to_runtime_data(
             channels: 1,        // Assuming mono for now
             stream_id: None,
             timestamp_us: None,
-            arrival_ts_us: None,
+            arrival_ts_us,
         })
     } else {
         let video_track = video_track.ok_or_else(|| {
@@ -675,7 +687,7 @@ pub async fn rtp_to_runtime_data(
             timestamp_us: frame.timestamp_us,
             is_keyframe: false, // Will be set by encoder
             stream_id: None,
-            arrival_ts_us: None,
+            arrival_ts_us,
         })
     }
 }
