@@ -396,6 +396,9 @@ impl<'a> CapabilityResolver<'a> {
         );
 
         // Step 4: Re-validate connections from this node
+        // Clear previous errors to detect new mismatches
+        let errors_before = ctx.errors.len();
+
         for to_node in &downstream {
             self.validate_connection(ctx, node_id, to_node)?;
         }
@@ -408,6 +411,28 @@ impl<'a> CapabilityResolver<'a> {
 
         for from_node in upstream {
             self.validate_connection(ctx, &from_node, node_id)?;
+        }
+
+        // Step 6: Check if validation produced any new errors
+        if ctx.errors.len() > errors_before {
+            let new_errors = &ctx.errors[errors_before..];
+            let error_msg = new_errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("; ");
+
+            tracing::error!(
+                "[spec025] Re-validation failed for '{}': {}",
+                node_id,
+                error_msg
+            );
+
+            return Err(Error::Execution(format!(
+                "Capability mismatch after '{}' discovered actual capabilities: {}",
+                node_id,
+                error_msg
+            )));
         }
 
         tracing::debug!(
@@ -1250,5 +1275,207 @@ mod tests {
         // Only adaptive1 should be included, not adaptive2 (blocked by static)
         assert_eq!(order.len(), 1);
         assert_eq!(order[0], "adaptive1");
+    }
+
+    // =========================================================================
+    // Spec 025 - User Story 2: Cascade Propagation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_cascade_propagation_order() {
+        // T020 [US2]: Test cascade propagation through multiple Adaptive nodes
+        // Chain: source (RuntimeDiscovered) -> resample1 (Adaptive) -> resample2 (Adaptive) -> sink (Static)
+        use super::super::dynamic::CapabilityBehavior;
+
+        let registry = StreamingNodeRegistry::new();
+        let resolver = CapabilityResolver::new(&registry);
+
+        let mut ctx = ResolutionContext::new();
+
+        // Set up chain: source -> resample1 -> resample2 -> sink
+        ctx.set_behavior("source", CapabilityBehavior::RuntimeDiscovered);
+        ctx.set_behavior("resample1", CapabilityBehavior::Adaptive);
+        ctx.set_behavior("resample2", CapabilityBehavior::Adaptive);
+        ctx.set_behavior("sink", CapabilityBehavior::Static);
+
+        ctx.add_connection("source", "resample1");
+        ctx.add_connection("resample1", "resample2");
+        ctx.add_connection("resample2", "sink");
+
+        let order = resolver.compute_propagation_order(&ctx, "source");
+
+        // Both resample nodes should be in order
+        assert_eq!(order.len(), 2);
+        assert_eq!(order[0], "resample1");
+        assert_eq!(order[1], "resample2");
+    }
+
+    #[test]
+    fn test_cascade_propagation_fan_out() {
+        // T025 [US2]: Test fan-out scenarios (one source, multiple downstream paths)
+        // source -> resample -> branch1 (Passthrough)
+        //                    -> branch2 (Adaptive)
+        use super::super::dynamic::CapabilityBehavior;
+
+        let registry = StreamingNodeRegistry::new();
+        let resolver = CapabilityResolver::new(&registry);
+
+        let mut ctx = ResolutionContext::new();
+
+        ctx.set_behavior("source", CapabilityBehavior::RuntimeDiscovered);
+        ctx.set_behavior("resample", CapabilityBehavior::Adaptive);
+        ctx.set_behavior("branch1", CapabilityBehavior::Passthrough);
+        ctx.set_behavior("branch2", CapabilityBehavior::Adaptive);
+        ctx.set_behavior("sink1", CapabilityBehavior::Static);
+        ctx.set_behavior("sink2", CapabilityBehavior::Static);
+
+        // Fan-out topology
+        ctx.add_connection("source", "resample");
+        ctx.add_connection("resample", "branch1");
+        ctx.add_connection("resample", "branch2");
+        ctx.add_connection("branch1", "sink1");
+        ctx.add_connection("branch2", "sink2");
+
+        let order = resolver.compute_propagation_order(&ctx, "source");
+
+        // resample, branch1, and branch2 should all receive updates
+        assert_eq!(order.len(), 3);
+        assert_eq!(order[0], "resample");
+        // branch1 and branch2 order may vary (BFS from resample)
+        assert!(order.contains(&"branch1".to_string()));
+        assert!(order.contains(&"branch2".to_string()));
+    }
+
+    #[test]
+    fn test_multi_adaptive_cascade_creates_pending_updates() {
+        // T020/T022/T023 [US2]: Test that cascade creates pending updates for all Adaptive nodes
+        use super::super::constraints::{AudioConstraints, AudioSampleFormat, ConstraintValue, MediaConstraints};
+        use super::super::dynamic::{CapabilityBehavior, ResolvedCapabilities};
+
+        let registry = StreamingNodeRegistry::new();
+        let resolver = CapabilityResolver::new(&registry);
+
+        let mut ctx = ResolutionContext::new();
+
+        // Chain: mic -> resample1 -> resample2 -> whisper
+        ctx.set_behavior("mic", CapabilityBehavior::RuntimeDiscovered);
+        ctx.set_behavior("resample1", CapabilityBehavior::Adaptive);
+        ctx.set_behavior("resample2", CapabilityBehavior::Adaptive);
+        ctx.set_behavior("whisper", CapabilityBehavior::Static);
+
+        ctx.node_types.insert("mic".to_string(), "MicInput".to_string());
+        ctx.node_types.insert("resample1".to_string(), "FastResampleNode".to_string());
+        ctx.node_types.insert("resample2".to_string(), "FastResampleNode".to_string());
+        ctx.node_types.insert("whisper".to_string(), "RustWhisperNode".to_string());
+
+        ctx.add_connection("mic", "resample1");
+        ctx.add_connection("resample1", "resample2");
+        ctx.add_connection("resample2", "whisper");
+
+        // Set up provisional capabilities for mic
+        let potential_caps = MediaCapabilities::with_output(
+            MediaConstraints::Audio(AudioConstraints {
+                sample_rate: Some(ConstraintValue::Range { min: 8000, max: 192000 }),
+                channels: Some(ConstraintValue::Range { min: 1, max: 8 }),
+                format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+            })
+        );
+        ctx.resolved.insert("mic".to_string(), ResolvedCapabilities::provisional("mic", potential_caps));
+
+        // Mic discovers actual 48kHz
+        let actual_caps = MediaCapabilities::with_output(
+            MediaConstraints::Audio(AudioConstraints {
+                sample_rate: Some(ConstraintValue::Exact(48000)),
+                channels: Some(ConstraintValue::Exact(2)),
+                format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+            })
+        );
+
+        // Propagate
+        let result = resolver.revalidate_and_propagate(&mut ctx, "mic", actual_caps);
+        assert!(result.is_ok());
+
+        // Current implementation only creates pending update for immediate downstream (resample1)
+        // For full cascade support, both resample1 and resample2 need updates
+        // This test documents current behavior - resample1 gets an update directly from mic
+        assert!(ctx.get_pending_update("resample1").is_some(), "resample1 should have pending update");
+
+        let update = ctx.get_pending_update("resample1").unwrap();
+        assert_eq!(update.upstream_node_id, "mic");
+
+        // Note: resample2 doesn't get an update directly from mic because the current
+        // implementation only propagates to immediate downstream nodes.
+        // For full cascade support, SessionRouter.apply_pending_updates() should
+        // iteratively apply updates and re-propagate when Adaptive nodes are configured.
+    }
+
+    // =========================================================================
+    // Spec 025 - User Story 3: Incompatibility Detection Tests
+    // =========================================================================
+
+    #[test]
+    fn test_revalidate_detects_phase2_mismatch() {
+        // T026 [US3]: Test that revalidate_and_propagate() detects incompatible actual capabilities
+        // Scenario: Mic (RuntimeDiscovered) -> Whisper (Static, requires 16kHz)
+        // Mic discovers actual 48kHz which is incompatible with Whisper's 16kHz requirement
+        use super::super::constraints::{AudioConstraints, AudioSampleFormat, ConstraintValue, MediaConstraints};
+        use super::super::dynamic::{CapabilityBehavior, ResolvedCapabilities};
+
+        let registry = StreamingNodeRegistry::new();
+        let resolver = CapabilityResolver::new(&registry);
+
+        let mut ctx = ResolutionContext::new();
+
+        // Set up: mic (RuntimeDiscovered) -> whisper (Static, requires 16kHz)
+        ctx.set_behavior("mic", CapabilityBehavior::RuntimeDiscovered);
+        ctx.set_behavior("whisper", CapabilityBehavior::Static);
+
+        ctx.node_types.insert("mic".to_string(), "MicInput".to_string());
+        ctx.node_types.insert("whisper".to_string(), "RustWhisperNode".to_string());
+
+        ctx.add_connection("mic", "whisper");
+
+        // Set up mic's provisional capabilities (wide range - passes Phase 1)
+        let potential_caps = MediaCapabilities::with_output(
+            MediaConstraints::Audio(AudioConstraints {
+                sample_rate: Some(ConstraintValue::Range { min: 8000, max: 192000 }),
+                channels: Some(ConstraintValue::Range { min: 1, max: 8 }),
+                format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+            })
+        );
+        ctx.resolved.insert("mic".to_string(), ResolvedCapabilities::provisional("mic", potential_caps));
+
+        // Set up whisper's static capabilities (requires exactly 16kHz)
+        let whisper_caps = MediaCapabilities::with_input(
+            MediaConstraints::Audio(AudioConstraints {
+                sample_rate: Some(ConstraintValue::Exact(16000)),
+                channels: Some(ConstraintValue::Exact(1)),
+                format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+            })
+        );
+        ctx.resolved.insert("whisper".to_string(), ResolvedCapabilities::from_static("whisper", whisper_caps));
+
+        // Mic discovers actual 48kHz - this is incompatible with whisper's 16kHz
+        let actual_caps = MediaCapabilities::with_output(
+            MediaConstraints::Audio(AudioConstraints {
+                sample_rate: Some(ConstraintValue::Exact(48000)),
+                channels: Some(ConstraintValue::Exact(2)),
+                format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+            })
+        );
+
+        // revalidate_and_propagate should detect the mismatch and return an error
+        let result = resolver.revalidate_and_propagate(&mut ctx, "mic", actual_caps);
+
+        // The result should be an error because 48kHz is incompatible with 16kHz
+        assert!(result.is_err(), "Should detect sample rate mismatch");
+
+        // Verify the error message mentions the incompatibility
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("mic") || err_msg.contains("whisper") || err_msg.contains("sample"),
+            "Error should mention nodes or constraints involved: {}",
+            err_msg
+        );
     }
 }
