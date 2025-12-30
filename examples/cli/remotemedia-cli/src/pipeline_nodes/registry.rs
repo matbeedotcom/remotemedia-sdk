@@ -10,7 +10,7 @@ use remotemedia_runtime_core::capabilities::{
 };
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::nodes::streaming_node::{
-    AsyncStreamingNode, AsyncNodeWrapper,
+    AsyncStreamingNode,
     StreamingNode, StreamingNodeFactory, StreamingNodeRegistry,
 };
 use remotemedia_runtime_core::nodes::streaming_registry::create_default_streaming_registry;
@@ -28,17 +28,54 @@ use super::srt_output::SrtOutputConfig;
 // ============================================================================
 
 /// Streaming node for microphone input that actually captures audio
-struct MicInputStreamingNode {
+///
+/// Implements RuntimeDiscovered capability behavior when device is not explicitly
+/// specified. This enables two-phase capability resolution:
+/// - Phase 1: Use potential_capabilities() with broad range for early validation
+/// - Phase 2: After initialize(), use actual_capabilities() with discovered device caps
+pub struct MicInputStreamingNode {
+    node_id: String,
     config: MicInputConfig,
     capture: Mutex<Option<AudioCapture>>,
+    /// Discovered device capabilities (populated during initialize)
+    discovered_capabilities: Mutex<Option<MediaCapabilities>>,
 }
 
 impl MicInputStreamingNode {
-    fn new(config: MicInputConfig) -> Self {
+    pub fn new(node_id: String, config: MicInputConfig) -> Self {
         Self {
+            node_id,
             config,
             capture: Mutex::new(None),
+            discovered_capabilities: Mutex::new(None),
         }
+    }
+
+    /// Check if this node uses RuntimeDiscovered behavior
+    /// (when device is not explicitly specified or is "default")
+    fn is_runtime_discovered(&self) -> bool {
+        match &self.config.device {
+            None => true,
+            Some(d) => d.to_lowercase() == "default",
+        }
+    }
+
+    /// Get potential capabilities for Phase 1 validation (broad range)
+    fn potential_caps() -> MediaCapabilities {
+        MediaCapabilities::with_output(MediaConstraints::Audio(AudioConstraints {
+            sample_rate: Some(ConstraintValue::Range { min: 8000, max: 192000 }),
+            channels: Some(ConstraintValue::Range { min: 1, max: 8 }),
+            format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+        }))
+    }
+
+    /// Get configured capabilities when device is explicit
+    fn configured_caps(config: &MicInputConfig) -> MediaCapabilities {
+        MediaCapabilities::with_output(MediaConstraints::Audio(AudioConstraints {
+            sample_rate: Some(ConstraintValue::Exact(config.sample_rate)),
+            channels: Some(ConstraintValue::Exact(config.channels as u32)),
+            format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+        }))
     }
 }
 
@@ -60,8 +97,26 @@ impl AsyncStreamingNode for MicInputStreamingNode {
         let capture = AudioCapture::start(capture_config)
             .map_err(|e| Error::Execution(format!("Failed to start audio capture: {}", e)))?;
 
-        tracing::info!("MicInput initialized: capturing from '{}'", capture.device_name());
-        
+        // Store discovered capabilities for Phase 2 validation
+        // The actual device may have different capabilities than requested
+        let actual_sample_rate = capture.config().sample_rate;
+        let actual_channels = capture.config().channels;
+
+        let discovered = MediaCapabilities::with_output(MediaConstraints::Audio(AudioConstraints {
+            sample_rate: Some(ConstraintValue::Exact(actual_sample_rate)),
+            channels: Some(ConstraintValue::Exact(actual_channels as u32)),
+            format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+        }));
+
+        *self.discovered_capabilities.lock().await = Some(discovered);
+
+        tracing::info!(
+            "MicInput initialized: capturing from '{}' ({}Hz, {} ch)",
+            capture.device_name(),
+            actual_sample_rate,
+            actual_channels
+        );
+
         *self.capture.lock().await = Some(capture);
         Ok(())
     }
@@ -144,18 +199,105 @@ impl AsyncStreamingNode for MicInputStreamingNode {
     }
 }
 
+// Implement StreamingNode directly for MicInputStreamingNode to support capability methods
+#[async_trait::async_trait]
+impl StreamingNode for MicInputStreamingNode {
+    fn node_type(&self) -> &str {
+        "MicInput"
+    }
+
+    fn node_id(&self) -> &str {
+        &self.node_id
+    }
+
+    async fn initialize(&self) -> Result<(), Error> {
+        <Self as AsyncStreamingNode>::initialize(self).await
+    }
+
+    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+        <Self as AsyncStreamingNode>::process(self, data).await
+    }
+
+    async fn process_multi_async(
+        &self,
+        inputs: std::collections::HashMap<String, RuntimeData>,
+    ) -> Result<RuntimeData, Error> {
+        if let Some((_name, data)) = inputs.into_iter().next() {
+            self.process_async(data).await
+        } else {
+            Err(Error::Execution("No input data provided".into()))
+        }
+    }
+
+    fn is_multi_input(&self) -> bool {
+        false
+    }
+
+    async fn process_streaming_async(
+        &self,
+        data: RuntimeData,
+        session_id: Option<String>,
+        mut callback: Box<dyn FnMut(RuntimeData) -> Result<(), Error> + Send>,
+    ) -> Result<usize, Error> {
+        <Self as AsyncStreamingNode>::process_streaming(self, data, session_id, move |output| {
+            callback(output)
+        })
+        .await
+    }
+
+    // Capability Resolution Methods (spec 023)
+
+    fn media_capabilities(&self) -> Option<MediaCapabilities> {
+        if self.is_runtime_discovered() {
+            // For RuntimeDiscovered, return None here - use potential/actual instead
+            None
+        } else {
+            Some(Self::configured_caps(&self.config))
+        }
+    }
+
+    fn capability_behavior(&self) -> CapabilityBehavior {
+        if self.is_runtime_discovered() {
+            CapabilityBehavior::RuntimeDiscovered
+        } else {
+            CapabilityBehavior::Configured
+        }
+    }
+
+    fn potential_capabilities(&self) -> Option<MediaCapabilities> {
+        if self.is_runtime_discovered() {
+            Some(Self::potential_caps())
+        } else {
+            Some(Self::configured_caps(&self.config))
+        }
+    }
+
+    fn actual_capabilities(&self) -> Option<MediaCapabilities> {
+        // Try to get discovered capabilities (set during initialize)
+        // This is a sync method, so we can't await the lock
+        // Use try_lock and fall back to configured caps
+        if let Ok(guard) = self.discovered_capabilities.try_lock() {
+            if let Some(ref caps) = *guard {
+                return Some(caps.clone());
+            }
+        }
+        // Fall back to configured capabilities
+        Some(Self::configured_caps(&self.config))
+    }
+}
+
 /// Factory for creating MicInput streaming nodes
 pub struct MicInputNodeFactory;
 
 impl StreamingNodeFactory for MicInputNodeFactory {
     fn create(
         &self,
-        _node_id: String,
+        node_id: String,
         params: &serde_json::Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
         let config: MicInputConfig = serde_json::from_value(params.clone()).unwrap_or_default();
-        Ok(Box::new(AsyncNodeWrapper(Arc::new(MicInputStreamingNode::new(config)))))
+        Ok(Box::new(MicInputStreamingNode::new(node_id, config)))
     }
 
     fn node_type(&self) -> &str {
@@ -163,22 +305,20 @@ impl StreamingNodeFactory for MicInputNodeFactory {
     }
 
     fn media_capabilities(&self, params: &Value) -> Option<MediaCapabilities> {
-        // Parse config to get sample rate and channels
         let config: MicInputConfig = serde_json::from_value(params.clone()).unwrap_or_default();
-
-        // MicInput produces audio output based on configured sample_rate and channels
-        Some(MediaCapabilities::with_output(MediaConstraints::Audio(
-            AudioConstraints {
-                sample_rate: Some(ConstraintValue::Exact(config.sample_rate)),
-                channels: Some(ConstraintValue::Exact(config.channels as u32)),
-                format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
-            },
-        )))
+        // Always return configured capabilities - this is used for resolution
+        Some(MicInputStreamingNode::configured_caps(&config))
     }
 
     fn capability_behavior(&self) -> CapabilityBehavior {
-        // MicInput capabilities are determined by its configuration parameters
+        // Return Configured as the default behavior
+        // The node determines RuntimeDiscovered based on whether device is "default"
         CapabilityBehavior::Configured
+    }
+
+    fn potential_capabilities(&self, _params: &Value) -> Option<MediaCapabilities> {
+        // Return broad range for Phase 1 validation (used by RuntimeDiscovered nodes)
+        Some(MicInputStreamingNode::potential_caps())
     }
 }
 
@@ -187,16 +327,24 @@ impl StreamingNodeFactory for MicInputNodeFactory {
 // ============================================================================
 
 /// Streaming node for speaker output that actually plays audio
-struct SpeakerOutputStreamingNode {
+///
+/// Implements Passthrough capability behavior - it accepts whatever audio format
+/// it receives from upstream and attempts to play it on the output device.
+pub struct SpeakerOutputStreamingNode {
+    node_id: String,
     config: SpeakerOutputConfig,
     playback: Mutex<Option<AudioPlayback>>,
+    /// Capabilities inherited from upstream (set during resolution)
+    inherited_capabilities: Mutex<Option<MediaCapabilities>>,
 }
 
 impl SpeakerOutputStreamingNode {
-    fn new(config: SpeakerOutputConfig) -> Self {
+    pub fn new(node_id: String, config: SpeakerOutputConfig) -> Self {
         Self {
+            node_id,
             config,
             playback: Mutex::new(None),
+            inherited_capabilities: Mutex::new(None),
         }
     }
 }
@@ -218,8 +366,13 @@ impl AsyncStreamingNode for SpeakerOutputStreamingNode {
         let playback = AudioPlayback::start(playback_config)
             .map_err(|e| Error::Execution(format!("Failed to start audio playback: {}", e)))?;
 
-        tracing::info!("SpeakerOutput initialized: playing to '{}'", playback.device_name());
-        
+        tracing::info!(
+            "SpeakerOutput initialized: playing to '{}' ({}Hz, {} ch)",
+            playback.device_name(),
+            playback.config().sample_rate,
+            playback.config().channels
+        );
+
         *self.playback.lock().await = Some(playback);
         Ok(())
     }
@@ -249,18 +402,84 @@ impl AsyncStreamingNode for SpeakerOutputStreamingNode {
     }
 }
 
+// Implement StreamingNode directly to support capability methods
+#[async_trait::async_trait]
+impl StreamingNode for SpeakerOutputStreamingNode {
+    fn node_type(&self) -> &str {
+        "SpeakerOutput"
+    }
+
+    fn node_id(&self) -> &str {
+        &self.node_id
+    }
+
+    async fn initialize(&self) -> Result<(), Error> {
+        <Self as AsyncStreamingNode>::initialize(self).await
+    }
+
+    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+        <Self as AsyncStreamingNode>::process(self, data).await
+    }
+
+    async fn process_multi_async(
+        &self,
+        inputs: std::collections::HashMap<String, RuntimeData>,
+    ) -> Result<RuntimeData, Error> {
+        if let Some((_name, data)) = inputs.into_iter().next() {
+            self.process_async(data).await
+        } else {
+            Err(Error::Execution("No input data provided".into()))
+        }
+    }
+
+    fn is_multi_input(&self) -> bool {
+        false
+    }
+
+    // Capability Resolution Methods (spec 023)
+
+    fn media_capabilities(&self) -> Option<MediaCapabilities> {
+        // Passthrough node - capabilities are inherited from upstream
+        // Return None to signal passthrough behavior
+        None
+    }
+
+    fn capability_behavior(&self) -> CapabilityBehavior {
+        CapabilityBehavior::Passthrough
+    }
+
+    fn potential_capabilities(&self) -> Option<MediaCapabilities> {
+        // Accept any audio format
+        Some(MediaCapabilities::with_input(MediaConstraints::Audio(AudioConstraints {
+            sample_rate: Some(ConstraintValue::Range { min: 8000, max: 192000 }),
+            channels: Some(ConstraintValue::Range { min: 1, max: 8 }),
+            format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+        })))
+    }
+
+    fn actual_capabilities(&self) -> Option<MediaCapabilities> {
+        // Return inherited capabilities if set, otherwise potential capabilities
+        if let Ok(guard) = self.inherited_capabilities.try_lock() {
+            if let Some(ref caps) = *guard {
+                return Some(caps.clone());
+            }
+        }
+        self.potential_capabilities()
+    }
+}
+
 /// Factory for creating SpeakerOutput streaming nodes
 pub struct SpeakerOutputNodeFactory;
 
 impl StreamingNodeFactory for SpeakerOutputNodeFactory {
     fn create(
         &self,
-        _node_id: String,
+        node_id: String,
         params: &serde_json::Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
         let config: SpeakerOutputConfig = serde_json::from_value(params.clone()).unwrap_or_default();
-        Ok(Box::new(AsyncNodeWrapper(Arc::new(SpeakerOutputStreamingNode::new(config)))))
+        Ok(Box::new(SpeakerOutputStreamingNode::new(node_id, config)))
     }
 
     fn node_type(&self) -> &str {

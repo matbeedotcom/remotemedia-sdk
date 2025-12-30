@@ -401,8 +401,22 @@ impl<'a> CapabilityResolver<'a> {
                     self.resolve_passthrough(ctx, node_id)?;
                 }
                 CapabilityBehavior::Adaptive => {
-                    // Mark as needing reverse pass - resolve input only
-                    self.mark_needs_reverse(ctx, node_id, &params)?;
+                    // Check if capabilities already have output defined (explicit config)
+                    // If so, treat it as Configured instead of needing reverse pass
+                    if let Some(caps) = self.get_factory_capabilities(ctx, node_id, &params) {
+                        if caps.default_output().is_some() {
+                            // Output is already defined - treat as Configured
+                            // Update the behavior in context to reflect this
+                            ctx.set_behavior(node_id, CapabilityBehavior::Configured);
+                            self.resolve_static_or_configured(ctx, node_id, &params)?;
+                        } else {
+                            // No output defined - needs reverse pass to determine output
+                            self.mark_needs_reverse(ctx, node_id, &params)?;
+                        }
+                    } else {
+                        // No capabilities at all - still mark for reverse pass
+                        self.mark_needs_reverse(ctx, node_id, &params)?;
+                    }
                 }
                 CapabilityBehavior::RuntimeDiscovered => {
                     // Use potential capabilities (provisional)
