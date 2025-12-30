@@ -43,7 +43,7 @@ impl AsyncStreamingNode for ResampleStreamingNode {
                 samples,
                 sample_rate,
                 channels,
-                stream_id: _,
+                ..
             } => (samples.clone(), *sample_rate, *channels),
             _ => {
                 return Err(Error::InvalidInput {
@@ -88,6 +88,8 @@ impl AsyncStreamingNode for ResampleStreamingNode {
                 sample_rate: resampled.sample_rate,
                 channels: resampled.channels as u32,
                 stream_id: None,
+                timestamp_us: None,
+                arrival_ts_us: None,
             });
         }
 
@@ -142,6 +144,8 @@ impl AsyncStreamingNode for ResampleStreamingNode {
             sample_rate: target_rate,
             channels: input_channels,
             stream_id: None,
+            timestamp_us: None,
+            arrival_ts_us: None,
         })
     }
 }
@@ -318,7 +322,7 @@ impl AsyncStreamingNode for AutoResampleStreamingNode {
                 samples,
                 sample_rate,
                 channels,
-                stream_id: _,
+                ..
             } => (samples.clone(), *sample_rate, *channels as usize),
             _ => {
                 return Err(Error::InvalidInput {
@@ -351,6 +355,8 @@ impl AsyncStreamingNode for AutoResampleStreamingNode {
                 sample_rate: target_rate,
                 channels: channels as u32,
                 stream_id: None,
+                timestamp_us: None,
+                arrival_ts_us: None,
             });
         }
 
@@ -382,6 +388,8 @@ impl AsyncStreamingNode for AutoResampleStreamingNode {
                 sample_rate: resampled.sample_rate,
                 channels: resampled.channels as u32,
                 stream_id: None,
+                timestamp_us: None,
+                arrival_ts_us: None,
             });
         }
 
@@ -417,6 +425,8 @@ impl AsyncStreamingNode for AutoResampleStreamingNode {
             sample_rate: target_rate,
             channels: channels as u32,
             stream_id: None,
+            timestamp_us: None,
+            arrival_ts_us: None,
         })
     }
 }

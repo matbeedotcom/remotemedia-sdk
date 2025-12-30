@@ -31,8 +31,12 @@ pub mod streaming_scheduler;
 pub use error::ExecutionErrorExt;
 pub use graph::{PipelineGraph as Graph, PipelineNode as Node};
 pub use metrics::{NodeMetrics, PipelineMetrics};
-pub use retry::RetryPolicy;
+pub use retry::{CircuitBreaker, CircuitState, RetryPolicy};
 pub use scheduler::{ExecutionContext, Scheduler};
+
+// spec 026: Re-export drift metrics and streaming scheduler
+pub use drift_metrics::{DriftAlerts, DriftMetrics, DriftSample, DriftThresholds, StreamClockState};
+pub use streaming_scheduler::{NodeStats, SchedulerConfig, StreamingScheduler};
 
 use crate::capabilities::{CapabilitySource, ResolutionContext, ResolvedCapabilities};
 use crate::executor::node_executor::{NodeContext, NodeExecutor};
@@ -760,7 +764,7 @@ impl Executor {
                                 samples,
                                 sample_rate,
                                 channels,
-                                stream_id: _,
+                                ..
                             } => format!(
                                 "Audio({} samples, {}Hz, {} ch)",
                                 samples.len(),

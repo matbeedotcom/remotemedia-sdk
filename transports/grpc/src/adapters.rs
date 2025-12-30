@@ -18,7 +18,7 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             samples,
             sample_rate,
             channels,
-            stream_id: _,
+            ..
         } => DataType::Audio(AudioBuffer {
             samples: samples.iter().flat_map(|f| f.to_le_bytes()).collect(),
             sample_rate: *sample_rate,
@@ -35,7 +35,7 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             frame_number,
             timestamp_us,
             is_keyframe,
-            stream_id: _,
+            ..
         } => {
             DataType::Video(VideoFrame {
                 pixel_data: pixel_data.clone(),
@@ -162,6 +162,8 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
                 sample_rate: audio.sample_rate,
                 channels: audio.channels,
                 stream_id: None,
+                timestamp_us: None,     // spec 026: Set by transport layer
+                arrival_ts_us: None,    // spec 026: Set by transport layer
             })
         }
         Some(DataType::Video(video)) => {
@@ -199,6 +201,7 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
                 timestamp_us: video.timestamp_us,
                 is_keyframe: video.is_keyframe,
                 stream_id: None,
+                arrival_ts_us: None,    // spec 026: Set by transport layer
             })
         }
         Some(DataType::Tensor(tensor)) => Some(RuntimeData::Tensor {

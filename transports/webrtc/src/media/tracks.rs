@@ -316,6 +316,7 @@ impl VideoTrack {
             timestamp_us: frame.timestamp_us,
             is_keyframe: frame.is_keyframe,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         self.send_video_runtime_data(runtime_data).await
@@ -417,6 +418,7 @@ impl VideoTrack {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         // Decode using runtime-core VideoDecoderNode
@@ -645,6 +647,8 @@ pub async fn rtp_to_runtime_data(
             sample_rate: 48000, // Opus always decodes to 48kHz
             channels: 1,        // Assuming mono for now
             stream_id: None,
+            timestamp_us: None,
+            arrival_ts_us: None,
         })
     } else {
         let video_track = video_track.ok_or_else(|| {
@@ -671,6 +675,7 @@ pub async fn rtp_to_runtime_data(
             timestamp_us: frame.timestamp_us,
             is_keyframe: false, // Will be set by encoder
             stream_id: None,
+            arrival_ts_us: None,
         })
     }
 }

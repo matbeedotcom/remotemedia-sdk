@@ -72,6 +72,8 @@ async fn test_streaming_send_and_receive() {
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     })
     .with_sequence(1);
 

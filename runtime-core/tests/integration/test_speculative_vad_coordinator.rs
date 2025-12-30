@@ -96,6 +96,8 @@ async fn test_coordinator_via_pipeline_runner_streaming() {
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     };
 
     // Send audio to session (wrap in TransportData)
@@ -163,6 +165,8 @@ async fn test_coordinator_immediate_forwarding_latency() {
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     };
 
     // Measure time from send to first output
@@ -219,6 +223,8 @@ async fn test_coordinator_multiple_chunks() {
             sample_rate: 16000,
             channels: 1,
             stream_id: Some(format!("chunk_{}", i)),
+            timestamp_us: None,
+            arrival_ts_us: None,
         };
 
         session
@@ -282,6 +288,8 @@ async fn test_coordinator_with_custom_config() {
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     };
 
     session
@@ -319,6 +327,8 @@ async fn test_coordinator_unary_execution() {
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     };
 
     let transport_input = TransportData::new(audio_input);
@@ -365,6 +375,8 @@ async fn test_coordinator_session_isolation() {
         sample_rate: 16000,
         channels: 1,
         stream_id: Some("session1_audio".to_string()),
+        timestamp_us: None,
+        arrival_ts_us: None,
     };
 
     let audio2 = RuntimeData::Audio {
@@ -372,6 +384,8 @@ async fn test_coordinator_session_isolation() {
         sample_rate: 16000,
         channels: 1,
         stream_id: Some("session2_audio".to_string()),
+        timestamp_us: None,
+        arrival_ts_us: None,
     };
 
     session1.send_input(TransportData::new(audio1)).await.expect("Send to session 1");

@@ -242,10 +242,10 @@ impl StreamingScheduler {
         // Get or create node state
         self.ensure_node_state(node_id).await?;
 
-        // Check circuit breaker
+        // Check circuit breaker (use write lock to allow state transition)
         {
-            let states = self.node_states.read().await;
-            if let Some(state) = states.get(node_id) {
+            let mut states = self.node_states.write().await;
+            if let Some(state) = states.get_mut(node_id) {
                 if state.circuit_breaker.is_open() {
                     return Err(Error::Execution(format!(
                         "Circuit breaker open for node '{}'",
@@ -417,7 +417,7 @@ impl StreamingScheduler {
         states.get(node_id).map(|state| NodeStats {
             execution_count: state.execution_count,
             error_count: state.error_count,
-            circuit_breaker_open: state.circuit_breaker.is_open(),
+            circuit_breaker_open: state.circuit_breaker.is_open_readonly(),
             p50_us: state.latency_metrics.p50(Window::OneMinute),
             p95_us: state.latency_metrics.p95(Window::OneMinute),
             p99_us: state.latency_metrics.p99(Window::OneMinute),
@@ -435,7 +435,7 @@ impl StreamingScheduler {
                     NodeStats {
                         execution_count: state.execution_count,
                         error_count: state.error_count,
-                        circuit_breaker_open: state.circuit_breaker.is_open(),
+                        circuit_breaker_open: state.circuit_breaker.is_open_readonly(),
                         p50_us: state.latency_metrics.p50(Window::OneMinute),
                         p95_us: state.latency_metrics.p95(Window::OneMinute),
                         p99_us: state.latency_metrics.p99(Window::OneMinute),
@@ -476,7 +476,7 @@ impl StreamingScheduler {
             output.push_str(&format!(
                 "streaming_scheduler_node_circuit_breaker_open{{node_id=\"{}\"}} {}\n",
                 node_id,
-                if state.circuit_breaker.is_open() { 1 } else { 0 }
+                if state.circuit_breaker.is_open_readonly() { 1 } else { 0 }
             ));
             output.push_str(&format!(
                 "streaming_scheduler_node_latency_p50_us{{node_id=\"{}\"}} {}\n",

@@ -140,6 +140,14 @@ pub mod data {
             /// When None, uses default track for backward compatibility
             #[serde(default, skip_serializing_if = "Option::is_none")]
             stream_id: Option<String>,
+            /// Media timestamp in microseconds (spec 026)
+            /// Represents the presentation timestamp of this audio chunk
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            timestamp_us: Option<u64>,
+            /// Arrival timestamp in microseconds (spec 026)
+            /// Set by transport ingest layer for drift monitoring
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            arrival_ts_us: Option<u64>,
         },
         /// Video frame
         Video {
@@ -165,6 +173,10 @@ pub mod data {
             /// When None, uses default track for backward compatibility
             #[serde(default, skip_serializing_if = "Option::is_none")]
             stream_id: Option<String>,
+            /// Arrival timestamp in microseconds (spec 026)
+            /// Set by transport ingest layer for drift monitoring
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            arrival_ts_us: Option<u64>,
         },
     /// Tensor data
     Tensor {
@@ -275,6 +287,100 @@ pub mod data {
                 RuntimeData::Binary(_) => "binary",
                 RuntimeData::ControlMessage { .. } => "control_message",
                 RuntimeData::File { .. } => "file",
+            }
+        }
+
+        /// Get timing information for drift monitoring (spec 026)
+        ///
+        /// Returns (media_timestamp_us, arrival_timestamp_us) for Audio and Video variants.
+        /// For Audio, media timestamp comes from `timestamp_us` field.
+        /// For Video, media timestamp comes from `timestamp_us` field (presentation timestamp).
+        ///
+        /// # Returns
+        /// - `(Some(media_ts), Some(arrival_ts))` - Both timestamps available
+        /// - `(Some(media_ts), None)` - Only media timestamp (arrival not stamped yet)
+        /// - `(None, None)` - Not a timed media type or no timestamps set
+        pub fn timing(&self) -> (Option<u64>, Option<u64>) {
+            match self {
+                RuntimeData::Audio {
+                    timestamp_us,
+                    arrival_ts_us,
+                    ..
+                } => (*timestamp_us, *arrival_ts_us),
+                RuntimeData::Video {
+                    timestamp_us,
+                    arrival_ts_us,
+                    ..
+                } => (Some(*timestamp_us), *arrival_ts_us),
+                _ => (None, None),
+            }
+        }
+
+        /// Get stream identifier if present (spec 026)
+        ///
+        /// Returns the stream_id for Audio, Video, and File variants.
+        /// Used for multi-track routing and per-stream drift monitoring.
+        pub fn stream_id(&self) -> Option<&str> {
+            match self {
+                RuntimeData::Audio { stream_id, .. } => stream_id.as_deref(),
+                RuntimeData::Video { stream_id, .. } => stream_id.as_deref(),
+                RuntimeData::File { stream_id, .. } => stream_id.as_deref(),
+                _ => None,
+            }
+        }
+
+        /// Check if this is audio data (spec 026)
+        pub fn is_audio(&self) -> bool {
+            matches!(self, RuntimeData::Audio { .. })
+        }
+
+        /// Check if this is video data (spec 026)
+        pub fn is_video(&self) -> bool {
+            matches!(self, RuntimeData::Video { .. })
+        }
+
+        /// Check if this is a timed media type (audio or video)
+        ///
+        /// Timed media types have timestamps for drift monitoring.
+        pub fn is_timed_media(&self) -> bool {
+            self.is_audio() || self.is_video()
+        }
+
+        /// Set arrival timestamp for drift monitoring (spec 026)
+        ///
+        /// Should be called by transport ingest layer when data arrives.
+        /// Only affects Audio and Video variants.
+        ///
+        /// # Returns
+        /// `true` if timestamp was set, `false` if not applicable to this variant
+        pub fn set_arrival_timestamp(&mut self, arrival_us: u64) -> bool {
+            match self {
+                RuntimeData::Audio { arrival_ts_us, .. } => {
+                    *arrival_ts_us = Some(arrival_us);
+                    true
+                }
+                RuntimeData::Video { arrival_ts_us, .. } => {
+                    *arrival_ts_us = Some(arrival_us);
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        /// Set media timestamp for audio (spec 026)
+        ///
+        /// Used to set presentation timestamp on audio chunks.
+        /// Only affects Audio variant.
+        ///
+        /// # Returns
+        /// `true` if timestamp was set, `false` if not an Audio variant
+        pub fn set_audio_timestamp(&mut self, media_ts_us: u64) -> bool {
+            match self {
+                RuntimeData::Audio { timestamp_us, .. } => {
+                    *timestamp_us = Some(media_ts_us);
+                    true
+                }
+                _ => false,
             }
         }
 
@@ -546,6 +652,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         assert!(frame.validate_video_frame().is_ok());
@@ -563,6 +670,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         let result = frame.validate_video_frame();
@@ -583,6 +691,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         let result = frame.validate_video_frame();
@@ -603,6 +712,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         let result = frame.validate_video_frame();
@@ -623,6 +733,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         assert!(frame.validate_video_frame().is_ok());
@@ -641,9 +752,95 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: true,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         assert!(frame.validate_video_frame().is_ok());
+    }
+
+    // spec 026: Tests for RuntimeData timing methods
+    #[test]
+    fn test_runtime_data_timing_audio() {
+        let audio = data::RuntimeData::Audio {
+            samples: vec![0.0; 100],
+            sample_rate: 44100,
+            channels: 1,
+            stream_id: Some("audio_main".to_string()),
+            timestamp_us: Some(1_000_000),
+            arrival_ts_us: Some(1_001_000),
+        };
+
+        let (media_ts, arrival_ts) = audio.timing();
+        assert_eq!(media_ts, Some(1_000_000));
+        assert_eq!(arrival_ts, Some(1_001_000));
+        assert_eq!(audio.stream_id(), Some("audio_main"));
+        assert!(audio.is_audio());
+        assert!(!audio.is_video());
+        assert!(audio.is_timed_media());
+    }
+
+    #[test]
+    fn test_runtime_data_timing_video() {
+        let video = data::RuntimeData::Video {
+            pixel_data: vec![0u8; 1000],
+            width: 100,
+            height: 100,
+            format: PixelFormat::Rgb24,
+            codec: None,
+            frame_number: 0,
+            timestamp_us: 2_000_000,
+            is_keyframe: true,
+            stream_id: Some("video_main".to_string()),
+            arrival_ts_us: Some(2_001_000),
+        };
+
+        let (media_ts, arrival_ts) = video.timing();
+        assert_eq!(media_ts, Some(2_000_000));
+        assert_eq!(arrival_ts, Some(2_001_000));
+        assert_eq!(video.stream_id(), Some("video_main"));
+        assert!(!video.is_audio());
+        assert!(video.is_video());
+        assert!(video.is_timed_media());
+    }
+
+    #[test]
+    fn test_runtime_data_timing_non_media() {
+        let text = data::RuntimeData::Text("hello".to_string());
+
+        let (media_ts, arrival_ts) = text.timing();
+        assert_eq!(media_ts, None);
+        assert_eq!(arrival_ts, None);
+        assert_eq!(text.stream_id(), None);
+        assert!(!text.is_audio());
+        assert!(!text.is_video());
+        assert!(!text.is_timed_media());
+    }
+
+    #[test]
+    fn test_runtime_data_set_timestamps() {
+        let mut audio = data::RuntimeData::Audio {
+            samples: vec![0.0; 100],
+            sample_rate: 44100,
+            channels: 1,
+            stream_id: None,
+            timestamp_us: None,
+            arrival_ts_us: None,
+        };
+
+        // Set arrival timestamp
+        assert!(audio.set_arrival_timestamp(5_000_000));
+        let (_, arrival_ts) = audio.timing();
+        assert_eq!(arrival_ts, Some(5_000_000));
+
+        // Set media timestamp
+        assert!(audio.set_audio_timestamp(4_000_000));
+        let (media_ts, _) = audio.timing();
+        assert_eq!(media_ts, Some(4_000_000));
+
+        // Non-audio types should return false
+        let mut text = data::RuntimeData::Text("hello".to_string());
+        assert!(!text.set_arrival_timestamp(1000));
+        assert!(!text.set_audio_timestamp(1000));
     }
 
     // T010-T013: Unit tests for RuntimeData::File (spec 001)

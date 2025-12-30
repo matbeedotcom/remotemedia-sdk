@@ -243,7 +243,7 @@ impl AsyncStreamingNode for SpeculativeVADCoordinator {
                 samples,
                 sample_rate,
                 channels,
-                stream_id: _,
+                ..
             } => (samples.clone(), *sample_rate, *channels),
             _ => {
                 return Err(Error::Execution(
@@ -261,6 +261,8 @@ impl AsyncStreamingNode for SpeculativeVADCoordinator {
             sample_rate,
             channels,
             stream_id: None,
+            timestamp_us: None,
+            arrival_ts_us: None,
         };
         callback(audio_output)?;
         output_count += 1;
@@ -449,6 +451,8 @@ mod tests {
             sample_rate: 16000,
             channels: 1,
             stream_id: None,
+            timestamp_us: None,
+            arrival_ts_us: None,
         };
 
         let mut outputs = Vec::new();
@@ -498,6 +502,8 @@ mod tests {
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: None,
+                timestamp_us: None,
+                arrival_ts_us: None,
             };
 
             let callback = |_: RuntimeData| Ok(());
@@ -526,6 +532,8 @@ mod tests {
             sample_rate: 16000,
             channels: 1,
             stream_id: None,
+            timestamp_us: None,
+            arrival_ts_us: None,
         };
 
         let callback = |_: RuntimeData| Ok(());

@@ -39,10 +39,17 @@ pub mod executor;
 // Re-export key types for convenience
 pub use client::{ClientStreamSession, PipelineClient, TransportType};
 pub use data::TransportData;
+pub use executor::{ExecutorConfig, PipelineExecutor, SessionHandle};
 pub use plugin_registry::TransportPluginRegistry;
 pub use runner::PipelineRunner;
 pub use session::{StreamSession, StreamSessionHandle};
 pub use session_router::{DataPacket, SessionRouter};
+
+/// Deprecated alias for PipelineExecutor
+///
+/// Use `PipelineExecutor` instead. This alias exists for backward compatibility.
+#[deprecated(since = "0.5.0", note = "Use PipelineExecutor instead")]
+pub type PipelineRunnerDeprecated = PipelineExecutor;
 
 /// Configuration for creating a transport client
 #[derive(Debug, Clone, Serialize, Deserialize)]
