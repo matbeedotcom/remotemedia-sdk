@@ -102,6 +102,7 @@ regex = "1.10"
 # Low-latency streaming optimizations
 crossbeam = "0.8"
 hdrhistogram = "7.5"
+bitflags = "2.4"
 
 # Docker/build utilities
 tar = "0.4"

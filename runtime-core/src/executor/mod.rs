@@ -23,6 +23,10 @@ pub mod executor_bridge;
 pub mod latency_metrics;
 pub mod node_capabilities;
 
+// StreamingScheduler and DriftMetrics (spec 026)
+pub mod drift_metrics;
+pub mod streaming_scheduler;
+
 // Re-export key types for convenience
 pub use error::ExecutionErrorExt;
 pub use graph::{PipelineGraph as Graph, PipelineNode as Node};

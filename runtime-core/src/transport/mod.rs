@@ -33,6 +33,9 @@ pub mod runner;
 pub mod session;
 pub mod session_router;
 
+// PipelineExecutor facade (spec 026)
+pub mod executor;
+
 // Re-export key types for convenience
 pub use client::{ClientStreamSession, PipelineClient, TransportType};
 pub use data::TransportData;

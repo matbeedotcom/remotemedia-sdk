@@ -34,6 +34,9 @@ remotemedia-runtime-core-derive = { path = "../runtime-core-derive" }
 # Async trait support
 async-trait = { workspace = true }
 
+# StreamingScheduler drift metrics (spec 026)
+bitflags = { workspace = true }
+
 # Audio processing (for native nodes)
 rubato = { workspace = true }
 rustfft = { workspace = true }
