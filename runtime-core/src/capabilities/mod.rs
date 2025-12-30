@@ -72,8 +72,8 @@ pub use negotiation::{
 pub use registry::{ConversionRegistry, ConverterInfo, DefaultConversionRegistry};
 
 pub use dynamic::{
-    CapabilityBehavior, CapabilitySource, DynamicCapabilityProvider, ResolutionContext,
-    ResolutionState, ResolvedCapabilities,
+    CapabilityBehavior, CapabilityNotification, CapabilitySource, DynamicCapabilityProvider,
+    ResolutionContext, ResolutionState, ResolvedCapabilities,
 };
 
 pub use resolver::{CapabilityHints, CapabilityResolver, NodeHints};

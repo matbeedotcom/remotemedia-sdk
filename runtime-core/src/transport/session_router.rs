@@ -36,6 +36,7 @@
 //! router.send_input(input_data).await?;
 //! ```
 
+use crate::capabilities::{CapabilityBehavior, CapabilityResolver, ResolutionContext};
 use crate::data::RuntimeData;
 use crate::executor::PipelineGraph;
 use crate::manifest::Manifest;
@@ -101,6 +102,10 @@ pub struct SessionRouter {
 
     /// Shutdown signal sender (held externally)
     _shutdown_tx: mpsc::Sender<()>,
+
+    /// Capability resolution context (spec 025)
+    /// Stores pending capability updates for downstream nodes
+    resolution_ctx: Option<ResolutionContext>,
 }
 
 impl SessionRouter {
@@ -150,6 +155,7 @@ impl SessionRouter {
             input_tx,
             shutdown_rx: Some(shutdown_rx),
             _shutdown_tx: shutdown_tx,
+            resolution_ctx: None,
         };
 
         Ok((router, shutdown_tx_clone))
@@ -216,6 +222,130 @@ impl SessionRouter {
             self.session_id,
             self.cached_nodes.len()
         );
+
+        // Spec 025: After initialization, propagate actual capabilities from
+        // RuntimeDiscovered nodes to downstream Adaptive/Passthrough nodes
+        self.propagate_runtime_capabilities().await?;
+
+        Ok(())
+    }
+
+    /// Propagate capabilities from RuntimeDiscovered nodes after initialization (spec 025).
+    ///
+    /// This method is called after all nodes are initialized. For each node with
+    /// `RuntimeDiscovered` behavior that reports actual capabilities, we:
+    /// 1. Call `revalidate_and_propagate()` to update resolution context
+    /// 2. Apply pending updates to downstream nodes via `configure_from_upstream()`
+    async fn propagate_runtime_capabilities(&mut self) -> Result<()> {
+        // Build resolution context from manifest if not already present
+        if self.resolution_ctx.is_none() {
+            let mut ctx = ResolutionContext::new();
+
+            // Add node types and connections from manifest
+            for node_spec in &self.manifest.nodes {
+                ctx.node_types.insert(node_spec.id.clone(), node_spec.node_type.clone());
+            }
+            for conn in &self.manifest.connections {
+                ctx.add_connection(&conn.from, &conn.to);
+            }
+
+            // Set behaviors from cached nodes
+            for (node_id, node) in &self.cached_nodes {
+                ctx.set_behavior(node_id, node.capability_behavior());
+            }
+
+            self.resolution_ctx = Some(ctx);
+        }
+
+        let ctx = self.resolution_ctx.as_mut().unwrap();
+        let resolver = CapabilityResolver::new(&self.registry);
+
+        // Find RuntimeDiscovered nodes that have actual capabilities
+        let runtime_discovered_nodes: Vec<String> = self.cached_nodes
+            .iter()
+            .filter(|(_, node)| matches!(node.capability_behavior(), CapabilityBehavior::RuntimeDiscovered))
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        for node_id in runtime_discovered_nodes {
+            if let Some(node) = self.cached_nodes.get(&node_id) {
+                // Get actual capabilities from the node after initialization
+                if let Some(actual_caps) = node.actual_capabilities() {
+                    tracing::info!(
+                        "Session {}: Node '{}' reported actual capabilities, propagating to downstream nodes",
+                        self.session_id,
+                        node_id
+                    );
+
+                    // Update resolution context with actual capabilities and create pending updates
+                    if let Err(e) = resolver.revalidate_and_propagate(ctx, &node_id, actual_caps) {
+                        tracing::warn!(
+                            "Session {}: Failed to propagate capabilities from '{}': {}",
+                            self.session_id,
+                            node_id,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        // Apply pending updates to downstream nodes
+        self.apply_pending_updates().await?;
+
+        Ok(())
+    }
+
+    /// Apply pending capability updates to downstream nodes (spec 025).
+    ///
+    /// Iterates through all pending updates in the resolution context and calls
+    /// `configure_from_upstream()` on each target node.
+    pub async fn apply_pending_updates(&mut self) -> Result<()> {
+        let ctx = match &mut self.resolution_ctx {
+            Some(ctx) => ctx,
+            None => return Ok(()), // No context, nothing to apply
+        };
+
+        if !ctx.has_pending_updates() {
+            return Ok(());
+        }
+
+        // Get the list of nodes with pending updates
+        let nodes_to_update: Vec<String> = ctx.nodes_with_pending_updates()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        tracing::debug!(
+            "Session {}: Applying {} pending capability updates",
+            self.session_id,
+            nodes_to_update.len()
+        );
+
+        for node_id in nodes_to_update {
+            // Take the pending update (removes from context)
+            if let Some(notification) = ctx.take_pending_update(&node_id) {
+                if let Some(node) = self.cached_nodes.get(&node_id) {
+                    tracing::debug!(
+                        "Session {}: Configuring '{}' from upstream '{}'",
+                        self.session_id,
+                        node_id,
+                        notification.upstream_node_id
+                    );
+
+                    // Apply the upstream capabilities to this node
+                    if let Err(e) = node.configure_from_upstream(&notification.upstream_output) {
+                        tracing::warn!(
+                            "Session {}: Failed to configure '{}' from upstream: {}",
+                            self.session_id,
+                            node_id,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 

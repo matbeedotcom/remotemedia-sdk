@@ -38,9 +38,70 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::Instant;
 
 use super::constraints::{AudioConstraints, MediaCapabilities, MediaConstraints, ConstraintValue};
 use super::validation::CapabilityMismatch;
+
+// =============================================================================
+// Capability Notification (spec 025)
+// =============================================================================
+
+/// Notification of a pending capability update for a node (spec 025).
+///
+/// Created by `CapabilityResolver.revalidate_and_propagate()` when a RuntimeDiscovered
+/// node reports its actual capabilities. Consumed by `SessionRouter` after node
+/// initialization to configure downstream Adaptive/Passthrough nodes.
+///
+/// # Lifecycle
+///
+/// 1. Created by `revalidate_and_propagate()` when upstream capabilities change
+/// 2. Stored in `ResolutionContext.pending_updates`
+/// 3. Retrieved by SessionRouter after node initialization
+/// 4. Applied via `node.configure_from_upstream()`
+/// 5. Removed from pending_updates after successful application
+///
+/// # Example
+///
+/// ```ignore
+/// let notification = CapabilityNotification::new(
+///     "resample",  // target node
+///     "mic",       // upstream node that triggered update
+///     MediaCapabilities::with_output(audio_constraints),
+/// );
+/// ctx.add_pending_update(notification);
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityNotification {
+    /// Target node to receive the update
+    pub node_id: String,
+
+    /// Source node that triggered the propagation
+    pub upstream_node_id: String,
+
+    /// Capabilities from upstream node's output
+    pub upstream_output: MediaCapabilities,
+
+    /// When the update was created (for ordering concurrent updates)
+    #[serde(skip)]
+    pub timestamp: Option<Instant>,
+}
+
+impl CapabilityNotification {
+    /// Create a new capability notification.
+    pub fn new(
+        node_id: impl Into<String>,
+        upstream_node_id: impl Into<String>,
+        upstream_output: MediaCapabilities,
+    ) -> Self {
+        Self {
+            node_id: node_id.into(),
+            upstream_node_id: upstream_node_id.into(),
+            upstream_output,
+            timestamp: Some(Instant::now()),
+        }
+    }
+}
 
 // =============================================================================
 // Capability Behavior (spec 023)
@@ -418,6 +479,8 @@ pub struct ResolutionContext {
     pub states: HashMap<String, ResolutionState>,
     /// Errors accumulated during resolution (spec 023)
     pub errors: Vec<CapabilityMismatch>,
+    /// Pending capability updates for downstream nodes (spec 025)
+    pub pending_updates: HashMap<String, CapabilityNotification>,
 }
 
 impl ResolutionContext {
@@ -432,6 +495,7 @@ impl ResolutionContext {
             behaviors: HashMap::new(),
             states: HashMap::new(),
             errors: Vec::new(),
+            pending_updates: HashMap::new(),
         }
     }
 
@@ -537,6 +601,62 @@ impl ResolutionContext {
     pub fn is_complete(&self) -> bool {
         self.states.values().all(|s| matches!(s, ResolutionState::Complete))
             && self.errors.is_empty()
+    }
+
+    // =========================================================================
+    // Pending Update Methods (spec 025)
+    // =========================================================================
+
+    /// Add a pending capability update for a node. (spec 025)
+    ///
+    /// If an update already exists for the node, it will be replaced.
+    /// This ensures only the most recent update is pending.
+    ///
+    /// # Arguments
+    /// * `notification` - The capability notification to add
+    pub fn add_pending_update(&mut self, notification: CapabilityNotification) {
+        self.pending_updates
+            .insert(notification.node_id.clone(), notification);
+    }
+
+    /// Take (remove and return) the pending update for a node. (spec 025)
+    ///
+    /// Returns `Some(notification)` if there was a pending update, `None` otherwise.
+    /// After calling this, the node will have no pending update.
+    ///
+    /// # Arguments
+    /// * `node_id` - The ID of the node to get the update for
+    pub fn take_pending_update(&mut self, node_id: &str) -> Option<CapabilityNotification> {
+        self.pending_updates.remove(node_id)
+    }
+
+    /// Get a reference to the pending update for a node without removing it. (spec 025)
+    ///
+    /// Use this to inspect pending updates without consuming them.
+    ///
+    /// # Arguments
+    /// * `node_id` - The ID of the node to get the update for
+    pub fn get_pending_update(&self, node_id: &str) -> Option<&CapabilityNotification> {
+        self.pending_updates.get(node_id)
+    }
+
+    /// Clear all pending updates. (spec 025)
+    ///
+    /// Call this after all updates have been applied to clean up state.
+    pub fn clear_pending_updates(&mut self) {
+        self.pending_updates.clear();
+    }
+
+    /// Get all node IDs that have pending updates. (spec 025)
+    ///
+    /// Useful for iterating over nodes that need configuration.
+    pub fn nodes_with_pending_updates(&self) -> Vec<&str> {
+        self.pending_updates.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Check if there are any pending updates. (spec 025)
+    pub fn has_pending_updates(&self) -> bool {
+        !self.pending_updates.is_empty()
     }
 }
 
@@ -657,5 +777,116 @@ mod tests {
 
         let text = MediaConstraints::Text(TextConstraints::default());
         assert_eq!(get_sample_rate(&text), None);
+    }
+
+    // =========================================================================
+    // Spec 025: Capability Re-propagation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_pending_updates_storage() {
+        // T011 [US1]: Test pending update storage and retrieval
+        let mut ctx = ResolutionContext::new();
+
+        // Initially no pending updates
+        assert!(!ctx.has_pending_updates());
+        assert!(ctx.get_pending_update("resample").is_none());
+
+        // Create a notification
+        let caps = MediaCapabilities::with_output(
+            MediaConstraints::Audio(AudioConstraints {
+                sample_rate: Some(ConstraintValue::Exact(48000)),
+                channels: Some(ConstraintValue::Exact(2)),
+                format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+            })
+        );
+        let notification = CapabilityNotification::new("resample", "mic", caps);
+
+        // Add the pending update
+        ctx.add_pending_update(notification);
+
+        // Verify it was stored
+        assert!(ctx.has_pending_updates());
+        assert!(ctx.get_pending_update("resample").is_some());
+        assert_eq!(ctx.nodes_with_pending_updates(), vec!["resample"]);
+
+        // Verify the stored data
+        let stored = ctx.get_pending_update("resample").unwrap();
+        assert_eq!(stored.node_id, "resample");
+        assert_eq!(stored.upstream_node_id, "mic");
+        assert!(stored.timestamp.is_some());
+
+        // Take the update (removes it)
+        let taken = ctx.take_pending_update("resample");
+        assert!(taken.is_some());
+        assert_eq!(taken.unwrap().node_id, "resample");
+
+        // Verify it was removed
+        assert!(!ctx.has_pending_updates());
+        assert!(ctx.get_pending_update("resample").is_none());
+    }
+
+    #[test]
+    fn test_pending_updates_replacement() {
+        // Test that adding a new update for the same node replaces the old one
+        let mut ctx = ResolutionContext::new();
+
+        // Create first notification with 44100 Hz
+        let caps1 = MediaCapabilities::with_output(
+            MediaConstraints::Audio(AudioConstraints {
+                sample_rate: Some(ConstraintValue::Exact(44100)),
+                channels: Some(ConstraintValue::Exact(1)),
+                format: None,
+            })
+        );
+        let notification1 = CapabilityNotification::new("resample", "mic", caps1);
+        ctx.add_pending_update(notification1);
+
+        // Create second notification with 48000 Hz (should replace)
+        let caps2 = MediaCapabilities::with_output(
+            MediaConstraints::Audio(AudioConstraints {
+                sample_rate: Some(ConstraintValue::Exact(48000)),
+                channels: Some(ConstraintValue::Exact(2)),
+                format: None,
+            })
+        );
+        let notification2 = CapabilityNotification::new("resample", "mic", caps2);
+        ctx.add_pending_update(notification2);
+
+        // Verify only one update and it's the second one
+        assert_eq!(ctx.nodes_with_pending_updates().len(), 1);
+        let stored = ctx.get_pending_update("resample").unwrap();
+        if let Some(MediaConstraints::Audio(audio)) = stored.upstream_output.default_output() {
+            assert_eq!(audio.sample_rate, Some(ConstraintValue::Exact(48000)));
+            assert_eq!(audio.channels, Some(ConstraintValue::Exact(2)));
+        } else {
+            panic!("Expected audio constraints");
+        }
+    }
+
+    #[test]
+    fn test_clear_pending_updates() {
+        let mut ctx = ResolutionContext::new();
+
+        // Add multiple pending updates
+        let caps = MediaCapabilities::with_output(
+            MediaConstraints::Audio(AudioConstraints {
+                sample_rate: Some(ConstraintValue::Exact(48000)),
+                channels: Some(ConstraintValue::Exact(2)),
+                format: None,
+            })
+        );
+
+        ctx.add_pending_update(CapabilityNotification::new("node1", "source", caps.clone()));
+        ctx.add_pending_update(CapabilityNotification::new("node2", "source", caps.clone()));
+        ctx.add_pending_update(CapabilityNotification::new("node3", "source", caps.clone()));
+
+        assert_eq!(ctx.nodes_with_pending_updates().len(), 3);
+
+        // Clear all
+        ctx.clear_pending_updates();
+
+        assert!(!ctx.has_pending_updates());
+        assert_eq!(ctx.nodes_with_pending_updates().len(), 0);
     }
 }

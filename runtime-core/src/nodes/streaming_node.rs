@@ -344,6 +344,37 @@ pub trait StreamingNode: Send + Sync {
     fn actual_capabilities(&self) -> Option<MediaCapabilities> {
         self.media_capabilities()
     }
+
+    /// Configure this node based on upstream capabilities (spec 025).
+    ///
+    /// Called by `SessionRouter` after a RuntimeDiscovered upstream node reports
+    /// its actual capabilities. This allows Adaptive and Passthrough nodes to
+    /// configure themselves based on actual upstream values before data processing.
+    ///
+    /// Default: No-op. Override in Adaptive/Passthrough nodes that need upstream info.
+    ///
+    /// # Arguments
+    /// * `upstream_caps` - The actual output capabilities from the upstream node
+    ///
+    /// # Returns
+    /// * `Ok(())` if configuration succeeded
+    /// * `Err(_)` if the node cannot accept the upstream capabilities
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// fn configure_from_upstream(&self, upstream_caps: &MediaCapabilities) -> Result<(), Error> {
+    ///     if let Some(MediaConstraints::Audio(audio)) = upstream_caps.default_output() {
+    ///         if let Some(ConstraintValue::Exact(rate)) = &audio.sample_rate {
+    ///             self.set_source_rate(*rate);
+    ///         }
+    ///     }
+    ///     Ok(())
+    /// }
+    /// ```
+    fn configure_from_upstream(&self, _upstream_caps: &MediaCapabilities) -> Result<(), Error> {
+        Ok(()) // Default: no-op for nodes that don't need upstream configuration
+    }
 }
 
 /// Wrapper that makes a SyncStreamingNode into a StreamingNode

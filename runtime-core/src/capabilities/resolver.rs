@@ -280,6 +280,212 @@ impl<'a> CapabilityResolver<'a> {
         Ok(())
     }
 
+    /// Re-validate and propagate capabilities after RuntimeDiscovered node initialization (spec 025).
+    ///
+    /// This method extends `revalidate()` by also propagating the actual capabilities
+    /// to downstream Adaptive and Passthrough nodes. It:
+    ///
+    /// 1. Updates the source node's capabilities with actual values
+    /// 2. Re-validates connections from this node
+    /// 3. Creates `CapabilityNotification` for each downstream Adaptive/Passthrough node
+    /// 4. Stores notifications in `ctx.pending_updates` for later application
+    ///
+    /// The caller (typically `SessionRouter`) is responsible for:
+    /// - Calling `node.configure_from_upstream()` for each pending update
+    /// - Clearing pending updates after application
+    ///
+    /// # Arguments
+    /// * `ctx` - Resolution context to update
+    /// * `node_id` - Node that was initialized (RuntimeDiscovered source)
+    /// * `actual` - Actual capabilities discovered during initialization
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // After MicInput discovers actual 48kHz output
+    /// resolver.revalidate_and_propagate(&mut ctx, "mic", actual_caps)?;
+    ///
+    /// // Apply pending updates to downstream nodes
+    /// for node_id in ctx.nodes_with_pending_updates() {
+    ///     if let Some(update) = ctx.take_pending_update(node_id) {
+    ///         node.configure_from_upstream(&update.upstream_output)?;
+    ///     }
+    /// }
+    /// ```
+    pub fn revalidate_and_propagate(
+        &self,
+        ctx: &mut ResolutionContext,
+        node_id: &str,
+        actual: MediaCapabilities,
+    ) -> Result<(), Error> {
+        use super::dynamic::CapabilityNotification;
+
+        tracing::info!(
+            "[spec025] Starting capability re-propagation from node '{}'",
+            node_id
+        );
+
+        // Step 1: Update the source node's capabilities (same as revalidate)
+        if let Some(resolved) = ctx.resolved.get_mut(node_id) {
+            resolved.confirm_actual(actual.clone());
+            tracing::debug!(
+                "[spec025] Updated '{}' capabilities: provisional=false",
+                node_id
+            );
+        } else {
+            tracing::error!(
+                "[spec025] Cannot revalidate unknown node: {}",
+                node_id
+            );
+            return Err(Error::Execution(format!(
+                "Cannot revalidate unknown node: {}",
+                node_id
+            )));
+        }
+
+        // Step 2: Get downstream nodes and their behaviors
+        let downstream: Vec<String> = ctx.downstream_nodes(node_id)
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        tracing::debug!(
+            "[spec025] Node '{}' has {} downstream node(s): {:?}",
+            node_id,
+            downstream.len(),
+            downstream
+        );
+
+        // Step 3: Create pending updates for Adaptive and Passthrough downstream nodes
+        let mut pending_count = 0;
+        for to_node in &downstream {
+            let behavior = ctx.get_behavior(to_node);
+
+            match behavior {
+                CapabilityBehavior::Adaptive | CapabilityBehavior::Passthrough => {
+                    // Create a notification for this downstream node
+                    let notification = CapabilityNotification::new(
+                        to_node.clone(),
+                        node_id.to_string(),
+                        actual.clone(),
+                    );
+                    ctx.add_pending_update(notification);
+                    pending_count += 1;
+
+                    tracing::debug!(
+                        "[spec025] Created pending update for '{}' (behavior: {:?}) from '{}'",
+                        to_node,
+                        behavior,
+                        node_id
+                    );
+                }
+                _ => {
+                    tracing::trace!(
+                        "[spec025] Skipping '{}' (behavior: {:?}) - does not propagate",
+                        to_node,
+                        behavior
+                    );
+                }
+            }
+        }
+
+        tracing::info!(
+            "[spec025] Created {} pending update(s) for downstream nodes of '{}'",
+            pending_count,
+            node_id
+        );
+
+        // Step 4: Re-validate connections from this node
+        for to_node in &downstream {
+            self.validate_connection(ctx, node_id, to_node)?;
+        }
+
+        // Step 5: Re-validate connections to this node
+        let upstream: Vec<String> = ctx.upstream_nodes(node_id)
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        for from_node in upstream {
+            self.validate_connection(ctx, &from_node, node_id)?;
+        }
+
+        tracing::debug!(
+            "[spec025] Re-propagation complete for '{}', {} pending update(s) queued",
+            node_id,
+            ctx.nodes_with_pending_updates().len()
+        );
+
+        Ok(())
+    }
+
+    /// Compute the order for applying capability updates (spec 025).
+    ///
+    /// Returns nodes that need to receive capability updates in topological order,
+    /// starting from the source node and traversing downstream. Only includes
+    /// Adaptive and Passthrough nodes that should receive updates.
+    ///
+    /// # Arguments
+    /// * `ctx` - Resolution context with graph structure
+    /// * `source_node_id` - The RuntimeDiscovered node that triggered propagation
+    ///
+    /// # Returns
+    /// Vector of node IDs in the order they should receive updates
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // For pipeline: mic -> resample -> vad -> whisper
+    /// // Where mic is RuntimeDiscovered, resample is Adaptive, vad is Passthrough
+    /// let order = resolver.compute_propagation_order(&ctx, "mic");
+    /// assert_eq!(order, vec!["resample", "vad"]);
+    /// // whisper is Static so it's not included
+    /// ```
+    pub fn compute_propagation_order(
+        &self,
+        ctx: &ResolutionContext,
+        source_node_id: &str,
+    ) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+
+        // Start with immediate downstream nodes of the source
+        for downstream in ctx.downstream_nodes(source_node_id) {
+            queue.push_back(downstream.to_string());
+        }
+
+        // BFS traversal to maintain topological order
+        while let Some(node_id) = queue.pop_front() {
+            if visited.contains(&node_id) {
+                continue;
+            }
+            visited.insert(node_id.clone());
+
+            let behavior = ctx.get_behavior(&node_id);
+
+            match behavior {
+                CapabilityBehavior::Adaptive | CapabilityBehavior::Passthrough => {
+                    // This node needs an update
+                    result.push(node_id.clone());
+
+                    // Continue propagation to its downstream nodes
+                    for downstream in ctx.downstream_nodes(&node_id) {
+                        if !visited.contains(downstream) {
+                            queue.push_back(downstream.to_string());
+                        }
+                    }
+                }
+                _ => {
+                    // Static/Configured/RuntimeDiscovered don't propagate further
+                    // (RuntimeDiscovered will trigger their own propagation when they init)
+                }
+            }
+        }
+
+        result
+    }
+
     /// Get resolved capabilities for a node.
     pub fn get_resolved<'b>(
         &self,
@@ -899,5 +1105,150 @@ mod tests {
             "Introspection took {}μs for 100 queries, expected <1000μs (SC-005)",
             elapsed.as_micros()
         );
+    }
+
+    // =========================================================================
+    // Spec 025: Capability Re-propagation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_revalidate_and_propagate_basic() {
+        // T010 [US1]: Test basic revalidate_and_propagate functionality
+        // Scenario: RuntimeDiscovered source -> Adaptive resample -> Static sink
+        // When source reports actual 48kHz, resample should receive pending update
+        use super::super::constraints::{AudioConstraints, AudioSampleFormat, ConstraintValue, MediaConstraints};
+        use super::super::dynamic::{CapabilityBehavior, ResolvedCapabilities};
+
+        let registry = StreamingNodeRegistry::new();
+        let resolver = CapabilityResolver::new(&registry);
+
+        // Build a pipeline: mic (RuntimeDiscovered) -> resample (Adaptive) -> whisper (Static)
+        let connections = vec![
+            ("mic".to_string(), "resample".to_string()),
+            ("resample".to_string(), "whisper".to_string()),
+        ];
+
+        let mut ctx = ResolutionContext::new();
+
+        // Set up behaviors
+        ctx.set_behavior("mic", CapabilityBehavior::RuntimeDiscovered);
+        ctx.set_behavior("resample", CapabilityBehavior::Adaptive);
+        ctx.set_behavior("whisper", CapabilityBehavior::Static);
+
+        // Add node types
+        ctx.node_types.insert("mic".to_string(), "MicInput".to_string());
+        ctx.node_types.insert("resample".to_string(), "FastResampleNode".to_string());
+        ctx.node_types.insert("whisper".to_string(), "RustWhisperNode".to_string());
+
+        // Add connections
+        for (from, to) in &connections {
+            ctx.add_connection(from, to);
+        }
+
+        // Set up initial provisional capabilities for mic (Phase 1)
+        let potential_caps = MediaCapabilities::with_output(
+            MediaConstraints::Audio(AudioConstraints {
+                sample_rate: Some(ConstraintValue::Range { min: 8000, max: 192000 }),
+                channels: Some(ConstraintValue::Range { min: 1, max: 8 }),
+                format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+            })
+        );
+        let provisional = ResolvedCapabilities::provisional("mic", potential_caps);
+        ctx.resolved.insert("mic".to_string(), provisional);
+
+        // Simulate mic discovering actual 48kHz after initialization
+        let actual_caps = MediaCapabilities::with_output(
+            MediaConstraints::Audio(AudioConstraints {
+                sample_rate: Some(ConstraintValue::Exact(48000)),
+                channels: Some(ConstraintValue::Exact(2)),
+                format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+            })
+        );
+
+        // Call revalidate_and_propagate (this is what we're testing)
+        let result = resolver.revalidate_and_propagate(&mut ctx, "mic", actual_caps.clone());
+        assert!(result.is_ok(), "revalidate_and_propagate should succeed");
+
+        // Verify: mic's capabilities were updated
+        let mic_resolved = ctx.resolved.get("mic").expect("mic should have resolved caps");
+        assert!(!mic_resolved.provisional, "mic should no longer be provisional");
+
+        // Verify: resample should have a pending update
+        let pending = ctx.get_pending_update("resample");
+        assert!(pending.is_some(), "resample should have a pending update");
+
+        let update = pending.unwrap();
+        assert_eq!(update.upstream_node_id, "mic");
+        assert_eq!(update.node_id, "resample");
+
+        // Verify the upstream_output contains the actual 48kHz sample rate
+        if let Some(MediaConstraints::Audio(audio)) = update.upstream_output.default_output() {
+            assert_eq!(
+                audio.sample_rate,
+                Some(ConstraintValue::Exact(48000)),
+                "Pending update should contain 48kHz sample rate"
+            );
+        } else {
+            panic!("Expected audio constraints in pending update");
+        }
+    }
+
+    #[test]
+    fn test_compute_propagation_order_basic() {
+        // T013: Test compute_propagation_order returns nodes in topological order
+        use super::super::dynamic::CapabilityBehavior;
+
+        let registry = StreamingNodeRegistry::new();
+        let resolver = CapabilityResolver::new(&registry);
+
+        let mut ctx = ResolutionContext::new();
+
+        // Set up behaviors: mic -> resample -> vad -> whisper
+        ctx.set_behavior("mic", CapabilityBehavior::RuntimeDiscovered);
+        ctx.set_behavior("resample", CapabilityBehavior::Adaptive);
+        ctx.set_behavior("vad", CapabilityBehavior::Passthrough);
+        ctx.set_behavior("whisper", CapabilityBehavior::Static);
+
+        // Add connections
+        ctx.add_connection("mic", "resample");
+        ctx.add_connection("resample", "vad");
+        ctx.add_connection("vad", "whisper");
+
+        // Compute propagation order from mic
+        let order = resolver.compute_propagation_order(&ctx, "mic");
+
+        // Should include resample and vad (Adaptive and Passthrough)
+        // Should NOT include whisper (Static)
+        assert_eq!(order.len(), 2);
+        assert_eq!(order[0], "resample");
+        assert_eq!(order[1], "vad");
+    }
+
+    #[test]
+    fn test_compute_propagation_order_stops_at_static() {
+        // Verify propagation stops at Static nodes
+        use super::super::dynamic::CapabilityBehavior;
+
+        let registry = StreamingNodeRegistry::new();
+        let resolver = CapabilityResolver::new(&registry);
+
+        let mut ctx = ResolutionContext::new();
+
+        // Set up: source -> adaptive1 -> static -> adaptive2
+        // Propagation should stop at static, not reaching adaptive2
+        ctx.set_behavior("source", CapabilityBehavior::RuntimeDiscovered);
+        ctx.set_behavior("adaptive1", CapabilityBehavior::Adaptive);
+        ctx.set_behavior("static", CapabilityBehavior::Static);
+        ctx.set_behavior("adaptive2", CapabilityBehavior::Adaptive);
+
+        ctx.add_connection("source", "adaptive1");
+        ctx.add_connection("adaptive1", "static");
+        ctx.add_connection("static", "adaptive2");
+
+        let order = resolver.compute_propagation_order(&ctx, "source");
+
+        // Only adaptive1 should be included, not adaptive2 (blocked by static)
+        assert_eq!(order.len(), 1);
+        assert_eq!(order[0], "adaptive1");
     }
 }

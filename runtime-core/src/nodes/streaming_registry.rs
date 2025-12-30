@@ -1346,6 +1346,8 @@ impl StreamingNodeFactory for FastResampleNodeFactory {
         // Use AutoResampleStreamingNode when source or target rate is not specified
         // This enables lazy initialization with auto-detection from incoming data
         if source_rate.is_none() || target_rate.is_none() {
+            use crate::nodes::audio_resample_streaming::AutoResampleStreamingNodeWrapper;
+
             let config = AutoResampleConfig {
                 source_rate,
                 target_rate,
@@ -1353,7 +1355,8 @@ impl StreamingNodeFactory for FastResampleNodeFactory {
                 channels,
             };
             let node = AutoResampleStreamingNode::new(node_id, config);
-            return Ok(Box::new(AsyncNodeWrapper(Arc::new(node))));
+            // Use AutoResampleStreamingNodeWrapper for spec 025 configure_from_upstream support
+            return Ok(Box::new(AutoResampleStreamingNodeWrapper::new(node)));
         }
 
         // Both rates specified - use the original fixed-rate resampler
