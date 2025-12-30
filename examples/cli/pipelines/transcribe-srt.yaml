@@ -18,8 +18,21 @@ metadata:
   name: transcribe-srt
   description: Audio transcription to SRT subtitle format using Whisper
 
+# Default audio settings - can be overridden via CLI
+defaults:
+  sample_rate: 16000
+  channels: 1
+
 nodes:
-  # Whisper speech-to-text (input is provided by CLI as RuntimeData::Audio)
+  # Auto-resample audio to 16kHz for Whisper
+  # Automatically detects input sample rate (e.g., 48kHz stereo from mic)
+  - id: resample
+    node_type: AutoResampleNode
+    params:
+      target_rate: 16000
+      quality: medium  # low, medium, or high
+
+  # Whisper speech-to-text
   # NOTE: Must use QUANTIZED model for word-level timestamps (DTW alignment)
   # Options with word timestamps: quantized_tiny, quantized_tiny_en, large-v3-turbo
   # Options without word timestamps: tiny, base, small, medium, large
@@ -40,5 +53,7 @@ nodes:
       max_line_length: 42
 
 connections:
+  - from: resample
+    to: whisper
   - from: whisper
     to: srt

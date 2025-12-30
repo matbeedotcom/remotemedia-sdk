@@ -246,6 +246,20 @@ cli-remotemedia: ## Build the main remotemedia CLI
 cli-transcribe: ## Build the transcribe-srt CLI tool
 	cd examples && cargo build -p transcribe-srt $(CARGO_FLAGS)
 
+ifeq ($(OS),Windows_NT)
+cli-embed: setup-ffmpeg ## Build pipeline-embed (set PIPELINE_YAML env var)
+ifndef PIPELINE_YAML
+	@echo Usage: make cli-embed PIPELINE_YAML=/path/to/pipeline.yaml [PIPELINE_*=value ...]
+	@echo        Binary is named after metadata.name (override with PIPELINE_BIN_NAME)
+	@exit 1
+endif
+	cd examples && set "PIPELINE_YAML=$(PIPELINE_YAML)" && set "PIPELINE_BIN_NAME=$(PIPELINE_BIN_NAME)" && set "PIPELINE_STREAM=$(PIPELINE_STREAM)" && set "PIPELINE_MIC=$(PIPELINE_MIC)" && set "PIPELINE_SPEAKER=$(PIPELINE_SPEAKER)" && set "PIPELINE_SAMPLE_RATE=$(PIPELINE_SAMPLE_RATE)" && set "PIPELINE_CHANNELS=$(PIPELINE_CHANNELS)" && set "PIPELINE_CHUNK_SIZE=$(PIPELINE_CHUNK_SIZE)" && set "PIPELINE_TIMEOUT=$(PIPELINE_TIMEOUT)" && set "PIPELINE_INPUT_DEVICE=$(PIPELINE_INPUT_DEVICE)" && set "PIPELINE_OUTPUT_DEVICE=$(PIPELINE_OUTPUT_DEVICE)" && set "PIPELINE_AUDIO_HOST=$(PIPELINE_AUDIO_HOST)" && set "PIPELINE_BUFFER_MS=$(PIPELINE_BUFFER_MS)" && cargo build -p pipeline-embed $(CARGO_FLAGS)
+ifeq ($(PROFILE),release)
+	@echo Built: examples/target/release/pipeline-runner.exe
+else
+	@echo Built: examples/target/debug/pipeline-runner.exe
+endif
+else
 cli-embed: setup-ffmpeg ## Build pipeline-embed (set PIPELINE_YAML env var)
 	@if [ -z "$(PIPELINE_YAML)" ]; then \
 		echo "Usage: make cli-embed PIPELINE_YAML=/path/to/pipeline.yaml [PIPELINE_*=value ...]"; \
@@ -289,6 +303,7 @@ cli-embed: setup-ffmpeg ## Build pipeline-embed (set PIPELINE_YAML env var)
 			echo "Built: examples/target/debug/pipeline-runner"; \
 		fi; \
 	fi
+endif
 
 # =============================================================================
 # TEST TARGETS
