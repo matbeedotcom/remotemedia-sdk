@@ -1,9 +1,9 @@
-//! T025-T027: Integration tests for parameter validation in PipelineRunner
+//! T025-T027: Integration tests for parameter validation in PipelineExecutor
 //!
 //! Tests that invalid manifests are rejected before any node instantiation.
 
 use remotemedia_runtime_core::manifest::{Manifest, ManifestMetadata, NodeManifest};
-use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_runtime_core::transport::PipelineExecutor;
 use remotemedia_runtime_core::Error;
 use serde_json::json;
 use std::sync::Arc;
@@ -33,7 +33,7 @@ fn create_node(id: &str, node_type: &str, params: serde_json::Value) -> NodeMani
 #[tokio::test]
 async fn test_no_node_instantiation_on_validation_failure() {
     // Create a runner - this initializes the schema validator
-    let runner = PipelineRunner::new().expect("Failed to create PipelineRunner");
+    let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
 
     // Create a manifest with a known node type but invalid parameters
     // We'll use a node type that we know has a schema
@@ -46,7 +46,7 @@ async fn test_no_node_instantiation_on_validation_failure() {
     )]);
 
     // Try to validate - should fail before any node instantiation
-    let result = runner.validate(&manifest);
+    let result = runner.validate_manifest(&manifest).await;
 
     // Should be a validation error
     match result {
@@ -70,7 +70,7 @@ async fn test_no_node_instantiation_on_validation_failure() {
 /// T026: Integration test for multi-node manifest with one invalid node
 #[tokio::test]
 async fn test_multi_node_manifest_validation() {
-    let runner = PipelineRunner::new().expect("Failed to create PipelineRunner");
+    let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
 
     // Create a manifest with multiple nodes, one invalid
     let manifest = create_test_manifest(vec![
@@ -90,7 +90,7 @@ async fn test_multi_node_manifest_validation() {
         ),
     ]);
 
-    let result = runner.validate(&manifest);
+    let result = runner.validate_manifest(&manifest).await;
 
     match result {
         Err(Error::Validation(errors)) => {
@@ -117,7 +117,7 @@ async fn test_multi_node_manifest_validation() {
 /// T027: Integration test for streaming session rejection
 #[tokio::test]
 async fn test_streaming_session_rejected_on_invalid_params() {
-    let runner = PipelineRunner::new().expect("Failed to create PipelineRunner");
+    let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
 
     // Create a manifest with invalid parameters
     let manifest = Arc::new(create_test_manifest(vec![create_node(
@@ -129,7 +129,7 @@ async fn test_streaming_session_rejected_on_invalid_params() {
     )]));
 
     // Try to create a streaming session - should fail validation
-    let result = runner.create_stream_session(manifest).await;
+    let result = runner.create_session(manifest).await;
 
     match result {
         Err(Error::Validation(errors)) => {
@@ -155,7 +155,7 @@ async fn test_streaming_session_rejected_on_invalid_params() {
 /// Test that valid manifests pass validation
 #[tokio::test]
 async fn test_valid_manifest_passes_validation() {
-    let runner = PipelineRunner::new().expect("Failed to create PipelineRunner");
+    let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
 
     // Create a valid manifest
     let manifest = create_test_manifest(vec![create_node(
@@ -167,14 +167,14 @@ async fn test_valid_manifest_passes_validation() {
     )]);
 
     // Validation should pass
-    let result = runner.validate(&manifest);
+    let result = runner.validate_manifest(&manifest).await;
     assert!(result.is_ok(), "Valid manifest should pass validation");
 }
 
 /// Test that unknown node types pass validation (backward compatibility)
 #[tokio::test]
 async fn test_unknown_node_type_passes_validation() {
-    let runner = PipelineRunner::new().expect("Failed to create PipelineRunner");
+    let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
 
     // Create a manifest with unknown node type
     let manifest = create_test_manifest(vec![create_node(
@@ -187,7 +187,7 @@ async fn test_unknown_node_type_passes_validation() {
     )]);
 
     // Unknown node types should pass validation (no schema = no validation)
-    let result = runner.validate(&manifest);
+    let result = runner.validate_manifest(&manifest).await;
     assert!(
         result.is_ok(),
         "Unknown node type should pass validation for backward compatibility"
@@ -197,10 +197,10 @@ async fn test_unknown_node_type_passes_validation() {
 /// Test that empty manifest passes validation
 #[tokio::test]
 async fn test_empty_manifest_passes_validation() {
-    let runner = PipelineRunner::new().expect("Failed to create PipelineRunner");
+    let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
 
     let manifest = create_test_manifest(vec![]);
 
-    let result = runner.validate(&manifest);
+    let result = runner.validate_manifest(&manifest).await;
     assert!(result.is_ok(), "Empty manifest should pass validation");
 }

@@ -55,6 +55,8 @@ fn generate_audio_data(duration_ms: u32, sample_rate: u32) -> RuntimeData {
         sample_rate,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     }
 }
 

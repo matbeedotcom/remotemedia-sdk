@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::manifest::Manifest;
-use remotemedia_runtime_core::transport::runner::PipelineRunner;
+use remotemedia_runtime_core::transport::executor::PipelineExecutor;
 use remotemedia_runtime_core::transport::{
     ClientConfig, ClientStreamSession, PipelineClient, PipelineTransport, ServerConfig,
     StreamSession, TransportData, TransportPlugin,
@@ -26,7 +26,7 @@ impl TransportPlugin for MockTransportPlugin {
     async fn create_server(
         &self,
         _config: &ServerConfig,
-        _runner: Arc<PipelineRunner>,
+        _runner: Arc<PipelineExecutor>,
     ) -> Result<Box<dyn PipelineTransport>> {
         Ok(Box::new(MockServer))
     }

@@ -258,3 +258,9 @@ harness = false
 name = "bench_validation"
 path = "benches/bench_validation.rs"
 harness = false
+
+# StreamingScheduler and DriftMetrics benchmarks (spec 026)
+[[bench]]
+name = "bench_streaming_scheduler"
+path = "benches/bench_streaming_scheduler.rs"
+harness = false

@@ -76,6 +76,8 @@ fn create_browser_audio_chunk(chunk_idx: usize) -> RuntimeData {
         sample_rate: 48000,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     }
 }
 
@@ -87,13 +89,17 @@ fn resample_48_to_16(audio: RuntimeData) -> RuntimeData {
             sample_rate: 48000,
             channels,
             stream_id,
+            timestamp_us,
+            arrival_ts_us,
         } => {
             let resampled: Vec<f32> = samples.iter().step_by(3).copied().collect();
             RuntimeData::Audio {
                 samples: resampled,
                 sample_rate: 16000,
                 channels,
-                stream_id: stream_id,
+                stream_id,
+                timestamp_us,
+                arrival_ts_us,
             }
         }
         _ => audio.clone(),

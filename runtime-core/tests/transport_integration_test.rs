@@ -1,6 +1,6 @@
 //! Integration tests for transport abstraction layer
 //!
-//! Verifies that PipelineRunner and transport traits work correctly
+//! Verifies that PipelineExecutor and transport traits work correctly
 //! without any transport-specific dependencies.
 
 mod mock_transport;
@@ -9,7 +9,7 @@ use mock_transport::MockTransport;
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::manifest::Manifest;
 use remotemedia_runtime_core::transport::{
-    PipelineRunner, PipelineTransport, StreamSession, TransportData,
+    PipelineExecutor, PipelineTransport, StreamSession, TransportData,
 };
 use std::sync::Arc;
 
@@ -25,16 +25,16 @@ fn test_manifest() -> Manifest {
 
 #[tokio::test]
 async fn test_pipeline_runner_creation() {
-    let runner = PipelineRunner::new();
+    let runner = PipelineExecutor::new();
     assert!(
         runner.is_ok(),
-        "PipelineRunner should initialize successfully"
+        "PipelineExecutor should initialize successfully"
     );
 }
 
 #[tokio::test]
 async fn test_unary_execution_via_runner() {
-    let runner = PipelineRunner::new().unwrap();
+    let runner = PipelineExecutor::new().unwrap();
     let manifest = Arc::new(test_manifest());
 
     let input = TransportData::new(RuntimeData::Text("test".into()));
@@ -48,23 +48,23 @@ async fn test_unary_execution_via_runner() {
 
 #[tokio::test]
 async fn test_streaming_session_creation() {
-    let runner = PipelineRunner::new().unwrap();
+    let runner = PipelineExecutor::new().unwrap();
     let manifest = Arc::new(test_manifest());
 
-    let session_result = runner.create_stream_session(manifest).await;
+    let session_result = runner.create_session(manifest).await;
     assert!(session_result.is_ok(), "Session creation should succeed: {:?}", session_result.err());
 
     let session = session_result.unwrap();
     assert!(session.is_active());
-    assert!(!session.session_id().is_empty());
+    assert!(!session.session_id.is_empty());
 }
 
 #[tokio::test]
 async fn test_streaming_send_and_receive() {
-    let runner = PipelineRunner::new().unwrap();
+    let runner = PipelineExecutor::new().unwrap();
     let manifest = Arc::new(test_manifest());
 
-    let mut session = runner.create_stream_session(manifest).await.unwrap();
+    let mut session = runner.create_session(manifest).await.unwrap();
 
     // Send input
     let input = TransportData::new(RuntimeData::Audio {
@@ -105,10 +105,10 @@ async fn test_streaming_send_and_receive() {
 
 #[tokio::test]
 async fn test_session_close_idempotency() {
-    let runner = PipelineRunner::new().unwrap();
+    let runner = PipelineExecutor::new().unwrap();
     let manifest = Arc::new(test_manifest());
 
-    let mut session = runner.create_stream_session(manifest).await.unwrap();
+    let mut session = runner.create_session(manifest).await.unwrap();
 
     // Close once
     session.close().await.unwrap();
@@ -121,10 +121,10 @@ async fn test_session_close_idempotency() {
 
 #[tokio::test]
 async fn test_send_after_close_fails() {
-    let runner = PipelineRunner::new().unwrap();
+    let runner = PipelineExecutor::new().unwrap();
     let manifest = Arc::new(test_manifest());
 
-    let mut session = runner.create_stream_session(manifest).await.unwrap();
+    let mut session = runner.create_session(manifest).await.unwrap();
 
     // Close session
     session.close().await.unwrap();
@@ -162,24 +162,24 @@ async fn test_transport_data_builder_pattern() {
 
 #[tokio::test]
 async fn test_multiple_concurrent_sessions() {
-    let runner = PipelineRunner::new().unwrap();
+    let runner = PipelineExecutor::new().unwrap();
     let manifest = Arc::new(test_manifest());
 
     // Create multiple sessions concurrently
     let session1 = runner
-        .create_stream_session(Arc::clone(&manifest))
+        .create_session(Arc::clone(&manifest))
         .await
         .unwrap();
     let session2 = runner
-        .create_stream_session(Arc::clone(&manifest))
+        .create_session(Arc::clone(&manifest))
         .await
         .unwrap();
-    let session3 = runner.create_stream_session(manifest).await.unwrap();
+    let session3 = runner.create_session(manifest).await.unwrap();
 
     // All should have unique IDs
-    assert_ne!(session1.session_id(), session2.session_id());
-    assert_ne!(session2.session_id(), session3.session_id());
-    assert_ne!(session1.session_id(), session3.session_id());
+    assert_ne!(session1.session_id, session2.session_id);
+    assert_ne!(session2.session_id, session3.session_id);
+    assert_ne!(session1.session_id, session3.session_id);
 
     // All should be active
     assert!(session1.is_active());

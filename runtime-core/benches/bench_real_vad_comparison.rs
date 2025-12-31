@@ -31,6 +31,8 @@ fn create_test_audio() -> RuntimeData {
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     }
 }
 

@@ -278,7 +278,7 @@ fn test_string_length_validation() {
 }
 
 // =============================================================================
-// Test: Schema integration with PipelineRunner validation
+// Test: Schema integration with PipelineExecutor validation
 // =============================================================================
 
 #[test]

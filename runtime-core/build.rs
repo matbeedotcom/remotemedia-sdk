@@ -16,6 +16,17 @@ fn main() {
 
 #[cfg(feature = "video")]
 fn setup_ffmpeg() {
+    // Check if static linking mode - need extra dependencies
+    if env::var("FFMPEG_LIBS_MODE").map(|v| v == "static").unwrap_or(false) {
+        // Static FFmpeg requires zlib, lzma, and other compression libraries
+        println!("cargo:rustc-link-lib=z");
+        println!("cargo:rustc-link-lib=lzma");
+        println!("cargo:rustc-link-lib=bz2");
+        // X11/VDPAU for hardware acceleration
+        println!("cargo:rustc-link-lib=X11");
+        println!("cargo:rustc-link-lib=vdpau");
+    }
+
     // Check if user already has FFMPEG_INCLUDE_DIR set
     if env::var("FFMPEG_INCLUDE_DIR").is_ok() {
         println!("cargo:warning=Using existing FFMPEG_INCLUDE_DIR from environment");

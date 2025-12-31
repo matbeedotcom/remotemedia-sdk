@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use remotemedia_runtime_core::transport::client::PipelineClient;
-use remotemedia_runtime_core::transport::runner::PipelineRunner;
+use remotemedia_runtime_core::transport::executor::PipelineExecutor;
 use remotemedia_runtime_core::transport::{
     ClientConfig, PipelineTransport, ServerConfig, TransportPlugin,
 };
@@ -33,7 +33,7 @@ impl TransportPlugin for MockPlugin {
     async fn create_server(
         &self,
         _config: &ServerConfig,
-        _runner: Arc<PipelineRunner>,
+        _runner: Arc<PipelineExecutor>,
     ) -> Result<Box<dyn PipelineTransport>> {
         unimplemented!("test mock - not used in registry tests")
     }

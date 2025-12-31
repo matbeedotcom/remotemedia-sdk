@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::transport::{PipelineRunner, StreamSession, TransportData};
+use remotemedia_runtime_core::transport::{PipelineExecutor, StreamSession, TransportData};
 use remotemedia_runtime_core::manifest::{Manifest, ManifestMetadata, NodeManifest};
 
 #[cfg(feature = "silero-vad")]
@@ -45,6 +45,8 @@ fn create_test_audio(duration_ms: u64) -> RuntimeData {
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     }
 }
 

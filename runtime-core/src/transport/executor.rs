@@ -149,6 +149,31 @@ impl SessionHandle {
     }
 }
 
+// Implement StreamSession for SessionHandle to allow use in PipelineTransport
+#[async_trait::async_trait]
+impl crate::transport::StreamSession for SessionHandle {
+    fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    async fn send_input(&mut self, data: TransportData) -> Result<()> {
+        // SessionHandle::send_input takes &self, so we can call it with &mut self
+        <SessionHandle>::send_input(self, data).await
+    }
+
+    async fn recv_output(&mut self) -> Result<Option<TransportData>> {
+        <SessionHandle>::recv_output(self).await
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        <SessionHandle>::close(self).await
+    }
+
+    fn is_active(&self) -> bool {
+        <SessionHandle>::is_active(self)
+    }
+}
+
 /// Unified facade for transport pipeline execution
 ///
 /// PipelineExecutor replaces PipelineRunner with a cleaner API and
