@@ -292,3 +292,196 @@ fn test_help_shows_options() {
     assert!(stdout.contains("--show-pipeline"), "Should show --show-pipeline option");
     assert!(stdout.contains("activate"), "Should show activate subcommand");
 }
+
+// ============================================================================
+// T102-T103: Integration tests for --ingest flag
+// ============================================================================
+
+/// T102: Test --ingest with file:// URL produces health events
+#[test]
+#[ignore = "Requires full pipeline setup - run with --ignored"]
+fn test_ingest_file_url_produces_health_events() {
+    use tempfile::NamedTempFile;
+
+    // Generate test WAV file
+    let wav_file = NamedTempFile::with_suffix(".wav").expect("Failed to create temp file");
+    let samples = generate_test_audio(16000, 2.0);
+    {
+        let mut file = std::fs::File::create(wav_file.path()).expect("Failed to create file");
+        
+        // Write WAV header for s16 format
+        let header = generate_wav_header_s16(16000, 1, samples.len());
+        file.write_all(&header).expect("Failed to write header");
+        
+        // Convert f32 to s16 and write
+        for sample in samples {
+            let s16 = (sample * 32767.0) as i16;
+            file.write_all(&s16.to_le_bytes()).expect("Failed to write sample");
+        }
+    }
+
+    let file_url = format!("file://{}", wav_file.path().to_string_lossy());
+
+    // Build with rtmp feature
+    let status = Command::new("cargo")
+        .args(["build", "-p", "stream-health-demo", "--features", "rtmp"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .status()
+        .expect("Failed to build demo binary");
+    
+    if !status.success() {
+        panic!("Failed to build demo binary");
+    }
+
+    // Set unlimited mode for testing
+    let output = Command::new(demo_binary_path())
+        .args(["--ingest", &file_url, "--json", "-q"])
+        .env("REMOTEMEDIA_DEMO_UNLIMITED", "1")
+        .output()
+        .expect("Failed to run demo binary");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Debug output
+    if !output.status.success() {
+        eprintln!("stderr: {}", stderr);
+    }
+
+    // Should produce at least one health event
+    let mut health_events = 0;
+    for line in stdout.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+            if json.get("type").and_then(|t| t.as_str()) == Some("health") {
+                health_events += 1;
+            }
+        }
+    }
+
+    assert!(
+        health_events > 0,
+        "Should produce health events from file:// URL. stdout: {}",
+        stdout
+    );
+}
+
+/// T103: Test --ingest with bare path produces health events
+#[test]
+#[ignore = "Requires full pipeline setup - run with --ignored"]
+fn test_ingest_bare_path_produces_health_events() {
+    use tempfile::NamedTempFile;
+
+    // Generate test WAV file
+    let wav_file = NamedTempFile::with_suffix(".wav").expect("Failed to create temp file");
+    let samples = generate_test_audio(16000, 2.0);
+    {
+        let mut file = std::fs::File::create(wav_file.path()).expect("Failed to create file");
+        let header = generate_wav_header_s16(16000, 1, samples.len());
+        file.write_all(&header).expect("Failed to write header");
+        
+        for sample in samples {
+            let s16 = (sample * 32767.0) as i16;
+            file.write_all(&s16.to_le_bytes()).expect("Failed to write sample");
+        }
+    }
+
+    let bare_path = wav_file.path().to_string_lossy().to_string();
+
+    // Build with rtmp feature
+    let status = Command::new("cargo")
+        .args(["build", "-p", "stream-health-demo", "--features", "rtmp"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .status()
+        .expect("Failed to build demo binary");
+    
+    if !status.success() {
+        panic!("Failed to build demo binary");
+    }
+
+    let output = Command::new(demo_binary_path())
+        .args(["--ingest", &bare_path, "--json", "-q"])
+        .env("REMOTEMEDIA_DEMO_UNLIMITED", "1")
+        .output()
+        .expect("Failed to run demo binary");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    
+    // Should produce at least one JSONL event
+    let mut events = 0;
+    for line in stdout.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if serde_json::from_str::<serde_json::Value>(line).is_ok() {
+            events += 1;
+        }
+    }
+
+    assert!(
+        events > 0,
+        "Should produce events from bare path. stdout: {}",
+        stdout
+    );
+}
+
+/// Helper: Generate WAV header with s16 format
+fn generate_wav_header_s16(sample_rate: u32, channels: u16, sample_count: usize) -> Vec<u8> {
+    let bytes_per_sample = 2u16; // s16
+    let byte_rate = sample_rate * channels as u32 * bytes_per_sample as u32;
+    let block_align = channels * bytes_per_sample;
+    let data_size = (sample_count * bytes_per_sample as usize * channels as usize) as u32;
+    let file_size = 36 + data_size;
+
+    let mut header = Vec::with_capacity(44);
+    
+    // RIFF header
+    header.extend_from_slice(b"RIFF");
+    header.extend_from_slice(&file_size.to_le_bytes());
+    header.extend_from_slice(b"WAVE");
+    
+    // fmt chunk
+    header.extend_from_slice(b"fmt ");
+    header.extend_from_slice(&16u32.to_le_bytes());
+    header.extend_from_slice(&1u16.to_le_bytes()); // PCM format
+    header.extend_from_slice(&channels.to_le_bytes());
+    header.extend_from_slice(&sample_rate.to_le_bytes());
+    header.extend_from_slice(&byte_rate.to_le_bytes());
+    header.extend_from_slice(&block_align.to_le_bytes());
+    header.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+    
+    // data chunk
+    header.extend_from_slice(b"data");
+    header.extend_from_slice(&data_size.to_le_bytes());
+    
+    header
+}
+
+/// Test --ingest shows in help
+#[test]
+fn test_help_shows_ingest_option() {
+    let status = Command::new("cargo")
+        .args(["build", "-p", "stream-health-demo"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .status()
+        .expect("Failed to build demo binary");
+    
+    if !status.success() {
+        panic!("Failed to build demo binary");
+    }
+
+    let output = Command::new(demo_binary_path())
+        .arg("--help")
+        .output()
+        .expect("Failed to run demo binary");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    
+    assert!(
+        stdout.contains("--ingest"),
+        "Help should show --ingest option. Got: {}",
+        stdout
+    );
+}

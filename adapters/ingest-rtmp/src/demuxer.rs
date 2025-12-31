@@ -19,10 +19,11 @@
 use std::sync::mpsc;
 use std::thread;
 
+use remotemedia_runtime_core::data::video::{PixelFormat, VideoCodec};
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::ingestion::{
     AudioConfig, AudioTrackProperties, IngestMetadata, MediaType, TrackInfo, TrackProperties,
-    TrackSelection, VideoConfig,
+    TrackSelection, VideoConfig, VideoTrackProperties,
 };
 use remotemedia_runtime_core::Error;
 
@@ -42,6 +43,17 @@ enum WorkerResponse {
         sample_rate: u32,
         channels: u16,
         timestamp_us: u64,
+    },
+    /// Successfully decoded video frame
+    Video {
+        pixel_data: Vec<u8>,
+        width: u32,
+        height: u32,
+        format: PixelFormat,
+        codec: Option<VideoCodec>,
+        frame_number: u64,
+        timestamp_us: u64,
+        is_keyframe: bool,
     },
     /// Stream ended (EOF)
     EndOfStream,
