@@ -36,6 +36,7 @@ enum WorkerCommand {
 }
 
 /// Responses from the worker thread
+#[allow(dead_code)]
 enum WorkerResponse {
     /// Successfully decoded audio samples
     Audio {
@@ -153,7 +154,7 @@ impl RtmpDemuxer {
         self.metadata.clone()
     }
 
-    /// Read and decode the next audio frame
+    /// Read and decode the next frame (audio or video)
     pub async fn next_frame(&mut self) -> Result<Option<RuntimeData>, Error> {
         if self.ended {
             return Ok(None);
@@ -168,6 +169,11 @@ impl RtmpDemuxer {
         // Wait for response - use block_in_place to allow blocking in async context
         let response = tokio::task::block_in_place(|| self.resp_rx.recv());
 
+        let arrival_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_micros() as u64)
+            .unwrap_or(0);
+
         match response {
             Ok(WorkerResponse::Audio {
                 samples,
@@ -180,12 +186,28 @@ impl RtmpDemuxer {
                 channels: channels as u32,
                 stream_id: Some("audio:0".to_string()),
                 timestamp_us: Some(timestamp_us),
-                arrival_ts_us: Some(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_micros() as u64)
-                        .unwrap_or(0),
-                ),
+                arrival_ts_us: Some(arrival_ts),
+            })),
+            Ok(WorkerResponse::Video {
+                pixel_data,
+                width,
+                height,
+                format,
+                codec,
+                frame_number,
+                timestamp_us,
+                is_keyframe,
+            }) => Ok(Some(RuntimeData::Video {
+                pixel_data,
+                width,
+                height,
+                format,
+                codec,
+                frame_number,
+                timestamp_us,
+                is_keyframe,
+                stream_id: Some("video:0".to_string()),
+                arrival_ts_us: Some(arrival_ts),
             })),
             Ok(WorkerResponse::EndOfStream) => {
                 self.ended = true;
@@ -234,6 +256,32 @@ mod ffi {
     pub const AVMEDIA_TYPE_VIDEO: c_int = 0;
     pub const AVMEDIA_TYPE_AUDIO: c_int = 1;
 
+    // Pixel formats (from libavutil/pixfmt.h)
+    pub const AV_PIX_FMT_NONE: c_int = -1;
+    pub const AV_PIX_FMT_YUV420P: c_int = 0;
+    pub const AV_PIX_FMT_YUYV422: c_int = 1;
+    pub const AV_PIX_FMT_RGB24: c_int = 2;
+    pub const AV_PIX_FMT_BGR24: c_int = 3;
+    pub const AV_PIX_FMT_YUV422P: c_int = 4;
+    pub const AV_PIX_FMT_YUV444P: c_int = 5;
+    pub const AV_PIX_FMT_YUV410P: c_int = 6;
+    pub const AV_PIX_FMT_YUV411P: c_int = 7;
+    pub const AV_PIX_FMT_GRAY8: c_int = 8;
+    pub const AV_PIX_FMT_NV12: c_int = 23;
+    pub const AV_PIX_FMT_NV21: c_int = 24;
+    pub const AV_PIX_FMT_ARGB: c_int = 25;
+    pub const AV_PIX_FMT_RGBA: c_int = 26;
+
+    // Codec IDs for common video codecs
+    pub const AV_CODEC_ID_H264: c_int = 27;
+    pub const AV_CODEC_ID_VP8: c_int = 139;
+    pub const AV_CODEC_ID_VP9: c_int = 167;
+    pub const AV_CODEC_ID_AV1: c_int = 226;
+
+    // Picture types for keyframe detection
+    pub const AV_PICTURE_TYPE_NONE: c_int = 0;
+    pub const AV_PICTURE_TYPE_I: c_int = 1; // Intra (keyframe)
+
     // Sample formats (from libavutil/samplefmt.h)
     pub const AV_SAMPLE_FMT_NONE: c_int = -1;
     pub const AV_SAMPLE_FMT_U8: c_int = 0;
@@ -264,6 +312,7 @@ mod ffi {
     pub enum AVCodecParameters {}
     pub enum AVDictionary {}
     pub enum SwrContext {}
+    pub enum SwsContext {}
 
     // AVFormatContext - we need to access nb_streams and streams
     // This is a partial repr(C) struct matching FFmpeg's layout for these fields
@@ -367,6 +416,11 @@ mod ffi {
         pub fn ffw_frame_get_format(frame: *const AVFrame) -> c_int;
         pub fn ffw_frame_get_plane_data(frame: *const AVFrame, plane: c_int) -> *const u8;
         pub fn ffw_frame_get_channel_layout(frame: *const AVFrame) -> i64;
+        pub fn ffw_frame_get_width(frame: *const AVFrame) -> c_int;
+        pub fn ffw_frame_get_height(frame: *const AVFrame) -> c_int;
+        pub fn ffw_frame_get_line_size(frame: *const AVFrame, plane: c_int) -> c_int;
+        pub fn ffw_frame_get_picture_type(frame: *const AVFrame) -> c_int;
+        pub fn ffw_frame_get_pts(frame: *const AVFrame) -> i64;
         
         // Codec parameters accessors (these ARE available in libffwrapper.a)
         pub fn ffw_codec_parameters_get_sample_rate(params: *const AVCodecParameters) -> c_int;
@@ -374,7 +428,42 @@ mod ffi {
         pub fn ffw_codec_parameters_get_format(params: *const AVCodecParameters) -> c_int;
         pub fn ffw_codec_parameters_get_decoder_name(params: *const AVCodecParameters) -> *const c_char;
         pub fn ffw_codec_parameters_is_audio_codec(params: *const AVCodecParameters) -> c_int;
+        pub fn ffw_codec_parameters_is_video_codec(params: *const AVCodecParameters) -> c_int;
+        pub fn ffw_codec_parameters_get_width(params: *const AVCodecParameters) -> c_int;
+        pub fn ffw_codec_parameters_get_height(params: *const AVCodecParameters) -> c_int;
     }
+
+    // libswscale for video scaling/conversion
+    #[link(name = "swscale")]
+    extern "C" {
+        pub fn sws_getContext(
+            srcW: c_int,
+            srcH: c_int,
+            srcFormat: c_int,
+            dstW: c_int,
+            dstH: c_int,
+            dstFormat: c_int,
+            flags: c_int,
+            srcFilter: *mut c_void,
+            dstFilter: *mut c_void,
+            param: *const f64,
+        ) -> *mut SwsContext;
+        pub fn sws_freeContext(context: *mut SwsContext);
+        pub fn sws_scale(
+            context: *mut SwsContext,
+            srcSlice: *const *const u8,
+            srcStride: *const c_int,
+            srcSliceY: c_int,
+            srcSliceH: c_int,
+            dst: *const *mut u8,
+            dstStride: *const c_int,
+        ) -> c_int;
+    }
+
+    // SwsContext flags
+    pub const SWS_BILINEAR: c_int = 2;
+    pub const SWS_BICUBIC: c_int = 4;
+    pub const SWS_FAST_BILINEAR: c_int = 1;
 
     // libswresample  
     #[link(name = "swresample")]
@@ -405,17 +494,29 @@ mod ffi {
 }
 
 /// Worker thread state
+#[allow(dead_code)]
 struct WorkerState {
     format_ctx: *mut ffi::AVFormatContext,
+    // Audio state
     audio_codec_ctx: *mut ffi::AVCodecContext,
     audio_stream_index: i32,
-    packet: *mut ffi::AVPacket,
-    frame: *mut ffi::AVFrame,
     swr_ctx: *mut ffi::SwrContext,
     target_sample_rate: u32,
     target_channels: u16,
     source_format: i32,
-    timestamp_us: u64,
+    audio_timestamp_us: u64,
+    // Video state
+    video_codec_ctx: *mut ffi::AVCodecContext,
+    video_stream_index: i32,
+    sws_ctx: *mut ffi::SwsContext,
+    video_width: u32,
+    video_height: u32,
+    video_pixel_format: i32,
+    video_codec: Option<VideoCodec>,
+    video_frame_number: u64,
+    // Shared state
+    packet: *mut ffi::AVPacket,
+    frame: *mut ffi::AVFrame,
 }
 
 impl Drop for WorkerState {
@@ -430,14 +531,38 @@ impl Drop for WorkerState {
             if !self.swr_ctx.is_null() {
                 ffi::swr_free(&mut self.swr_ctx);
             }
+            if !self.sws_ctx.is_null() {
+                ffi::sws_freeContext(self.sws_ctx);
+            }
             if !self.audio_codec_ctx.is_null() {
                 ffi::avcodec_free_context(&mut self.audio_codec_ctx);
+            }
+            if !self.video_codec_ctx.is_null() {
+                ffi::avcodec_free_context(&mut self.video_codec_ctx);
             }
             if !self.format_ctx.is_null() {
                 ffi::avformat_close_input(&mut self.format_ctx);
             }
         }
     }
+}
+
+/// Decoded frame result
+enum DecodedFrame {
+    Audio {
+        samples: Vec<f32>,
+        timestamp_us: u64,
+    },
+    Video {
+        pixel_data: Vec<u8>,
+        width: u32,
+        height: u32,
+        format: PixelFormat,
+        codec: Option<VideoCodec>,
+        frame_number: u64,
+        timestamp_us: u64,
+        is_keyframe: bool,
+    },
 }
 
 /// Main function for the worker thread
@@ -468,12 +593,33 @@ fn worker_thread_main(
         match cmd {
             WorkerCommand::NextFrame => {
                 match decode_next_frame(&mut state) {
-                    Ok(Some((samples, ts))) => {
+                    Ok(Some(DecodedFrame::Audio { samples, timestamp_us })) => {
                         let _ = resp_tx.send(WorkerResponse::Audio {
                             samples,
                             sample_rate: state.target_sample_rate,
                             channels: state.target_channels,
-                            timestamp_us: ts,
+                            timestamp_us,
+                        });
+                    }
+                    Ok(Some(DecodedFrame::Video {
+                        pixel_data,
+                        width,
+                        height,
+                        format,
+                        codec,
+                        frame_number,
+                        timestamp_us,
+                        is_keyframe,
+                    })) => {
+                        let _ = resp_tx.send(WorkerResponse::Video {
+                            pixel_data,
+                            width,
+                            height,
+                            format,
+                            codec,
+                            frame_number,
+                            timestamp_us,
+                            is_keyframe,
                         });
                     }
                     Ok(None) => {
@@ -502,6 +648,8 @@ fn init_ffmpeg(
 ) -> Result<(WorkerState, IngestMetadata), String> {
     use std::ffi::CString;
     use std::ptr;
+
+    let _ = (target_sample_rate, target_channels); // May be used for future resampling config
 
     let c_url = CString::new(url).map_err(|_| "Invalid URL encoding".to_string())?;
 
@@ -536,147 +684,233 @@ fn init_ffmpeg(
             return Err(format!("Failed to find stream info: {}", ffi::av_err_str(ret)));
         }
 
-        // Find best audio stream - this also gives us the decoder
-        let mut decoder: *const ffi::AVCodec = ptr::null();
+        let nb_streams = (*format_ctx).nb_streams;
+        let mut tracks = Vec::new();
+
+        // =========================================================================
+        // AUDIO STREAM SETUP
+        // =========================================================================
+        let mut audio_decoder: *const ffi::AVCodec = ptr::null();
         let audio_stream_index = ffi::av_find_best_stream(
             format_ctx,
             ffi::AVMEDIA_TYPE_AUDIO,
             -1,
             -1,
-            &mut decoder,
+            &mut audio_decoder,
             0,
         );
 
-        if audio_stream_index < 0 {
-            ffi::avformat_close_input(&mut format_ctx);
-            return Err("No audio stream found".to_string());
-        }
+        let (audio_codec_ctx, source_sample_rate, source_channels, source_format, audio_codec_name) = 
+            if audio_stream_index >= 0 && (audio_stream_index as u32) < nb_streams {
+                let stream = *(*format_ctx).streams.offset(audio_stream_index as isize);
+                if !stream.is_null() {
+                    let codecpar = (*stream).codecpar;
+                    if !codecpar.is_null() {
+                        let sample_rate = ffi::ffw_codec_parameters_get_sample_rate(codecpar) as u32;
+                        let channel_layout = ffi::ffw_codec_parameters_get_channel_layout(codecpar);
+                        let channels = if channel_layout != 0 {
+                            (channel_layout as u64).count_ones() as u16
+                        } else {
+                            2
+                        };
+                        let format = ffi::ffw_codec_parameters_get_format(codecpar);
+                        
+                        let codec_name_ptr = ffi::ffw_codec_parameters_get_decoder_name(codecpar);
+                        let codec_name = if !codec_name_ptr.is_null() {
+                            let name = std::ffi::CStr::from_ptr(codec_name_ptr).to_string_lossy().into_owned();
+                            if name.is_empty() { None } else { Some(name) }
+                        } else {
+                            None
+                        };
 
-        // Access stream via our defined struct layout
-        let nb_streams = (*format_ctx).nb_streams;
-        if audio_stream_index as u32 >= nb_streams {
-            ffi::avformat_close_input(&mut format_ctx);
-            return Err("Audio stream index out of bounds".to_string());
-        }
+                        // Find decoder if not found
+                        if audio_decoder.is_null() {
+                            if let Some(ref name) = codec_name {
+                                extern "C" {
+                                    fn avcodec_find_decoder_by_name(name: *const std::os::raw::c_char) -> *const ffi::AVCodec;
+                                }
+                                let c_name = CString::new(name.as_str()).ok();
+                                if let Some(ref c_name) = c_name {
+                                    audio_decoder = avcodec_find_decoder_by_name(c_name.as_ptr());
+                                }
+                            }
+                        }
 
-        let stream = *(*format_ctx).streams.offset(audio_stream_index as isize);
-        if stream.is_null() {
-            ffi::avformat_close_input(&mut format_ctx);
-            return Err("Failed to get audio stream".to_string());
-        }
-
-        let codecpar = (*stream).codecpar;
-        if codecpar.is_null() {
-            ffi::avformat_close_input(&mut format_ctx);
-            return Err("Failed to get codec parameters".to_string());
-        }
-
-        // Use ac-ffmpeg wrappers to safely read codec parameters
-        let source_sample_rate = ffi::ffw_codec_parameters_get_sample_rate(codecpar) as u32;
-        let source_channel_layout = ffi::ffw_codec_parameters_get_channel_layout(codecpar);
-        let source_channels = if source_channel_layout != 0 {
-            (source_channel_layout as u64).count_ones() as u16
-        } else {
-            2 // Default to stereo if unknown
-        };
-        let source_format = ffi::ffw_codec_parameters_get_format(codecpar);
-        
-        // Get codec name
-        let codec_name_ptr = ffi::ffw_codec_parameters_get_decoder_name(codecpar);
-        let codec_name = if codec_name_ptr.is_null() {
-            None
-        } else {
-            let name = std::ffi::CStr::from_ptr(codec_name_ptr).to_string_lossy().into_owned();
-            if name.is_empty() { None } else { Some(name) }
-        };
-
-        tracing::info!(
-            "Audio stream: {}Hz {} channels, format {}, codec {:?}",
-            source_sample_rate,
-            source_channels,
-            source_format,
-            codec_name
-        );
-
-        // Create codec context
-        if decoder.is_null() {
-            // If av_find_best_stream didn't find a decoder, try by codec name
-            if let Some(ref name) = codec_name {
-                let c_name = CString::new(name.as_str()).ok();
-                if let Some(ref c_name) = c_name {
-                    // Try to find decoder by name
-                    extern "C" {
-                        fn avcodec_find_decoder_by_name(name: *const std::os::raw::c_char) -> *const ffi::AVCodec;
+                        if !audio_decoder.is_null() {
+                            let ctx = ffi::avcodec_alloc_context3(audio_decoder);
+                            if !ctx.is_null() {
+                                if ffi::avcodec_parameters_to_context(ctx, codecpar) >= 0 {
+                                    if ffi::avcodec_open2(ctx, audio_decoder, ptr::null_mut()) >= 0 {
+                                        tracing::info!(
+                                            "Audio stream: {}Hz {}ch, format {}, codec {:?}",
+                                            sample_rate, channels, format, codec_name
+                                        );
+                                        tracks.push(TrackInfo {
+                                            media_type: MediaType::Audio,
+                                            index: 0,
+                                            stream_id: "audio:0".to_string(),
+                                            language: None,
+                                            codec: codec_name.clone(),
+                                            properties: TrackProperties::Audio(AudioTrackProperties {
+                                                sample_rate,
+                                                channels,
+                                                bit_depth: None,
+                                            }),
+                                        });
+                                        (ctx, sample_rate, channels, format, codec_name)
+                                    } else {
+                                        ffi::avcodec_free_context(&mut (ctx as *mut _));
+                                        (ptr::null_mut(), 0, 0, 0, None)
+                                    }
+                                } else {
+                                    ffi::avcodec_free_context(&mut (ctx as *mut _));
+                                    (ptr::null_mut(), 0, 0, 0, None)
+                                }
+                            } else {
+                                (ptr::null_mut(), 0, 0, 0, None)
+                            }
+                        } else {
+                            (ptr::null_mut(), 0, 0, 0, None)
+                        }
+                    } else {
+                        (ptr::null_mut(), 0, 0, 0, None)
                     }
-                    decoder = avcodec_find_decoder_by_name(c_name.as_ptr());
+                } else {
+                    (ptr::null_mut(), 0, 0, 0, None)
                 }
-            }
-        }
-        
-        if decoder.is_null() {
-            ffi::avformat_close_input(&mut format_ctx);
-            return Err("No decoder found for audio stream".to_string());
-        }
+            } else {
+                tracing::warn!("No audio stream found");
+                (ptr::null_mut(), 0, 0, 0, None)
+            };
 
-        let audio_codec_ctx = ffi::avcodec_alloc_context3(decoder);
-        if audio_codec_ctx.is_null() {
-            ffi::avformat_close_input(&mut format_ctx);
-            return Err("Failed to allocate codec context".to_string());
-        }
+        let _ = audio_codec_name;
 
-        let ret = ffi::avcodec_parameters_to_context(audio_codec_ctx, codecpar);
-        if ret < 0 {
-            ffi::avcodec_free_context(&mut (audio_codec_ctx as *mut _));
-            ffi::avformat_close_input(&mut format_ctx);
-            return Err(format!("Failed to copy codec params: {}", ffi::av_err_str(ret)));
-        }
-
-        let ret = ffi::avcodec_open2(audio_codec_ctx, decoder, ptr::null_mut());
-        if ret < 0 {
-            ffi::avcodec_free_context(&mut (audio_codec_ctx as *mut _));
-            ffi::avformat_close_input(&mut format_ctx);
-            return Err(format!("Failed to open codec: {}", ffi::av_err_str(ret)));
-        }
-
-        // NOTE: We intentionally DO NOT resample here.
-        // The pipeline's AutoResampleStreamingNode handles resampling more robustly.
-        // This adapter just decodes and outputs raw audio at the source format.
-        let swr_ctx: *mut ffi::SwrContext = ptr::null_mut();
-        
-        tracing::info!(
-            "Audio decoder ready: {}Hz {}ch, format {}. Pipeline will handle resampling.",
-            source_sample_rate,
-            source_channels,
-            source_format
+        // =========================================================================
+        // VIDEO STREAM SETUP
+        // =========================================================================
+        let mut video_decoder: *const ffi::AVCodec = ptr::null();
+        let video_stream_index = ffi::av_find_best_stream(
+            format_ctx,
+            ffi::AVMEDIA_TYPE_VIDEO,
+            -1,
+            -1,
+            &mut video_decoder,
+            0,
         );
+
+        let (video_codec_ctx, video_width, video_height, video_pixel_format, video_codec, video_codec_name) = 
+            if video_stream_index >= 0 && (video_stream_index as u32) < nb_streams {
+                let stream = *(*format_ctx).streams.offset(video_stream_index as isize);
+                if !stream.is_null() {
+                    let codecpar = (*stream).codecpar;
+                    if !codecpar.is_null() {
+                        let width = ffi::ffw_codec_parameters_get_width(codecpar) as u32;
+                        let height = ffi::ffw_codec_parameters_get_height(codecpar) as u32;
+                        let pix_fmt = ffi::ffw_codec_parameters_get_format(codecpar);
+                        
+                        let codec_name_ptr = ffi::ffw_codec_parameters_get_decoder_name(codecpar);
+                        let codec_name = if !codec_name_ptr.is_null() {
+                            let name = std::ffi::CStr::from_ptr(codec_name_ptr).to_string_lossy().into_owned();
+                            if name.is_empty() { None } else { Some(name) }
+                        } else {
+                            None
+                        };
+
+                        // Map codec name to VideoCodec enum
+                        let video_codec = match codec_name.as_deref() {
+                            Some(name) if name.contains("264") || name.contains("avc") => Some(VideoCodec::H264),
+                            Some(name) if name.contains("vp8") => Some(VideoCodec::Vp8),
+                            Some(name) if name.contains("av1") || name.contains("av01") => Some(VideoCodec::Av1),
+                            _ => None,
+                        };
+
+                        // Find decoder if not found
+                        if video_decoder.is_null() {
+                            if let Some(ref name) = codec_name {
+                                extern "C" {
+                                    fn avcodec_find_decoder_by_name(name: *const std::os::raw::c_char) -> *const ffi::AVCodec;
+                                }
+                                let c_name = CString::new(name.as_str()).ok();
+                                if let Some(ref c_name) = c_name {
+                                    video_decoder = avcodec_find_decoder_by_name(c_name.as_ptr());
+                                }
+                            }
+                        }
+
+                        if !video_decoder.is_null() && width > 0 && height > 0 {
+                            let ctx = ffi::avcodec_alloc_context3(video_decoder);
+                            if !ctx.is_null() {
+                                if ffi::avcodec_parameters_to_context(ctx, codecpar) >= 0 {
+                                    if ffi::avcodec_open2(ctx, video_decoder, ptr::null_mut()) >= 0 {
+                                        tracing::info!(
+                                            "Video stream: {}x{}, format {}, codec {:?}",
+                                            width, height, pix_fmt, codec_name
+                                        );
+                                        tracks.push(TrackInfo {
+                                            media_type: MediaType::Video,
+                                            index: 0,
+                                            stream_id: "video:0".to_string(),
+                                            language: None,
+                                            codec: codec_name.clone(),
+                                            properties: TrackProperties::Video(VideoTrackProperties {
+                                                width,
+                                                height,
+                                                framerate: 0.0, // Will be determined from stream or estimated
+                                                pixel_format: None,
+                                            }),
+                                        });
+                                        (ctx, width, height, pix_fmt, video_codec, codec_name)
+                                    } else {
+                                        ffi::avcodec_free_context(&mut (ctx as *mut _));
+                                        (ptr::null_mut(), 0, 0, 0, None, None)
+                                    }
+                                } else {
+                                    ffi::avcodec_free_context(&mut (ctx as *mut _));
+                                    (ptr::null_mut(), 0, 0, 0, None, None)
+                                }
+                            } else {
+                                (ptr::null_mut(), 0, 0, 0, None, None)
+                            }
+                        } else {
+                            (ptr::null_mut(), 0, 0, 0, None, None)
+                        }
+                    } else {
+                        (ptr::null_mut(), 0, 0, 0, None, None)
+                    }
+                } else {
+                    (ptr::null_mut(), 0, 0, 0, None, None)
+                }
+            } else {
+                tracing::info!("No video stream found");
+                (ptr::null_mut(), 0, 0, 0, None, None)
+            };
+
+        let _ = video_codec_name;
+
+        // Must have at least one stream
+        if audio_codec_ctx.is_null() && video_codec_ctx.is_null() {
+            ffi::avformat_close_input(&mut format_ctx);
+            return Err("No audio or video streams found".to_string());
+        }
 
         // Allocate packet and frame
         let packet = ffi::av_packet_alloc();
         let frame = ffi::av_frame_alloc();
 
         if packet.is_null() || frame.is_null() {
-            if !swr_ctx.is_null() {
-                ffi::swr_free(&mut (swr_ctx as *mut _));
+            if !audio_codec_ctx.is_null() {
+                ffi::avcodec_free_context(&mut (audio_codec_ctx as *mut _));
             }
-            ffi::avcodec_free_context(&mut (audio_codec_ctx as *mut _));
+            if !video_codec_ctx.is_null() {
+                ffi::avcodec_free_context(&mut (video_codec_ctx as *mut _));
+            }
             ffi::avformat_close_input(&mut format_ctx);
             return Err("Failed to allocate packet/frame".to_string());
         }
 
-        // Build metadata - report actual source format (pipeline handles resampling)
+        // Build metadata
         let metadata = IngestMetadata {
-            tracks: vec![TrackInfo {
-                media_type: MediaType::Audio,
-                index: 0,
-                stream_id: "audio:0".to_string(),
-                language: None,
-                codec: codec_name,
-                properties: TrackProperties::Audio(AudioTrackProperties {
-                    sample_rate: source_sample_rate,
-                    channels: source_channels,
-                    bit_depth: None,
-                }),
-            }],
+            tracks,
             format: Some("streaming".to_string()),
             duration_ms: None,
             bitrate: None,
@@ -684,23 +918,34 @@ fn init_ffmpeg(
 
         let state = WorkerState {
             format_ctx,
+            // Audio
             audio_codec_ctx,
             audio_stream_index,
+            swr_ctx: ptr::null_mut(),
+            target_sample_rate: source_sample_rate,
+            target_channels: source_channels,
+            source_format,
+            audio_timestamp_us: 0,
+            // Video
+            video_codec_ctx,
+            video_stream_index,
+            sws_ctx: ptr::null_mut(), // May be used for format conversion later
+            video_width,
+            video_height,
+            video_pixel_format,
+            video_codec,
+            video_frame_number: 0,
+            // Shared
             packet,
             frame,
-            swr_ctx,
-            target_sample_rate: source_sample_rate,  // Use source rate (no resampling)
-            target_channels: source_channels,        // Use source channels (no resampling)
-            source_format,
-            timestamp_us: 0,
         };
 
         Ok((state, metadata))
     }
 }
 
-/// Decode next audio frame
-fn decode_next_frame(state: &mut WorkerState) -> Result<Option<(Vec<f32>, u64)>, String> {
+/// Decode next frame (audio or video)
+fn decode_next_frame(state: &mut WorkerState) -> Result<Option<DecodedFrame>, String> {
     unsafe {
         loop {
             // Read packet
@@ -712,209 +957,334 @@ fn decode_next_frame(state: &mut WorkerState) -> Result<Option<(Vec<f32>, u64)>,
                 return Err(format!("Read error: {}", ffi::av_err_str(ret)));
             }
 
-            // Check if it's our audio stream - use direct struct access
             let stream_index = (*state.packet).stream_index;
-            if stream_index != state.audio_stream_index {
+
+            // =========================================================================
+            // AUDIO PACKET
+            // =========================================================================
+            if stream_index == state.audio_stream_index && !state.audio_codec_ctx.is_null() {
+                let ret = ffi::avcodec_send_packet(state.audio_codec_ctx, state.packet);
                 ffi::av_packet_unref(state.packet);
-                continue;
-            }
 
-            // Send packet to decoder
-            let ret = ffi::avcodec_send_packet(state.audio_codec_ctx, state.packet);
-            ffi::av_packet_unref(state.packet);
+                if ret < 0 {
+                    continue;
+                }
 
-            if ret < 0 {
-                continue; // Try next packet
-            }
+                let ret = ffi::avcodec_receive_frame(state.audio_codec_ctx, state.frame);
+                if ret == ffi::AVERROR_EAGAIN {
+                    continue;
+                }
+                if ret < 0 {
+                    continue;
+                }
 
-            // Receive decoded frame
-            let ret = ffi::avcodec_receive_frame(state.audio_codec_ctx, state.frame);
-            if ret == ffi::AVERROR_EAGAIN {
-                continue; // Need more packets
-            }
-            if ret < 0 {
-                continue;
-            }
-
-            // Extract samples using ac-ffmpeg wrapper functions for AVFrame
-            let nb_samples = ffi::ffw_frame_get_nb_samples(state.frame);
-            let format = ffi::ffw_frame_get_format(state.frame);
-            
-            // Get channels from frame's channel_layout or fall back to stored value
-            let channel_layout = ffi::ffw_frame_get_channel_layout(state.frame);
-            let channels = if channel_layout != 0 {
-                (channel_layout as u64).count_ones() as usize
-            } else {
-                state.target_channels as usize
-            };
-
-            if nb_samples <= 0 {
-                ffi::av_frame_unref(state.frame);
-                continue;
-            }
-
-            let samples = if !state.swr_ctx.is_null() {
-                // Resample
-                let frame_sample_rate = ffi::ffw_frame_get_sample_rate(state.frame);
+                let nb_samples = ffi::ffw_frame_get_nb_samples(state.frame);
+                let format = ffi::ffw_frame_get_format(state.frame);
                 
-                // Validate frame data before resampling
-                let plane0 = ffi::ffw_frame_get_plane_data(state.frame, 0);
-                if plane0.is_null() {
-                    tracing::warn!("Frame has null plane data, skipping");
+                let channel_layout = ffi::ffw_frame_get_channel_layout(state.frame);
+                let channels = if channel_layout != 0 {
+                    (channel_layout as u64).count_ones() as usize
+                } else {
+                    state.target_channels as usize
+                };
+
+                if nb_samples <= 0 {
                     ffi::av_frame_unref(state.frame);
                     continue;
                 }
-                
-                let out_samples = if frame_sample_rate > 0 {
-                    (nb_samples as u64 * state.target_sample_rate as u64 / frame_sample_rate as u64 + 256) as usize
-                } else {
-                    (nb_samples as usize) + 256
-                };
-                
-                // Sanity check output size
-                if out_samples > 1_000_000 {
-                    tracing::warn!("Unreasonable output sample count: {}, skipping", out_samples);
-                    ffi::av_frame_unref(state.frame);
-                    continue;
-                }
-                
-                let mut out_buffer: Vec<f32> = vec![0.0; out_samples * state.target_channels as usize];
 
-                // For swr_convert, we need to pass array of plane pointers
-                // For interleaved: single pointer to all data
-                // For planar: array of pointers, one per channel
-                let is_planar = format == ffi::AV_SAMPLE_FMT_U8P 
-                    || format == ffi::AV_SAMPLE_FMT_S16P 
-                    || format == ffi::AV_SAMPLE_FMT_S32P
-                    || format == ffi::AV_SAMPLE_FMT_FLTP 
-                    || format == ffi::AV_SAMPLE_FMT_DBLP;
-
-                let mut out_ptr = out_buffer.as_mut_ptr() as *mut u8;
-                
-                let converted = if is_planar && channels > 1 {
-                    // Planar format - collect pointers for each plane
-                    let mut in_ptrs: Vec<*const u8> = Vec::with_capacity(channels);
-                    for ch in 0..channels {
-                        let plane = ffi::ffw_frame_get_plane_data(state.frame, ch as i32);
-                        if plane.is_null() {
-                            tracing::warn!("Planar frame has null plane {} data, skipping", ch);
-                            ffi::av_frame_unref(state.frame);
-                            continue;
-                        }
-                        in_ptrs.push(plane);
-                    }
-                    
-                    ffi::swr_convert(
-                        state.swr_ctx,
-                        &mut out_ptr,
-                        out_samples as i32,
-                        in_ptrs.as_ptr(),
-                        nb_samples,
-                    )
-                } else {
-                    // Interleaved format - single pointer (plane0 already validated)
-                    ffi::swr_convert(
-                        state.swr_ctx,
-                        &mut out_ptr,
-                        out_samples as i32,
-                        &plane0,
-                        nb_samples,
-                    )
-                };
-
-                ffi::av_frame_unref(state.frame);
-
-                if converted > 0 {
-                    out_buffer.truncate(converted as usize * state.target_channels as usize);
-                    out_buffer
-                } else {
-                    continue;
-                }
-            } else {
-                // No resampling needed - extract samples directly
                 let data = ffi::ffw_frame_get_plane_data(state.frame, 0);
-                
-                // Validate pointer before use
                 if data.is_null() {
-                    tracing::warn!("Frame has null data pointer, skipping");
                     ffi::av_frame_unref(state.frame);
                     continue;
                 }
                 
                 let total_samples = nb_samples as usize * channels;
-                
-                // Sanity check
                 if total_samples == 0 || total_samples > 1_000_000 {
-                    tracing::warn!("Invalid sample count: {} (nb_samples={}, channels={}), skipping", 
-                        total_samples, nb_samples, channels);
                     ffi::av_frame_unref(state.frame);
                     continue;
                 }
 
-                // For planar formats, only use the first channel (convert to mono)
-                // This avoids complex interleaving issues and the pipeline can handle channel conversion
                 let samples = match format {
                     f if f == ffi::AV_SAMPLE_FMT_FLT => {
-                        // Interleaved float - use as-is
                         std::slice::from_raw_parts(data as *const f32, total_samples).to_vec()
                     }
                     f if f == ffi::AV_SAMPLE_FMT_FLTP => {
-                        // Planar float - just use first channel (mono)
-                        // Pipeline's AutoResampleNode will handle channel conversion if needed
                         std::slice::from_raw_parts(data as *const f32, nb_samples as usize).to_vec()
                     }
                     f if f == ffi::AV_SAMPLE_FMT_S16 => {
-                        // Interleaved s16
                         std::slice::from_raw_parts(data as *const i16, total_samples)
                             .iter()
                             .map(|&s| s as f32 / 32768.0)
                             .collect()
                     }
                     f if f == ffi::AV_SAMPLE_FMT_S16P => {
-                        // Planar s16 - just use first channel (mono)
                         std::slice::from_raw_parts(data as *const i16, nb_samples as usize)
                             .iter()
                             .map(|&s| s as f32 / 32768.0)
                             .collect()
                     }
                     f if f == ffi::AV_SAMPLE_FMT_S32 => {
-                        // Interleaved s32
                         std::slice::from_raw_parts(data as *const i32, total_samples)
                             .iter()
                             .map(|&s| s as f32 / 2147483648.0)
                             .collect()
                     }
                     f if f == ffi::AV_SAMPLE_FMT_S32P => {
-                        // Planar s32 - just use first channel (mono)
                         std::slice::from_raw_parts(data as *const i32, nb_samples as usize)
                             .iter()
                             .map(|&s| s as f32 / 2147483648.0)
                             .collect()
                     }
                     _ => {
-                        // Unknown format - try to interpret as f32
                         tracing::warn!("Unknown audio format {}, treating as f32", format);
                         std::slice::from_raw_parts(data as *const f32, nb_samples as usize).to_vec()
                     }
                 };
 
                 ffi::av_frame_unref(state.frame);
-                samples
-            };
 
-            // Calculate new timestamp
-            let chunk_duration_us = if state.target_sample_rate > 0 {
-                (samples.len() as u64 * 1_000_000)
-                    / (state.target_sample_rate as u64 * state.target_channels as u64)
-            } else {
-                0
-            };
+                let chunk_duration_us = if state.target_sample_rate > 0 {
+                    (samples.len() as u64 * 1_000_000)
+                        / (state.target_sample_rate as u64 * state.target_channels.max(1) as u64)
+                } else {
+                    0
+                };
 
-            let current_ts = state.timestamp_us;
-            state.timestamp_us += chunk_duration_us;
+                let timestamp_us = state.audio_timestamp_us;
+                state.audio_timestamp_us += chunk_duration_us;
 
-            return Ok(Some((samples, current_ts)));
+                return Ok(Some(DecodedFrame::Audio { samples, timestamp_us }));
+            }
+
+            // =========================================================================
+            // VIDEO PACKET
+            // =========================================================================
+            if stream_index == state.video_stream_index && !state.video_codec_ctx.is_null() {
+                let ret = ffi::avcodec_send_packet(state.video_codec_ctx, state.packet);
+                ffi::av_packet_unref(state.packet);
+
+                if ret < 0 {
+                    continue;
+                }
+
+                let ret = ffi::avcodec_receive_frame(state.video_codec_ctx, state.frame);
+                if ret == ffi::AVERROR_EAGAIN {
+                    continue;
+                }
+                if ret < 0 {
+                    continue;
+                }
+
+                let width = ffi::ffw_frame_get_width(state.frame) as u32;
+                let height = ffi::ffw_frame_get_height(state.frame) as u32;
+                let pix_fmt = ffi::ffw_frame_get_format(state.frame);
+                let picture_type = ffi::ffw_frame_get_picture_type(state.frame);
+                let is_keyframe = picture_type == ffi::AV_PICTURE_TYPE_I;
+                let pts = ffi::ffw_frame_get_pts(state.frame);
+
+                if width == 0 || height == 0 {
+                    ffi::av_frame_unref(state.frame);
+                    continue;
+                }
+
+                // Map FFmpeg pixel format to our PixelFormat
+                let format = match pix_fmt {
+                    f if f == ffi::AV_PIX_FMT_YUV420P => PixelFormat::Yuv420p,
+                    f if f == ffi::AV_PIX_FMT_NV12 => PixelFormat::NV12,
+                    f if f == ffi::AV_PIX_FMT_RGB24 => PixelFormat::Rgb24,
+                    f if f == ffi::AV_PIX_FMT_RGBA => PixelFormat::Rgba32,
+                    _ => {
+                        // For unsupported formats, output as YUV420P (most common)
+                        // In future, we could use sws_scale to convert
+                        PixelFormat::Yuv420p
+                    }
+                };
+
+                // Extract pixel data based on format
+                let pixel_data = extract_video_frame_data(state.frame, width, height, pix_fmt);
+
+                ffi::av_frame_unref(state.frame);
+
+                if pixel_data.is_empty() {
+                    continue;
+                }
+
+                // Calculate timestamp in microseconds
+                // FFmpeg streams have time_base, but we use a simple frame-based approach
+                let timestamp_us = if pts >= 0 {
+                    // Use PTS if available (convert from stream time_base to microseconds)
+                    // Assuming 1/90000 time_base for video (common), or estimate from frame rate
+                    (pts as u64 * 1_000_000) / 90000
+                } else {
+                    // Estimate from frame number (assume 30fps)
+                    (state.video_frame_number * 1_000_000) / 30
+                };
+
+                let frame_number = state.video_frame_number;
+                state.video_frame_number += 1;
+
+                return Ok(Some(DecodedFrame::Video {
+                    pixel_data,
+                    width,
+                    height,
+                    format,
+                    codec: state.video_codec,
+                    frame_number,
+                    timestamp_us,
+                    is_keyframe,
+                }));
+            }
+
+            // Packet doesn't match any stream we're tracking
+            ffi::av_packet_unref(state.packet);
         }
+    }
+}
+
+/// Extract raw pixel data from an AVFrame
+unsafe fn extract_video_frame_data(
+    frame: *mut ffi::AVFrame,
+    width: u32,
+    height: u32,
+    pix_fmt: i32,
+) -> Vec<u8> {
+    // For YUV420P (most common), we need Y, U, V planes
+    if pix_fmt == ffi::AV_PIX_FMT_YUV420P {
+        let y_size = (width * height) as usize;
+        let uv_size = (width * height / 4) as usize;
+        let total_size = y_size + uv_size * 2;
+
+        let mut data = Vec::with_capacity(total_size);
+
+        // Y plane
+        let y_ptr = ffi::ffw_frame_get_plane_data(frame, 0);
+        let y_linesize = ffi::ffw_frame_get_line_size(frame, 0) as usize;
+        if y_ptr.is_null() {
+            return Vec::new();
+        }
+
+        // Copy Y plane row by row (handles stride)
+        for row in 0..height as usize {
+            let src = y_ptr.add(row * y_linesize);
+            data.extend_from_slice(std::slice::from_raw_parts(src, width as usize));
+        }
+
+        // U plane
+        let u_ptr = ffi::ffw_frame_get_plane_data(frame, 1);
+        let u_linesize = ffi::ffw_frame_get_line_size(frame, 1) as usize;
+        if u_ptr.is_null() {
+            return Vec::new();
+        }
+
+        for row in 0..(height / 2) as usize {
+            let src = u_ptr.add(row * u_linesize);
+            data.extend_from_slice(std::slice::from_raw_parts(src, (width / 2) as usize));
+        }
+
+        // V plane
+        let v_ptr = ffi::ffw_frame_get_plane_data(frame, 2);
+        let v_linesize = ffi::ffw_frame_get_line_size(frame, 2) as usize;
+        if v_ptr.is_null() {
+            return Vec::new();
+        }
+
+        for row in 0..(height / 2) as usize {
+            let src = v_ptr.add(row * v_linesize);
+            data.extend_from_slice(std::slice::from_raw_parts(src, (width / 2) as usize));
+        }
+
+        data
+    } else if pix_fmt == ffi::AV_PIX_FMT_NV12 {
+        // NV12: Y plane + interleaved UV plane
+        let y_size = (width * height) as usize;
+        let uv_size = (width * height / 2) as usize;
+        let total_size = y_size + uv_size;
+
+        let mut data = Vec::with_capacity(total_size);
+
+        // Y plane
+        let y_ptr = ffi::ffw_frame_get_plane_data(frame, 0);
+        let y_linesize = ffi::ffw_frame_get_line_size(frame, 0) as usize;
+        if y_ptr.is_null() {
+            return Vec::new();
+        }
+
+        for row in 0..height as usize {
+            let src = y_ptr.add(row * y_linesize);
+            data.extend_from_slice(std::slice::from_raw_parts(src, width as usize));
+        }
+
+        // UV plane (interleaved)
+        let uv_ptr = ffi::ffw_frame_get_plane_data(frame, 1);
+        let uv_linesize = ffi::ffw_frame_get_line_size(frame, 1) as usize;
+        if uv_ptr.is_null() {
+            return Vec::new();
+        }
+
+        for row in 0..(height / 2) as usize {
+            let src = uv_ptr.add(row * uv_linesize);
+            data.extend_from_slice(std::slice::from_raw_parts(src, width as usize));
+        }
+
+        data
+    } else if pix_fmt == ffi::AV_PIX_FMT_RGB24 {
+        // Packed RGB24
+        let total_size = (width * height * 3) as usize;
+        let mut data = Vec::with_capacity(total_size);
+
+        let ptr = ffi::ffw_frame_get_plane_data(frame, 0);
+        let linesize = ffi::ffw_frame_get_line_size(frame, 0) as usize;
+        if ptr.is_null() {
+            return Vec::new();
+        }
+
+        for row in 0..height as usize {
+            let src = ptr.add(row * linesize);
+            data.extend_from_slice(std::slice::from_raw_parts(src, (width * 3) as usize));
+        }
+
+        data
+    } else if pix_fmt == ffi::AV_PIX_FMT_RGBA {
+        // Packed RGBA32
+        let total_size = (width * height * 4) as usize;
+        let mut data = Vec::with_capacity(total_size);
+
+        let ptr = ffi::ffw_frame_get_plane_data(frame, 0);
+        let linesize = ffi::ffw_frame_get_line_size(frame, 0) as usize;
+        if ptr.is_null() {
+            return Vec::new();
+        }
+
+        for row in 0..height as usize {
+            let src = ptr.add(row * linesize);
+            data.extend_from_slice(std::slice::from_raw_parts(src, (width * 4) as usize));
+        }
+
+        data
+    } else {
+        // For other formats, try to extract as YUV420P equivalent
+        // This is a fallback that may not work correctly for all formats
+        let y_size = (width * height) as usize;
+        let uv_size = (width * height / 4) as usize;
+
+        let y_ptr = ffi::ffw_frame_get_plane_data(frame, 0);
+        if y_ptr.is_null() {
+            return Vec::new();
+        }
+
+        let y_linesize = ffi::ffw_frame_get_line_size(frame, 0) as usize;
+        let mut data = Vec::with_capacity(y_size + uv_size * 2);
+
+        for row in 0..height as usize {
+            let src = y_ptr.add(row * y_linesize);
+            data.extend_from_slice(std::slice::from_raw_parts(src, width as usize));
+        }
+
+        // Fill U and V with neutral gray (128) if not available
+        data.resize(y_size + uv_size * 2, 128);
+
+        data
     }
 }
 

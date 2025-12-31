@@ -178,6 +178,7 @@ Both APIs work together - you can mix old and new styles in the same registry.
 │  remotemedia-runtime-core               │
 │  ├─ transport/ (traits & abstractions)  │
 │  ├─ executor/ (pipeline execution)      │
+│  ├─ ingestion/ (media ingest plugins)   │
 │  ├─ nodes/ (audio processing nodes)     │
 │  ├─ data/ (RuntimeData types)           │
 │  └─ manifest/ (configuration parsing)   │
@@ -188,6 +189,118 @@ Both APIs work together - you can mix old and new styles in the same registry.
 │  ❌ webrtc (WebRTC)                     │
 └─────────────────────────────────────────┘
 ```
+
+## Ingestion Framework (Spec 028)
+
+The ingestion module provides a pluggable framework for ingesting media from various sources (RTMP, RTSP, UDP, files, etc.) into pipelines.
+
+### Quick Example
+
+```rust
+use remotemedia_runtime_core::ingestion::{
+    global_ingest_registry, IngestConfig, TrackSelection,
+};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Get the global ingest registry (FileIngestPlugin is auto-registered)
+    let registry = global_ingest_registry();
+
+    // Create config for an RTSP stream
+    let config = IngestConfig::from_url("rtsp://server:8554/stream");
+
+    // Create the ingest source
+    let source = registry.create_from_uri(&config)?;
+
+    // Start ingestion - returns a stream of RuntimeData
+    let mut stream = source.start().await?;
+
+    // Receive decoded audio and video frames
+    while let Some(data) = stream.recv().await {
+        match data {
+            RuntimeData::Audio { samples, sample_rate, channels, stream_id, .. } => {
+                // Process audio chunk
+            }
+            RuntimeData::Video { pixel_data, width, height, format, .. } => {
+                // Process video frame
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+```
+
+### Supported Sources
+
+| Plugin | Schemes | Description |
+|--------|---------|-------------|
+| **FileIngestPlugin** (built-in) | `file://`, `-`, bare paths | Local files, stdin |
+| **RtmpIngestPlugin** (opt-in) | `rtmp://`, `rtmps://`, `rtsp://`, `rtsps://`, `udp://`, `srt://` | Live streaming protocols |
+
+### Enabling RTMP/RTSP Support
+
+Add the `ingest-rtmp` adapter:
+
+```toml
+[dependencies]
+remotemedia-ingest-rtmp = { path = "adapters/ingest-rtmp" }
+```
+
+Then register it:
+
+```rust
+use remotemedia_ingest_rtmp::RtmpIngestPlugin;
+
+let registry = global_ingest_registry();
+registry.register(Arc::new(RtmpIngestPlugin))?;
+```
+
+### Multi-Track Support
+
+Ingest sources support multi-track media (audio, video, subtitles). Each track is tagged with a `stream_id`:
+
+- Audio tracks: `"audio:0"`, `"audio:1"`, etc.
+- Video tracks: `"video:0"`, `"video:1"`, etc.
+- Subtitle tracks: `"subtitle:0"`, etc.
+
+Configure which tracks to ingest:
+
+```rust
+let config = IngestConfig {
+    url: "rtsp://server/stream".into(),
+    track_selection: TrackSelection::FirstAudioVideo, // Default
+    // Or: TrackSelection::All
+    // Or: TrackSelection::Specific(vec![...])
+    ..Default::default()
+};
+```
+
+### Creating Custom Ingest Plugins
+
+```rust
+use remotemedia_runtime_core::ingestion::{IngestPlugin, IngestSource, IngestConfig};
+use async_trait::async_trait;
+
+pub struct MyIngestPlugin;
+
+impl IngestPlugin for MyIngestPlugin {
+    fn name(&self) -> &'static str { "my-ingest" }
+    fn schemes(&self) -> &'static [&'static str] { &["my://"] }
+
+    fn create(&self, config: IngestConfig) -> Result<Arc<dyn IngestSource>, Error> {
+        Ok(Arc::new(MyIngestSource::new(config)?))
+    }
+
+    fn validate(&self, config: &IngestConfig) -> Result<(), Error> {
+        // Validate URL and config
+        Ok(())
+    }
+}
+```
+
+See `adapters/ingest-rtmp/` for a complete implementation.
 
 ## API Documentation
 
