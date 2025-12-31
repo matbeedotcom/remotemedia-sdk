@@ -691,18 +691,22 @@ async fn run_streaming_analysis(
 fn process_health_output(output: RuntimeData, emitter: &mut events::EventEmitter) -> Result<()> {
     match output {
         RuntimeData::Json(json) => {
+            tracing::debug!("Received JSON output: {}", json);
             // Convert JSON health events to HealthEvent enum
             if let Some(events) = convert_json_to_health_events(&json) {
                 for event in events {
+                    tracing::debug!("Emitting event: {:?}", event);
                     if let Err(e) = emitter.emit(event) {
                         tracing::warn!("Failed to emit event: {}", e);
                     }
                 }
+            } else {
+                tracing::debug!("No events converted from JSON");
             }
         }
         _ => {
-            // Ignore non-JSON outputs
-            tracing::debug!("Ignoring non-JSON output: {:?}", output);
+            // Ignore non-JSON outputs (e.g., audio passthrough)
+            tracing::trace!("Ignoring non-JSON output");
         }
     }
     Ok(())
@@ -733,6 +737,11 @@ fn convert_json_to_health_events(json: &serde_json::Value) -> Option<Vec<events:
 
 /// Convert a single JSON event to HealthEvent
 fn convert_single_json_event(json: &serde_json::Value) -> Option<events::HealthEvent> {
+    // Check for schema-based events from analysis nodes (uses _schema field)
+    if let Some(schema) = json.get("_schema").and_then(|v| v.as_str()) {
+        return convert_schema_event(schema, json);
+    }
+
     let event_type = json.get("type")?.as_str()?;
 
     match event_type {
@@ -764,6 +773,64 @@ fn convert_single_json_event(json: &serde_json::Value) -> Option<events::HealthE
             let skew_ms = json.get("skew_ms")?.as_i64()?;
             let threshold_ms = json.get("threshold_ms")?.as_i64()?;
             Some(events::HealthEvent::av_skew(skew_ms, threshold_ms))
+        }
+        _ => None,
+    }
+}
+
+/// Convert schema-based events from analysis nodes
+fn convert_schema_event(schema: &str, data: &serde_json::Value) -> Option<events::HealthEvent> {
+    match schema {
+        "audio_level_event" => {
+            let is_low_volume = data.get("is_low_volume")?.as_bool()?;
+            let is_silence = data.get("is_silence")?.as_bool()?;
+            let rms_db = data.get("rms_db")?.as_f64()? as f32;
+            let peak_db = data.get("peak_db")?.as_f64()? as f32;
+            let stream_id = data.get("stream_id").and_then(|v| v.as_str().map(String::from));
+
+            if is_silence {
+                Some(events::HealthEvent::silence(0.0, rms_db, stream_id))
+            } else if is_low_volume {
+                Some(events::HealthEvent::low_volume(rms_db, peak_db, stream_id))
+            } else {
+                None // No issue detected
+            }
+        }
+        "silence_event" => {
+            let is_sustained = data.get("is_sustained_silence")?.as_bool()?;
+            let has_dropouts = data.get("has_intermittent_dropouts")?.as_bool()?;
+            let silence_duration_ms = data.get("silence_duration_ms")?.as_f64()? as f32;
+            let rms_db = data.get("rms_db")?.as_f64()? as f32;
+            let dropout_count = data.get("dropout_count")?.as_u64()? as u32;
+            let stream_id = data.get("stream_id").and_then(|v| v.as_str().map(String::from));
+
+            if has_dropouts {
+                Some(events::HealthEvent::dropouts(dropout_count, stream_id))
+            } else if is_sustained {
+                Some(events::HealthEvent::silence(silence_duration_ms, rms_db, stream_id))
+            } else {
+                None
+            }
+        }
+        "clipping_event" => {
+            let is_clipping = data.get("is_clipping")?.as_bool()?;
+            if !is_clipping {
+                return None;
+            }
+            let saturation_ratio = data.get("saturation_ratio")?.as_f64()? as f32;
+            let crest_factor_db = data.get("crest_factor_db")?.as_f64()? as f32;
+            let stream_id = data.get("stream_id").and_then(|v| v.as_str().map(String::from));
+            Some(events::HealthEvent::clipping(saturation_ratio, crest_factor_db, stream_id))
+        }
+        "channel_balance_event" => {
+            let is_imbalanced = data.get("is_imbalanced")?.as_bool()?;
+            if !is_imbalanced {
+                return None;
+            }
+            let imbalance_db = data.get("imbalance_db")?.as_f64()? as f32;
+            let dead_channel = data.get("dead_channel")?.as_str()?.to_string();
+            let stream_id = data.get("stream_id").and_then(|v| v.as_str().map(String::from));
+            Some(events::HealthEvent::channel_imbalance(imbalance_db, dead_channel, stream_id))
         }
         _ => None,
     }

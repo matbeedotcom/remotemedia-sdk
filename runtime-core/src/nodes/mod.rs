@@ -51,6 +51,19 @@ pub use audio_chunker::AudioChunkerNode;
 pub mod health_emitter;
 pub use health_emitter::{HealthEmitterNode, HealthEmitterConfig, HealthEmitterNodeFactory};
 
+// Audio analysis nodes for stream health monitoring
+pub mod audio_level;
+pub use audio_level::{AudioLevelNode, AudioLevelConfig, AudioLevelNodeFactory, AudioLevelEvent};
+
+pub mod clipping_detector;
+pub use clipping_detector::{ClippingDetectorNode, ClippingConfig, ClippingDetectorNodeFactory, ClippingEvent};
+
+pub mod channel_balance;
+pub use channel_balance::{ChannelBalanceNode, ChannelBalanceConfig, ChannelBalanceNodeFactory, ChannelBalanceEvent};
+
+pub mod silence_detector;
+pub use silence_detector::{SilenceDetectorNode, SilenceConfig, SilenceDetectorNodeFactory, SilenceEvent};
+
 pub mod audio_resample_streaming;
 pub use audio_resample_streaming::ResampleStreamingNode;
 

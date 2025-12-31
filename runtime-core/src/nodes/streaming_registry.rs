@@ -9,6 +9,10 @@ use crate::nodes::passthrough::PassThroughNode;
 use crate::nodes::python_streaming::PythonStreamingNode;
 use crate::nodes::health_emitter::HealthEmitterNodeFactory;
 use crate::nodes::remote_pipeline::RemotePipelineNodeFactory;
+use crate::nodes::audio_level::AudioLevelNodeFactory;
+use crate::nodes::clipping_detector::ClippingDetectorNodeFactory;
+use crate::nodes::channel_balance::ChannelBalanceNodeFactory;
+use crate::nodes::silence_detector::SilenceDetectorNodeFactory;
 use crate::nodes::whisper::RustWhisperNode;
 // Temporarily disabled - incomplete implementation
 // use crate::nodes::sync_av::SynchronizedAudioVideoNode;
@@ -1710,6 +1714,12 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
 
     // Register health monitoring nodes (spec 027)
     registry.register(Arc::new(HealthEmitterNodeFactory));
+    
+    // Register audio analysis nodes for fault detection (spec 027)
+    registry.register(Arc::new(AudioLevelNodeFactory));
+    registry.register(Arc::new(ClippingDetectorNodeFactory));
+    registry.register(Arc::new(ChannelBalanceNodeFactory));
+    registry.register(Arc::new(SilenceDetectorNodeFactory));
 
     // Register Speculative VAD Gate (Spec 007 - low-latency streaming)
     registry.register(Arc::new(SpeculativeVADGateFactory));

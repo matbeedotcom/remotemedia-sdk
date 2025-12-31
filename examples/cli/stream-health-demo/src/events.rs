@@ -64,6 +64,69 @@ pub enum HealthEvent {
         /// Configured threshold in milliseconds
         threshold_ms: i64,
     },
+
+    /// Silence detected in audio stream
+    Silence {
+        /// Timestamp when silence was detected
+        ts: DateTime<Utc>,
+        /// Duration of silence in milliseconds
+        duration_ms: f32,
+        /// RMS level in dB
+        rms_db: f32,
+        /// Stream identifier (if available)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stream_id: Option<String>,
+    },
+
+    /// Low audio volume detected
+    LowVolume {
+        /// Timestamp when low volume was detected
+        ts: DateTime<Utc>,
+        /// RMS level in dB
+        rms_db: f32,
+        /// Peak level in dB
+        peak_db: f32,
+        /// Stream identifier (if available)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stream_id: Option<String>,
+    },
+
+    /// Audio clipping/distortion detected
+    Clipping {
+        /// Timestamp when clipping was detected
+        ts: DateTime<Utc>,
+        /// Saturation ratio (percentage of samples at clipping)
+        saturation_ratio: f32,
+        /// Crest factor in dB
+        crest_factor_db: f32,
+        /// Stream identifier (if available)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stream_id: Option<String>,
+    },
+
+    /// Channel imbalance detected (one-sided audio)
+    ChannelImbalance {
+        /// Timestamp when imbalance was detected
+        ts: DateTime<Utc>,
+        /// Imbalance in dB (positive = left louder)
+        imbalance_db: f32,
+        /// Name of dead channel if any ("left", "right", or "none")
+        dead_channel: String,
+        /// Stream identifier (if available)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stream_id: Option<String>,
+    },
+
+    /// Intermittent audio dropouts detected
+    Dropouts {
+        /// Timestamp when dropouts were detected
+        ts: DateTime<Utc>,
+        /// Number of dropouts in monitoring window
+        dropout_count: u32,
+        /// Stream identifier (if available)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stream_id: Option<String>,
+    },
 }
 
 impl HealthEvent {
@@ -113,6 +176,55 @@ impl HealthEvent {
         }
     }
 
+    /// Create a new silence event
+    pub fn silence(duration_ms: f32, rms_db: f32, stream_id: Option<String>) -> Self {
+        Self::Silence {
+            ts: Utc::now(),
+            duration_ms,
+            rms_db,
+            stream_id,
+        }
+    }
+
+    /// Create a new low volume event
+    pub fn low_volume(rms_db: f32, peak_db: f32, stream_id: Option<String>) -> Self {
+        Self::LowVolume {
+            ts: Utc::now(),
+            rms_db,
+            peak_db,
+            stream_id,
+        }
+    }
+
+    /// Create a new clipping event
+    pub fn clipping(saturation_ratio: f32, crest_factor_db: f32, stream_id: Option<String>) -> Self {
+        Self::Clipping {
+            ts: Utc::now(),
+            saturation_ratio,
+            crest_factor_db,
+            stream_id,
+        }
+    }
+
+    /// Create a new channel imbalance event
+    pub fn channel_imbalance(imbalance_db: f32, dead_channel: String, stream_id: Option<String>) -> Self {
+        Self::ChannelImbalance {
+            ts: Utc::now(),
+            imbalance_db,
+            dead_channel,
+            stream_id,
+        }
+    }
+
+    /// Create a new dropouts event
+    pub fn dropouts(dropout_count: u32, stream_id: Option<String>) -> Self {
+        Self::Dropouts {
+            ts: Utc::now(),
+            dropout_count,
+            stream_id,
+        }
+    }
+
     /// Get the timestamp of the event
     pub fn timestamp(&self) -> DateTime<Utc> {
         match self {
@@ -121,6 +233,11 @@ impl HealthEvent {
             Self::Health { ts, .. } => *ts,
             Self::Cadence { ts, .. } => *ts,
             Self::AvSkew { ts, .. } => *ts,
+            Self::Silence { ts, .. } => *ts,
+            Self::LowVolume { ts, .. } => *ts,
+            Self::Clipping { ts, .. } => *ts,
+            Self::ChannelImbalance { ts, .. } => *ts,
+            Self::Dropouts { ts, .. } => *ts,
         }
     }
 
@@ -137,6 +254,21 @@ impl HealthEvent {
     /// Check if this is a health event
     pub fn is_health(&self) -> bool {
         matches!(self, Self::Health { .. })
+    }
+
+    /// Check if this is a silence event
+    pub fn is_silence(&self) -> bool {
+        matches!(self, Self::Silence { .. })
+    }
+
+    /// Check if this is a clipping event
+    pub fn is_clipping(&self) -> bool {
+        matches!(self, Self::Clipping { .. })
+    }
+
+    /// Check if this is a channel imbalance event
+    pub fn is_channel_imbalance(&self) -> bool {
+        matches!(self, Self::ChannelImbalance { .. })
     }
 }
 
