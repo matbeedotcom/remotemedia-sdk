@@ -178,12 +178,24 @@ struct NodeExecutionState {
     circuit_breaker: Mutex<CircuitBreaker>,
     /// Atomic flag for fast circuit breaker check (avoids lock on hot path)
     circuit_open: AtomicBool,
-    /// Latency metrics for this node
+    /// Consecutive failure count for lock-free CB updates
+    consecutive_failures: AtomicU64,
+    /// CB failure threshold
+    failure_threshold: u64,
+    /// Latency metrics for this node (used by full path)
     latency_metrics: LatencyMetrics,
     /// Total execution count (atomic for lock-free increment)
     execution_count: AtomicU64,
     /// Total error count (atomic for lock-free increment)
     error_count: AtomicU64,
+    /// Fast path latency sum (for computing average without locks)
+    latency_sum_us: AtomicU64,
+    /// Fast path latency count
+    latency_count: AtomicU64,
+    /// Fast path min latency
+    latency_min_us: AtomicU64,
+    /// Fast path max latency
+    latency_max_us: AtomicU64,
 }
 
 impl NodeExecutionState {
@@ -194,9 +206,15 @@ impl NodeExecutionState {
         Ok(Self {
             circuit_breaker: Mutex::new(CircuitBreaker::new(threshold)),
             circuit_open: AtomicBool::new(false),
+            consecutive_failures: AtomicU64::new(0),
+            failure_threshold: threshold as u64,
             latency_metrics,
             execution_count: AtomicU64::new(0),
             error_count: AtomicU64::new(0),
+            latency_sum_us: AtomicU64::new(0),
+            latency_count: AtomicU64::new(0),
+            latency_min_us: AtomicU64::new(u64::MAX),
+            latency_max_us: AtomicU64::new(0),
         })
     }
 
@@ -210,14 +228,61 @@ impl NodeExecutionState {
         self.circuit_open.store(open, Ordering::Release);
     }
 
-    /// Record success: increment counter, update circuit breaker
+    /// Record success with full latency metrics (takes locks)
     async fn record_success(&self, duration_us: u64) {
         self.execution_count.fetch_add(1, Ordering::Relaxed);
         let _ = self.latency_metrics.record_latency(duration_us);
 
         let mut cb = self.circuit_breaker.lock().await;
         cb.record_success();
+        self.consecutive_failures.store(0, Ordering::Relaxed);
         self.set_circuit_open(false);
+    }
+
+    /// Record success lock-free (fast path - no locks, no histogram)
+    ///
+    /// Only updates atomic counters. Use for latency-critical nodes.
+    fn record_success_fast(&self, duration_us: u64) {
+        self.execution_count.fetch_add(1, Ordering::Relaxed);
+
+        // Lock-free latency tracking (sum/count/min/max)
+        self.latency_sum_us.fetch_add(duration_us, Ordering::Relaxed);
+        self.latency_count.fetch_add(1, Ordering::Relaxed);
+
+        // Update min (atomic compare-and-swap loop)
+        let mut current_min = self.latency_min_us.load(Ordering::Relaxed);
+        while duration_us < current_min {
+            match self.latency_min_us.compare_exchange_weak(
+                current_min,
+                duration_us,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(new_min) => current_min = new_min,
+            }
+        }
+
+        // Update max (atomic compare-and-swap loop)
+        let mut current_max = self.latency_max_us.load(Ordering::Relaxed);
+        while duration_us > current_max {
+            match self.latency_max_us.compare_exchange_weak(
+                current_max,
+                duration_us,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(new_max) => current_max = new_max,
+            }
+        }
+
+        // Lock-free circuit breaker reset on success
+        self.consecutive_failures.store(0, Ordering::Relaxed);
+        // Only clear open flag if it was set (avoid unnecessary writes)
+        if self.circuit_open.load(Ordering::Relaxed) {
+            self.set_circuit_open(false);
+        }
     }
 
     /// Record failure: increment counters, update circuit breaker
@@ -229,6 +294,22 @@ impl NodeExecutionState {
         let mut cb = self.circuit_breaker.lock().await;
         cb.record_failure();
         self.set_circuit_open(cb.is_open_readonly());
+    }
+
+    /// Record failure lock-free (fast path)
+    fn record_failure_fast(&self, duration_us: u64) {
+        self.execution_count.fetch_add(1, Ordering::Relaxed);
+        self.error_count.fetch_add(1, Ordering::Relaxed);
+
+        // Lock-free latency tracking
+        self.latency_sum_us.fetch_add(duration_us, Ordering::Relaxed);
+        self.latency_count.fetch_add(1, Ordering::Relaxed);
+
+        // Lock-free circuit breaker update
+        let failures = self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
+        if failures >= self.failure_threshold {
+            self.set_circuit_open(true);
+        }
     }
 
     /// Check and potentially transition circuit breaker (for full path)
@@ -247,6 +328,15 @@ impl NodeExecutionState {
     /// Get error count
     fn get_error_count(&self) -> u64 {
         self.error_count.load(Ordering::Relaxed)
+    }
+
+    /// Get fast path average latency (lock-free)
+    fn get_avg_latency_us(&self) -> u64 {
+        let count = self.latency_count.load(Ordering::Relaxed);
+        if count == 0 {
+            return 0;
+        }
+        self.latency_sum_us.load(Ordering::Relaxed) / count
     }
 }
 
@@ -454,6 +544,9 @@ impl StreamingScheduler {
     /// - No timeout wrapper (avoids tokio timer overhead)
     /// - No pipeline metrics recording (avoids extra lock)
     /// - Atomic counter updates (no lock for counters)
+    /// - Lock-free latency recording (no HDR histogram, just sum/count/min/max)
+    /// - Lock-free circuit breaker updates (no mutex on success/failure)
+    /// - try_acquire() for semaphore (falls back to async acquire only if needed)
     ///
     /// Use this for latency-critical nodes where scheduler overhead matters.
     /// Target overhead: <1µs for fast nodes.
@@ -488,10 +581,17 @@ impl StreamingScheduler {
             )));
         }
 
-        // Acquire semaphore permit (still need concurrency control)
-        let _permit = self.semaphore.acquire().await.map_err(|e| {
-            Error::Execution(format!("Failed to acquire semaphore: {}", e))
-        })?;
+        // Try non-blocking semaphore acquire first (fast path)
+        // Falls back to async acquire only if permits exhausted
+        let _permit = match self.semaphore.try_acquire() {
+            Ok(permit) => permit,
+            Err(_) => {
+                // Slow path: wait for permit
+                self.semaphore.acquire().await.map_err(|e| {
+                    Error::Execution(format!("Failed to acquire semaphore: {}", e))
+                })?
+            }
+        };
 
         let start = std::time::Instant::now();
 
@@ -500,16 +600,8 @@ impl StreamingScheduler {
             Ok(value) => {
                 let duration_us = start.elapsed().as_micros() as u64;
 
-                // Atomic counter increment + latency recording (no global lock)
-                node_state.execution_count.fetch_add(1, Ordering::Relaxed);
-                let _ = node_state.latency_metrics.record_latency(duration_us);
-
-                // Update circuit breaker (per-node mutex, not global)
-                {
-                    let mut cb = node_state.circuit_breaker.lock().await;
-                    cb.record_success();
-                    node_state.set_circuit_open(false);
-                }
+                // Lock-free success recording (atomics only, no mutex, no HDR histogram)
+                node_state.record_success_fast(duration_us);
 
                 Ok(SchedulerResult {
                     result: value,
@@ -520,17 +612,8 @@ impl StreamingScheduler {
             Err(e) => {
                 let duration_us = start.elapsed().as_micros() as u64;
 
-                // Atomic counter increments (no global lock)
-                node_state.execution_count.fetch_add(1, Ordering::Relaxed);
-                node_state.error_count.fetch_add(1, Ordering::Relaxed);
-                let _ = node_state.latency_metrics.record_latency(duration_us);
-
-                // Update circuit breaker (per-node mutex, not global)
-                {
-                    let mut cb = node_state.circuit_breaker.lock().await;
-                    cb.record_failure();
-                    node_state.set_circuit_open(cb.is_open_readonly());
-                }
+                // Lock-free failure recording (atomics only, no mutex)
+                node_state.record_failure_fast(duration_us);
 
                 Err(e)
             }

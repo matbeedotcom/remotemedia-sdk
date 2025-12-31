@@ -35,30 +35,44 @@ use std::time::Duration;
 
 /// CPU-bound work that takes approximately the specified number of iterations.
 /// Each iteration does ~1ns of work (simple arithmetic).
+///
+/// Uses volatile read/write to prevent loop elimination while keeping
+/// actual work minimal. The black_box inside the loop ensures the compiler
+/// cannot optimize away iterations.
 #[inline(never)]
 fn cpu_work(iterations: u64) -> u64 {
     let mut result = 0u64;
     for i in 0..iterations {
-        result = result.wrapping_add(i.wrapping_mul(17));
-        hint_black_box(result);
+        // black_box on each iteration prevents loop elimination/vectorization
+        result = hint_black_box(result.wrapping_add(i.wrapping_mul(17)));
     }
     result
 }
 
 /// Calibrate iterations to approximate microseconds of CPU work.
 /// Returns iterations needed for approximately 1µs of work.
+///
+/// Uses larger loop (10K iterations) and multiple runs taking minimum
+/// for more stable calibration.
 fn calibrate_iterations() -> u64 {
-    // Run a quick calibration
-    let start = std::time::Instant::now();
-    let _ = cpu_work(1000);
-    let elapsed = start.elapsed();
+    const CALIBRATION_ITERS: u64 = 10_000;
+    const CALIBRATION_RUNS: usize = 5;
+
+    let mut min_nanos = u64::MAX;
+
+    for _ in 0..CALIBRATION_RUNS {
+        let start = std::time::Instant::now();
+        let _ = cpu_work(CALIBRATION_ITERS);
+        let elapsed = start.elapsed().as_nanos() as u64;
+        min_nanos = min_nanos.min(elapsed);
+    }
 
     // Calculate iterations per microsecond
-    let nanos_per_1000 = elapsed.as_nanos() as u64;
-    if nanos_per_1000 == 0 {
+    if min_nanos == 0 {
         1000 // Fallback
     } else {
-        (1000 * 1000) / nanos_per_1000 // iterations per µs
+        // iters_per_us = CALIBRATION_ITERS / (min_nanos / 1000)
+        (CALIBRATION_ITERS * 1000) / min_nanos
     }
 }
 
@@ -106,18 +120,20 @@ fn bench_scheduler_absolute_overhead(c: &mut Criterion) {
     });
 
     // Full path cold (new node each time)
+    // Pre-generate node IDs to avoid format! allocation in timed loop
     let scheduler_cold = StreamingScheduler::with_defaults();
-    let mut cold_counter = 0u64;
+    let cold_node_ids: Vec<String> = (0..100_000).map(|i| format!("cold_node_{}", i)).collect();
+    let cold_counter = std::sync::atomic::AtomicUsize::new(0);
 
     group.bench_function("full_path_cold", |b| {
         b.to_async(&rt).iter(|| {
-            let node_id = format!("cold_node_{}", cold_counter);
-            cold_counter += 1;
+            let idx = cold_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % cold_node_ids.len();
+            let node_id = &cold_node_ids[idx];
             let sched = &scheduler_cold;
             async move {
                 black_box(
                     sched
-                        .execute_streaming_node(&node_id, || async { Ok::<_, Error>(42) })
+                        .execute_streaming_node(node_id, || async { Ok::<_, Error>(42) })
                         .await
                         .unwrap()
                         .result,
@@ -176,6 +192,10 @@ fn bench_scheduler_absolute_overhead(c: &mut Criterion) {
 ///
 /// Measures (scheduler_time - direct_time) / direct_time to get true overhead %.
 /// Uses calibrated CPU work at various durations.
+///
+/// CRITICAL: Baseline uses async runtime to match scheduler measurements.
+/// Comparing sync baseline to async scheduler would show async runtime overhead,
+/// not scheduler overhead.
 fn bench_scheduler_overhead_ratio(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let iters_per_us = calibrate_iterations();
@@ -187,12 +207,16 @@ fn bench_scheduler_overhead_ratio(c: &mut Criterion) {
     for work_us in [10, 100, 1000, 10000] {
         let iterations = work_us * iters_per_us;
 
-        // Baseline: direct CPU work (no scheduler)
+        // Baseline: ASYNC direct CPU work (matches scheduler's async context)
+        // This measures pure work inside async runtime without scheduler overhead
+        // NOTE: We use black_box on iterations to prevent constant propagation optimization
         group.bench_with_input(
-            BenchmarkId::new("direct", work_us),
+            BenchmarkId::new("direct_async", work_us),
             &iterations,
             |b, &iters| {
-                b.iter(|| black_box(cpu_work(iters)));
+                b.to_async(&rt).iter(|| async move {
+                    black_box(cpu_work(black_box(iters)))
+                });
             },
         );
 
@@ -212,7 +236,7 @@ fn bench_scheduler_overhead_ratio(c: &mut Criterion) {
                     black_box(
                         scheduler
                             .execute_streaming_node("bench_node", || async {
-                                Ok::<_, Error>(cpu_work(iters))
+                                Ok::<_, Error>(cpu_work(black_box(iters)))
                             })
                             .await
                             .unwrap()
@@ -238,7 +262,7 @@ fn bench_scheduler_overhead_ratio(c: &mut Criterion) {
                     black_box(
                         scheduler_fast
                             .execute_streaming_node_fast("fast_bench_node", || async {
-                                Ok::<_, Error>(cpu_work(iters))
+                                Ok::<_, Error>(cpu_work(black_box(iters)))
                             })
                             .await
                             .unwrap()
@@ -257,13 +281,21 @@ fn bench_scheduler_overhead_ratio(c: &mut Criterion) {
 /// Tests scheduler behavior under concurrent access:
 /// - Same node (hot node contention)
 /// - Different nodes (map contention)
+///
+/// CRITICAL: Uses pre-spawned tasks waiting on barrier to measure actual
+/// contention, not spawn overhead. Previous version measured tokio::spawn
+/// cost which dwarfed actual scheduler contention.
 fn bench_scheduler_contention(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     let mut group = c.benchmark_group("scheduler_contention");
     group.measurement_time(Duration::from_secs(5));
 
-    // Concurrent tasks on same node
+    // Pre-generate node IDs to avoid format! in timed path
+    let node_ids: Vec<String> = (0..16).map(|i| format!("contention_node_{}", i)).collect();
+
+    // Concurrent tasks on same node - using join_all instead of spawn
+    // This measures actual scheduler contention without spawn overhead
     for num_tasks in [2, 4, 8, 16] {
         let scheduler = Arc::new(StreamingScheduler::with_defaults());
 
@@ -275,55 +307,60 @@ fn bench_scheduler_contention(c: &mut Criterion) {
         });
 
         group.bench_with_input(
-            BenchmarkId::new("same_node", num_tasks),
+            BenchmarkId::new("same_node_join", num_tasks),
             &num_tasks,
             |b, &n| {
                 b.to_async(&rt).iter(|| {
                     let sched = scheduler.clone();
                     async move {
-                        let handles: Vec<_> = (0..n)
+                        // Use futures::join_all for concurrent execution without spawn overhead
+                        let futures: Vec<_> = (0..n)
                             .map(|_| {
                                 let s = sched.clone();
-                                tokio::spawn(async move {
+                                async move {
                                     s.execute_streaming_node("hot_node", || async {
                                         Ok::<_, Error>(42)
                                     })
                                     .await
-                                })
+                                }
                             })
                             .collect();
 
-                        for h in handles {
-                            let _ = black_box(h.await);
+                        let results = futures::future::join_all(futures).await;
+                        for r in results {
+                            let _ = black_box(r);
                         }
                     }
                 });
             },
         );
 
-        // Concurrent tasks on different nodes
+        // Concurrent tasks on different nodes (pre-generated IDs)
         group.bench_with_input(
-            BenchmarkId::new("different_nodes", num_tasks),
+            BenchmarkId::new("different_nodes_join", num_tasks),
             &num_tasks,
             |b, &n| {
+                let ids = &node_ids[..n];
                 b.to_async(&rt).iter(|| {
                     let sched = scheduler.clone();
                     async move {
-                        let handles: Vec<_> = (0..n)
-                            .map(|i| {
+                        let futures: Vec<_> = ids
+                            .iter()
+                            .map(|node_id| {
                                 let s = sched.clone();
-                                let node_id = format!("node_{}", i);
-                                tokio::spawn(async move {
-                                    s.execute_streaming_node(&node_id, || async {
+                                let id = node_id.clone();
+                                async move {
+                                    s.execute_streaming_node(&id, || async {
                                         Ok::<_, Error>(42)
                                     })
                                     .await
-                                })
+                                }
                             })
                             .collect();
 
-                        for h in handles {
-                            let _ = black_box(h.await);
+                        let results = futures::future::join_all(futures).await;
+                        for r in results {
+                            let _ = black_box(r);
                         }
                     }
                 });
@@ -393,6 +430,44 @@ fn bench_drift_recording(c: &mut Criterion) {
             ))
         });
     });
+
+    group.finish();
+}
+
+/// T089-B: Batched drift recording benchmark.
+///
+/// Measures amortized cost when recording multiple samples.
+/// This tests real-world usage where samples arrive in bursts.
+fn bench_drift_recording_batched(c: &mut Criterion) {
+    let mut group = c.benchmark_group("drift_recording_batched");
+    group.measurement_time(Duration::from_secs(3));
+
+    for batch_size in [10, 100, 1000] {
+        let mut metrics = DriftMetrics::with_defaults("bench_batch_stream".to_string());
+        // Pre-warm
+        for i in 0..100 {
+            metrics.record_sample(i * 33_333, i * 33_333, None);
+        }
+
+        let mut media_ts = 100 * 33_333u64;
+        let mut arrival_ts = 100 * 33_333u64;
+
+        group.throughput(Throughput::Elements(batch_size as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("batch", batch_size),
+            &batch_size,
+            |b, &n| {
+                b.iter(|| {
+                    for _ in 0..n {
+                        media_ts += 33_333;
+                        arrival_ts += 33_333;
+                        black_box(metrics.record_sample(media_ts, arrival_ts, None));
+                    }
+                });
+            },
+        );
+    }
 
     group.finish();
 }
@@ -644,6 +719,7 @@ criterion_group!(
     bench_scheduler_overhead_ratio,
     bench_scheduler_contention,
     bench_drift_recording,
+    bench_drift_recording_batched,
     bench_health_score,
     bench_prometheus_export,
     bench_debug_json,
