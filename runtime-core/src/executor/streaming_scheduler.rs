@@ -16,6 +16,14 @@
 //! 4. Circuit breaker to prevent cascading failures
 //! 5. Metrics recording for observability
 //!
+//! # Two Execution Paths
+//!
+//! - `execute_streaming_node()` - Full features: timeout, circuit breaker, metrics, retry
+//! - `execute_streaming_node_fast()` - Minimal overhead: no timeout, read-only CB check, no metrics
+//!
+//! Use `execute_streaming_node_fast()` for latency-critical nodes where you want
+//! minimal scheduler overhead (target: <1µs for fast nodes).
+//!
 //! # Retry Policy
 //!
 //! Retries are **disabled by default** and only apply to nodes explicitly
@@ -43,9 +51,15 @@
 //! let config = SchedulerConfig::default();
 //! let scheduler = StreamingScheduler::new(config);
 //!
-//! // Execute a node with all protections
+//! // Execute a node with all protections (full features)
 //! let result = scheduler.execute_streaming_node(
 //!     "whisper",
+//!     || async { node.process(input).await },
+//! ).await?;
+//!
+//! // Execute with minimal overhead (fast path)
+//! let result = scheduler.execute_streaming_node_fast(
+//!     "audio_transform",
 //!     || async { node.process(input).await },
 //! ).await?;
 //! ```
@@ -59,9 +73,10 @@ use crate::executor::metrics::PipelineMetrics;
 use crate::executor::retry::{CircuitBreaker, RetryPolicy};
 use crate::{Error, Result};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::time::timeout;
 
 /// Default maximum concurrency
@@ -157,16 +172,18 @@ pub struct SchedulerResult<T> {
     pub retry_count: u32,
 }
 
-/// Per-node execution state
+/// Per-node execution state with atomics for lock-free hot path operations
 struct NodeExecutionState {
-    /// Circuit breaker for this node
-    circuit_breaker: CircuitBreaker,
+    /// Circuit breaker for this node (protected by Mutex for state transitions)
+    circuit_breaker: Mutex<CircuitBreaker>,
+    /// Atomic flag for fast circuit breaker check (avoids lock on hot path)
+    circuit_open: AtomicBool,
     /// Latency metrics for this node
     latency_metrics: LatencyMetrics,
-    /// Total execution count
-    execution_count: u64,
-    /// Total error count
-    error_count: u64,
+    /// Total execution count (atomic for lock-free increment)
+    execution_count: AtomicU64,
+    /// Total error count (atomic for lock-free increment)
+    error_count: AtomicU64,
 }
 
 impl NodeExecutionState {
@@ -175,11 +192,61 @@ impl NodeExecutionState {
             .map_err(|e| Error::Execution(format!("Failed to create latency metrics: {}", e)))?;
 
         Ok(Self {
-            circuit_breaker: CircuitBreaker::new(threshold),
+            circuit_breaker: Mutex::new(CircuitBreaker::new(threshold)),
+            circuit_open: AtomicBool::new(false),
             latency_metrics,
-            execution_count: 0,
-            error_count: 0,
+            execution_count: AtomicU64::new(0),
+            error_count: AtomicU64::new(0),
         })
+    }
+
+    /// Check if circuit breaker is open (lock-free fast path)
+    fn is_circuit_open(&self) -> bool {
+        self.circuit_open.load(Ordering::Acquire)
+    }
+
+    /// Update circuit breaker state atomically
+    fn set_circuit_open(&self, open: bool) {
+        self.circuit_open.store(open, Ordering::Release);
+    }
+
+    /// Record success: increment counter, update circuit breaker
+    async fn record_success(&self, duration_us: u64) {
+        self.execution_count.fetch_add(1, Ordering::Relaxed);
+        let _ = self.latency_metrics.record_latency(duration_us);
+
+        let mut cb = self.circuit_breaker.lock().await;
+        cb.record_success();
+        self.set_circuit_open(false);
+    }
+
+    /// Record failure: increment counters, update circuit breaker
+    async fn record_failure(&self, duration_us: u64) {
+        self.execution_count.fetch_add(1, Ordering::Relaxed);
+        self.error_count.fetch_add(1, Ordering::Relaxed);
+        let _ = self.latency_metrics.record_latency(duration_us);
+
+        let mut cb = self.circuit_breaker.lock().await;
+        cb.record_failure();
+        self.set_circuit_open(cb.is_open_readonly());
+    }
+
+    /// Check and potentially transition circuit breaker (for full path)
+    async fn check_circuit_breaker(&self) -> bool {
+        let mut cb = self.circuit_breaker.lock().await;
+        let is_open = cb.is_open();
+        self.set_circuit_open(is_open);
+        is_open
+    }
+
+    /// Get execution count
+    fn get_execution_count(&self) -> u64 {
+        self.execution_count.load(Ordering::Relaxed)
+    }
+
+    /// Get error count
+    fn get_error_count(&self) -> u64 {
+        self.error_count.load(Ordering::Relaxed)
     }
 }
 
@@ -189,8 +256,8 @@ pub struct StreamingScheduler {
     pub config: SchedulerConfig,
     /// Concurrency semaphore
     semaphore: Arc<Semaphore>,
-    /// Per-node execution state
-    node_states: Arc<RwLock<HashMap<String, NodeExecutionState>>>,
+    /// Per-node execution state (Arc for sharing across tasks)
+    node_states: Arc<RwLock<HashMap<String, Arc<NodeExecutionState>>>>,
     /// Pipeline-level metrics
     metrics: Arc<RwLock<PipelineMetrics>>,
 }
@@ -211,6 +278,31 @@ impl StreamingScheduler {
         Self::new(SchedulerConfig::default())
     }
 
+    /// Get or create node state, returning Arc for lock-free access
+    async fn get_or_create_node_state(&self, node_id: &str) -> Result<Arc<NodeExecutionState>> {
+        // Fast path: check with read lock
+        {
+            let states = self.node_states.read().await;
+            if let Some(state) = states.get(node_id) {
+                return Ok(state.clone());
+            }
+        }
+
+        // Slow path: acquire write lock and insert
+        let mut states = self.node_states.write().await;
+        // Double-check after acquiring write lock
+        if let Some(state) = states.get(node_id) {
+            return Ok(state.clone());
+        }
+
+        let state = Arc::new(NodeExecutionState::new(
+            node_id,
+            self.config.circuit_breaker_threshold,
+        )?);
+        states.insert(node_id.to_string(), state.clone());
+        Ok(state)
+    }
+
     /// Execute a streaming node with all scheduler protections
     ///
     /// This method applies:
@@ -219,6 +311,8 @@ impl StreamingScheduler {
     /// 3. Retry logic (if node is marked retryable)
     /// 4. Circuit breaker
     /// 5. Metrics recording
+    ///
+    /// For minimal overhead execution, use `execute_streaming_node_fast()` instead.
     ///
     /// # Arguments
     ///
@@ -239,20 +333,15 @@ impl StreamingScheduler {
         Fut: std::future::Future<Output = Result<T>> + Send,
         T: Send,
     {
-        // Get or create node state
-        self.ensure_node_state(node_id).await?;
+        // Get or create node state (single lock acquisition)
+        let node_state = self.get_or_create_node_state(node_id).await?;
 
-        // Check circuit breaker (use write lock to allow state transition)
-        {
-            let mut states = self.node_states.write().await;
-            if let Some(state) = states.get_mut(node_id) {
-                if state.circuit_breaker.is_open() {
-                    return Err(Error::Execution(format!(
-                        "Circuit breaker open for node '{}'",
-                        node_id
-                    )));
-                }
-            }
+        // Check circuit breaker (takes mutex only if needed for state transition)
+        if node_state.check_circuit_breaker().await {
+            return Err(Error::Execution(format!(
+                "Circuit breaker open for node '{}'",
+                node_id
+            )));
         }
 
         // Acquire semaphore permit
@@ -295,7 +384,14 @@ impl StreamingScheduler {
                     let duration = start.elapsed();
                     let duration_us = duration.as_micros() as u64;
 
-                    self.record_success(node_id, duration).await;
+                    // Record to node state (atomics + per-node mutex)
+                    node_state.record_success(duration_us).await;
+
+                    // Update pipeline metrics (if enabled)
+                    if self.config.enable_metrics {
+                        let mut metrics = self.metrics.write().await;
+                        metrics.record_node_execution(node_id, duration, true);
+                    }
 
                     return Ok(SchedulerResult {
                         result: value,
@@ -335,22 +431,110 @@ impl StreamingScheduler {
 
         // All attempts failed
         let duration = start.elapsed();
+        let duration_us = duration.as_micros() as u64;
 
-        self.record_failure(node_id, duration).await;
+        // Record failure to node state
+        node_state.record_failure(duration_us).await;
+
+        // Update pipeline metrics (if enabled)
+        if self.config.enable_metrics {
+            let mut metrics = self.metrics.write().await;
+            metrics.record_node_execution(node_id, duration, false);
+        }
 
         Err(last_error.unwrap_or_else(|| {
             Error::Execution(format!("Node '{}' failed with unknown error", node_id))
         }))
     }
 
-    /// Ensure node state exists
-    async fn ensure_node_state(&self, node_id: &str) -> Result<()> {
-        let mut states = self.node_states.write().await;
-        if !states.contains_key(node_id) {
-            let state = NodeExecutionState::new(node_id, self.config.circuit_breaker_threshold)?;
-            states.insert(node_id.to_string(), state);
+    /// Execute a streaming node with minimal scheduler overhead (fast path)
+    ///
+    /// This method provides:
+    /// - Lock-free circuit breaker check (atomic read)
+    /// - No timeout wrapper (avoids tokio timer overhead)
+    /// - No pipeline metrics recording (avoids extra lock)
+    /// - Atomic counter updates (no lock for counters)
+    ///
+    /// Use this for latency-critical nodes where scheduler overhead matters.
+    /// Target overhead: <1µs for fast nodes.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_id` - Unique identifier for the node
+    /// * `operation` - The async operation to execute
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(SchedulerResult<T>)` - Execution succeeded
+    /// * `Err(Error)` - Execution failed or circuit breaker open
+    pub async fn execute_streaming_node_fast<T, F, Fut>(
+        &self,
+        node_id: &str,
+        operation: F,
+    ) -> Result<SchedulerResult<T>>
+    where
+        F: FnOnce() -> Fut + Send,
+        Fut: std::future::Future<Output = Result<T>> + Send,
+        T: Send,
+    {
+        // Get or create node state
+        let node_state = self.get_or_create_node_state(node_id).await?;
+
+        // Lock-free circuit breaker check (atomic read only)
+        if node_state.is_circuit_open() {
+            return Err(Error::Execution(format!(
+                "Circuit breaker open for node '{}'",
+                node_id
+            )));
         }
-        Ok(())
+
+        // Acquire semaphore permit (still need concurrency control)
+        let _permit = self.semaphore.acquire().await.map_err(|e| {
+            Error::Execution(format!("Failed to acquire semaphore: {}", e))
+        })?;
+
+        let start = std::time::Instant::now();
+
+        // Execute directly without timeout wrapper
+        match operation().await {
+            Ok(value) => {
+                let duration_us = start.elapsed().as_micros() as u64;
+
+                // Atomic counter increment + latency recording (no global lock)
+                node_state.execution_count.fetch_add(1, Ordering::Relaxed);
+                let _ = node_state.latency_metrics.record_latency(duration_us);
+
+                // Update circuit breaker (per-node mutex, not global)
+                {
+                    let mut cb = node_state.circuit_breaker.lock().await;
+                    cb.record_success();
+                    node_state.set_circuit_open(false);
+                }
+
+                Ok(SchedulerResult {
+                    result: value,
+                    duration_us,
+                    retry_count: 0,
+                })
+            }
+            Err(e) => {
+                let duration_us = start.elapsed().as_micros() as u64;
+
+                // Atomic counter increments (no global lock)
+                node_state.execution_count.fetch_add(1, Ordering::Relaxed);
+                node_state.error_count.fetch_add(1, Ordering::Relaxed);
+                let _ = node_state.latency_metrics.record_latency(duration_us);
+
+                // Update circuit breaker (per-node mutex, not global)
+                {
+                    let mut cb = node_state.circuit_breaker.lock().await;
+                    cb.record_failure();
+                    node_state.set_circuit_open(cb.is_open_readonly());
+                }
+
+                Err(e)
+            }
+        }
     }
 
     /// Get timeout duration for a node
@@ -362,39 +546,6 @@ impl StreamingScheduler {
             .copied()
             .unwrap_or(self.config.default_timeout_ms);
         Duration::from_millis(timeout_ms)
-    }
-
-    /// Record successful execution
-    async fn record_success(&self, node_id: &str, duration: Duration) {
-        let mut states = self.node_states.write().await;
-        if let Some(state) = states.get_mut(node_id) {
-            state.circuit_breaker.record_success();
-            let _ = state.latency_metrics.record_latency(duration.as_micros() as u64);
-            state.execution_count += 1;
-        }
-
-        // Update pipeline metrics
-        if self.config.enable_metrics {
-            let mut metrics = self.metrics.write().await;
-            metrics.record_node_execution(node_id, duration, true);
-        }
-    }
-
-    /// Record failed execution
-    async fn record_failure(&self, node_id: &str, duration: Duration) {
-        let mut states = self.node_states.write().await;
-        if let Some(state) = states.get_mut(node_id) {
-            state.circuit_breaker.record_failure();
-            let _ = state.latency_metrics.record_latency(duration.as_micros() as u64);
-            state.execution_count += 1;
-            state.error_count += 1;
-        }
-
-        // Update pipeline metrics
-        if self.config.enable_metrics {
-            let mut metrics = self.metrics.write().await;
-            metrics.record_node_execution(node_id, duration, false);
-        }
     }
 
     /// Get latency percentiles for a node
@@ -415,9 +566,9 @@ impl StreamingScheduler {
     pub async fn get_node_stats(&self, node_id: &str) -> Option<NodeStats> {
         let states = self.node_states.read().await;
         states.get(node_id).map(|state| NodeStats {
-            execution_count: state.execution_count,
-            error_count: state.error_count,
-            circuit_breaker_open: state.circuit_breaker.is_open_readonly(),
+            execution_count: state.get_execution_count(),
+            error_count: state.get_error_count(),
+            circuit_breaker_open: state.is_circuit_open(),
             p50_us: state.latency_metrics.p50(Window::OneMinute),
             p95_us: state.latency_metrics.p95(Window::OneMinute),
             p99_us: state.latency_metrics.p99(Window::OneMinute),
@@ -433,9 +584,9 @@ impl StreamingScheduler {
                 (
                     id.clone(),
                     NodeStats {
-                        execution_count: state.execution_count,
-                        error_count: state.error_count,
-                        circuit_breaker_open: state.circuit_breaker.is_open_readonly(),
+                        execution_count: state.get_execution_count(),
+                        error_count: state.get_error_count(),
+                        circuit_breaker_open: state.is_circuit_open(),
                         p50_us: state.latency_metrics.p50(Window::OneMinute),
                         p95_us: state.latency_metrics.p95(Window::OneMinute),
                         p99_us: state.latency_metrics.p99(Window::OneMinute),
@@ -452,9 +603,11 @@ impl StreamingScheduler {
 
     /// Reset circuit breaker for a node
     pub async fn reset_circuit_breaker(&self, node_id: &str) {
-        let mut states = self.node_states.write().await;
-        if let Some(state) = states.get_mut(node_id) {
-            state.circuit_breaker.reset();
+        let states = self.node_states.read().await;
+        if let Some(state) = states.get(node_id) {
+            let mut cb = state.circuit_breaker.lock().await;
+            cb.reset();
+            state.set_circuit_open(false);
         }
     }
 
@@ -467,16 +620,18 @@ impl StreamingScheduler {
         for (node_id, state) in states.iter() {
             output.push_str(&format!(
                 "streaming_scheduler_node_executions_total{{node_id=\"{}\"}} {}\n",
-                node_id, state.execution_count
+                node_id,
+                state.get_execution_count()
             ));
             output.push_str(&format!(
                 "streaming_scheduler_node_errors_total{{node_id=\"{}\"}} {}\n",
-                node_id, state.error_count
+                node_id,
+                state.get_error_count()
             ));
             output.push_str(&format!(
                 "streaming_scheduler_node_circuit_breaker_open{{node_id=\"{}\"}} {}\n",
                 node_id,
-                if state.circuit_breaker.is_open_readonly() { 1 } else { 0 }
+                if state.is_circuit_open() { 1 } else { 0 }
             ));
             output.push_str(&format!(
                 "streaming_scheduler_node_latency_p50_us{{node_id=\"{}\"}} {}\n",

@@ -5,54 +5,245 @@
 //! - T089: Drift recording <1μs per sample
 //! - T090: Health score calculation <10μs
 //! - T091: Prometheus export <10ms for 100 streams
+//!
+//! # Benchmark Categories
+//!
+//! ## T088 Scheduler Overhead
+//!
+//! Three measurement modes:
+//! - **Absolute overhead**: Fixed cost per call with immediate-return operation
+//! - **Relative overhead**: Percentage overhead vs CPU-bound work at various durations
+//! - **Fast path**: Minimal overhead path without timeout/metrics
+//!
+//! ## Contention Benchmarks
+//!
+//! - Same node contention (hot node, lock contention)
+//! - Different nodes (map contention, growth)
+//!
+//! ## Configuration Comparison
+//!
+//! - Metrics enabled vs disabled
+//! - Cold path (first call) vs warm path (steady state)
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use remotemedia_runtime_core::executor::drift_metrics::{DriftMetrics, DriftThresholds};
-use remotemedia_runtime_core::executor::streaming_scheduler::StreamingScheduler;
+use remotemedia_runtime_core::executor::streaming_scheduler::{SchedulerConfig, StreamingScheduler};
 use remotemedia_runtime_core::Error;
+use std::hint::black_box as hint_black_box;
+use std::sync::Arc;
 use std::time::Duration;
 
-/// T088: Benchmark scheduler overhead
+/// CPU-bound work that takes approximately the specified number of iterations.
+/// Each iteration does ~1ns of work (simple arithmetic).
+#[inline(never)]
+fn cpu_work(iterations: u64) -> u64 {
+    let mut result = 0u64;
+    for i in 0..iterations {
+        result = result.wrapping_add(i.wrapping_mul(17));
+        hint_black_box(result);
+    }
+    result
+}
+
+/// Calibrate iterations to approximate microseconds of CPU work.
+/// Returns iterations needed for approximately 1µs of work.
+fn calibrate_iterations() -> u64 {
+    // Run a quick calibration
+    let start = std::time::Instant::now();
+    let _ = cpu_work(1000);
+    let elapsed = start.elapsed();
+
+    // Calculate iterations per microsecond
+    let nanos_per_1000 = elapsed.as_nanos() as u64;
+    if nanos_per_1000 == 0 {
+        1000 // Fallback
+    } else {
+        (1000 * 1000) / nanos_per_1000 // iterations per µs
+    }
+}
+
+// ============================================================================
+// T088: Scheduler Overhead Benchmarks
+// ============================================================================
+
+/// T088-A: Absolute per-call scheduler overhead with immediate-return operation.
 ///
-/// Measures the overhead of the scheduler wrapper compared to direct execution.
-/// Success criteria: overhead <1% of node execution time
-fn bench_scheduler_overhead(c: &mut Criterion) {
+/// This measures the fixed cost of the scheduler wrapper:
+/// - Node state lookup (read lock)
+/// - Circuit breaker check
+/// - Semaphore acquire/release
+/// - Timeout wrapper
+/// - Metrics recording
+fn bench_scheduler_absolute_overhead(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
-    let mut group = c.benchmark_group("scheduler_overhead");
+    let mut group = c.benchmark_group("scheduler_absolute_overhead");
     group.measurement_time(Duration::from_secs(5));
 
-    // Test with different simulated node execution times
-    for node_duration_us in [100, 1000, 10000] {
-        let scheduler = StreamingScheduler::with_defaults();
+    // Full path with all features
+    let scheduler_full = StreamingScheduler::new(SchedulerConfig {
+        enable_metrics: true,
+        ..Default::default()
+    });
 
-        // Baseline: direct execution without scheduler
+    // Pre-warm the node state
+    rt.block_on(async {
+        let _ = scheduler_full
+            .execute_streaming_node("warm_node", || async { Ok::<_, Error>(()) })
+            .await;
+    });
+
+    group.bench_function("full_path_warm", |b| {
+        b.to_async(&rt).iter(|| async {
+            black_box(
+                scheduler_full
+                    .execute_streaming_node("warm_node", || async { Ok::<_, Error>(42) })
+                    .await
+                    .unwrap()
+                    .result,
+            )
+        });
+    });
+
+    // Full path cold (new node each time)
+    let scheduler_cold = StreamingScheduler::with_defaults();
+    let mut cold_counter = 0u64;
+
+    group.bench_function("full_path_cold", |b| {
+        b.to_async(&rt).iter(|| {
+            let node_id = format!("cold_node_{}", cold_counter);
+            cold_counter += 1;
+            let sched = &scheduler_cold;
+            async move {
+                black_box(
+                    sched
+                        .execute_streaming_node(&node_id, || async { Ok::<_, Error>(42) })
+                        .await
+                        .unwrap()
+                        .result,
+                )
+            }
+        });
+    });
+
+    // Fast path with minimal overhead
+    let scheduler_fast = StreamingScheduler::with_defaults();
+    rt.block_on(async {
+        let _ = scheduler_fast
+            .execute_streaming_node_fast("fast_warm_node", || async { Ok::<_, Error>(()) })
+            .await;
+    });
+
+    group.bench_function("fast_path_warm", |b| {
+        b.to_async(&rt).iter(|| async {
+            black_box(
+                scheduler_fast
+                    .execute_streaming_node_fast("fast_warm_node", || async { Ok::<_, Error>(42) })
+                    .await
+                    .unwrap()
+                    .result,
+            )
+        });
+    });
+
+    // Metrics disabled path
+    let scheduler_no_metrics = StreamingScheduler::new(SchedulerConfig {
+        enable_metrics: false,
+        ..Default::default()
+    });
+    rt.block_on(async {
+        let _ = scheduler_no_metrics
+            .execute_streaming_node("no_metrics_node", || async { Ok::<_, Error>(()) })
+            .await;
+    });
+
+    group.bench_function("full_path_no_metrics", |b| {
+        b.to_async(&rt).iter(|| async {
+            black_box(
+                scheduler_no_metrics
+                    .execute_streaming_node("no_metrics_node", || async { Ok::<_, Error>(42) })
+                    .await
+                    .unwrap()
+                    .result,
+            )
+        });
+    });
+
+    group.finish();
+}
+
+/// T088-B: Overhead ratio vs CPU-bound work.
+///
+/// Measures (scheduler_time - direct_time) / direct_time to get true overhead %.
+/// Uses calibrated CPU work at various durations.
+fn bench_scheduler_overhead_ratio(c: &mut Criterion) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let iters_per_us = calibrate_iterations();
+
+    let mut group = c.benchmark_group("scheduler_overhead_ratio");
+    group.measurement_time(Duration::from_secs(5));
+
+    // Test at various work durations (in microseconds)
+    for work_us in [10, 100, 1000, 10000] {
+        let iterations = work_us * iters_per_us;
+
+        // Baseline: direct CPU work (no scheduler)
         group.bench_with_input(
-            BenchmarkId::new("direct", node_duration_us),
-            &node_duration_us,
-            |b, &duration_us| {
+            BenchmarkId::new("direct", work_us),
+            &iterations,
+            |b, &iters| {
+                b.iter(|| black_box(cpu_work(iters)));
+            },
+        );
+
+        // With scheduler full path
+        let scheduler = StreamingScheduler::with_defaults();
+        rt.block_on(async {
+            let _ = scheduler
+                .execute_streaming_node("bench_node", || async { Ok::<_, Error>(()) })
+                .await;
+        });
+
+        group.bench_with_input(
+            BenchmarkId::new("full_path", work_us),
+            &iterations,
+            |b, &iters| {
                 b.to_async(&rt).iter(|| async {
-                    // Simulate node work
-                    tokio::time::sleep(Duration::from_micros(duration_us)).await;
-                    black_box(42)
+                    black_box(
+                        scheduler
+                            .execute_streaming_node("bench_node", || async {
+                                Ok::<_, Error>(cpu_work(iters))
+                            })
+                            .await
+                            .unwrap()
+                            .result,
+                    )
                 });
             },
         );
 
-        // With scheduler
+        // With scheduler fast path
+        let scheduler_fast = StreamingScheduler::with_defaults();
+        rt.block_on(async {
+            let _ = scheduler_fast
+                .execute_streaming_node_fast("fast_bench_node", || async { Ok::<_, Error>(()) })
+                .await;
+        });
+
         group.bench_with_input(
-            BenchmarkId::new("with_scheduler", node_duration_us),
-            &node_duration_us,
-            |b, &duration_us| {
+            BenchmarkId::new("fast_path", work_us),
+            &iterations,
+            |b, &iters| {
                 b.to_async(&rt).iter(|| async {
-                    scheduler
-                        .execute_streaming_node("bench_node", || async {
-                            tokio::time::sleep(Duration::from_micros(duration_us)).await;
-                            Ok::<_, Error>(42)
-                        })
-                        .await
-                        .unwrap()
-                        .result
+                    black_box(
+                        scheduler_fast
+                            .execute_streaming_node_fast("fast_bench_node", || async {
+                                Ok::<_, Error>(cpu_work(iters))
+                            })
+                            .await
+                            .unwrap()
+                            .result,
+                    )
                 });
             },
         );
@@ -61,7 +252,93 @@ fn bench_scheduler_overhead(c: &mut Criterion) {
     group.finish();
 }
 
-/// T089: Benchmark drift recording
+/// T088-C: Contention benchmarks.
+///
+/// Tests scheduler behavior under concurrent access:
+/// - Same node (hot node contention)
+/// - Different nodes (map contention)
+fn bench_scheduler_contention(c: &mut Criterion) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    let mut group = c.benchmark_group("scheduler_contention");
+    group.measurement_time(Duration::from_secs(5));
+
+    // Concurrent tasks on same node
+    for num_tasks in [2, 4, 8, 16] {
+        let scheduler = Arc::new(StreamingScheduler::with_defaults());
+
+        // Pre-warm
+        rt.block_on(async {
+            let _ = scheduler
+                .execute_streaming_node("hot_node", || async { Ok::<_, Error>(()) })
+                .await;
+        });
+
+        group.bench_with_input(
+            BenchmarkId::new("same_node", num_tasks),
+            &num_tasks,
+            |b, &n| {
+                b.to_async(&rt).iter(|| {
+                    let sched = scheduler.clone();
+                    async move {
+                        let handles: Vec<_> = (0..n)
+                            .map(|_| {
+                                let s = sched.clone();
+                                tokio::spawn(async move {
+                                    s.execute_streaming_node("hot_node", || async {
+                                        Ok::<_, Error>(42)
+                                    })
+                                    .await
+                                })
+                            })
+                            .collect();
+
+                        for h in handles {
+                            let _ = black_box(h.await);
+                        }
+                    }
+                });
+            },
+        );
+
+        // Concurrent tasks on different nodes
+        group.bench_with_input(
+            BenchmarkId::new("different_nodes", num_tasks),
+            &num_tasks,
+            |b, &n| {
+                b.to_async(&rt).iter(|| {
+                    let sched = scheduler.clone();
+                    async move {
+                        let handles: Vec<_> = (0..n)
+                            .map(|i| {
+                                let s = sched.clone();
+                                let node_id = format!("node_{}", i);
+                                tokio::spawn(async move {
+                                    s.execute_streaming_node(&node_id, || async {
+                                        Ok::<_, Error>(42)
+                                    })
+                                    .await
+                                })
+                            })
+                            .collect();
+
+                        for h in handles {
+                            let _ = black_box(h.await);
+                        }
+                    }
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ============================================================================
+// T089: Drift Recording Benchmarks
+// ============================================================================
+
+/// T089: Benchmark drift recording.
 ///
 /// Measures time to record a single drift sample.
 /// Success criteria: <1μs per sample
@@ -120,7 +397,11 @@ fn bench_drift_recording(c: &mut Criterion) {
     group.finish();
 }
 
-/// T090: Benchmark health score calculation
+// ============================================================================
+// T090: Health Score Calculation Benchmarks
+// ============================================================================
+
+/// T090: Benchmark health score calculation.
 ///
 /// Measures time to calculate health score.
 /// Success criteria: <10μs
@@ -162,7 +443,11 @@ fn bench_health_score(c: &mut Criterion) {
     group.finish();
 }
 
-/// T091: Benchmark Prometheus export
+// ============================================================================
+// T091: Prometheus Export Benchmarks
+// ============================================================================
+
+/// T091: Benchmark Prometheus export.
 ///
 /// Measures time to export Prometheus metrics for multiple streams.
 /// Success criteria: <10ms for 100 streams
@@ -185,6 +470,8 @@ fn bench_prometheus_export(c: &mut Criterion) {
                 m
             })
             .collect();
+
+        group.throughput(Throughput::Elements(stream_count as u64));
 
         group.bench_with_input(
             BenchmarkId::new("drift_metrics", stream_count),
@@ -228,6 +515,10 @@ fn bench_prometheus_export(c: &mut Criterion) {
 
     group.finish();
 }
+
+// ============================================================================
+// Additional Benchmarks
+// ============================================================================
 
 /// Benchmark debug JSON export
 fn bench_debug_json(c: &mut Criterion) {
@@ -321,14 +612,43 @@ fn bench_alert_hysteresis(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark component isolation: timeout wrapper overhead
+fn bench_timeout_wrapper_overhead(c: &mut Criterion) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    let mut group = c.benchmark_group("timeout_wrapper");
+    group.measurement_time(Duration::from_secs(3));
+
+    // Direct async call
+    group.bench_function("direct_async", |b| {
+        b.to_async(&rt).iter(|| async {
+            black_box(async { Ok::<_, Error>(42) }.await)
+        });
+    });
+
+    // With timeout wrapper (very long timeout, just measuring wrapper cost)
+    group.bench_function("with_timeout_wrapper", |b| {
+        b.to_async(&rt).iter(|| async {
+            black_box(
+                tokio::time::timeout(Duration::from_secs(30), async { Ok::<_, Error>(42) }).await,
+            )
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
-    bench_scheduler_overhead,
+    bench_scheduler_absolute_overhead,
+    bench_scheduler_overhead_ratio,
+    bench_scheduler_contention,
     bench_drift_recording,
     bench_health_score,
     bench_prometheus_export,
     bench_debug_json,
     bench_scheduler_stats,
     bench_alert_hysteresis,
+    bench_timeout_wrapper_overhead,
 );
 criterion_main!(benches);
