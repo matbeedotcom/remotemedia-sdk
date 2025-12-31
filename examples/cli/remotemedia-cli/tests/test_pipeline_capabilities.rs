@@ -2157,6 +2157,8 @@ mod dual_runtime_discovered_tests {
                 sample_rate: self.actual_sample_rate,
                 channels: self.actual_channels,
                 stream_id: None,
+                timestamp_us: None,
+                arrival_ts_us: None,
             })
         }
 
@@ -3225,6 +3227,8 @@ mod node_lifecycle_tests {
                 sample_rate,
                 channels,
                 stream_id: None,
+                timestamp_us: None,
+                arrival_ts_us: None,
             })
         }
 

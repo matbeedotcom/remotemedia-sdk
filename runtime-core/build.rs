@@ -22,9 +22,26 @@ fn setup_ffmpeg() {
         println!("cargo:rustc-link-lib=z");
         println!("cargo:rustc-link-lib=lzma");
         println!("cargo:rustc-link-lib=bz2");
-        // X11/VDPAU for hardware acceleration
-        println!("cargo:rustc-link-lib=X11");
-        println!("cargo:rustc-link-lib=vdpau");
+        // X11/VDPAU for hardware acceleration (Linux only)
+        #[cfg(target_os = "linux")]
+        {
+            println!("cargo:rustc-link-lib=X11");
+            println!("cargo:rustc-link-lib=vdpau");
+        }
+        // OpenSSL for RTMPS/HTTPS network protocols
+        println!("cargo:rustc-link-lib=ssl");
+        println!("cargo:rustc-link-lib=crypto");
+        // Additional network protocol dependencies
+        #[cfg(target_os = "linux")]
+        {
+            // GnuTLS alternative (if FFmpeg was built with GnuTLS instead of OpenSSL)
+            // Uncomment if needed:
+            // println!("cargo:rustc-link-lib=gnutls");
+            
+            // librtmp for native RTMP support (if FFmpeg was built with librtmp)
+            // Uncomment if needed:
+            // println!("cargo:rustc-link-lib=rtmp");
+        }
     }
 
     // Check if user already has FFMPEG_INCLUDE_DIR set

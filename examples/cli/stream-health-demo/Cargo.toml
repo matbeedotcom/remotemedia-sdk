@@ -22,6 +22,9 @@ remotemedia-cli = { path = "../remotemedia-cli" }
 # SDK core
 remotemedia-runtime-core = { workspace = true }
 
+# Ingestion adapter (optional for RTMP support)
+remotemedia-ingest-rtmp = { path = "../../../adapters/ingest-rtmp", optional = true }
+
 # CLI framework
 clap = { workspace = true }
 
@@ -47,8 +50,15 @@ chrono = { workspace = true }
 # Platform directories
 dirs = { workspace = true }
 
+# URL parsing for ingest URIs
+url = { workspace = true }
+
 # License cryptography (stub for now - will implement later)
 # ed25519-dalek = { workspace = true }
+
+[features]
+default = []
+rtmp = ["dep:remotemedia-ingest-rtmp"]
 
 [dev-dependencies]
 tempfile = "3"

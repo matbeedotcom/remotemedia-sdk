@@ -109,6 +109,7 @@ regex = { workspace = true }
 ctrlc = { workspace = true }
 reqwest = { workspace = true }
 rand = { workspace = true }
+url = { workspace = true }
 
 # Low-latency streaming optimizations (spec 007)
 crossbeam = { workspace = true }

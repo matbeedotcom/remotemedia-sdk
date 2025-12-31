@@ -117,6 +117,74 @@ pub enum Error {
     /// Node parameter validation failed
     #[error("Parameter validation failed: {} error(s)", .0.len())]
     Validation(Vec<ValidationError>),
+
+    // =========================================================================
+    // Ingestion errors (spec 028)
+    // =========================================================================
+
+    /// File not found for ingestion
+    #[error("Ingest file not found: {path}")]
+    IngestFileNotFound {
+        /// Path that was not found
+        path: String,
+    },
+
+    /// Invalid URI scheme for ingestion
+    #[error("Invalid ingest scheme: {scheme}. Expected one of: {expected:?}")]
+    IngestInvalidScheme {
+        /// The invalid scheme
+        scheme: String,
+        /// Expected schemes
+        expected: Vec<String>,
+    },
+
+    /// Unsupported URI scheme for ingestion (no plugin registered)
+    #[error("Unsupported ingest scheme: {scheme}. Available: {available:?}")]
+    IngestUnsupportedScheme {
+        /// The unsupported scheme
+        scheme: String,
+        /// Available schemes
+        available: Vec<String>,
+    },
+
+    /// Media decode error during ingestion
+    #[error("Ingest decode error: {message}")]
+    IngestDecodeError {
+        /// Error message
+        message: String,
+        /// Optional codec name
+        codec: Option<String>,
+    },
+
+    /// Connection error during ingestion
+    #[error("Ingest connection error: {message}")]
+    IngestConnectionError {
+        /// Error message
+        message: String,
+        /// URL that failed to connect
+        url: String,
+    },
+
+    /// Plugin already registered in ingest registry
+    #[error("Ingest plugin already registered: {name}")]
+    IngestPluginAlreadyRegistered {
+        /// Plugin name
+        name: String,
+    },
+
+    /// Plugin not found in ingest registry
+    #[error("Ingest plugin not found: {name}")]
+    IngestPluginNotFound {
+        /// Plugin name
+        name: String,
+    },
+
+    /// Lock error in ingest registry
+    #[error("Ingest registry lock error: {message}")]
+    IngestLockError {
+        /// Error message
+        message: String,
+    },
 }
 
 impl From<anyhow::Error> for Error {

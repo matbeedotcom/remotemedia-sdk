@@ -162,7 +162,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("Transcribing with model '{}', language '{}'", args.model, args.language);
 
-    let input_data = RuntimeData::Audio { samples, sample_rate, channels, stream_id: None };
+    let input_data = RuntimeData::Audio { samples, sample_rate, channels, stream_id: None, timestamp_us: None, arrival_ts_us: None };
     
     let output = tokio::time::timeout(args.timeout, 
         pipeline::execute_unary(&runner, manifest, input_data)

@@ -39,6 +39,9 @@ use remotemedia_cli::{
 };
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::manifest::{Manifest, NodeManifest};
+use remotemedia_runtime_core::ingestion::{
+    global_ingest_registry, IngestConfig, IngestStatus, AudioConfig,
+};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -55,6 +58,11 @@ struct Args {
     /// Input source: file path, named pipe, or `-` for stdin
     #[arg(short = 'i', long, help = "Input file, pipe, or '-' for stdin")]
     input: Option<String>,
+
+    /// Ingest from URI (file://, rtmp://, rtmps://)
+    /// Uses the pluggable ingestion framework with auto-decoding
+    #[arg(long, help = "Ingest URI (file://, rtmp://, rtmps://)")]
+    ingest: Option<String>,
 
     /// Output destination for JSONL events [default: stdout]
     #[arg(short = 'o', long, default_value = "-", help = "Output file or '-' for stdout")]
@@ -121,6 +129,20 @@ enum Command {
     },
 }
 
+/// Register RTMP plugin if the feature is enabled
+fn register_ingest_plugins() {
+    #[cfg(feature = "rtmp")]
+    {
+        use remotemedia_ingest_rtmp::RtmpIngestPlugin;
+        let registry = global_ingest_registry();
+        if let Err(e) = registry.register(Arc::new(RtmpIngestPlugin)) {
+            tracing::warn!("Failed to register RTMP plugin: {}", e);
+        } else {
+            tracing::info!("Registered RTMP/RTMPS ingest plugin");
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -140,6 +162,9 @@ async fn main() -> Result<()> {
         .with(fmt::layer().with_writer(std::io::stderr))
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| filter.into()))
         .init();
+
+    // Register additional ingest plugins (e.g., RTMP if enabled)
+    register_ingest_plugins();
 
     // Handle --show-pipeline
     if args.show_pipeline {
@@ -169,13 +194,20 @@ async fn main() -> Result<()> {
     }
 
     // Validate input is provided for analysis
-    if args.input.is_none() {
+    if args.input.is_none() && args.ingest.is_none() {
         anyhow::bail!(
-            "No input specified. Use -i <file> or -i - for stdin.\n\
+            "No input specified. Use -i <file> or --ingest <uri>.\n\
             Examples:\n  \
             ./remotemedia-demo -i audio.wav\n  \
+            ./remotemedia-demo --ingest file:///path/to/audio.wav\n  \
+            ./remotemedia-demo --ingest rtmp://server/live/stream\n  \
             ffmpeg -i input.mp4 -f wav -ar 16000 -ac 1 - | ./remotemedia-demo -i - --stream"
         );
+    }
+
+    // Check for conflicting options
+    if args.input.is_some() && args.ingest.is_some() {
+        anyhow::bail!("Cannot use both -i and --ingest. Choose one input method.");
     }
 
     // Load demo controller
@@ -188,7 +220,11 @@ async fn main() -> Result<()> {
         if !args.json {
             banner::show_licensed_banner();
         }
-        run_licensed_session(&args).await
+        if args.ingest.is_some() {
+            run_licensed_ingest_session(&args).await
+        } else {
+            run_licensed_session(&args).await
+        }
     } else {
         // Demo mode - enforce limits
         demo.check_can_start()?;
@@ -203,7 +239,11 @@ async fn main() -> Result<()> {
         }
 
         // Run with timer
-        let result = run_demo_session(&args, &mut demo).await;
+        let result = if args.ingest.is_some() {
+            run_demo_ingest_session(&args, &mut demo).await
+        } else {
+            run_demo_session(&args, &mut demo).await
+        };
 
         // Generate and display summary
         let summary = demo.end_session(result.as_ref().map(|r| r.as_slice()).unwrap_or(&[]));
@@ -278,6 +318,68 @@ async fn run_licensed_session(args: &Args) -> Result<()> {
 
     // Run health analysis
     let (_emitter, _collected_events) = run_health_analysis(args, &mut never_rx, &mut ctrlc_rx).await?;
+
+    tracing::info!("Session ended");
+    Ok(())
+}
+
+/// Run a demo session with time limit enforcement using ingestion framework
+async fn run_demo_ingest_session(
+    args: &Args,
+    demo: &mut demo_mode::DemoController,
+) -> Result<Vec<events::HealthEvent>> {
+    let session_duration = demo.time_remaining();
+    let warning_time = Duration::from_secs(DemoConfig::WARNING_SECS);
+
+    // Create shutdown channel for timer
+    let (timer_shutdown_tx, mut timer_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    // Spawn timer task
+    let json_mode = args.json;
+    tokio::spawn(async move {
+        // Wait until warning time
+        if session_duration > warning_time {
+            tokio::time::sleep(session_duration - warning_time).await;
+            if !json_mode {
+                banner::show_warning(warning_time);
+            }
+            tokio::time::sleep(warning_time).await;
+        } else {
+            tokio::time::sleep(session_duration).await;
+        }
+        let _ = timer_shutdown_tx.send(());
+    });
+
+    // Spawn Ctrl+C handler
+    let (ctrlc_tx, mut ctrlc_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        let _ = ctrlc_tx.send(());
+    });
+
+    // Run ingest analysis
+    let (_emitter, collected_events) = run_ingest_analysis(args, &mut timer_shutdown_rx, &mut ctrlc_rx).await?;
+
+    Ok(collected_events)
+}
+
+/// Run a licensed session using ingestion framework (no time limits)
+async fn run_licensed_ingest_session(args: &Args) -> Result<()> {
+    // Setup Ctrl+C handler
+    let (ctrlc_tx, mut ctrlc_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        let _ = ctrlc_tx.send(());
+    });
+
+    tracing::info!("Running ingest in licensed mode (no time limit)");
+    tracing::info!("Press Ctrl+C to stop");
+
+    // Create a dummy timer that never fires
+    let (_never_tx, mut never_rx) = tokio::sync::oneshot::channel::<()>();
+
+    // Run ingest analysis
+    let (_emitter, _collected_events) = run_ingest_analysis(args, &mut never_rx, &mut ctrlc_rx).await?;
 
     tracing::info!("Session ended");
     Ok(())
@@ -834,4 +936,141 @@ fn convert_schema_event(schema: &str, data: &serde_json::Value) -> Option<events
         }
         _ => None,
     }
+}
+
+// ============================================================================
+// Ingestion Framework Mode
+// ============================================================================
+
+/// Run health analysis using the pluggable ingestion framework
+async fn run_ingest_analysis(
+    args: &Args,
+    timer_shutdown: &mut tokio::sync::oneshot::Receiver<()>,
+    ctrlc_shutdown: &mut tokio::sync::oneshot::Receiver<()>,
+) -> Result<(events::EventEmitter, Vec<events::HealthEvent>)> {
+    let ingest_uri = args.ingest.as_ref().expect("--ingest should be set");
+
+    // Setup output writer
+    let writer: Box<dyn std::io::Write + Send> = if args.output == "-" {
+        Box::new(std::io::stdout())
+    } else {
+        Box::new(std::fs::File::create(&args.output)
+            .context("Failed to create output file")?)
+    };
+    let mut emitter = events::EventEmitter::new(writer);
+
+    // Create ingest configuration with the URI
+    let config = IngestConfig::from_url(ingest_uri)
+        .with_audio(AudioConfig {
+            sample_rate: args.sample_rate,
+            channels: args.channels as u16,
+        });
+
+    // Get the global registry and create the ingest source
+    let registry = global_ingest_registry();
+
+    let mut source = registry.create_from_uri(&config)
+        .map_err(|e| anyhow::anyhow!("Failed to create ingest source: {}", e))?;
+
+    // Start the ingest
+    let mut stream = source.start().await
+        .map_err(|e| anyhow::anyhow!("Failed to start ingest: {}", e))?;
+
+    tracing::info!("Ingesting from: {}", ingest_uri);
+    tracing::info!("Metadata: {:?}", stream.metadata());
+
+    // Create pipeline runner
+    let runner = pipeline::create_runner_with_cli_nodes().await?;
+    let manifest = Arc::new(create_health_manifest(args));
+
+    // Create streaming session
+    let mut session = pipeline::StreamingSession::new(&runner, manifest)
+        .await
+        .context("Failed to create streaming session")?;
+
+    let start_time = Instant::now();
+    let mut chunk_count: u64 = 0;
+
+    tracing::info!("Ingest mode started (press Ctrl+C to stop)");
+
+    // Main ingest loop
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = &mut *timer_shutdown => {
+                tracing::info!("Demo session timeout");
+                break;
+            }
+
+            _ = &mut *ctrlc_shutdown => {
+                tracing::info!("Received Ctrl+C");
+                break;
+            }
+
+            // Receive from ingest stream
+            data = stream.recv() => {
+                match data {
+                    Some(runtime_data) => {
+                        // Only process audio data
+                        if let RuntimeData::Audio { .. } = &runtime_data {
+                            // Send to pipeline
+                            if let Err(e) = session.send(runtime_data).await {
+                                tracing::error!("Failed to send to pipeline: {}", e);
+                                break;
+                            }
+
+                            // Process available outputs
+                            while let Ok(Some(output)) = session.try_recv() {
+                                process_health_output(output, &mut emitter)?;
+                            }
+
+                            chunk_count += 1;
+                        } else {
+                            // Log non-audio data (e.g., video)
+                            tracing::trace!("Skipping non-audio data: {:?}", std::mem::discriminant(&runtime_data));
+                        }
+                    }
+                    None => {
+                        // End of stream
+                        tracing::info!("End of ingest stream");
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Check ingest source status
+        if source.status() == IngestStatus::Disconnected {
+            tracing::warn!("Ingest source disconnected");
+            break;
+        }
+    }
+
+    // Stop the ingest source
+    if let Err(e) = source.stop().await {
+        tracing::warn!("Error stopping ingest source: {}", e);
+    }
+
+    // Drain remaining pipeline outputs
+    let drain_timeout = std::time::Duration::from_millis(500);
+    while let Ok(Some(output)) = session.recv_timeout(drain_timeout).await {
+        process_health_output(output, &mut emitter)?;
+    }
+
+    // Close session
+    if let Err(e) = session.close().await {
+        tracing::warn!("Error closing session: {}", e);
+    }
+
+    tracing::info!("Processed {} chunks in {:?}", chunk_count, start_time.elapsed());
+
+    let collected = emitter.into_events();
+    let new_emitter = if args.output == "-" {
+        events::EventEmitter::stdout()
+    } else {
+        events::EventEmitter::new(Box::new(std::io::stdout()))
+    };
+
+    Ok((new_emitter, collected))
 }

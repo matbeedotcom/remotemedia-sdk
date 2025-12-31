@@ -3762,6 +3762,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "remotemedia-ingest-rtmp"
+version = "0.4.0"
+dependencies = [
+ "ac-ffmpeg",
+ "async-trait",
+ "remotemedia-runtime-core",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "remotemedia-runtime-core"
 version = "0.4.0"
 dependencies = [
@@ -3815,6 +3828,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
  "windows 0.52.0",
 ]
@@ -4490,6 +4504,7 @@ dependencies = [
  "clap",
  "dirs",
  "remotemedia-cli",
+ "remotemedia-ingest-rtmp",
  "remotemedia-runtime-core",
  "serde",
  "serde_json",
@@ -4499,6 +4514,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

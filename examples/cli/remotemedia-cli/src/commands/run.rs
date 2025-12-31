@@ -139,6 +139,8 @@ fn to_runtime_data(data: Vec<u8>, format: InputFormat, path: Option<&str>) -> Re
                 sample_rate,
                 channels: channels as u32,
                 stream_id: None,
+                timestamp_us: None,
+                arrival_ts_us: None,
             })
         }
         InputFormat::RawPcm => {
@@ -158,6 +160,8 @@ fn to_runtime_data(data: Vec<u8>, format: InputFormat, path: Option<&str>) -> Re
                     sample_rate,
                     channels,
                     stream_id: None,
+                    timestamp_us: None,
+                    arrival_ts_us: None,
                 })
             } else {
                 // Assume 16-bit signed PCM
@@ -173,6 +177,8 @@ fn to_runtime_data(data: Vec<u8>, format: InputFormat, path: Option<&str>) -> Re
                     sample_rate,
                     channels,
                     stream_id: None,
+                    timestamp_us: None,
+                    arrival_ts_us: None,
                 })
             }
         }

@@ -42,6 +42,7 @@ extern crate self as remotemedia_runtime_core;
 pub mod audio;
 pub mod capabilities;
 pub mod executor;
+pub mod ingestion;
 pub mod nodes;
 pub mod python;
 pub mod validation;

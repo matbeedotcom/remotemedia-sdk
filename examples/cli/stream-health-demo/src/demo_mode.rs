@@ -139,12 +139,22 @@ impl DemoController {
     }
 
     /// Check if we have a valid (non-expired) license
+    /// Also returns true if REMOTEMEDIA_DEV=1 environment variable is set
     pub fn has_valid_license(&self) -> bool {
+        // Dev mode bypass for testing
+        if std::env::var("REMOTEMEDIA_DEV").map(|v| v == "1").unwrap_or(false) {
+            return true;
+        }
         self.license.as_ref().map(|l| !l.is_expired()).unwrap_or(false)
     }
 
     /// Check if a new session can be started
     pub fn check_can_start(&self) -> Result<(), DemoError> {
+        // Development bypass
+        if std::env::var("REMOTEMEDIA_DEMO_UNLIMITED").map(|v| v == "1").unwrap_or(false) {
+            return Ok(());
+        }
+        
         if self.has_valid_license() {
             return Ok(());
         }
