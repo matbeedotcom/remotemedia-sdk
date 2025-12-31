@@ -191,10 +191,21 @@ impl SessionRouter {
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         let shutdown_tx_clone = shutdown_tx.clone();
 
-        // Create scheduler with provided or default config
-        let scheduler = Arc::new(StreamingScheduler::new(
-            scheduler_config.unwrap_or_default(),
-        ));
+        // Create scheduler config, extracting fast_path nodes from manifest
+        let mut config = scheduler_config.unwrap_or_default();
+        for node_def in &manifest.nodes {
+            if node_def.fast_path {
+                config.fast_path_nodes.insert(node_def.id.clone());
+                tracing::debug!(
+                    "Session {}: Node '{}' configured for fast path execution",
+                    session_id,
+                    node_def.id
+                );
+            }
+        }
+
+        // Create scheduler with config
+        let scheduler = Arc::new(StreamingScheduler::new(config));
 
         let router = Self {
             session_id,
@@ -567,27 +578,53 @@ impl SessionRouter {
                 let node_id_owned = node_id.clone();
 
                 // Use scheduler for execution with timeout, retry, and circuit breaker
+                // Choose fast path or full path based on node configuration
                 let scheduler = self.scheduler.clone();
-                let result = scheduler
-                    .execute_streaming_node(&node_id_owned, || {
-                        let node_ref = node;
-                        let input_clone = input.clone();
-                        let session_clone = session_id.clone();
-                        let cb = Box::new({
-                            let outputs = node_outputs_ref.clone();
-                            move |output: RuntimeData| {
-                                outputs.lock().unwrap().push(output);
-                                Ok(())
-                            }
-                        });
-                        async move {
+                let use_fast_path = scheduler.config.is_fast_path(&node_id_owned);
+
+                let result = if use_fast_path {
+                    // Fast path: lock-free, no timeout, no HDR metrics
+                    let node_ref = node;
+                    let input_clone = input.clone();
+                    let session_clone = session_id.clone();
+                    let cb = Box::new({
+                        let outputs = node_outputs_ref.clone();
+                        move |output: RuntimeData| {
+                            outputs.lock().unwrap().push(output);
+                            Ok(())
+                        }
+                    });
+                    scheduler
+                        .execute_streaming_node_fast(&node_id_owned, || async move {
                             node_ref
                                 .process_streaming_async(input_clone, Some(session_clone), cb)
                                 .await
                                 .map(|_| ())
-                        }
-                    })
-                    .await;
+                        })
+                        .await
+                } else {
+                    // Full path: timeout, retry, HDR histogram metrics
+                    scheduler
+                        .execute_streaming_node(&node_id_owned, || {
+                            let node_ref = node;
+                            let input_clone = input.clone();
+                            let session_clone = session_id.clone();
+                            let cb = Box::new({
+                                let outputs = node_outputs_ref.clone();
+                                move |output: RuntimeData| {
+                                    outputs.lock().unwrap().push(output);
+                                    Ok(())
+                                }
+                            });
+                            async move {
+                                node_ref
+                                    .process_streaming_async(input_clone, Some(session_clone), cb)
+                                    .await
+                                    .map(|_| ())
+                            }
+                        })
+                        .await
+                };
 
                 match result {
                     Ok(scheduler_result) => {

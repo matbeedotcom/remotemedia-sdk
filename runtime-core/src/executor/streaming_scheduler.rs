@@ -101,6 +101,8 @@ pub struct SchedulerConfig {
     pub retry_policy: RetryPolicy,
     /// Set of node IDs that are retryable (empty = no retries)
     pub retryable_nodes: HashSet<String>,
+    /// Set of node IDs that use fast path execution (lock-free, no timeout)
+    pub fast_path_nodes: HashSet<String>,
     /// Circuit breaker failure threshold
     pub circuit_breaker_threshold: usize,
     /// Enable metrics collection
@@ -115,6 +117,7 @@ impl Default for SchedulerConfig {
             node_timeouts: HashMap::new(),
             retry_policy: RetryPolicy::None,  // No retries by default
             retryable_nodes: HashSet::new(),
+            fast_path_nodes: HashSet::new(),
             circuit_breaker_threshold: DEFAULT_CIRCUIT_BREAKER_THRESHOLD,
             enable_metrics: true,
         }
@@ -158,6 +161,17 @@ impl SchedulerConfig {
     pub fn with_circuit_breaker_threshold(mut self, threshold: usize) -> Self {
         self.circuit_breaker_threshold = threshold;
         self
+    }
+
+    /// Mark a node for fast path execution (lock-free, no timeout)
+    pub fn with_fast_path_node(mut self, node_id: impl Into<String>) -> Self {
+        self.fast_path_nodes.insert(node_id.into());
+        self
+    }
+
+    /// Check if a node should use fast path execution
+    pub fn is_fast_path(&self, node_id: &str) -> bool {
+        self.fast_path_nodes.contains(node_id)
     }
 }
 

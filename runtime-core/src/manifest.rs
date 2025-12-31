@@ -106,6 +106,28 @@ pub struct NodeManifest {
     #[cfg(feature = "docker")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker: Option<crate::python::multiprocess::docker_support::DockerNodeConfig>,
+
+    /// Use low-latency fast path execution (spec 026)
+    ///
+    /// When enabled, the node uses `execute_streaming_node_fast()` which provides:
+    /// - Lock-free circuit breaker check (atomic read only)
+    /// - No timeout wrapper (avoids tokio timer overhead)
+    /// - No HDR histogram metrics (just atomic sum/count/min/max)
+    /// - try_acquire() for semaphore (non-blocking when permits available)
+    ///
+    /// Target overhead: <100ns vs ~250ns for full path.
+    ///
+    /// Recommended for:
+    /// - Audio/video transforms that are CPU-bound and fast (<1ms)
+    /// - High-frequency nodes (>100 calls/sec)
+    /// - Nodes where timeout protection isn't critical
+    ///
+    /// NOT recommended for:
+    /// - External API calls (need timeout protection)
+    /// - Nodes that may hang (need circuit breaker full features)
+    /// - Nodes requiring detailed latency percentiles (P50/P95/P99)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fast_path: bool,
 }
 
 /// Runtime hint for Python node execution (Phase 1.10.5)
