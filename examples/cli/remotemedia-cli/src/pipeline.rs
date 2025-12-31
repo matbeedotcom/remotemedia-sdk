@@ -6,24 +6,24 @@
 use anyhow::{Context, Result};
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::manifest::Manifest;
-use remotemedia_runtime_core::transport::{PipelineRunner, TransportData};
+use remotemedia_runtime_core::transport::{PipelineExecutor, TransportData};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::pipeline_nodes::get_cli_node_factories;
 
-/// Initialize a PipelineRunner instance
+/// Initialize a PipelineExecutor instance
 ///
-/// Creates a new PipelineRunner with all built-in nodes registered.
-/// This is a relatively expensive operation, so the runner should be
+/// Creates a new PipelineExecutor with all built-in nodes registered.
+/// This is a relatively expensive operation, so the executor should be
 /// reused across multiple pipeline executions when possible.
-pub fn create_runner() -> Result<PipelineRunner> {
-    PipelineRunner::new().map_err(|e| anyhow::anyhow!("Failed to create pipeline runner: {}", e))
+pub fn create_runner() -> Result<PipelineExecutor> {
+    PipelineExecutor::new().map_err(|e| anyhow::anyhow!("Failed to create pipeline executor: {}", e))
 }
 
-/// Initialize a PipelineRunner with CLI-specific nodes (MicInput, SpeakerOutput, etc.)
+/// Initialize a PipelineExecutor with CLI-specific nodes (MicInput, SpeakerOutput, etc.)
 ///
-/// Creates a new PipelineRunner with both built-in and CLI-specific streaming nodes.
+/// Creates a new PipelineExecutor with both built-in and CLI-specific streaming nodes.
 /// Use this when your pipeline needs audio I/O nodes.
 ///
 /// # Examples
@@ -34,12 +34,14 @@ pub fn create_runner() -> Result<PipelineRunner> {
 /// let runner = create_runner_with_cli_nodes().await?;
 /// // Now you can use MicInput, SpeakerOutput, SrtOutput nodes in pipelines
 /// ```
-pub async fn create_runner_with_cli_nodes() -> Result<PipelineRunner> {
-    let runner = PipelineRunner::new()
-        .map_err(|e| anyhow::anyhow!("Failed to create pipeline runner: {}", e))?;
+pub async fn create_runner_with_cli_nodes() -> Result<PipelineExecutor> {
+    let runner = PipelineExecutor::new()
+        .map_err(|e| anyhow::anyhow!("Failed to create pipeline executor: {}", e))?;
 
     // Register CLI-specific streaming node factories
-    runner.register_streaming_factories(get_cli_node_factories()).await;
+    for factory in get_cli_node_factories() {
+        runner.register_factory(factory).await;
+    }
 
     Ok(runner)
 }
@@ -67,14 +69,14 @@ pub fn parse_manifest(content: &str) -> Result<Manifest> {
 /// Execute a pipeline with unary semantics (one input, one output)
 ///
 /// # Arguments
-/// * `runner` - The PipelineRunner instance
+/// * `runner` - The PipelineExecutor instance
 /// * `manifest` - The parsed pipeline manifest
 /// * `input` - Input data to feed to the first node
 ///
 /// # Returns
 /// The output from the last node in the pipeline
 pub async fn execute_unary(
-    runner: &PipelineRunner,
+    runner: &PipelineExecutor,
     manifest: Arc<Manifest>,
     input: RuntimeData,
 ) -> Result<RuntimeData> {
@@ -93,14 +95,14 @@ pub async fn execute_unary(
 /// Allows specifying inputs for specific nodes by ID.
 ///
 /// # Arguments
-/// * `runner` - The PipelineRunner instance  
+/// * `runner` - The PipelineExecutor instance  
 /// * `manifest` - The parsed pipeline manifest
 /// * `inputs` - Map of node_id -> RuntimeData for input nodes
 ///
 /// # Returns
 /// Map of node_id -> RuntimeData for output nodes
 pub async fn execute_with_inputs(
-    runner: &PipelineRunner,
+    runner: &PipelineExecutor,
     manifest: Arc<Manifest>,
     inputs: HashMap<String, RuntimeData>,
 ) -> Result<HashMap<String, RuntimeData>> {
@@ -129,14 +131,14 @@ pub async fn execute_with_inputs(
 ///
 /// Provides a convenient interface for streaming pipeline execution.
 pub struct StreamingSession {
-    handle: remotemedia_runtime_core::transport::StreamSessionHandle,
+    handle: remotemedia_runtime_core::transport::SessionHandle,
 }
 
 impl StreamingSession {
     /// Create a new streaming session
-    pub async fn new(runner: &PipelineRunner, manifest: Arc<Manifest>) -> Result<Self> {
+    pub async fn new(runner: &PipelineExecutor, manifest: Arc<Manifest>) -> Result<Self> {
         let handle = runner
-            .create_stream_session(manifest)
+            .create_session(manifest)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create streaming session: {}", e))?;
 
@@ -145,7 +147,6 @@ impl StreamingSession {
 
     /// Send input data to the pipeline
     pub async fn send(&mut self, data: RuntimeData) -> Result<()> {
-        use remotemedia_runtime_core::transport::StreamSession;
         let transport_data = TransportData::new(data);
         self.handle
             .send_input(transport_data)
@@ -157,7 +158,6 @@ impl StreamingSession {
     ///
     /// Returns None if the session has ended.
     pub async fn recv(&mut self) -> Result<Option<RuntimeData>> {
-        use remotemedia_runtime_core::transport::StreamSession;
         match self.handle.recv_output().await {
             Ok(Some(transport_data)) => Ok(Some(transport_data.data)),
             Ok(None) => Ok(None),
@@ -165,9 +165,34 @@ impl StreamingSession {
         }
     }
 
+    /// Try to receive output from the pipeline without blocking
+    ///
+    /// Returns None if no output is immediately available.
+    pub fn try_recv(&mut self) -> Result<Option<RuntimeData>> {
+        match self.handle.try_recv_output() {
+            Ok(Some(transport_data)) => Ok(Some(transport_data.data)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(anyhow::anyhow!("Failed to receive data: {}", e)),
+        }
+    }
+
+    /// Receive output with a timeout
+    ///
+    /// Returns None if no output is available within the timeout.
+    pub async fn recv_timeout(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<Option<RuntimeData>> {
+        match tokio::time::timeout(timeout, self.handle.recv_output()).await {
+            Ok(Ok(Some(transport_data))) => Ok(Some(transport_data.data)),
+            Ok(Ok(None)) => Ok(None),
+            Ok(Err(e)) => Err(anyhow::anyhow!("Failed to receive data: {}", e)),
+            Err(_) => Ok(None), // Timeout - no data available
+        }
+    }
+
     /// Close the streaming session
     pub async fn close(mut self) -> Result<()> {
-        use remotemedia_runtime_core::transport::StreamSession;
         self.handle
             .close()
             .await

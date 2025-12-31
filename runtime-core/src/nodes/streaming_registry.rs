@@ -7,6 +7,7 @@ use crate::capabilities::{
 use crate::nodes::calculator::CalculatorNode;
 use crate::nodes::passthrough::PassThroughNode;
 use crate::nodes::python_streaming::PythonStreamingNode;
+use crate::nodes::health_emitter::HealthEmitterNodeFactory;
 use crate::nodes::remote_pipeline::RemotePipelineNodeFactory;
 use crate::nodes::whisper::RustWhisperNode;
 // Temporarily disabled - incomplete implementation
@@ -1706,6 +1707,9 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
     registry.register(Arc::new(RustWhisperNodeFactory));  // Rust rwhisper
     registry.register(Arc::new(WhisperXNodeFactory));     // Python WhisperX with alignment
     registry.register(Arc::new(HFWhisperNodeFactory));    // Python HuggingFace with word timestamps
+
+    // Register health monitoring nodes (spec 027)
+    registry.register(Arc::new(HealthEmitterNodeFactory));
 
     // Register Speculative VAD Gate (Spec 007 - low-latency streaming)
     registry.register(Arc::new(SpeculativeVADGateFactory));

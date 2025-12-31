@@ -48,6 +48,9 @@ pub use audio_buffer_accumulator::AudioBufferAccumulatorNode;
 pub mod audio_chunker;
 pub use audio_chunker::AudioChunkerNode;
 
+pub mod health_emitter;
+pub use health_emitter::{HealthEmitterNode, HealthEmitterConfig, HealthEmitterNodeFactory};
+
 pub mod audio_resample_streaming;
 pub use audio_resample_streaming::ResampleStreamingNode;
 

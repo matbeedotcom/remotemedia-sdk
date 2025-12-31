@@ -135,6 +135,8 @@ impl AsyncStreamingNode for MicInputStreamingNode {
                     sample_rate: self.config.sample_rate,
                     channels: self.config.channels as u32,
                     stream_id: None,
+                    timestamp_us: None,
+                    arrival_ts_us: None,
                 })
             }
             None => {
@@ -144,6 +146,8 @@ impl AsyncStreamingNode for MicInputStreamingNode {
                     sample_rate: self.config.sample_rate,
                     channels: self.config.channels as u32,
                     stream_id: None,
+                    timestamp_us: None,
+                    arrival_ts_us: None,
                 })
             }
         }
@@ -179,6 +183,8 @@ impl AsyncStreamingNode for MicInputStreamingNode {
                     sample_rate: self.config.sample_rate,
                     channels: self.config.channels as u32,
                     stream_id: None,
+                    timestamp_us: None,
+                    arrival_ts_us: None,
                 })?;
                 chunks_sent += 1;
             }
@@ -191,6 +197,8 @@ impl AsyncStreamingNode for MicInputStreamingNode {
                 sample_rate: self.config.sample_rate,
                 channels: self.config.channels as u32,
                 stream_id: None,
+                timestamp_us: None,
+                arrival_ts_us: None,
             })?;
             chunks_sent += 1;
         }

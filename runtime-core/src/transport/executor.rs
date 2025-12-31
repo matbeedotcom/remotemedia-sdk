@@ -122,6 +122,17 @@ impl SessionHandle {
         }
     }
 
+    /// Try to receive output data without blocking
+    ///
+    /// Returns `None` if no output is immediately available.
+    pub fn try_recv_output(&mut self) -> Result<Option<TransportData>> {
+        match self.output_rx.try_recv() {
+            Ok(data) => Ok(Some(TransportData::new(data))),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => Ok(None),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => Ok(None),
+        }
+    }
+
     /// Check if the session is still active
     pub fn is_active(&self) -> bool {
         self.is_active && !self.task_handle.is_finished()
@@ -206,7 +217,10 @@ impl PipelineExecutor {
     /// Create a new PipelineExecutor with custom configuration
     pub fn with_config(config: ExecutorConfig) -> Result<Self> {
         let scheduler = Arc::new(StreamingScheduler::new(config.scheduler_config.clone()));
-        let registry = Arc::new(RwLock::new(StreamingNodeRegistry::new()));
+        // Use the default registry with all built-in nodes registered
+        let registry = Arc::new(RwLock::new(
+            crate::nodes::streaming_registry::create_default_streaming_registry(),
+        ));
 
         Ok(Self {
             config,

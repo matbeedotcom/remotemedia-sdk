@@ -1,0 +1,54 @@
+[package]
+name = "stream-health-demo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Time-limited demo CLI for stream health monitoring"
+license.workspace = true
+
+[[bin]]
+name = "remotemedia-demo"
+path = "src/main.rs"
+
+[build-dependencies]
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+
+[dependencies]
+# Reuse CLI library
+remotemedia-cli = { path = "../remotemedia-cli" }
+
+# SDK core
+remotemedia-runtime-core = { workspace = true }
+
+# CLI framework
+clap = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Time handling
+chrono = { workspace = true }
+
+# Platform directories
+dirs = { workspace = true }
+
+# License cryptography (stub for now - will implement later)
+# ed25519-dalek = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

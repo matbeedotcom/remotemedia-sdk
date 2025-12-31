@@ -338,6 +338,8 @@ impl NodeExecutor for MicInputNode {
                 sample_rate: self.config.sample_rate,
                 channels: self.config.channels as u32,
                 stream_id: None,
+                timestamp_us: None,
+                arrival_ts_us: None,
             };
 
             let value = serde_json::to_value(&audio_data)?;

@@ -1,0 +1,26 @@
+{
+  "duration": {
+    "secs": 0,
+    "nanos": 503668941
+  },
+  "samples_processed": 0,
+  "drift_events": [
+    {
+      "ts": "2025-12-31T08:51:04.240864939Z",
+      "lead_ms": -1249
+    }
+  ],
+  "freeze_events": [],
+  "health_stats": {
+    "average": 1.0,
+    "minimum": 1.0,
+    "time_below_threshold": {
+      "secs": 0,
+      "nanos": 0
+    },
+    "sample_count": 1
+  },
+  "termination_reason": "user_interrupt",
+  "started_at": "2025-12-31T08:51:04.238739495Z",
+  "ended_at": "2025-12-31T08:51:04.742408436Z"
+}

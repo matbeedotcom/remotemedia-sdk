@@ -439,6 +439,9 @@ impl SessionRouter {
     }
 
     async fn run(&mut self) -> Result<()> {
+        // Initialize all nodes before processing starts
+        self.initialize_nodes().await?;
+
         let mut input_rx = self
             .input_rx
             .take()

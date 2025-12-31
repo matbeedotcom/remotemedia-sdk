@@ -1,0 +1,21 @@
+version: v1
+metadata:
+  name: stream-health-monitor
+  description: Real-time drift, freeze, and health monitoring
+  cli_defaults:
+    stream: true
+    sample_rate: 16000
+    channels: 1
+
+nodes:
+  - id: health
+    node_type: HealthEmitterNode
+    params:
+      lead_threshold_ms: 50
+      freeze_threshold_ms: 500
+      health_emit_interval_ms: 1000
+      av_skew_threshold_ms: 80
+      cadence_cv_threshold: 0.3
+      health_threshold: 0.7
+
+connections: []
