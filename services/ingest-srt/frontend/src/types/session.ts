@@ -63,7 +63,7 @@ export interface Session {
   session_id: string;
   srt_url: string;
   expires_at: string;
-  ffmpeg_command: string;
+  ffmpeg_command_copy: string;
   ffmpeg_command_transcode: string;
   webhook_url?: string;
 }

@@ -53,7 +53,7 @@ export default function App() {
               )}
               {session ? (
                 <IngestCommand
-                  command={session.ffmpeg_command}
+                  command={session.ffmpeg_command_copy}
                   isLocked={commandLocked}
                 />
               ) : isCreating ? (
