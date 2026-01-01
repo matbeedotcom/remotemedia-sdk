@@ -208,6 +208,8 @@ nodes:
     node_type: AudioLevelNode
     params:
       window_size_ms: 100
+      low_volume_threshold_db: -40.0
+      silence_threshold_db: -60.0
     is_streaming: true
 
   # Silence and dropout detection
