@@ -26,6 +26,9 @@ pub struct SilenceEvent {
     pub dropout_count: u32,
     /// Whether intermittent dropouts pattern detected
     pub has_intermittent_dropouts: bool,
+    /// Health: 1.0 = healthy, 0.0 = unhealthy
+    /// Based on silence duration relative to sustained threshold
+    pub health: f32,
     /// Stream identifier
     pub stream_id: Option<String>,
     /// Timestamp in microseconds
@@ -160,6 +163,17 @@ impl SilenceDetectorNode {
 
         let has_intermittent_dropouts = dropout_count >= self.config.dropout_count_threshold;
 
+        // Calculate health: 1.0 = healthy, 0.0 = unhealthy
+        // Degrades linearly as silence approaches sustained threshold, then stays at 0
+        let health = if !is_silent {
+            1.0
+        } else if silence_duration_ms >= self.config.sustained_silence_ms {
+            0.0
+        } else {
+            // Linear degradation from 1.0 to 0.0 as silence approaches threshold
+            1.0 - (silence_duration_ms / self.config.sustained_silence_ms)
+        };
+
         // Create event
         let event = SilenceEvent {
             is_silent,
@@ -168,6 +182,7 @@ impl SilenceDetectorNode {
             is_sustained_silence,
             dropout_count,
             has_intermittent_dropouts,
+            health,
             stream_id: stream_id.clone(),
             timestamp_us,
         };

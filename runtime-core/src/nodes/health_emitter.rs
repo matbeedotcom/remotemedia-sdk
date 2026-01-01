@@ -29,7 +29,7 @@ use crate::nodes::streaming_node::{StreamingNode, StreamingNodeFactory};
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -44,10 +44,6 @@ pub struct HealthEmitterConfig {
     #[serde(default = "default_freeze_threshold_ms")]
     pub freeze_threshold_ms: u64,
 
-    /// Health score emission interval in milliseconds (default: 1000ms)
-    #[serde(default = "default_health_emit_interval_ms")]
-    pub health_emit_interval_ms: u64,
-
     /// A/V skew threshold in milliseconds (default: 80ms)
     #[serde(default = "default_av_skew_threshold_ms")]
     pub av_skew_threshold_ms: i64,
@@ -59,6 +55,10 @@ pub struct HealthEmitterConfig {
     /// Health score threshold for alerts (default: 0.7)
     #[serde(default = "default_health_threshold")]
     pub health_threshold: f64,
+
+    /// Minimum score change to trigger health event emission (default: 0.05)
+    #[serde(default = "default_score_change_threshold")]
+    pub score_change_threshold: f64,
 }
 
 fn default_lead_threshold_ms() -> i64 {
@@ -66,9 +66,6 @@ fn default_lead_threshold_ms() -> i64 {
 }
 fn default_freeze_threshold_ms() -> u64 {
     500
-}
-fn default_health_emit_interval_ms() -> u64 {
-    1000
 }
 fn default_av_skew_threshold_ms() -> i64 {
     80
@@ -79,16 +76,19 @@ fn default_cadence_cv_threshold() -> f64 {
 fn default_health_threshold() -> f64 {
     0.7
 }
+fn default_score_change_threshold() -> f64 {
+    0.05
+}
 
 impl Default for HealthEmitterConfig {
     fn default() -> Self {
         Self {
             lead_threshold_ms: default_lead_threshold_ms(),
             freeze_threshold_ms: default_freeze_threshold_ms(),
-            health_emit_interval_ms: default_health_emit_interval_ms(),
             av_skew_threshold_ms: default_av_skew_threshold_ms(),
             cadence_cv_threshold: default_cadence_cv_threshold(),
             health_threshold: default_health_threshold(),
+            score_change_threshold: default_score_change_threshold(),
         }
     }
 }
@@ -113,14 +113,21 @@ impl From<&HealthEmitterConfig> for DriftThresholds {
 struct HealthEmitterState {
     /// DriftMetrics instance for tracking stream health
     drift_metrics: DriftMetrics,
-    /// Last time we emitted a health score event
-    last_health_emit_us: u64,
-    /// Health emit interval in microseconds
-    health_emit_interval_us: u64,
     /// Configured thresholds for event emission
     config: HealthEmitterConfig,
     /// Sample counter
     sample_count: u64,
+    /// Last emitted health score (for change detection)
+    last_emitted_score: Option<f64>,
+    /// Last emitted alerts (for change detection)
+    last_emitted_alerts: DriftAlerts,
+    /// Active issues tracked from upstream events (e.g., "SILENCE", "CLIPPING", "LOW_VOLUME")
+    active_issues: HashSet<String>,
+    /// Last emitted active issues (for change detection)
+    last_emitted_issues: HashSet<String>,
+    /// Health values from upstream nodes, keyed by schema type
+    /// Uses minimum aggregation: any 0 makes the stream unhealthy
+    upstream_health: HashMap<String, f64>,
 }
 
 /// Streaming node that emits health events based on DriftMetrics
@@ -133,16 +140,18 @@ impl HealthEmitterNode {
     /// Create a new HealthEmitterNode
     pub fn new(node_id: String, config: HealthEmitterConfig) -> Self {
         let thresholds = DriftThresholds::from(&config);
-        let health_emit_interval_us = config.health_emit_interval_ms * 1000;
 
         Self {
             node_id: node_id.clone(),
             state: RwLock::new(HealthEmitterState {
                 drift_metrics: DriftMetrics::new(node_id, thresholds),
-                last_health_emit_us: 0,
-                health_emit_interval_us,
                 config,
                 sample_count: 0,
+                last_emitted_score: None,
+                last_emitted_alerts: DriftAlerts::empty(),
+                active_issues: HashSet::new(),
+                last_emitted_issues: HashSet::new(),
+                upstream_health: HashMap::new(),
             }),
         }
     }
@@ -195,29 +204,38 @@ impl HealthEmitterNode {
     }
 
     /// Create a health score event JSON
-    fn create_health_event(score: f64, alerts: DriftAlerts) -> Value {
-        let alert_names: Vec<&str> = {
-            let mut names = Vec::new();
-            if alerts.contains(DriftAlerts::DRIFT_SLOPE) {
-                names.push("DRIFT_SLOPE");
+    fn create_health_event(score: f64, alerts: DriftAlerts, active_issues: &HashSet<String>) -> Value {
+        let mut alert_names: Vec<String> = Vec::new();
+
+        // Add DriftMetrics alerts
+        if alerts.contains(DriftAlerts::DRIFT_SLOPE) {
+            alert_names.push("DRIFT_SLOPE".to_string());
+        }
+        if alerts.contains(DriftAlerts::LEAD_JUMP) {
+            alert_names.push("LEAD_JUMP".to_string());
+        }
+        if alerts.contains(DriftAlerts::AV_SKEW) {
+            alert_names.push("AV_SKEW".to_string());
+        }
+        if alerts.contains(DriftAlerts::FREEZE) {
+            alert_names.push("FREEZE".to_string());
+        }
+        if alerts.contains(DriftAlerts::CADENCE_UNSTABLE) {
+            alert_names.push("CADENCE_UNSTABLE".to_string());
+        }
+        if alerts.contains(DriftAlerts::HEALTH_LOW) {
+            alert_names.push("HEALTH_LOW".to_string());
+        }
+
+        // Add active issues from upstream nodes (e.g., SILENCE, CLIPPING, LOW_VOLUME)
+        for issue in active_issues {
+            if !alert_names.contains(issue) {
+                alert_names.push(issue.clone());
             }
-            if alerts.contains(DriftAlerts::LEAD_JUMP) {
-                names.push("LEAD_JUMP");
-            }
-            if alerts.contains(DriftAlerts::AV_SKEW) {
-                names.push("AV_SKEW");
-            }
-            if alerts.contains(DriftAlerts::FREEZE) {
-                names.push("FREEZE");
-            }
-            if alerts.contains(DriftAlerts::CADENCE_UNSTABLE) {
-                names.push("CADENCE_UNSTABLE");
-            }
-            if alerts.contains(DriftAlerts::HEALTH_LOW) {
-                names.push("HEALTH_LOW");
-            }
-            names
-        };
+        }
+
+        // Sort for consistent output
+        alert_names.sort();
 
         serde_json::json!({
             "type": "health",
@@ -318,7 +336,43 @@ impl HealthEmitterNode {
             Error::Execution(format!("Failed to lock health emitter state: {}", e))
         })?;
 
-        // Extract timing from input data
+        // Handle JSON input from upstream nodes (audio_level, silence_detector, etc.)
+        if let RuntimeData::Json(json) = data {
+            if !json.is_null() {
+                // Update active issues and health values from upstream event data
+                Self::update_from_upstream_json(json, &mut state);
+
+                // Calculate aggregated health from upstream nodes (minimum = any 0 makes stream unhealthy)
+                let health_score = Self::calculate_aggregated_health(&state.upstream_health);
+
+                // Check if active issues changed
+                let issues_changed = state.active_issues != state.last_emitted_issues;
+
+                // Check if score changed significantly
+                let score_changed = match state.last_emitted_score {
+                    Some(last_score) => {
+                        (health_score - last_score).abs() >= state.config.score_change_threshold
+                    }
+                    None => true,
+                };
+
+                if issues_changed || score_changed {
+                    let alerts_after = state.drift_metrics.alerts();
+
+                    events.push(Self::create_health_event(
+                        health_score,
+                        alerts_after,
+                        &state.active_issues,
+                    ));
+                    state.last_emitted_score = Some(health_score);
+                    state.last_emitted_alerts = alerts_after;
+                    state.last_emitted_issues = state.active_issues.clone();
+                }
+            }
+            return Ok(events);
+        }
+
+        // Extract timing from input data (Audio/Video)
         let (media_ts_us, arrival_ts_us, stream_id) = match data {
             RuntimeData::Audio {
                 timestamp_us,
@@ -351,7 +405,7 @@ impl HealthEmitterNode {
                 (*timestamp_us, arrival_ts, stream_id.clone())
             }
             _ => {
-                // For non-media data, just return empty events
+                // For other non-media data, just return empty events
                 return Ok(events);
             }
         };
@@ -362,7 +416,7 @@ impl HealthEmitterNode {
         let alerts_before = state.drift_metrics.alerts();
 
         // Record the sample
-        let alerts_changed = state
+        let drift_alerts_changed = state
             .drift_metrics
             .record_sample(media_ts_us, arrival_ts_us, None);
 
@@ -370,7 +424,7 @@ impl HealthEmitterNode {
         let alerts_after = state.drift_metrics.alerts();
 
         // Check for newly raised alerts and emit events
-        if alerts_changed {
+        if drift_alerts_changed {
             let new_alerts = alerts_after - alerts_before;
 
             // Drift alert
@@ -411,14 +465,155 @@ impl HealthEmitterNode {
             }
         }
 
-        // Check if we should emit a periodic health score event
-        if current_time_us - state.last_health_emit_us >= state.health_emit_interval_us {
-            let health_score = state.drift_metrics.health_score();
-            events.push(Self::create_health_event(health_score, alerts_after));
-            state.last_health_emit_us = current_time_us;
+        // Emit health event when score or alerts change (event-driven, not interval-based)
+        let health_score = state.drift_metrics.health_score();
+
+        // Check if alerts changed (excluding HEALTH_LOW which can flicker with score)
+        let alerts_mask = DriftAlerts::all() - DriftAlerts::HEALTH_LOW;
+        let alerts_changed =
+            (alerts_after & alerts_mask) != (state.last_emitted_alerts & alerts_mask);
+
+        // Check if score changed significantly
+        let score_changed = match state.last_emitted_score {
+            Some(last_score) => {
+                (health_score - last_score).abs() >= state.config.score_change_threshold
+            }
+            None => true, // Always emit the first time
+        };
+
+        // Check if active issues changed
+        let issues_changed = state.active_issues != state.last_emitted_issues;
+
+        if alerts_changed || score_changed || issues_changed {
+            events.push(Self::create_health_event(
+                health_score,
+                alerts_after,
+                &state.active_issues,
+            ));
+            state.last_emitted_score = Some(health_score);
+            state.last_emitted_alerts = alerts_after;
+            state.last_emitted_issues = state.active_issues.clone();
         }
 
         Ok(events)
+    }
+
+    /// Update active issues and health values based on JSON event from upstream nodes
+    fn update_from_upstream_json(json: &Value, state: &mut HealthEmitterState) {
+        let active_issues = &mut state.active_issues;
+        let upstream_health = &mut state.upstream_health;
+        // Check schema type to determine event source
+        let schema = json.get("_schema").and_then(|s| s.as_str()).unwrap_or("");
+
+        // Extract health value if present (all upstream nodes now emit this)
+        if let Some(health) = json.get("health").and_then(|v| v.as_f64()) {
+            if !schema.is_empty() {
+                upstream_health.insert(schema.to_string(), health);
+            }
+        }
+
+        match schema {
+            "audio_level_event" => {
+                // AudioLevelNode: is_silence, is_low_volume
+                if json.get("is_silence").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    active_issues.insert("SILENCE".to_string());
+                } else {
+                    active_issues.remove("SILENCE");
+                }
+                if json.get("is_low_volume").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    active_issues.insert("LOW_VOLUME".to_string());
+                } else {
+                    active_issues.remove("LOW_VOLUME");
+                }
+            }
+            "silence_event" => {
+                // SilenceDetectorNode: is_sustained_silence, has_intermittent_dropouts
+                if json
+                    .get("is_sustained_silence")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    active_issues.insert("SUSTAINED_SILENCE".to_string());
+                } else {
+                    active_issues.remove("SUSTAINED_SILENCE");
+                }
+                if json
+                    .get("has_intermittent_dropouts")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    active_issues.insert("INTERMITTENT_DROPOUTS".to_string());
+                } else {
+                    active_issues.remove("INTERMITTENT_DROPOUTS");
+                }
+            }
+            "clipping_event" => {
+                // ClippingDetectorNode: is_clipping
+                if json.get("is_clipping").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    active_issues.insert("CLIPPING".to_string());
+                } else {
+                    active_issues.remove("CLIPPING");
+                }
+            }
+            "channel_balance_event" => {
+                // ChannelBalanceNode: is_imbalanced, has_dead_channel
+                if json
+                    .get("is_imbalanced")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    active_issues.insert("CHANNEL_IMBALANCE".to_string());
+                } else {
+                    active_issues.remove("CHANNEL_IMBALANCE");
+                }
+                if json
+                    .get("has_dead_channel")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    active_issues.insert("DEAD_CHANNEL".to_string());
+                } else {
+                    active_issues.remove("DEAD_CHANNEL");
+                }
+            }
+            _ => {
+                // For other schemas or missing schema, try generic detection
+                // Look for common alert patterns
+                if let Some(event_type) = json.get("event_type").and_then(|e| e.as_str()) {
+                    // Handle session.health events
+                    if event_type == "session.health" {
+                        if let Some(state) = json.get("state").and_then(|s| s.as_str()) {
+                            match state {
+                                "unhealthy" => {
+                                    active_issues.insert("SESSION_UNHEALTHY".to_string());
+                                    active_issues.remove("SESSION_DEGRADED");
+                                }
+                                "degraded" => {
+                                    active_issues.insert("SESSION_DEGRADED".to_string());
+                                    active_issues.remove("SESSION_UNHEALTHY");
+                                }
+                                _ => {
+                                    active_issues.remove("SESSION_UNHEALTHY");
+                                    active_issues.remove("SESSION_DEGRADED");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Calculate aggregated health score from upstream nodes
+    /// Uses minimum: any node at 0 makes the entire stream unhealthy
+    fn calculate_aggregated_health(upstream_health: &HashMap<String, f64>) -> f64 {
+        if upstream_health.is_empty() {
+            return 1.0; // No upstream data yet, assume healthy
+        }
+        upstream_health
+            .values()
+            .copied()
+            .fold(1.0_f64, f64::min)
     }
 }
 
@@ -455,7 +650,7 @@ mod tests {
         let config = HealthEmitterConfig::default();
         assert_eq!(config.lead_threshold_ms, 50);
         assert_eq!(config.freeze_threshold_ms, 500);
-        assert_eq!(config.health_emit_interval_ms, 1000);
+        assert_eq!(config.score_change_threshold, 0.05);
     }
 
     #[test]
@@ -469,7 +664,7 @@ mod tests {
         assert_eq!(config.lead_threshold_ms, 100);
         assert_eq!(config.freeze_threshold_ms, 1000);
         // Defaults for unspecified fields
-        assert_eq!(config.health_emit_interval_ms, 1000);
+        assert_eq!(config.score_change_threshold, 0.05);
     }
 
     #[test]
@@ -491,14 +686,37 @@ mod tests {
 
     #[test]
     fn test_health_event_creation() {
-        let event =
-            HealthEmitterNode::create_health_event(0.72, DriftAlerts::DRIFT_SLOPE | DriftAlerts::FREEZE);
+        let active_issues = HashSet::new();
+        let event = HealthEmitterNode::create_health_event(
+            0.72,
+            DriftAlerts::DRIFT_SLOPE | DriftAlerts::FREEZE,
+            &active_issues,
+        );
         assert_eq!(event["type"], "health");
         assert_eq!(event["score"], 0.72);
 
         let alerts = event["alerts"].as_array().unwrap();
         assert!(alerts.contains(&Value::String("DRIFT_SLOPE".to_string())));
         assert!(alerts.contains(&Value::String("FREEZE".to_string())));
+    }
+
+    #[test]
+    fn test_health_event_with_active_issues() {
+        let mut active_issues = HashSet::new();
+        active_issues.insert("CLIPPING".to_string());
+        active_issues.insert("LOW_VOLUME".to_string());
+
+        let event = HealthEmitterNode::create_health_event(
+            0.85,
+            DriftAlerts::empty(),
+            &active_issues,
+        );
+        assert_eq!(event["type"], "health");
+        assert_eq!(event["score"], 0.85);
+
+        let alerts = event["alerts"].as_array().unwrap();
+        assert!(alerts.contains(&Value::String("CLIPPING".to_string())));
+        assert!(alerts.contains(&Value::String("LOW_VOLUME".to_string())));
     }
 
     #[tokio::test]

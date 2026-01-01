@@ -18,6 +18,8 @@ pub struct ClippingEvent {
     pub crest_factor_db: f32,
     /// Whether clipping was detected
     pub is_clipping: bool,
+    /// Health: 1.0 = healthy (no clipping), 0.0 = unhealthy (severe clipping)
+    pub health: f32,
     /// Stream identifier
     pub stream_id: Option<String>,
     /// Timestamp in microseconds
@@ -106,11 +108,17 @@ impl ClippingDetectorNode {
         let is_clipping = saturation_ratio >= self.config.saturation_ratio_threshold
             || crest_factor_db <= self.config.crest_factor_threshold_db;
 
+        // Calculate health: 1.0 = healthy, 0.0 = unhealthy
+        // Based on saturation ratio relative to threshold (0% = healthy, threshold = unhealthy)
+        let health = (1.0 - (saturation_ratio / self.config.saturation_ratio_threshold).min(1.0))
+            .max(0.0);
+
         // Create event
         let event = ClippingEvent {
             saturation_ratio,
             crest_factor_db,
             is_clipping,
+            health,
             stream_id: stream_id.clone(),
             timestamp_us,
         };

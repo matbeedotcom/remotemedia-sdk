@@ -1,0 +1,45 @@
+# Technical Stream Analysis Pipeline
+# Infrastructure-layer metrics for debugging
+
+version: "1.0"
+
+metadata:
+  name: Technical Stream Analysis
+  description: Timing drift, event correlation, and audio evidence
+
+nodes:
+  # Timing drift analysis (jitter and clock drift)
+  - id: timing_drift
+    node_type: TimingDriftNode
+    params:
+      jitter_threshold_ms: 50
+      drift_threshold_ms_per_s: 5.0
+      emit_interval_ms: 1000
+      lead_threshold_ms: 100
+    is_streaming: true
+
+  # Event correlator (groups alerts into incidents)
+  - id: event_correlator
+    node_type: EventCorrelatorNode
+    params:
+      correlation_window_ms: 5000
+      min_events_for_incident: 2
+    is_streaming: true
+
+  # Audio evidence capture (rolling buffer for alert context)
+  - id: audio_evidence
+    node_type: AudioEvidenceNode
+    params:
+      buffer_duration_s: 10
+      pre_alert_s: 3
+      post_alert_s: 2
+      enabled: true
+    is_streaming: true
+
+# Connection topology:
+# - timing_drift receives raw stream timing data
+# - event_correlator receives alerts from timing_drift
+# - audio_evidence receives alerts to trigger evidence capture
+connections:
+  - { from: timing_drift, to: event_correlator }
+  - { from: event_correlator, to: audio_evidence }

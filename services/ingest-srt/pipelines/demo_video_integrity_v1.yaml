@@ -1,0 +1,25 @@
+# Video Integrity Analysis Pipeline
+# Detects freeze frames and black frames
+
+version: "1.0"
+
+metadata:
+  name: Video Integrity Analysis
+  description: Detects freeze frames and black frames
+
+nodes:
+  # Event correlator (groups alerts into incidents)
+  - id: event_correlator
+    node_type: EventCorrelatorNode
+    params:
+      correlation_window_ms: 5000
+      min_events_for_incident: 3
+    is_streaming: true
+
+  - id: health_emitter
+    node_type: HealthEmitterNode
+    params: {}
+    is_streaming: true
+
+# No video analysis nodes implemented yet - correlator and health_emitter receive input directly
+connections: []

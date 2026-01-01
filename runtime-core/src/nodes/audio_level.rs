@@ -8,7 +8,6 @@ use crate::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Audio level detection result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +20,9 @@ pub struct AudioLevelEvent {
     pub is_low_volume: bool,
     /// Whether complete silence was detected
     pub is_silence: bool,
+    /// Health: 1.0 = healthy, 0.0 = unhealthy
+    /// Silence = 0.0, Low volume = 0.5, Normal = 1.0
+    pub health: f32,
     /// Stream identifier
     pub stream_id: Option<String>,
     /// Timestamp in microseconds
@@ -101,12 +103,25 @@ impl AudioLevelNode {
         let is_silence = rms_db <= self.config.silence_threshold_db;
         let is_low_volume = !is_silence && rms_db <= self.config.low_volume_threshold_db;
 
+        // Calculate health as continuous value: 1.0 = healthy, 0.0 = unhealthy
+        // Maps rms_db from [silence_threshold, low_volume_threshold] to [0.0, 1.0]
+        let health = if rms_db <= self.config.silence_threshold_db {
+            0.0
+        } else if rms_db >= self.config.low_volume_threshold_db {
+            1.0
+        } else {
+            // Linear interpolation between silence and low_volume thresholds
+            let range = self.config.low_volume_threshold_db - self.config.silence_threshold_db;
+            ((rms_db - self.config.silence_threshold_db) / range).clamp(0.0, 1.0)
+        };
+
         // Create level event
         let event = AudioLevelEvent {
             rms_db,
             peak_db,
             is_low_volume,
             is_silence,
+            health,
             stream_id: stream_id.clone(),
             timestamp_us,
         };

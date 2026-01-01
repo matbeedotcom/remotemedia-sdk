@@ -99,6 +99,33 @@ impl PipelineRegistry {
             manifest: DEFAULT_AV_QUALITY_MANIFEST.to_string(),
             enabled: true,
         });
+
+        // Contact center QA template (business layer)
+        self.register(PipelineTemplate {
+            id: "contact_center_qa_v1".to_string(),
+            name: "Contact Center QA".to_string(),
+            description: "Speech presence, conversation flow metrics, and session health for contact center quality assurance".to_string(),
+            manifest: CONTACT_CENTER_QA_MANIFEST.to_string(),
+            enabled: true,
+        });
+
+        // Technical stream analysis template (technical layer)
+        self.register(PipelineTemplate {
+            id: "technical_stream_analysis_v1".to_string(),
+            name: "Technical Stream Analysis".to_string(),
+            description: "Timing drift, event correlation, and audio evidence capture for infrastructure debugging".to_string(),
+            manifest: TECHNICAL_STREAM_ANALYSIS_MANIFEST.to_string(),
+            enabled: true,
+        });
+
+        // Full stream health template (combined business + technical)
+        self.register(PipelineTemplate {
+            id: "full_stream_health_v1".to_string(),
+            name: "Full Stream Health".to_string(),
+            description: "Complete stream health monitoring with both business metrics and technical diagnostics".to_string(),
+            manifest: FULL_STREAM_HEALTH_MANIFEST.to_string(),
+            enabled: true,
+        });
     }
 
     /// Register a template
@@ -191,106 +218,13 @@ impl Default for PipelineRegistry {
     }
 }
 
-/// Default audio quality analysis manifest
-const DEFAULT_AUDIO_QUALITY_MANIFEST: &str = r#"
-# Audio Quality Analysis Pipeline
-# Detects common audio issues in real-time
-
-version: "1.0"
-
-metadata:
-  name: Audio Quality Analysis
-  description: Detects silence, clipping, low volume, and channel imbalance
-
-nodes:
-  # Audio level metering (RMS, peak, crest factor)
-  - id: audio_level
-    node_type: AudioLevelNode
-    params:
-      window_size_ms: 100
-      low_volume_threshold_db: -40.0
-      silence_threshold_db: -60.0
-    is_streaming: true
-
-  # Silence and dropout detection
-  - id: silence_detector
-    node_type: SilenceDetectorNode
-    params:
-      silence_threshold_db: -50.0
-      sustained_silence_ms: 500.0
-      dropout_count_threshold: 3
-    is_streaming: true
-
-  # Clipping/distortion detection
-  - id: clipping_detector
-    node_type: ClippingDetectorNode
-    params:
-      clipping_threshold: 0.99
-      saturation_ratio_threshold: 0.01
-    is_streaming: true
-
-  # Channel imbalance detection (for stereo)
-  - id: channel_balance
-    node_type: ChannelBalanceNode
-    params:
-      imbalance_threshold_db: 6.0
-    is_streaming: true
-
-  # Health score aggregation and event emission
-  - id: health_emitter
-    node_type: HealthEmitterNode
-    params:
-      emit_interval_ms: 1000
-      lead_threshold_ms: 50
-      freeze_threshold_ms: 500
-      health_threshold: 0.7
-    is_streaming: true
-
-# All nodes receive audio input directly (source nodes)
-# Each node produces its own analysis output
-connections: []
-"#;
-
-/// Default video integrity analysis manifest
-const DEFAULT_VIDEO_INTEGRITY_MANIFEST: &str = r#"
-# Video Integrity Analysis Pipeline
-# Detects freeze frames and black frames
-
-version: "1.0"
-
-metadata:
-  name: Video Integrity Analysis
-  description: Detects freeze frames and black frames
-
-nodes:
-  - id: health_emitter
-    node_type: HealthEmitterNode
-    params:
-      emit_interval_ms: 1000
-    is_streaming: true
-
-connections: []
-"#;
-
-/// Default combined A/V quality analysis manifest
-const DEFAULT_AV_QUALITY_MANIFEST: &str = r#"
-# Combined Audio/Video Quality Analysis Pipeline
-
-version: "1.0"
-
-metadata:
-  name: A/V Quality Analysis
-  description: Combined audio and video quality analysis
-
-nodes:
-  - id: health_emitter
-    node_type: HealthEmitterNode
-    params:
-      emit_interval_ms: 1000
-    is_streaming: true
-
-connections: []
-"#;
+// Pipeline manifests are loaded from external YAML files at compile time
+const DEFAULT_AUDIO_QUALITY_MANIFEST: &str = include_str!("../../pipelines/demo_audio_quality_v1.yaml");
+const DEFAULT_VIDEO_INTEGRITY_MANIFEST: &str = include_str!("../../pipelines/demo_video_integrity_v1.yaml");
+const DEFAULT_AV_QUALITY_MANIFEST: &str = include_str!("../../pipelines/demo_av_quality_v1.yaml");
+const CONTACT_CENTER_QA_MANIFEST: &str = include_str!("../../pipelines/contact_center_qa_v1.yaml");
+const TECHNICAL_STREAM_ANALYSIS_MANIFEST: &str = include_str!("../../pipelines/technical_stream_analysis_v1.yaml");
+const FULL_STREAM_HEALTH_MANIFEST: &str = include_str!("../../pipelines/full_stream_health_v1.yaml");
 
 #[cfg(test)]
 mod tests {
@@ -302,6 +236,10 @@ mod tests {
         assert!(registry.get("demo_audio_quality_v1").is_some());
         assert!(registry.get("demo_video_integrity_v1").is_some());
         assert!(registry.get("demo_av_quality_v1").is_some());
+        // Stream health monitoring templates
+        assert!(registry.get("contact_center_qa_v1").is_some());
+        assert!(registry.get("technical_stream_analysis_v1").is_some());
+        assert!(registry.get("full_stream_health_v1").is_some());
     }
 
     #[test]
@@ -324,5 +262,30 @@ mod tests {
         let ids = registry.list();
         assert!(ids.contains(&"demo_audio_quality_v1"));
         assert!(ids.contains(&"demo_video_integrity_v1"));
+        assert!(ids.contains(&"contact_center_qa_v1"));
+        assert!(ids.contains(&"full_stream_health_v1"));
+    }
+
+    #[test]
+    fn test_stream_health_templates() {
+        let registry = PipelineRegistry::with_defaults();
+
+        // Contact center QA template should have speech presence
+        let qa = registry.get("contact_center_qa_v1").unwrap();
+        assert!(qa.manifest.contains("SpeechPresenceNode"));
+        assert!(qa.manifest.contains("ConversationFlowNode"));
+        assert!(qa.manifest.contains("SessionHealthNode"));
+
+        // Technical template should have timing drift
+        let tech = registry.get("technical_stream_analysis_v1").unwrap();
+        assert!(tech.manifest.contains("TimingDriftNode"));
+        assert!(tech.manifest.contains("EventCorrelatorNode"));
+        assert!(tech.manifest.contains("AudioEvidenceNode"));
+
+        // Full template should have both layers
+        let full = registry.get("full_stream_health_v1").unwrap();
+        assert!(full.manifest.contains("SpeechPresenceNode"));
+        assert!(full.manifest.contains("TimingDriftNode"));
+        assert!(full.manifest.contains("HealthEmitterNode"));
     }
 }

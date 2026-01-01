@@ -26,6 +26,8 @@ pub struct ChannelBalanceEvent {
     pub has_dead_channel: bool,
     /// Which channel is dead (if any): "left", "right", or "none"
     pub dead_channel: String,
+    /// Health: 1.0 = healthy (balanced), 0.0 = unhealthy (dead channel or severe imbalance)
+    pub health: f32,
     /// Stream identifier
     pub stream_id: Option<String>,
     /// Timestamp in microseconds
@@ -113,6 +115,7 @@ impl ChannelBalanceNode {
                 is_imbalanced: false,
                 has_dead_channel: false,
                 dead_channel: "none".to_string(),
+                health: 1.0, // Mono is always "balanced"
                 stream_id: stream_id.clone(),
                 timestamp_us,
             };
@@ -159,6 +162,14 @@ impl ChannelBalanceNode {
         let is_imbalanced =
             has_dead_channel || imbalance_db.abs() >= self.config.imbalance_threshold_db;
 
+        // Calculate health: 1.0 = healthy, 0.0 = unhealthy
+        // Dead channel = 0.0, imbalance degrades linearly based on threshold
+        let health = if has_dead_channel {
+            0.0
+        } else {
+            (1.0 - (imbalance_db.abs() / self.config.imbalance_threshold_db).min(1.0)).max(0.0)
+        };
+
         // Create event
         let event = ChannelBalanceEvent {
             left_rms_db,
@@ -168,6 +179,7 @@ impl ChannelBalanceNode {
             is_imbalanced,
             has_dead_channel,
             dead_channel: dead_channel.clone(),
+            health,
             stream_id: stream_id.clone(),
             timestamp_us,
         };

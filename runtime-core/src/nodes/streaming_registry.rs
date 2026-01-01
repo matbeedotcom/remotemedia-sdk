@@ -13,6 +13,12 @@ use crate::nodes::audio_level::AudioLevelNodeFactory;
 use crate::nodes::clipping_detector::ClippingDetectorNodeFactory;
 use crate::nodes::channel_balance::ChannelBalanceNodeFactory;
 use crate::nodes::silence_detector::SilenceDetectorNodeFactory;
+use crate::nodes::speech_presence::SpeechPresenceNodeFactory;
+use crate::nodes::conversation_flow::ConversationFlowNodeFactory;
+use crate::nodes::session_health::SessionHealthNodeFactory;
+use crate::nodes::timing_drift::TimingDriftNodeFactory;
+use crate::nodes::event_correlator::EventCorrelatorNodeFactory;
+use crate::nodes::audio_evidence::AudioEvidenceNodeFactory;
 use crate::nodes::whisper::RustWhisperNode;
 // Temporarily disabled - incomplete implementation
 // use crate::nodes::sync_av::SynchronizedAudioVideoNode;
@@ -1720,6 +1726,16 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
     registry.register(Arc::new(ClippingDetectorNodeFactory));
     registry.register(Arc::new(ChannelBalanceNodeFactory));
     registry.register(Arc::new(SilenceDetectorNodeFactory));
+
+    // Register stream health monitoring nodes (business layer)
+    registry.register(Arc::new(SpeechPresenceNodeFactory));
+    registry.register(Arc::new(ConversationFlowNodeFactory));
+    registry.register(Arc::new(SessionHealthNodeFactory));
+
+    // Register stream health monitoring nodes (technical layer)
+    registry.register(Arc::new(TimingDriftNodeFactory));
+    registry.register(Arc::new(EventCorrelatorNodeFactory));
+    registry.register(Arc::new(AudioEvidenceNodeFactory));
 
     // Register Speculative VAD Gate (Spec 007 - low-latency streaming)
     registry.register(Arc::new(SpeculativeVADGateFactory));

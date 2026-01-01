@@ -14,7 +14,18 @@ cargo run -p remotemedia-ingest-srt --release
 INGEST_HTTP_PORT=8080 INGEST_SRT_PORT=9000 cargo run -p remotemedia-ingest-srt
 ```
 
-### 2. Create a Session
+### 2. Open the Demo UI
+
+Navigate to http://localhost:8080 in your browser to access the Stream Health Monitor demo.
+
+The demo UI provides:
+- Pipeline selection (Contact Center QA, Full Stream Health, Technical Analysis, etc.)
+- One-click session creation with auto-generated FFmpeg commands
+- Real-time event timeline with color-coded severity
+- Health score visualization
+- Event detail pane with contextual hints
+
+### 3. Create a Session (API)
 
 ```bash
 curl -X POST http://localhost:8080/api/ingest/sessions \
@@ -40,7 +51,7 @@ Response:
 }
 ```
 
-### 3. Push Media with FFmpeg
+### 4. Push Media with FFmpeg
 
 ```bash
 # Copy mode (lowest CPU, requires compatible source)
@@ -53,7 +64,7 @@ ffmpeg -re -i input.mp4 \
   -f mpegts "srt://localhost:9000?mode=caller&streamid=..."
 ```
 
-### 4. Receive Events
+### 5. Receive Events
 
 #### Via SSE (Server-Sent Events)
 ```bash
@@ -87,6 +98,34 @@ Webhooks receive POST requests with JSON payload:
   }
 }
 ```
+
+## Available Pipelines
+
+### Business Layer (Contact Center QA)
+
+| Pipeline | Description |
+|----------|-------------|
+| `contact_center_qa_v1` | Speech presence, conversation flow metrics, and session health for contact center quality assurance |
+| `full_stream_health_v1` | Complete monitoring combining business and technical analysis layers |
+
+### Technical Layer
+
+| Pipeline | Description |
+|----------|-------------|
+| `technical_stream_analysis_v1` | Timing drift detection, event correlation, and audio evidence capture |
+
+### Audio Analysis
+
+| Pipeline | Description |
+|----------|-------------|
+| `demo_audio_quality_v1` | Silence, clipping, volume, and channel balance detection |
+| `demo_av_quality_v1` | Combined audio and video analysis |
+
+### Video Analysis
+
+| Pipeline | Description |
+|----------|-------------|
+| `demo_video_integrity_v1` | Freeze frames and black frame detection |
 
 ## API Endpoints
 
@@ -241,6 +280,8 @@ The `/metrics` endpoint returns:
 
 ## Development
 
+### Backend
+
 ```bash
 # Build
 cargo build -p remotemedia-ingest-srt
@@ -251,6 +292,55 @@ cargo test -p remotemedia-ingest-srt
 # Run with debug logging
 RUST_LOG=debug cargo run -p remotemedia-ingest-srt
 ```
+
+### Frontend (Demo UI)
+
+The demo UI is a React app built with Vite, Tailwind CSS, and Zustand.
+
+```bash
+cd frontend
+
+# Install dependencies
+npm install
+
+# Development server (proxies API to localhost:8080)
+npm run dev
+
+# Build for production (outputs to ../static)
+npm run build
+
+# Type checking
+npm run type-check
+```
+
+The production build is automatically served by the gateway at http://localhost:8080.
+
+### E2E Tests
+
+End-to-end tests use Playwright and require:
+- The gateway server running (or use `webServer` config)
+- A test video file at the repository root (`input.mp4`) for streaming tests
+
+```bash
+cd e2e
+
+# Install Playwright browsers (first time only)
+npx playwright install
+
+# Run all tests
+npx playwright test
+
+# Run with UI
+npx playwright test --ui
+
+# Run specific test file
+npx playwright test tests/gateway.spec.ts
+
+# Debug mode
+npx playwright test --debug
+```
+
+The Playwright config automatically starts the gateway server before running tests.
 
 ## License
 

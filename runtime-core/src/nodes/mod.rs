@@ -64,6 +64,26 @@ pub use channel_balance::{ChannelBalanceNode, ChannelBalanceConfig, ChannelBalan
 pub mod silence_detector;
 pub use silence_detector::{SilenceDetectorNode, SilenceConfig, SilenceDetectorNodeFactory, SilenceEvent};
 
+// Stream health monitoring nodes (business layer)
+pub mod speech_presence;
+pub use speech_presence::{SpeechPresenceNode, SpeechPresenceConfig, SpeechPresenceNodeFactory};
+
+pub mod conversation_flow;
+pub use conversation_flow::{ConversationFlowNode, ConversationFlowConfig, ConversationFlowNodeFactory};
+
+pub mod session_health;
+pub use session_health::{SessionHealthNode, SessionHealthConfig, SessionHealthNodeFactory};
+
+// Stream health monitoring nodes (technical layer)
+pub mod timing_drift;
+pub use timing_drift::{TimingDriftNode, TimingDriftConfig, TimingDriftNodeFactory};
+
+pub mod event_correlator;
+pub use event_correlator::{EventCorrelatorNode, EventCorrelatorConfig, EventCorrelatorNodeFactory};
+
+pub mod audio_evidence;
+pub use audio_evidence::{AudioEvidenceNode, AudioEvidenceConfig, AudioEvidenceNodeFactory};
+
 pub mod audio_resample_streaming;
 pub use audio_resample_streaming::ResampleStreamingNode;
 

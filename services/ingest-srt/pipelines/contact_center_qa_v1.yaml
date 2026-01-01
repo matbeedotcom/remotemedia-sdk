@@ -1,0 +1,77 @@
+# Contact Center QA Pipeline
+# Business-layer metrics for conversation quality assessment
+
+version: "1.0"
+
+metadata:
+  name: Contact Center QA
+  description: Speech presence, talk ratios, and session health for QA
+
+nodes:
+  # Audio level metering (feeds speech presence)
+  - id: audio_level
+    node_type: AudioLevelNode
+    params:
+      window_size_ms: 100
+      low_volume_threshold_db: -40.0
+      silence_threshold_db: -60.0
+    is_streaming: true
+
+  # Silence detection (for dead air tracking)
+  - id: silence_detector
+    node_type: SilenceDetectorNode
+    params:
+      silence_threshold_db: -50.0
+      sustained_silence_ms: 500.0
+    is_streaming: true
+
+  # Speech presence (speaking/silent/dead_air/overlap states)
+  - id: speech_presence
+    node_type: SpeechPresenceNode
+    params:
+      dead_air_threshold_ms: 2000
+      overlap_threshold_ms: 500
+      emit_on_transition: true
+    is_streaming: true
+
+  # Conversation flow (talk ratios over sliding windows)
+  - id: conversation_flow
+    node_type: ConversationFlowNode
+    params:
+      window_ms: 30000
+      emit_interval_ms: 5000
+    is_streaming: true
+
+  # Session health aggregation (ok/degraded/unhealthy)
+  - id: session_health
+    node_type: SessionHealthNode
+    params:
+      degraded_threshold: 0.8
+      unhealthy_threshold: 0.5
+      emit_interval_ms: 5000
+    is_streaming: true
+
+  # Event correlator (groups alerts into incidents)
+  - id: event_correlator
+    node_type: EventCorrelatorNode
+    params:
+      correlation_window_ms: 5000
+      min_events_for_incident: 3
+    is_streaming: true
+
+# Connection topology:
+# - audio_level and silence_detector receive raw audio
+# - speech_presence derives state from audio_level
+# - conversation_flow tracks speech patterns from speech_presence
+# - session_health aggregates from speech_presence and silence_detector
+# - event_correlator receives alerts from all analysis nodes
+connections:
+  - { from: audio_level, to: speech_presence }
+  - { from: audio_level, to: event_correlator }
+  - { from: silence_detector, to: session_health }
+  - { from: silence_detector, to: event_correlator }
+  - { from: speech_presence, to: conversation_flow }
+  - { from: speech_presence, to: session_health }
+  - { from: speech_presence, to: event_correlator }
+  - { from: conversation_flow, to: session_health }
+  - { from: conversation_flow, to: event_correlator }
