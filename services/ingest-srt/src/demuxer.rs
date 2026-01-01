@@ -21,6 +21,15 @@ pub struct DecodedAudio {
     pub timestamp_us: u64,
 }
 
+/// Video timing information (no pixel data - just PTS for A/V sync)
+#[derive(Debug, Clone)]
+pub struct VideoTiming {
+    /// Presentation timestamp in microseconds
+    pub timestamp_us: u64,
+    /// Frame duration in microseconds (based on framerate)
+    pub duration_us: u64,
+}
+
 /// Thread-safe ring buffer for feeding data to FFmpeg
 struct RingBuffer {
     data: Mutex<RingBufferInner>,
@@ -92,6 +101,8 @@ enum WorkerCommand {
 enum WorkerResponse {
     /// Successfully decoded audio samples
     Audio(DecodedAudio),
+    /// Video timing info (for A/V sync - no pixel data)
+    Video(VideoTiming),
     /// Stream ended
     EndOfStream,
     /// Error occurred
@@ -104,7 +115,10 @@ pub struct MpegTsDemuxer {
     input_rx: mpsc::Receiver<Vec<u8>>,
 
     /// Channel to send decoded audio
-    output_tx: mpsc::Sender<DecodedAudio>,
+    audio_tx: mpsc::Sender<DecodedAudio>,
+
+    /// Channel to send video timing (optional - for A/V sync)
+    video_tx: Option<mpsc::Sender<VideoTiming>>,
 
     /// Target sample rate for output
     pub target_sample_rate: u32,
@@ -117,17 +131,37 @@ pub struct MpegTsDemuxer {
 }
 
 impl MpegTsDemuxer {
-    /// Create a new demuxer
+    /// Create a new demuxer (audio only, for backwards compatibility)
     pub fn new(
         input_rx: mpsc::Receiver<Vec<u8>>,
-        output_tx: mpsc::Sender<DecodedAudio>,
+        audio_tx: mpsc::Sender<DecodedAudio>,
         target_sample_rate: u32,
         target_channels: u32,
         session_id: String,
     ) -> Self {
         Self {
             input_rx,
-            output_tx,
+            audio_tx,
+            video_tx: None,
+            target_sample_rate,
+            target_channels,
+            session_id,
+        }
+    }
+
+    /// Create a new demuxer with video timing output for A/V sync
+    pub fn with_video(
+        input_rx: mpsc::Receiver<Vec<u8>>,
+        audio_tx: mpsc::Sender<DecodedAudio>,
+        video_tx: mpsc::Sender<VideoTiming>,
+        target_sample_rate: u32,
+        target_channels: u32,
+        session_id: String,
+    ) -> Self {
+        Self {
+            input_rx,
+            audio_tx,
+            video_tx: Some(video_tx),
             target_sample_rate,
             target_channels,
             session_id,
@@ -185,13 +219,23 @@ impl MpegTsDemuxer {
                         match resp {
                             WorkerResponse::Audio(audio) => {
                                 frame_count += 1;
-                                if self.output_tx.send(audio).await.is_err() {
+                                if self.audio_tx.send(audio).await.is_err() {
                                     tracing::warn!(
                                         session_id = %self.session_id,
-                                        "Output channel closed"
+                                        "Audio output channel closed"
                                     );
                                     let _ = cmd_tx.send(WorkerCommand::Shutdown);
                                     break;
+                                }
+                            }
+                            WorkerResponse::Video(video) => {
+                                if let Some(ref video_tx) = self.video_tx {
+                                    if video_tx.send(video).await.is_err() {
+                                        tracing::debug!(
+                                            session_id = %self.session_id,
+                                            "Video output channel closed"
+                                        );
+                                    }
                                 }
                             }
                             WorkerResponse::EndOfStream => {
@@ -218,9 +262,17 @@ impl MpegTsDemuxer {
 
         // Drain remaining frames
         while let Ok(resp) = resp_rx.recv_timeout(std::time::Duration::from_millis(100)) {
-            if let WorkerResponse::Audio(audio) = resp {
-                frame_count += 1;
-                let _ = self.output_tx.send(audio).await;
+            match resp {
+                WorkerResponse::Audio(audio) => {
+                    frame_count += 1;
+                    let _ = self.audio_tx.send(audio).await;
+                }
+                WorkerResponse::Video(video) => {
+                    if let Some(ref video_tx) = self.video_tx {
+                        let _ = video_tx.send(video).await;
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -404,6 +456,45 @@ fn worker_thread_main(
             return;
         }
 
+        // Find video stream (optional - for A/V sync)
+        let mut video_stream_index = ffi::av_find_best_stream(
+            format_ctx,
+            ffi::AVMediaType::AVMEDIA_TYPE_VIDEO,
+            -1,
+            -1,
+            ptr::null_mut(),
+            0,
+        );
+
+        // Try manual search if needed
+        if video_stream_index < 0 {
+            let nb_streams = (*format_ctx).nb_streams as usize;
+            for i in 0..nb_streams {
+                let stream = *(*format_ctx).streams.add(i);
+                let codec_type = (*(*stream).codecpar).codec_type;
+                if codec_type == ffi::AVMediaType::AVMEDIA_TYPE_VIDEO {
+                    video_stream_index = i as i32;
+                    break;
+                }
+            }
+        }
+
+        // Get video time base for timestamp conversion (if video found)
+        let video_time_base = if video_stream_index >= 0 {
+            let video_stream = *(*format_ctx).streams.offset(video_stream_index as isize);
+            let tb = (*video_stream).time_base;
+            tracing::info!(
+                session_id = %session_id,
+                video_stream_index = video_stream_index,
+                time_base = ?format!("{}/{}", tb.num, tb.den),
+                "Video stream found for A/V sync"
+            );
+            Some((tb.num as i64, tb.den as i64))
+        } else {
+            tracing::debug!(session_id = %session_id, "No video stream found (audio-only mode)");
+            None
+        };
+
         let audio_stream = *(*format_ctx).streams.offset(audio_stream_index as isize);
         let codec_params = (*audio_stream).codecpar;
 
@@ -499,6 +590,7 @@ fn worker_thread_main(
         let mut audio_timestamp_us: u64 = 0;
         let mut audio_packets_processed: u64 = 0;
         let mut audio_frames_decoded: u64 = 0;
+        let mut video_packets_processed: u64 = 0;
         let mut read_errors: u64 = 0;
 
         tracing::debug!(session_id = %session_id, "Starting packet processing loop");
@@ -525,8 +617,57 @@ fn worker_thread_main(
                 continue;
             }
 
+            let stream_index = (*packet).stream_index;
+
+            // Handle video packets (just extract PTS, no decoding)
+            if video_stream_index >= 0 && stream_index == video_stream_index {
+                video_packets_processed += 1;
+
+                // Extract PTS and convert to microseconds
+                let pts = (*packet).pts;
+                let duration = (*packet).duration;
+
+                if pts != ffi::AV_NOPTS_VALUE && video_time_base.is_some() {
+                    let (num, den) = video_time_base.unwrap();
+                    // Convert PTS from stream time base to microseconds
+                    // pts * (num / den) * 1_000_000
+                    let timestamp_us = if den != 0 {
+                        ((pts as i128 * num as i128 * 1_000_000) / den as i128) as u64
+                    } else {
+                        0
+                    };
+                    let duration_us = if den != 0 && duration != ffi::AV_NOPTS_VALUE {
+                        ((duration as i128 * num as i128 * 1_000_000) / den as i128) as u64
+                    } else {
+                        // Default to ~33ms (30fps) if unknown
+                        33333
+                    };
+
+                    let video_timing = VideoTiming {
+                        timestamp_us,
+                        duration_us,
+                    };
+
+                    // Log first video packet
+                    if video_packets_processed == 1 {
+                        tracing::info!(
+                            session_id = %session_id,
+                            pts = pts,
+                            timestamp_us = timestamp_us,
+                            duration_us = duration_us,
+                            "First video packet PTS extracted"
+                        );
+                    }
+
+                    let _ = resp_tx.send(WorkerResponse::Video(video_timing));
+                }
+
+                ffi::av_packet_unref(packet);
+                continue;
+            }
+
             // Only process audio packets
-            if (*packet).stream_index != audio_stream_index {
+            if stream_index != audio_stream_index {
                 ffi::av_packet_unref(packet);
                 continue;
             }
@@ -618,6 +759,7 @@ fn worker_thread_main(
             session_id = %session_id,
             audio_packets = audio_packets_processed,
             audio_frames = audio_frames_decoded,
+            video_packets = video_packets_processed,
             "Packet processing loop ended"
         );
 
