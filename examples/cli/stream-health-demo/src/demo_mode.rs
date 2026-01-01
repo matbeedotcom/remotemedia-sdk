@@ -5,7 +5,7 @@
 //! - 3 sessions per calendar day (UTC)
 //! - Persistent state tracking across runs
 
-use crate::events::HealthEvent;
+use remotemedia_health_analyzer::HealthEvent;
 use crate::license::License;
 use crate::summary::SessionSummary;
 use crate::DemoConfig;

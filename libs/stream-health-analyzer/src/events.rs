@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Write;
 
 /// Health event types emitted by the stream health monitor
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HealthEvent {
     /// Audio/video drift exceeds threshold
@@ -23,7 +23,7 @@ pub enum HealthEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         stream_id: Option<String>,
     },
-    
+
     /// Stream freeze detected
     Freeze {
         /// Timestamp when the freeze was detected
@@ -34,7 +34,7 @@ pub enum HealthEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         stream_id: Option<String>,
     },
-    
+
     /// Periodic health score update
     Health {
         /// Timestamp of the health score
@@ -44,7 +44,7 @@ pub enum HealthEvent {
         /// List of active alert names
         alerts: Vec<String>,
     },
-    
+
     /// Cadence variance alert
     Cadence {
         /// Timestamp when the alert was triggered
@@ -54,7 +54,7 @@ pub enum HealthEvent {
         /// Configured threshold
         threshold: f64,
     },
-    
+
     /// Audio/video synchronization skew
     AvSkew {
         /// Timestamp when the skew was detected
@@ -126,6 +126,30 @@ pub enum HealthEvent {
         /// Stream identifier (if available)
         #[serde(skip_serializing_if = "Option::is_none")]
         stream_id: Option<String>,
+    },
+
+    /// Stream started event (for SSE/webhook)
+    StreamStarted {
+        /// Timestamp when stream started
+        ts: DateTime<Utc>,
+        /// Relative time in milliseconds (always 0 for stream start)
+        relative_ms: u64,
+        /// Session identifier
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
+
+    /// Stream ended event (for SSE/webhook)
+    StreamEnded {
+        /// Timestamp when stream ended
+        ts: DateTime<Utc>,
+        /// Relative time in milliseconds since stream start
+        relative_ms: u64,
+        /// Reason for stream ending
+        reason: String,
+        /// Session identifier
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
 }
 
@@ -207,7 +231,11 @@ impl HealthEvent {
     }
 
     /// Create a new channel imbalance event
-    pub fn channel_imbalance(imbalance_db: f32, dead_channel: String, stream_id: Option<String>) -> Self {
+    pub fn channel_imbalance(
+        imbalance_db: f32,
+        dead_channel: String,
+        stream_id: Option<String>,
+    ) -> Self {
         Self::ChannelImbalance {
             ts: Utc::now(),
             imbalance_db,
@@ -225,6 +253,25 @@ impl HealthEvent {
         }
     }
 
+    /// Create a stream started event
+    pub fn stream_started(session_id: Option<String>) -> Self {
+        Self::StreamStarted {
+            ts: Utc::now(),
+            relative_ms: 0,
+            session_id,
+        }
+    }
+
+    /// Create a stream ended event
+    pub fn stream_ended(relative_ms: u64, reason: String, session_id: Option<String>) -> Self {
+        Self::StreamEnded {
+            ts: Utc::now(),
+            relative_ms,
+            reason,
+            session_id,
+        }
+    }
+
     /// Get the timestamp of the event
     pub fn timestamp(&self) -> DateTime<Utc> {
         match self {
@@ -238,6 +285,26 @@ impl HealthEvent {
             Self::Clipping { ts, .. } => *ts,
             Self::ChannelImbalance { ts, .. } => *ts,
             Self::Dropouts { ts, .. } => *ts,
+            Self::StreamStarted { ts, .. } => *ts,
+            Self::StreamEnded { ts, .. } => *ts,
+        }
+    }
+
+    /// Get the event type as a string
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            Self::Drift { .. } => "drift",
+            Self::Freeze { .. } => "freeze",
+            Self::Health { .. } => "health",
+            Self::Cadence { .. } => "cadence",
+            Self::AvSkew { .. } => "av_skew",
+            Self::Silence { .. } => "silence",
+            Self::LowVolume { .. } => "low_volume",
+            Self::Clipping { .. } => "clipping",
+            Self::ChannelImbalance { .. } => "channel_imbalance",
+            Self::Dropouts { .. } => "dropouts",
+            Self::StreamStarted { .. } => "stream_started",
+            Self::StreamEnded { .. } => "stream_ended",
         }
     }
 
@@ -269,6 +336,27 @@ impl HealthEvent {
     /// Check if this is a channel imbalance event
     pub fn is_channel_imbalance(&self) -> bool {
         matches!(self, Self::ChannelImbalance { .. })
+    }
+
+    /// Check if this is an alert event (not health score or system event)
+    pub fn is_alert(&self) -> bool {
+        matches!(
+            self,
+            Self::Drift { .. }
+                | Self::Freeze { .. }
+                | Self::Cadence { .. }
+                | Self::AvSkew { .. }
+                | Self::Silence { .. }
+                | Self::LowVolume { .. }
+                | Self::Clipping { .. }
+                | Self::ChannelImbalance { .. }
+                | Self::Dropouts { .. }
+        )
+    }
+
+    /// Check if this is a system event (stream started/ended)
+    pub fn is_system(&self) -> bool {
+        matches!(self, Self::StreamStarted { .. } | Self::StreamEnded { .. })
     }
 }
 
@@ -311,6 +399,11 @@ impl EventEmitter {
     pub fn into_events(self) -> Vec<HealthEvent> {
         self.events
     }
+
+    /// Get mutable reference to events
+    pub fn events_mut(&mut self) -> &mut Vec<HealthEvent> {
+        &mut self.events
+    }
 }
 
 #[cfg(test)]
@@ -346,16 +439,44 @@ mod tests {
     }
 
     #[test]
+    fn test_stream_started_event() {
+        let event = HealthEvent::stream_started(Some("sess_123".to_string()));
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"type\":\"stream_started\""));
+        assert!(json.contains("\"relative_ms\":0"));
+        assert!(json.contains("\"session_id\":\"sess_123\""));
+    }
+
+    #[test]
+    fn test_stream_ended_event() {
+        let event = HealthEvent::stream_ended(120000, "client_disconnect".to_string(), None);
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"type\":\"stream_ended\""));
+        assert!(json.contains("\"relative_ms\":120000"));
+        assert!(json.contains("\"reason\":\"client_disconnect\""));
+    }
+
+    #[test]
+    fn test_event_type_categorization() {
+        assert!(HealthEvent::drift(50, 50, None).is_alert());
+        assert!(HealthEvent::silence(1000.0, -60.0, None).is_alert());
+        assert!(!HealthEvent::health(0.95, vec![]).is_alert());
+        assert!(!HealthEvent::stream_started(None).is_alert());
+        assert!(HealthEvent::stream_started(None).is_system());
+        assert!(HealthEvent::stream_ended(0, "end".to_string(), None).is_system());
+    }
+
+    #[test]
     fn test_event_emitter_jsonl() {
         use std::io::Cursor;
         use std::sync::{Arc, Mutex};
 
         // Use a shared buffer wrapped in Arc<Mutex<_>>
         let buffer = Arc::new(Mutex::new(Cursor::new(Vec::new())));
-        
+
         // Create a wrapper that implements Write + Send
         struct SharedBuffer(Arc<Mutex<Cursor<Vec<u8>>>>);
-        
+
         impl std::io::Write for SharedBuffer {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
                 self.0.lock().unwrap().write(buf)
@@ -364,18 +485,18 @@ mod tests {
                 self.0.lock().unwrap().flush()
             }
         }
-        
+
         let buffer_clone = buffer.clone();
         let mut emitter = EventEmitter::new(Box::new(SharedBuffer(buffer_clone)));
-        
+
         emitter.emit(HealthEvent::drift(50, 50, None)).unwrap();
         emitter.emit(HealthEvent::health(0.85, vec![])).unwrap();
-        
+
         // Check the collected events
         assert_eq!(emitter.events().len(), 2);
         assert!(emitter.events()[0].is_drift());
         assert!(emitter.events()[1].is_health());
-        
+
         // Also verify the buffer content
         let inner = buffer.lock().unwrap();
         let output = String::from_utf8(inner.get_ref().clone()).unwrap();

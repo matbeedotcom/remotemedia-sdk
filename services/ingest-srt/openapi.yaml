@@ -1,0 +1,521 @@
+openapi: 3.1.0
+info:
+  title: SRT Ingest Gateway API
+  description: |
+    Push-based SRT ingest endpoint for real-time stream health monitoring.
+    Users push media via FFmpeg/GStreamer to a private SRT URL; the gateway
+    demuxes, decodes, runs analysis pipelines, and emits alerts via webhooks and SSE.
+  version: 1.0.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+tags:
+  - name: Sessions
+    description: Ingest session management
+  - name: Events
+    description: Real-time event streaming
+  - name: System
+    description: Health and metrics endpoints
+
+paths:
+  /api/ingest/sessions:
+    post:
+      tags:
+        - Sessions
+      summary: Create a new ingest session
+      description: |
+        Creates a new ingest session and returns the SRT URL for pushing media.
+        The session is valid until the specified max_duration_seconds expires,
+        the client disconnects, or the session is explicitly deleted.
+      operationId: createSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+            examples:
+              audio_only:
+                summary: Audio-only monitoring
+                value:
+                  pipeline: demo_audio_quality_v1
+                  webhook_url: https://your-server.com/webhook
+                  audio_enabled: true
+                  video_enabled: false
+                  max_duration_seconds: 300
+              full_av:
+                summary: Full audio/video monitoring
+                value:
+                  pipeline: full_av_analysis
+                  webhook_url: https://your-server.com/webhook
+                  audio_enabled: true
+                  video_enabled: true
+                  max_duration_seconds: 3600
+      responses:
+        '201':
+          description: Session created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateSessionResponse'
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Maximum sessions reached
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/ingest/sessions/{id}:
+    get:
+      tags:
+        - Sessions
+      summary: Get session status
+      description: Returns the current status and metadata of an ingest session.
+      operationId: getSession
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Session details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionStatus'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Sessions
+      summary: End a session
+      description: |
+        Terminates an active ingest session. The SRT connection will be closed
+        and any pending webhooks will be flushed.
+      operationId: deleteSession
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '204':
+          description: Session ended successfully
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/ingest/sessions/{id}/events:
+    get:
+      tags:
+        - Events
+      summary: Subscribe to session events (SSE)
+      description: |
+        Opens a Server-Sent Events stream for real-time event delivery.
+        Events include health alerts, system notifications, and periodic health scores.
+
+        The connection will remain open until the session ends or the client disconnects.
+      operationId: subscribeEvents
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              examples:
+                alert_event:
+                  summary: Alert event
+                  value: |
+                    event: alert
+                    data: {"type":"silence","ts":"2025-01-01T00:00:30.000Z","duration_ms":3500,"rms_db":-60.0}
+                health_event:
+                  summary: Health score event
+                  value: |
+                    event: health
+                    data: {"type":"health","ts":"2025-01-01T00:00:30.000Z","score":0.85,"alerts":["SILENCE"]}
+                system_event:
+                  summary: System event
+                  value: |
+                    event: system
+                    data: {"type":"stream_ended","ts":"2025-01-01T00:01:00.000Z","reason":"client_disconnect"}
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /health:
+    get:
+      tags:
+        - System
+      summary: Health check
+      description: Returns OK if the gateway is healthy and accepting connections.
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Gateway is healthy
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: OK
+
+  /metrics:
+    get:
+      tags:
+        - System
+      summary: Gateway metrics
+      description: Returns current gateway metrics including session counts, event stats, and uptime.
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Current metrics snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsSnapshot'
+
+components:
+  parameters:
+    SessionId:
+      name: id
+      in: path
+      required: true
+      description: Session ID (e.g., sess_abc123def456)
+      schema:
+        type: string
+        pattern: ^sess_[a-zA-Z0-9]+$
+        example: sess_abc123def456
+
+  schemas:
+    CreateSessionRequest:
+      type: object
+      required:
+        - pipeline
+      properties:
+        pipeline:
+          type: string
+          description: Name of the analysis pipeline to run
+          example: demo_audio_quality_v1
+        webhook_url:
+          type: string
+          format: uri
+          description: URL to receive webhook notifications for events
+          example: https://your-server.com/webhook
+        audio_enabled:
+          type: boolean
+          default: true
+          description: Enable audio stream analysis
+        video_enabled:
+          type: boolean
+          default: false
+          description: Enable video stream analysis
+        max_duration_seconds:
+          type: integer
+          minimum: 1
+          maximum: 86400
+          default: 3600
+          description: Maximum session duration in seconds
+
+    CreateSessionResponse:
+      type: object
+      required:
+        - session_id
+        - srt_url
+        - events_url
+        - expires_at
+      properties:
+        session_id:
+          type: string
+          description: Unique session identifier
+          example: sess_abc123def456
+        srt_url:
+          type: string
+          format: uri
+          description: SRT URL to push media to
+          example: srt://localhost:9000?mode=caller&streamid=...
+        ffmpeg_command_copy:
+          type: string
+          description: Example FFmpeg command using copy mode (lowest CPU)
+          example: ffmpeg -re -i "<YOUR_SOURCE>" -c copy -f mpegts "srt://..."
+        ffmpeg_command_transcode:
+          type: string
+          description: Example FFmpeg command with transcoding (most compatible)
+          example: ffmpeg -re -i "<YOUR_SOURCE>" -c:v libx264 ... "srt://..."
+        events_url:
+          type: string
+          description: Relative URL for SSE event subscription
+          example: /api/ingest/sessions/sess_abc123def456/events
+        expires_at:
+          type: string
+          format: date-time
+          description: Session expiration timestamp
+          example: '2025-01-01T00:05:00Z'
+
+    SessionStatus:
+      type: object
+      required:
+        - session_id
+        - state
+        - created_at
+      properties:
+        session_id:
+          type: string
+          example: sess_abc123def456
+        state:
+          type: string
+          enum:
+            - created
+            - connected
+            - streaming
+            - ended
+          description: Current session state
+        created_at:
+          type: string
+          format: date-time
+          description: Session creation timestamp
+        connected_at:
+          type: string
+          format: date-time
+          description: SRT connection timestamp (if connected)
+        pipeline:
+          type: string
+          description: Active analysis pipeline
+        audio_enabled:
+          type: boolean
+        video_enabled:
+          type: boolean
+        bytes_received:
+          type: integer
+          format: int64
+          description: Total bytes received in this session
+        packets_received:
+          type: integer
+          format: int64
+          description: Total MPEG-TS packets received
+        events_emitted:
+          type: integer
+          format: int64
+          description: Total events emitted for this session
+        end_reason:
+          type: string
+          enum:
+            - client_disconnect
+            - timeout
+            - error
+            - deleted
+            - expired
+          description: Reason for session end (if ended)
+
+    MetricsSnapshot:
+      type: object
+      properties:
+        sessions_created:
+          type: integer
+          format: int64
+          description: Total sessions created since startup
+        sessions_ended:
+          type: integer
+          format: int64
+          description: Total sessions ended since startup
+        active_sessions:
+          type: integer
+          format: int64
+          description: Currently active sessions
+        events_emitted:
+          type: integer
+          format: int64
+          description: Total events emitted since startup
+        bytes_received:
+          type: integer
+          format: int64
+          description: Total bytes received since startup
+        packets_received:
+          type: integer
+          format: int64
+          description: Total MPEG-TS packets received since startup
+        webhook_attempts:
+          type: integer
+          format: int64
+          description: Total webhook delivery attempts
+        webhook_successes:
+          type: integer
+          format: int64
+          description: Successful webhook deliveries
+        webhook_failures:
+          type: integer
+          format: int64
+          description: Failed webhook deliveries
+        uptime_secs:
+          type: integer
+          format: int64
+          description: Gateway uptime in seconds
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Error message
+          example: Session not found
+        code:
+          type: string
+          description: Error code for programmatic handling
+          example: SESSION_NOT_FOUND
+
+    WebhookPayload:
+      type: object
+      description: Payload sent to webhook endpoints
+      required:
+        - event_type
+        - session_id
+        - timestamp
+        - data
+      properties:
+        event_type:
+          type: string
+          description: Type of event
+          enum:
+            - silence
+            - low_volume
+            - clipping
+            - channel_imbalance
+            - dropouts
+            - drift
+            - freeze
+            - stream_started
+            - stream_ended
+            - health
+        session_id:
+          type: string
+          example: sess_abc123def456
+        timestamp:
+          type: string
+          format: date-time
+          description: Event timestamp (ISO 8601)
+        relative_ms:
+          type: integer
+          format: int64
+          description: Milliseconds since stream started
+        data:
+          type: object
+          description: Event-specific data
+          additionalProperties: true
+
+    AlertEvent:
+      type: object
+      description: Audio/video quality alert
+      properties:
+        type:
+          type: string
+          enum:
+            - silence
+            - low_volume
+            - clipping
+            - channel_imbalance
+            - dropouts
+            - drift
+            - freeze
+        duration_ms:
+          type: integer
+          description: Duration of the issue in milliseconds
+        rms_db:
+          type: number
+          format: float
+          description: RMS level in dB (for audio alerts)
+        peak_db:
+          type: number
+          format: float
+          description: Peak level in dB
+        saturation_ratio:
+          type: number
+          format: float
+          description: Ratio of saturated samples (0.0-1.0)
+        crest_factor_db:
+          type: number
+          format: float
+          description: Crest factor in dB
+        imbalance_db:
+          type: number
+          format: float
+          description: Channel imbalance in dB
+        dead_channel:
+          type: string
+          enum:
+            - left
+            - right
+          description: Which channel is dead/silent
+        dropout_count:
+          type: integer
+          description: Number of audio dropouts detected
+        lead_ms:
+          type: number
+          format: float
+          description: A/V drift in milliseconds
+        threshold_ms:
+          type: number
+          format: float
+          description: Configured drift threshold
+
+    HealthEvent:
+      type: object
+      description: Periodic health score
+      properties:
+        type:
+          type: string
+          const: health
+        score:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          description: Overall health score (0.0 = critical, 1.0 = perfect)
+        alerts:
+          type: array
+          items:
+            type: string
+          description: List of active alert types
+          example:
+            - SILENCE
+            - LOW_VOLUME
+
+    SystemEvent:
+      type: object
+      description: System notification
+      properties:
+        type:
+          type: string
+          enum:
+            - stream_started
+            - stream_ended
+        session_id:
+          type: string
+        reason:
+          type: string
+          description: Reason for stream end (if applicable)
+          enum:
+            - client_disconnect
+            - timeout
+            - error
+            - deleted
+            - expired

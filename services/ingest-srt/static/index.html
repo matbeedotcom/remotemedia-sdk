@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SRT Ingest Gateway - Demo</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #0f3460;
+            --text-primary: #eaeaea;
+            --text-secondary: #a0a0a0;
+            --accent: #e94560;
+            --accent-secondary: #533483;
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --error: #ef4444;
+            --border: #2d3748;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: var(--bg-secondary);
+            padding: 20px 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 30px;
+        }
+
+        header h1 {
+            font-size: 1.8rem;
+            font-weight: 600;
+        }
+
+        header p {
+            color: var(--text-secondary);
+            margin-top: 5px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid var(--border);
+        }
+
+        .card h2 {
+            font-size: 1.2rem;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card h2::before {
+            content: '';
+            width: 4px;
+            height: 20px;
+            background: var(--accent);
+            border-radius: 2px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 1rem;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .checkbox-group {
+            display: flex;
+            gap: 20px;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            width: auto;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #d13350;
+        }
+
+        .btn-primary:disabled {
+            background: var(--text-secondary);
+            cursor: not-allowed;
+        }
+
+        .btn-danger {
+            background: var(--error);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .session-info {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+
+        .session-info h3 {
+            font-size: 1rem;
+            margin-bottom: 10px;
+            color: var(--success);
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+        }
+
+        .info-label {
+            color: var(--text-secondary);
+        }
+
+        .info-value {
+            font-family: monospace;
+            font-size: 0.9rem;
+            word-break: break-all;
+        }
+
+        .ffmpeg-command {
+            background: var(--bg-primary);
+            border-radius: 6px;
+            padding: 12px;
+            margin-top: 10px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .copy-btn {
+            padding: 6px 12px;
+            font-size: 0.8rem;
+            margin-top: 8px;
+        }
+
+        .events-container {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .event-item {
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-left: 3px solid var(--accent);
+        }
+
+        .event-item.alert {
+            border-left-color: var(--warning);
+        }
+
+        .event-item.system {
+            border-left-color: var(--accent-secondary);
+        }
+
+        .event-item.health {
+            border-left-color: var(--success);
+        }
+
+        .event-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .event-type {
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.8rem;
+        }
+
+        .event-time {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+        }
+
+        .event-data {
+            font-family: monospace;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .status-connected {
+            background: var(--success);
+            color: var(--bg-primary);
+        }
+
+        .status-disconnected {
+            background: var(--text-secondary);
+            color: var(--bg-primary);
+        }
+
+        .status-streaming {
+            background: var(--accent);
+            color: white;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .metric-card {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+        }
+
+        .metric-value {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+
+        .metric-label {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin-top: 5px;
+        }
+
+        .health-score {
+            font-size: 3rem;
+            font-weight: 700;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .health-score.good {
+            color: var(--success);
+        }
+
+        .health-score.warning {
+            color: var(--warning);
+        }
+
+        .health-score.bad {
+            color: var(--error);
+        }
+
+        .no-events {
+            text-align: center;
+            color: var(--text-secondary);
+            padding: 40px;
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>SRT Ingest Gateway</h1>
+            <p>Real-time stream health monitoring demo</p>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="grid">
+            <!-- Left Column: Session Management -->
+            <div>
+                <div class="card">
+                    <h2>Create Session</h2>
+                    <form id="createSessionForm">
+                        <div class="form-group">
+                            <label for="pipeline">Pipeline</label>
+                            <select id="pipeline">
+                                <option value="demo_audio_quality_v1">Audio Quality Analysis</option>
+                                <option value="demo_av_sync_v1">Audio/Video Sync</option>
+                                <option value="custom">Custom</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="webhookUrl">Webhook URL (optional)</label>
+                            <input type="url" id="webhookUrl" placeholder="https://your-server.com/webhook">
+                        </div>
+                        <div class="form-group">
+                            <label>Stream Analysis</label>
+                            <div class="checkbox-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="audioEnabled" checked>
+                                    Audio
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="videoEnabled">
+                                    Video
+                                </label>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="maxDuration">Max Duration (seconds)</label>
+                            <input type="number" id="maxDuration" value="300" min="60" max="3600">
+                        </div>
+                        <button type="submit" class="btn-primary" id="createBtn">Create Session</button>
+                    </form>
+
+                    <div id="sessionInfo" class="session-info hidden">
+                        <h3>Session Active</h3>
+                        <div class="info-row">
+                            <span class="info-label">Session ID</span>
+                            <span class="info-value" id="sessionId"></span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Status</span>
+                            <span id="sessionStatus" class="status-badge status-disconnected">Created</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Expires</span>
+                            <span class="info-value" id="expiresAt"></span>
+                        </div>
+
+                        <h4 style="margin-top: 15px; margin-bottom: 10px;">FFmpeg Command</h4>
+                        <div class="ffmpeg-command" id="ffmpegCommand"></div>
+                        <button class="btn-primary copy-btn" onclick="copyCommand()">Copy Command</button>
+
+                        <button class="btn-danger" style="width: 100%; margin-top: 15px;" onclick="endSession()">End Session</button>
+                    </div>
+                </div>
+
+                <!-- Metrics Card -->
+                <div class="card" style="margin-top: 20px;">
+                    <h2>Gateway Metrics</h2>
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <div class="metric-value" id="activeSessions">0</div>
+                            <div class="metric-label">Active Sessions</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-value" id="totalEvents">0</div>
+                            <div class="metric-label">Events</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-value" id="uptime">0s</div>
+                            <div class="metric-label">Uptime</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Events -->
+            <div>
+                <div class="card">
+                    <h2>Health Score</h2>
+                    <div class="health-score good" id="healthScore">--</div>
+                    <div id="activeAlerts" style="text-align: center; color: var(--text-secondary);">
+                        No active alerts
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 20px;">
+                    <h2>Live Events</h2>
+                    <div class="events-container" id="eventsContainer">
+                        <div class="no-events">
+                            Create a session and start streaming to see events
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // Configuration
+        const API_BASE = window.location.origin;
+
+        // State
+        let currentSession = null;
+        let eventSource = null;
+        let metricsInterval = null;
+
+        // DOM Elements
+        const createForm = document.getElementById('createSessionForm');
+        const sessionInfo = document.getElementById('sessionInfo');
+        const eventsContainer = document.getElementById('eventsContainer');
+        const createBtn = document.getElementById('createBtn');
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            startMetricsPolling();
+        });
+
+        // Create Session
+        createForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            createBtn.disabled = true;
+            createBtn.textContent = 'Creating...';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/ingest/sessions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        pipeline: document.getElementById('pipeline').value,
+                        webhook_url: document.getElementById('webhookUrl').value || null,
+                        audio_enabled: document.getElementById('audioEnabled').checked,
+                        video_enabled: document.getElementById('videoEnabled').checked,
+                        max_duration_seconds: parseInt(document.getElementById('maxDuration').value)
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to create session');
+                }
+
+                currentSession = await response.json();
+                showSessionInfo(currentSession);
+                connectSSE(currentSession.session_id);
+
+            } catch (error) {
+                alert('Error: ' + error.message);
+            } finally {
+                createBtn.disabled = false;
+                createBtn.textContent = 'Create Session';
+            }
+        });
+
+        // Show Session Info
+        function showSessionInfo(session) {
+            document.getElementById('sessionId').textContent = session.session_id;
+            document.getElementById('expiresAt').textContent = new Date(session.expires_at).toLocaleString();
+            document.getElementById('ffmpegCommand').textContent = session.ffmpeg_command_transcode;
+            sessionInfo.classList.remove('hidden');
+            createForm.classList.add('hidden');
+            eventsContainer.innerHTML = '<div class="no-events">Waiting for stream...</div>';
+        }
+
+        // Copy FFmpeg Command
+        function copyCommand() {
+            const command = document.getElementById('ffmpegCommand').textContent;
+            navigator.clipboard.writeText(command).then(() => {
+                const btn = document.querySelector('.copy-btn');
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = 'Copy Command', 2000);
+            });
+        }
+
+        // End Session
+        async function endSession() {
+            if (!currentSession) return;
+
+            try {
+                await fetch(`${API_BASE}/api/ingest/sessions/${currentSession.session_id}`, {
+                    method: 'DELETE'
+                });
+            } catch (error) {
+                console.error('Error ending session:', error);
+            }
+
+            disconnectSSE();
+            sessionInfo.classList.add('hidden');
+            createForm.classList.remove('hidden');
+            currentSession = null;
+            document.getElementById('healthScore').textContent = '--';
+            document.getElementById('healthScore').className = 'health-score good';
+            document.getElementById('activeAlerts').textContent = 'No active alerts';
+            eventsContainer.innerHTML = '<div class="no-events">Create a session and start streaming to see events</div>';
+        }
+
+        // Connect to SSE
+        function connectSSE(sessionId) {
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            eventSource = new EventSource(`${API_BASE}/api/ingest/sessions/${sessionId}/events`);
+
+            const eventTypes = ['health', 'system', 'alert', 'event'];
+
+            eventSource.addEventListener('alert', (e) => {
+                const data = JSON.parse(e.data);
+                addEvent('alert', data);
+                updateStatus('streaming');
+            });
+
+            eventSource.addEventListener('health', (e) => {
+                const data = JSON.parse(e.data);
+                updateHealthScore(data.score, data.alerts || []);
+                addEvent('health', data);
+            });
+
+            eventSource.addEventListener('system', (e) => {
+                const data = JSON.parse(e.data);
+                addEvent('system', data);
+
+                if (data.type === 'stream_started') {
+                    updateStatus('streaming');
+                } else if (data.type === 'stream_ended') {
+                    updateStatus('disconnected');
+                }
+            });
+
+            eventSource.addEventListener('event', (e) => {
+                const data = JSON.parse(e.data);
+                addEvent('event', data);
+            });
+
+            eventSource.onerror = () => {
+                console.log('SSE connection error');
+                updateStatus('disconnected');
+            };
+        }
+
+        // Disconnect SSE
+        function disconnectSSE() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+        }
+
+        // Add Event to List
+        function addEvent(type, data) {
+            // Remove "no events" message
+            const noEvents = eventsContainer.querySelector('.no-events');
+            if (noEvents) noEvents.remove();
+
+            const eventDiv = document.createElement('div');
+            eventDiv.className = `event-item ${type}`;
+            eventDiv.innerHTML = `
+                <div class="event-header">
+                    <span class="event-type">${data.type || type}</span>
+                    <span class="event-time">${new Date().toLocaleTimeString()}</span>
+                </div>
+                <div class="event-data">${formatEventData(data)}</div>
+            `;
+
+            eventsContainer.insertBefore(eventDiv, eventsContainer.firstChild);
+
+            // Keep only last 50 events
+            while (eventsContainer.children.length > 50) {
+                eventsContainer.removeChild(eventsContainer.lastChild);
+            }
+        }
+
+        // Format Event Data
+        function formatEventData(data) {
+            const exclude = ['type', 'ts', 'timestamp'];
+            const parts = [];
+
+            for (const [key, value] of Object.entries(data)) {
+                if (exclude.includes(key)) continue;
+                if (typeof value === 'number') {
+                    parts.push(`${key}: ${value.toFixed(2)}`);
+                } else if (Array.isArray(value)) {
+                    parts.push(`${key}: [${value.join(', ')}]`);
+                } else {
+                    parts.push(`${key}: ${value}`);
+                }
+            }
+
+            return parts.join(' | ') || 'No additional data';
+        }
+
+        // Update Status Badge
+        function updateStatus(status) {
+            const badge = document.getElementById('sessionStatus');
+            badge.className = `status-badge status-${status}`;
+            badge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+        }
+
+        // Update Health Score
+        function updateHealthScore(score, alerts) {
+            const scoreEl = document.getElementById('healthScore');
+            const alertsEl = document.getElementById('activeAlerts');
+
+            const percentage = Math.round(score * 100);
+            scoreEl.textContent = `${percentage}%`;
+
+            if (score >= 0.8) {
+                scoreEl.className = 'health-score good';
+            } else if (score >= 0.5) {
+                scoreEl.className = 'health-score warning';
+            } else {
+                scoreEl.className = 'health-score bad';
+            }
+
+            if (alerts.length > 0) {
+                alertsEl.textContent = `Active: ${alerts.join(', ')}`;
+                alertsEl.style.color = 'var(--warning)';
+            } else {
+                alertsEl.textContent = 'No active alerts';
+                alertsEl.style.color = 'var(--text-secondary)';
+            }
+        }
+
+        // Metrics Polling
+        function startMetricsPolling() {
+            fetchMetrics();
+            metricsInterval = setInterval(fetchMetrics, 5000);
+        }
+
+        async function fetchMetrics() {
+            try {
+                const response = await fetch(`${API_BASE}/metrics`);
+                if (response.ok) {
+                    const metrics = await response.json();
+                    document.getElementById('activeSessions').textContent = metrics.active_sessions;
+                    document.getElementById('totalEvents').textContent = metrics.events_emitted;
+                    document.getElementById('uptime').textContent = formatUptime(metrics.uptime_secs);
+                }
+            } catch (error) {
+                console.error('Failed to fetch metrics:', error);
+            }
+        }
+
+        function formatUptime(seconds) {
+            if (seconds < 60) return `${seconds}s`;
+            if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+            return `${Math.floor(seconds / 3600)}h`;
+        }
+    </script>
+</body>
+</html>

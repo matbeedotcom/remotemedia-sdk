@@ -3,7 +3,7 @@
 //! This module generates the end-of-session summary that shows what the
 //! demo found and provides proof of value to the user.
 
-use crate::events::HealthEvent;
+use remotemedia_health_analyzer::HealthEvent;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

@@ -3762,6 +3762,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "remotemedia-health-analyzer"
+version = "0.4.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "remotemedia-ingest-rtmp"
 version = "0.4.0"
 dependencies = [
@@ -4504,6 +4515,7 @@ dependencies = [
  "clap",
  "dirs",
  "remotemedia-cli",
+ "remotemedia-health-analyzer",
  "remotemedia-ingest-rtmp",
  "remotemedia-runtime-core",
  "serde",

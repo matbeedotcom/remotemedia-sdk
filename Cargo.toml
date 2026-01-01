@@ -7,6 +7,8 @@ members = [
     "transports/webrtc", # WebRTC transport
     "transports/http",  # HTTP/REST transport with SSE
     "adapters/ingest-rtmp",  # RTMP ingestion adapter
+    "libs/stream-health-analyzer",  # Shared stream health analysis
+    "services/ingest-srt",  # SRT ingest gateway
 ]
 exclude = [
     "examples/*",  # Examples are independent projects demonstrating usage

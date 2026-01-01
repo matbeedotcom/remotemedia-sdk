@@ -22,6 +22,9 @@ remotemedia-cli = { path = "../remotemedia-cli" }
 # SDK core
 remotemedia-runtime-core = { workspace = true }
 
+# Shared health analyzer types
+remotemedia-health-analyzer = { workspace = true }
+
 # Ingestion adapter (optional for RTMP support)
 remotemedia-ingest-rtmp = { path = "../../../adapters/ingest-rtmp", optional = true }
 

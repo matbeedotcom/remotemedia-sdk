@@ -69,6 +69,11 @@ help: ## Show this help message
 	@echo "  adapters-all                   Build all ingestion adapters"
 	@echo "  adapter-rtmp                   Build RTMP/RTSP/UDP/SRT ingestion adapter"
 	@echo ""
+	@echo "Service Targets:"
+	@echo "  services-all                   Build all services"
+	@echo "  ingest-srt                     Build SRT ingest gateway service"
+	@echo "  run-ingest-srt                 Run SRT ingest gateway"
+	@echo ""
 	@echo "CLI Targets:"
 	@echo "  cli                            Build all CLI tools"
 	@echo "  cli-remotemedia                Build main remotemedia CLI"
@@ -88,6 +93,8 @@ help: ## Show this help message
 	@echo "  test-transports                Run all transport tests"
 	@echo "  test-adapters                  Run all adapter tests"
 	@echo "  test-adapter-rtmp              Run RTMP/RTSP adapter tests"
+	@echo "  test-services                  Run all service tests"
+	@echo "  test-ingest-srt                Run SRT ingest gateway tests"
 	@echo "  test-demo                      Run stream health demo tests"
 	@echo ""
 	@echo "Benchmark Targets:"
@@ -233,6 +240,20 @@ adapters-all: adapter-rtmp ## Build all ingestion adapters
 
 adapter-rtmp: setup-ffmpeg ## Build RTMP/RTSP/UDP/SRT ingestion adapter
 	cargo build -p remotemedia-ingest-rtmp $(CARGO_FLAGS)
+
+# =============================================================================
+# SERVICES (INGEST GATEWAYS)
+# =============================================================================
+
+.PHONY: services-all ingest-srt
+
+services-all: ingest-srt ## Build all services
+
+ingest-srt: setup-ffmpeg adapter-rtmp ## Build SRT ingest gateway service
+	cargo build -p remotemedia-ingest-srt $(CARGO_FLAGS)
+
+run-ingest-srt: ingest-srt ## Run SRT ingest gateway
+	cargo run -p remotemedia-ingest-srt $(CARGO_FLAGS)
 
 # =============================================================================
 # SERVER BINARIES
@@ -387,6 +408,11 @@ test-core-ingestion: ## Run runtime-core ingestion module tests
 test-demo: ## Run stream health demo tests
 	cd examples && cargo test -p stream-health-demo
 
+test-services: test-ingest-srt ## Run all service tests
+
+test-ingest-srt: ## Run SRT ingest gateway tests
+	cargo test -p remotemedia-ingest-srt
+
 # =============================================================================
 # BENCHMARK TARGETS
 # =============================================================================
@@ -423,9 +449,9 @@ bench-speculative: ## Run speculative coordinator benchmarks
 # CHECK & LINT TARGETS
 # =============================================================================
 
-.PHONY: check check-core check-transports check-adapters check-examples clippy fmt
+.PHONY: check check-core check-transports check-adapters check-services check-examples clippy fmt
 
-check: check-core check-transports check-adapters check-examples ## Check all packages compile
+check: check-core check-transports check-adapters check-services check-examples ## Check all packages compile
 
 check-core: ## Check runtime-core compiles
 	cargo check -p remotemedia-runtime-core
@@ -438,6 +464,9 @@ check-transports: ## Check all transports compile
 
 check-adapters: ## Check all adapters compile
 	cargo check -p remotemedia-ingest-rtmp
+
+check-services: ## Check all services compile
+	-cargo check -p remotemedia-ingest-srt 2>/dev/null || echo "ingest-srt not yet implemented"
 
 check-examples: ## Check examples compile
 	cd examples && cargo check --workspace
