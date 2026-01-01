@@ -1743,6 +1743,14 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
     // Register Speculative VAD Coordinator (integrates forwarding + Silero VAD)
     registry.register(Arc::new(SpeculativeVADCoordinatorFactory));
 
+    // Register speaker diarization node (identifies who spoke when)
+    #[cfg(feature = "speaker-diarization")]
+    registry.register(Arc::new(crate::nodes::speaker_diarization::SpeakerDiarizationNodeFactory));
+
+    // Register audio channel splitter node (routes audio by speaker)
+    registry.register(Arc::new(crate::nodes::audio_channel_splitter::AudioChannelSplitterNodeFactory));
+
+
     // Register Python TTS nodes
     registry.register(Arc::new(KokoroTTSNodeFactory));
     registry.register(Arc::new(VibeVoiceTTSNodeFactory));

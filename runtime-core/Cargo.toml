@@ -49,6 +49,9 @@ rwhisper = { version = "0.4" }
 rodio = "0.20"  # Match rwhisper's rodio version
 base64 = "0.22"
 
+# Speaker diarization (uses ONNX models) - using git for ort 2.x compatibility
+pyannote-rs = { git = "https://github.com/thewh1teagle/pyannote-rs", optional = true }
+
 # Video codec support (spec 012)
 ac-ffmpeg = { version = "0.19", optional = true }
 rav1e = { version = "0.8", optional = true }
@@ -142,6 +145,7 @@ tokio-stream = { workspace = true }
 default = ["multiprocess", "silero-vad", "docker", "video"]
 multiprocess = ["iceoryx2", "iceoryx2-bb-log", "iceoryx2-bb-container", "iceoryx2-bb-elementary"]
 silero-vad = ["ort"]
+speaker-diarization = ["ort", "dep:pyannote-rs"]
 grpc-client = ["tonic", "prost", "prost-types"]
 # Docker support integrated into multiprocess system
 docker = ["dep:bollard", "dep:tar", "dep:chrono", "dep:bytes", "dep:hyper", "dep:http-body-util", "dep:glob", "dep:rusqlite"]

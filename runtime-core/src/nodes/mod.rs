@@ -100,6 +100,17 @@ pub use speculative_vad_gate::{SpeculativeVADGate, SpeculativeVADGateConfig, VAD
 pub mod speculative_vad_coordinator;
 pub use speculative_vad_coordinator::{SpeculativeVADCoordinator, SpeculativeVADCoordinatorConfig};
 
+// Speaker diarization (identifies who spoke when)
+#[cfg(feature = "speaker-diarization")]
+pub mod speaker_diarization;
+#[cfg(feature = "speaker-diarization")]
+pub use speaker_diarization::{SpeakerDiarizationNode, SpeakerDiarizationConfig, SpeakerDiarizationNodeFactory};
+
+// Audio channel splitter (routes audio by speaker)
+pub mod audio_channel_splitter;
+pub use audio_channel_splitter::{AudioChannelSplitterNode, AudioChannelSplitterConfig, AudioChannelSplitterNodeFactory, OutputMode};
+
+
 pub use registry::{CompositeRegistry, NodeFactory as NodeFactoryTrait, RuntimeHint};
 pub use streaming_node::{
     AsyncNodeWrapper, AsyncStreamingNode, StreamingNode, StreamingNodeFactory,

@@ -1,5 +1,6 @@
 // Build script for runtime-core
 // - Auto-downloads FFmpeg libraries for ac-ffmpeg when video feature is enabled
+// - Auto-downloads speaker diarization ONNX models when speaker-diarization feature is enabled
 // - Sets FFMPEG_INCLUDE_DIR and FFMPEG_LIB_DIR environment variables
 
 use std::env;
@@ -11,8 +12,93 @@ fn main() {
     #[cfg(feature = "video")]
     setup_ffmpeg();
 
+    // Download speaker diarization models if feature is enabled
+    #[cfg(feature = "speaker-diarization")]
+    setup_speaker_diarization_models();
+
     println!("cargo:rerun-if-changed=build.rs");
 }
+
+#[cfg(feature = "speaker-diarization")]
+fn setup_speaker_diarization_models() {
+    use std::process::Command;
+
+    let out_dir = env::var("OUT_DIR").unwrap();
+    let models_dir = PathBuf::from(&out_dir).join("speaker_diarization_models");
+
+    fs::create_dir_all(&models_dir).expect("Failed to create speaker diarization models directory");
+
+    let models = [
+        (
+            "segmentation-3.0.onnx",
+            "https://github.com/thewh1teagle/pyannote-rs/releases/download/v0.1.0/segmentation-3.0.onnx"
+        ),
+        (
+            "wespeaker_en_voxceleb_CAM++.onnx",
+            "https://github.com/thewh1teagle/pyannote-rs/releases/download/v0.1.0/wespeaker_en_voxceleb_CAM++.onnx"
+        ),
+    ];
+
+    for (filename, url) in models {
+        let model_path = models_dir.join(filename);
+
+        if model_path.exists() {
+            println!("cargo:warning=Speaker diarization model {} already exists", filename);
+            continue;
+        }
+
+        println!("cargo:warning=Downloading speaker diarization model: {} ...", filename);
+
+        // Try curl first (available on most systems)
+        let status = Command::new("curl")
+            .args(&["-L", "-o", model_path.to_str().unwrap(), url])
+            .status();
+
+        if status.is_err() || !status.unwrap().success() {
+            // Try wget as fallback
+            let wget_status = Command::new("wget")
+                .args(&["-O", model_path.to_str().unwrap(), url])
+                .status();
+
+            if wget_status.is_err() || !wget_status.unwrap().success() {
+                // Try PowerShell on Windows
+                #[cfg(target_os = "windows")]
+                {
+                    let ps_status = Command::new("powershell")
+                        .args(&[
+                            "-Command",
+                            &format!(
+                                "Invoke-WebRequest -Uri '{}' -OutFile '{}'",
+                                url,
+                                model_path.display()
+                            ),
+                        ])
+                        .status();
+
+                    if ps_status.is_err() || !ps_status.unwrap().success() {
+                        panic!(
+                            "Failed to download speaker diarization model {}. Please download manually from {} to {}",
+                            filename, url, model_path.display()
+                        );
+                    }
+                }
+
+                #[cfg(not(target_os = "windows"))]
+                panic!(
+                    "Failed to download speaker diarization model {}. Please download manually from {} to {}",
+                    filename, url, model_path.display()
+                );
+            }
+        }
+
+        println!("cargo:warning=Downloaded speaker diarization model: {}", filename);
+    }
+
+    // Expose model directory path to code via env var
+    println!("cargo:rustc-env=SPEAKER_DIARIZATION_MODELS_DIR={}", models_dir.display());
+    println!("cargo:warning=Speaker diarization models directory: {}", models_dir.display());
+}
+
 
 #[cfg(feature = "video")]
 fn setup_ffmpeg() {
