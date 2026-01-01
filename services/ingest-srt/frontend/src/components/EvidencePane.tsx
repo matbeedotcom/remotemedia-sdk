@@ -21,8 +21,17 @@ export function EvidencePane() {
 
   if (!selectedEvent) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-text-muted p-8">
-        <p className="text-center">Select an event from the timeline to see details</p>
+      <div className="h-full flex flex-col">
+        {/* Header */}
+        <div className="p-4 border-b border-surface-elevated">
+          <h2 className="text-sm font-medium text-text-muted">Event details</h2>
+        </div>
+        {/* Empty state hint */}
+        <div className="flex-1 flex items-center justify-center p-8">
+          <p className="text-sm text-text-muted text-center">
+            Select an event from the timeline to inspect it.
+          </p>
+        </div>
       </div>
     );
   }
@@ -54,8 +63,8 @@ export function EvidencePane() {
         {/* Raw data (collapsed by default) */}
         <section>
           <details className="group">
-            <summary className="text-xs font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:text-text-secondary">
-              Raw Event Data
+            <summary className="text-xs font-medium text-text-muted cursor-pointer hover:text-text-secondary">
+              View raw event
             </summary>
             <pre className="mt-2 p-3 bg-surface-primary rounded-lg text-xs font-mono text-text-secondary overflow-x-auto">
               {JSON.stringify(selectedEvent, null, 2)}

@@ -140,3 +140,30 @@ export function formatTimestamp(timestampUs: number, startUs?: number): string {
   const secs = seconds % 60;
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 }
+
+/** Event group for timeline display */
+export interface EventGroup {
+  /** The representative event for this group */
+  event: AnyStreamEvent;
+  /** Number of consecutive events of this type */
+  count: number;
+  /** Whether this represents multiple events */
+  isGrouped: boolean;
+}
+
+/** Event types that can be grouped when consecutive */
+export const GROUPABLE_EVENT_TYPES = [
+  'audio.silence',
+  'audio.clipping',
+  'audio.low_volume',
+  'audio.channel_imbalance',
+  'timing.jitter_spike',
+  'timing.clock_drift',
+] as const;
+
+/** Check if an event should be displayed in the timeline */
+export function isDisplayableEvent(event: AnyStreamEvent): boolean {
+  // Filter out routine health pings - they update header but shouldn't flood timeline
+  if (event.event_type === 'session.health') return false;
+  return true;
+}

@@ -74,3 +74,15 @@ export interface GatewayMetrics {
   events_emitted: number;
   uptime_secs: number;
 }
+
+/** Session summary for completion state */
+export interface SessionSummary {
+  /** Duration in milliseconds */
+  durationMs: number;
+  /** Alert counts by event type */
+  alertCounts: Record<string, number>;
+  /** Total alerts detected */
+  totalAlerts: number;
+  /** Whether webhook was configured */
+  webhookConfigured: boolean;
+}

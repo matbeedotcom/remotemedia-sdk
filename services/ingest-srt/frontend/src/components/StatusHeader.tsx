@@ -5,71 +5,82 @@ export function StatusHeader() {
   const status = useSessionStore((s) => s.status);
   const healthStatus = useSessionStore((s) => s.healthStatus);
   const activeContributors = useSessionStore((s) => s.activeContributors);
+  const selectedPipeline = useSessionStore((s) => s.selectedPipeline);
 
   const isLive = status === 'streaming';
+  const isReady = (status === 'created' || status === 'connecting') && selectedPipeline;
+  const isDisconnected = status === 'disconnected';
 
-  // Determine display status
-  const displayStatus = isLive
-    ? healthStatus === 'unhealthy'
-      ? 'Session Unhealthy'
-      : healthStatus === 'degraded'
-        ? 'Session Degraded'
-        : 'No active issues'
-    : status === 'disconnected'
-      ? 'Disconnected'
-      : status === 'connecting'
-        ? 'Connecting...'
-        : status === 'created'
-          ? 'Waiting for stream...'
-          : null;
+  // Determine display status and label
+  let statusLabel: string;
+  let statusText: string;
 
-  if (status === 'idle') {
+  if (isLive) {
+    statusLabel = 'LIVE';
+    if (healthStatus === 'unhealthy') {
+      statusText = 'Session unhealthy';
+    } else if (healthStatus === 'degraded') {
+      statusText = 'Session degraded';
+    } else {
+      statusText = 'No active issues';
+    }
+  } else if (isDisconnected) {
+    statusLabel = 'DISCONNECTED';
+    statusText = 'Session complete';
+  } else if (isReady) {
+    statusLabel = 'READY';
+    statusText = 'Waiting for media';
+  } else {
+    // Idle state - don't show header
     return null;
   }
 
   return (
     <div
       className={clsx(
-        'fixed top-0 left-0 right-0 z-50 px-6 py-3 transition-all duration-300',
+        'px-6 py-3 transition-all duration-150',
         'flex items-center justify-between',
-        'backdrop-blur-sm border-b',
-        isLive && healthStatus === 'ok' && 'bg-surface-secondary/90 border-status-ok/20',
-        isLive && healthStatus === 'degraded' && 'bg-surface-secondary/90 border-status-warning/30',
-        isLive && healthStatus === 'unhealthy' && 'bg-surface-secondary/90 border-status-error/30',
-        !isLive && 'bg-surface-secondary/80 border-text-muted/20'
+        'border-b',
+        isLive && healthStatus === 'ok' && 'bg-surface-secondary border-status-ok/20',
+        isLive && healthStatus === 'degraded' && 'bg-surface-secondary border-status-warning/30',
+        isLive && healthStatus === 'unhealthy' && 'bg-surface-secondary border-status-error/30',
+        isReady && 'bg-surface-secondary border-status-info/20',
+        isDisconnected && 'bg-surface-secondary border-text-muted/20'
       )}
     >
-      <div className="flex items-center gap-4">
-        {/* Live indicator */}
-        {isLive && (
-          <div className="flex items-center gap-2">
-            <div
-              className={clsx(
-                'w-2 h-2 rounded-full animate-pulse-subtle',
-                healthStatus === 'ok' && 'bg-status-ok',
-                healthStatus === 'degraded' && 'bg-status-warning',
-                healthStatus === 'unhealthy' && 'bg-status-error'
-              )}
-            />
-            <span className="text-sm font-medium text-text-primary">LIVE</span>
-          </div>
-        )}
+      <div className="flex items-center gap-3">
+        {/* Status indicator */}
+        <div className="flex items-center gap-2">
+          <div
+            className={clsx(
+              'w-2 h-2 rounded-full',
+              isLive && 'animate-pulse-subtle',
+              isLive && healthStatus === 'ok' && 'bg-status-ok',
+              isLive && healthStatus === 'degraded' && 'bg-status-warning',
+              isLive && healthStatus === 'unhealthy' && 'bg-status-error',
+              isReady && 'bg-status-info',
+              isDisconnected && 'bg-text-muted'
+            )}
+          />
+          <span
+            className={clsx(
+              'text-sm font-medium',
+              isLive && 'text-text-primary',
+              isReady && 'text-status-info',
+              isDisconnected && 'text-text-muted'
+            )}
+          >
+            {statusLabel}
+          </span>
+        </div>
 
         {/* Status text */}
-        <span
-          className={clsx(
-            'text-sm',
-            isLive && healthStatus === 'ok' && 'text-status-ok',
-            isLive && healthStatus === 'degraded' && 'text-status-warning',
-            isLive && healthStatus === 'unhealthy' && 'text-status-error',
-            !isLive && 'text-text-secondary'
-          )}
-        >
-          {displayStatus}
+        <span className="text-sm text-text-secondary">
+          {statusText}
         </span>
       </div>
 
-      {/* Active contributors */}
+      {/* Active contributors (only when live and degraded/unhealthy) */}
       {isLive && activeContributors.length > 0 && (
         <div className="flex items-center gap-2 text-xs text-text-muted">
           <span>Contributors:</span>

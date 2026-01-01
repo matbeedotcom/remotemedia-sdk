@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useSessionStore } from '@/store/session';
-import { getEventCategory, formatTimestamp, type AnyStreamEvent, type EventCategory } from '@/types/events';
+import { getEventCategory, formatTimestamp, isDisplayableEvent, type AnyStreamEvent, type EventCategory } from '@/types/events';
 import clsx from 'clsx';
 
 /** Color mapping for event categories */
@@ -74,8 +74,11 @@ export function Timeline() {
 
   const startUs = startedAt ? startedAt * 1000 : undefined;
 
-  // Group consecutive events of the same type
-  const groupedEvents = useMemo(() => groupConsecutiveEvents(events), [events]);
+  // Filter to displayable events and group consecutive events of the same type
+  const groupedEvents = useMemo(() => {
+    const displayable = events.filter(isDisplayableEvent);
+    return groupConsecutiveEvents(displayable);
+  }, [events]);
 
   if (events.length === 0) {
     return (

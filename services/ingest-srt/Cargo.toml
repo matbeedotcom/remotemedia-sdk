@@ -63,3 +63,8 @@ ffmpeg-next = "7"
 [dev-dependencies]
 tokio-test = { workspace = true }
 tempfile = { workspace = true }
+
+[features]
+default = ["speaker-diarization"]
+# Speaker diarization requires ONNX models, pass through to runtime-core
+speaker-diarization = ["remotemedia-runtime-core/speaker-diarization"]

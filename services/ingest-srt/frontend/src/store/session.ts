@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, SessionStatus, GatewayMetrics } from '@/types/session';
+import type { Session, SessionStatus, GatewayMetrics, PipelineTemplate } from '@/types/session';
 import type { AnyStreamEvent, IncidentEvent } from '@/types/events';
 
 /** Grouped incident with its child events */
@@ -18,6 +18,12 @@ interface SessionState {
   session: Session | null;
   status: SessionStatus;
   startedAt: number | null;
+
+  // Pipeline selection (before session creation)
+  selectedPipeline: PipelineTemplate | null;
+
+  // Command lock state (after stream connects)
+  commandLocked: boolean;
 
   // Events
   events: AnyStreamEvent[];
@@ -41,6 +47,8 @@ interface SessionState {
   selectEvent: (eventId: string | null) => void;
   updateHealth: (score: number, status: 'ok' | 'degraded' | 'unhealthy', contributors: string[]) => void;
   setMetrics: (metrics: GatewayMetrics) => void;
+  selectPipeline: (pipeline: PipelineTemplate | null) => void;
+  lockCommand: () => void;
   reset: () => void;
 }
 
@@ -51,6 +59,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   session: null,
   status: 'idle',
   startedAt: null,
+  selectedPipeline: null,
+  commandLocked: false,
   events: [],
   selectedEventId: null,
   incidents: [],
@@ -96,7 +106,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     // Update status based on system events
     if (event.event_type === 'stream_started') {
-      set({ status: 'streaming' });
+      set({ status: 'streaming', commandLocked: true });
     } else if (event.event_type === 'stream_ended') {
       set({ status: 'disconnected' });
     }
@@ -113,11 +123,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   setMetrics: (metrics) => set({ metrics }),
 
+  selectPipeline: (pipeline) => set({ selectedPipeline: pipeline }),
+
+  lockCommand: () => set({ commandLocked: true }),
+
   reset: () =>
     set({
       session: null,
       status: 'idle',
       startedAt: null,
+      selectedPipeline: null,
+      commandLocked: false,
       events: [],
       selectedEventId: null,
       incidents: [],
