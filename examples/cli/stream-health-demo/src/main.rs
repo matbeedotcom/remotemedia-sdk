@@ -17,11 +17,17 @@
 //! ./remotemedia-demo --show-limits
 //!
 //! # Activate a license
-//! ./remotemedia-demo activate RMDA-XXXX-XXXX-XXXX
+//! ./remotemedia-demo activate --file license.json
+//!
+//! # Check license status
+//! ./remotemedia-demo --license-status
 //! ```
 
 // Include the generated pipeline and config
 include!(concat!(env!("OUT_DIR"), "/embedded_pipeline.rs"));
+
+// Include the embedded license (if any)
+include!(concat!(env!("OUT_DIR"), "/embedded_license.rs"));
 
 mod banner;
 mod demo_mode;
@@ -49,14 +55,23 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-/// Stream Health Monitor Demo
-///
-/// Analyze audio/video streams for drift, freezes, and health issues.
-/// Demo mode: 15-minute sessions, 3 per day. Activate a license for unlimited use.
+/// Get the CLI about text based on license status
+fn get_about_text() -> String {
+    if let Some(expiry) = EMBEDDED_LICENSE_EXPIRY {
+        format!(
+            "Analyze audio/video streams for drift, freezes, and health issues. Licensed until {}.",
+            expiry
+        )
+    } else {
+        "Analyze audio/video streams for drift, freezes, and health issues. Demo mode: 15-minute sessions, 3 per day. Activate a license for unlimited use.".to_string()
+    }
+}
+
+/// Stream Health Monitor
 #[derive(Parser)]
 #[command(name = BINARY_NAME)]
 #[command(author, version)]
-#[command(about = PIPELINE_DESCRIPTION)]
+#[command(about = get_about_text())]
 struct Args {
     /// Input source: file path, named pipe, or `-` for stdin
     #[arg(short = 'i', long, help = "Input file, pipe, or '-' for stdin")]
@@ -111,6 +126,14 @@ struct Args {
     #[arg(long, help = "Display demo mode limits")]
     show_limits: bool,
 
+    /// Show license status and exit
+    #[arg(long, help = "Display current license status")]
+    license_status: bool,
+
+    /// Use a specific license file for this session
+    #[arg(long, help = "Path to license file (overrides installed license)")]
+    license_file: Option<String>,
+
     /// Increase verbosity (-v, -vv, -vvv)
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
@@ -125,10 +148,11 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Activate a license key
+    /// Activate a license file
     Activate {
-        /// License key (RMDA-XXXX-XXXX-XXXX format)
-        key: String,
+        /// Path to the license.json file
+        #[arg(long, short = 'f')]
+        file: String,
     },
 }
 
@@ -185,15 +209,20 @@ async fn main() -> Result<()> {
         println!("  Warning before:    {} seconds", DemoConfig::WARNING_SECS);
         println!();
         println!("Activate a license to remove these limits:");
-        println!("  ./remotemedia-demo activate RMDA-XXXX-XXXX-XXXX");
+        println!("  ./remotemedia-demo activate --file license.json");
         println!();
         println!("Get a license at https://remotemedia.dev/license");
         return Ok(());
     }
 
+    // Handle --license-status
+    if args.license_status {
+        return license::show_license_status_command(args.license_file.as_deref());
+    }
+
     // Handle license activation subcommand
-    if let Some(Command::Activate { key }) = args.command {
-        return license::activate_license_command(&key);
+    if let Some(Command::Activate { file }) = args.command {
+        return license::activate_license_command(&file);
     }
 
     // Validate input is provided for analysis
@@ -493,7 +522,7 @@ async fn read_audio_input(args: &Args) -> Result<AudioInput> {
             Ok(AudioInput::Unary {
                 samples,
                 sample_rate,
-                channels: channels as u32,
+                channels,
             })
         }
     }

@@ -1,0 +1,6 @@
+# Never commit private keys!
+private.key
+*.key
+
+# Allow this .gitignore file
+!.gitignore

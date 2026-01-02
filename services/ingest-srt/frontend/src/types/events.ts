@@ -117,6 +117,9 @@ export type EventCategory =
   | 'system'
   | 'event';
 
+/** Drift/timing alert event types from HealthEmitterNode */
+const DRIFT_ALERT_TYPES = new Set(['drift', 'av_skew', 'cadence', 'freeze', 'dropouts']);
+
 /** Get category from event type */
 export function getEventCategory(eventType: string): EventCategory {
   if (eventType.startsWith('speech.') || eventType.startsWith('presence.')) return 'speech';
@@ -125,8 +128,10 @@ export function getEventCategory(eventType: string): EventCategory {
   if (eventType.startsWith('timing.')) return 'timing';
   if (eventType.startsWith('incident.')) return 'incident';
   if (eventType.startsWith('stream_') || eventType.startsWith('webhook')) return 'system';
+  // Audio quality and drift/timing alerts
   if (eventType.includes('silence') || eventType.includes('clipping') ||
-      eventType.includes('imbalance') || eventType.includes('low_volume')) return 'alert';
+      eventType.includes('imbalance') || eventType.includes('low_volume') ||
+      DRIFT_ALERT_TYPES.has(eventType)) return 'alert';
   return 'event';
 }
 
@@ -161,9 +166,18 @@ export const GROUPABLE_EVENT_TYPES = [
   'timing.clock_drift',
 ] as const;
 
+/** Event types that should NOT be displayed in the timeline (high-frequency status updates) */
+const HIDDEN_EVENT_TYPES = new Set([
+  'health',              // Health score updates (raw event type from backend)
+  'session.health',      // Health score updates (namespaced)
+  'timing.report',       // Periodic timing reports - only show anomalies (jitter_spike, clock_drift)
+  'conversation.flow',   // Periodic flow snapshots - too noisy for timeline
+  'speech.state',        // Continuous speech state - prefer transitions only
+]);
+
 /** Check if an event should be displayed in the timeline */
 export function isDisplayableEvent(event: AnyStreamEvent): boolean {
-  // Filter out routine health pings - they update header but shouldn't flood timeline
-  if (event.event_type === 'session.health') return false;
+  // Filter out routine status updates - they update header/metrics but shouldn't flood timeline
+  if (HIDDEN_EVENT_TYPES.has(event.event_type)) return false;
   return true;
 }

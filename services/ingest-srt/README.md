@@ -315,6 +315,12 @@ npm run type-check
 
 The production build is automatically served by the gateway at http://localhost:8080.
 
+## Prefer local-only (no service)? Use the desktop demo CLI
+
+If you don’t want to stream audio/video to any service endpoint, you can run the demo CLI and consume the **same event stream** as JSONL.
+
+See: `examples/cli/stream-health-demo/README.md` (binary: `remotemedia-demo`)
+
 ### E2E Tests
 
 End-to-end tests use Playwright and require:

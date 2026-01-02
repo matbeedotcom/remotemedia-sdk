@@ -157,7 +157,7 @@ impl SessionSummary {
         };
 
         // Estimate samples processed (rough estimate based on event count)
-        let samples_processed = (duration.as_secs() * 16000) as u64; // 16kHz sample rate
+        let samples_processed = duration.as_secs() * 16000; // 16kHz sample rate
 
         Self {
             duration,
@@ -245,6 +245,7 @@ impl SessionSummary {
     }
     
     /// Try to save report, returning a result without failing the session
+    #[allow(dead_code)] // Available for non-failing report saves
     pub fn try_save_report(&self, path: &Path) -> bool {
         match self.save_report(path) {
             Ok(()) => true,

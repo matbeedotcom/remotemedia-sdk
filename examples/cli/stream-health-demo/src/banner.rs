@@ -43,6 +43,7 @@ pub fn show_warning(remaining: Duration) {
 }
 
 /// Show the daily limit reached message
+#[allow(dead_code)] // Called when daily limit is reached
 pub fn show_daily_limit_reached(resets_in: Duration) {
     eprintln!();
     eprintln!("╔══════════════════════════════════════════════════════════════════╗");
@@ -57,6 +58,7 @@ pub fn show_daily_limit_reached(resets_in: Duration) {
 }
 
 /// Format a duration as human-readable string
+#[allow(dead_code)] // Used by show_daily_limit_reached
 pub fn format_duration(duration: Duration) -> String {
     let total_secs = duration.as_secs();
     

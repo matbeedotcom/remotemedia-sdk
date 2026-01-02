@@ -105,6 +105,7 @@ impl From<&HealthEmitterConfig> for DriftThresholds {
             samples_to_raise: 5,
             samples_to_clear: 10,
             slope_ema_alpha: 0.1,
+            warmup_samples: crate::executor::drift_metrics::DEFAULT_WARMUP_SAMPLES,
         }
     }
 }

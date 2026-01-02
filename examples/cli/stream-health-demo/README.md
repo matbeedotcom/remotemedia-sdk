@@ -126,19 +126,79 @@ REMOTEMEDIA_DEMO_UNLIMITED=1 ./remotemedia-demo --ingest rtsp://...
 
 ## License Activation
 
-```bash
-# Activate license
-./remotemedia-demo --activate RMDA-XXXX-XXXX-XXXX
+Evaluation licenses unlock unlimited usage and remove demo watermarks from outputs.
 
-# Check license status
-./remotemedia-demo --show-limits
+### Activating a License
+
+```bash
+# Activate license from a license file
+./remotemedia-demo activate --file license.json
+
+# Check current license status
+./remotemedia-demo --license-status
+```
+
+### Using a License for a Session
+
+```bash
+# Use a specific license file for this session only
+./remotemedia-demo --ingest rtsp://server/stream --license-file license.json
+
+# Normal usage (uses installed license from ~/.config/remotemedia/license.json)
+./remotemedia-demo --ingest rtsp://server/stream
+```
+
+### License Status
+
+```bash
+# View license details
+./remotemedia-demo --license-status
+
+# Example output (licensed):
+#   License Status: VALID
+#   Customer: ACME Corp
+#   License ID: 940a5af3-...
+#   Expires: 2027-01-01T23:59:59+00:00
+#   Entitlements:
+#     - Ingest schemes: file, udp, srt, rtmp
+#     - Video processing: allowed
+#
+# Example output (unlicensed):
+#   No license activated
+#   Running in demo mode (15 min sessions, 3 per day)
+```
+
+### Entitlements
+
+Licenses control access to features:
+
+| Entitlement | Description |
+|-------------|-------------|
+| `allow_ingest_schemes` | Permitted input sources (file, udp, srt, rtmp) |
+| `allow_video` | Video processing enabled |
+| `max_session_duration_secs` | Maximum session length (unlimited if not set) |
+
+### Watermarked Output
+
+All JSONL events include an `_rm` metadata block:
+
+```json
+{"_rm":{"demo":false,"customer_id":"c9f4e3d2-...","watermark":"EVAL-ACME"},"type":"health","ts":"...","score":1.0}
+```
+
+In demo mode:
+```json
+{"_rm":{"demo":true,"watermark":"DEMO-UNLICENSED"},"type":"health","ts":"...","score":1.0}
 ```
 
 ## Command Line Options
 
 ```
 USAGE:
-    remotemedia-demo [OPTIONS]
+    remotemedia-demo [OPTIONS] [COMMAND]
+
+COMMANDS:
+    activate              Activate a license from a file
 
 OPTIONS:
     -i, --input <FILE>       Input file (WAV/audio) or - for stdin
@@ -146,9 +206,13 @@ OPTIONS:
         --json               Output events as JSONL
     -q, --quiet              Suppress banner and status messages
         --show-limits        Show demo mode limits
-        --activate <KEY>     Activate license key
+        --license-status     Display current license status
+        --license-file <F>   Use specific license file for this session
     -h, --help               Print help
     -V, --version            Print version
+
+ACTIVATE OPTIONS:
+    --file <PATH>            Path to license.json file (required)
 ```
 
 ## Integration Examples

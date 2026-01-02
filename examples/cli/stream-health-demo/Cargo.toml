@@ -13,7 +13,9 @@ path = "src/main.rs"
 
 [build-dependencies]
 serde = { workspace = true }
+serde_json = { workspace = true }
 serde_yaml = { workspace = true }
+base64 = "0.22"
 
 [dependencies]
 # Reuse CLI library
@@ -51,13 +53,15 @@ tracing-subscriber = { workspace = true }
 chrono = { workspace = true }
 
 # Platform directories
-dirs = { workspace = true }
+dirs = "5.0"
 
 # URL parsing for ingest URIs
 url = { workspace = true }
 
-# License cryptography (stub for now - will implement later)
-# ed25519-dalek = { workspace = true }
+# License cryptography
+ed25519-dalek = { version = "2.2", default-features = false }
+base64 = "0.22"
+serde_json_canonicalizer = "0.3"
 
 [features]
 default = []

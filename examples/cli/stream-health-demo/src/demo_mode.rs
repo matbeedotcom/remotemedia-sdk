@@ -22,6 +22,7 @@ pub enum DemoError {
     DailyLimitReached(u32, u32),
     
     #[error("Failed to load demo state: {0}")]
+    #[allow(dead_code)] // Reserved for future use
     StateLoadError(String),
     
     #[error("Failed to save demo state: {0}")]
@@ -71,6 +72,7 @@ pub struct DemoLimits {
     /// Maximum sessions per calendar day
     pub max_sessions_per_day: u32,
     /// Maximum concurrent streams (always 1 in demo)
+    #[allow(dead_code)] // Reserved for future use
     pub concurrent_streams: u32,
 }
 
@@ -208,6 +210,7 @@ impl DemoController {
     }
 
     /// Check if warning should be shown (< 1 minute remaining)
+    #[allow(dead_code)] // Called by session warning display
     pub fn should_warn(&self) -> bool {
         if self.has_valid_license() {
             return false;
@@ -551,12 +554,15 @@ mod tests {
         
         // Add a valid license
         controller.license = Some(crate::license::License {
-            key: "test".to_string(),
-            plan: crate::license::LicensePlan::Pro,
+            version: 1,
+            customer_id: "test-customer".to_string(),
+            license_id: "test-license".to_string(),
             issued_at: Utc::now(),
-            expires_at: Some(Utc::now() + chrono::Duration::days(365)),
-            max_streams: 10,
-            signature: "test_signature".to_string(),
+            expires_at: Utc::now() + chrono::Duration::days(365),
+            not_before: None,
+            entitlements: crate::license::Entitlements::default(),
+            watermark: "TEST".to_string(),
+            signature: "dGVzdA==".to_string(), // base64 encoded "test"
         });
         
         // With license, should pass

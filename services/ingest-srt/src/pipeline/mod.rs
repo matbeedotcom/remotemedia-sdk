@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use remotemedia_health_analyzer::HealthEvent;
+use remotemedia_health_analyzer::{convert_json_to_health_events, HealthEvent};
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::manifest::Manifest;
 use remotemedia_runtime_core::transport::{PipelineExecutor, TransportData};
@@ -288,165 +288,24 @@ fn process_pipeline_output(
     Ok(())
 }
 
-/// Convert RuntimeData output to HealthEvent
+/// Convert RuntimeData output to HealthEvent(s)
+///
+/// Uses the centralized conversion from remotemedia_health_analyzer crate.
 fn convert_to_health_event(data: &RuntimeData) -> Option<HealthEvent> {
     match data {
         RuntimeData::Json(value) => {
-            // Try to parse as HealthEvent
-            if let Ok(event) = serde_json::from_value::<HealthEvent>(value.clone()) {
-                return Some(event);
+            // Use the library's conversion function which properly handles all event types
+            // including drift, av_skew, cadence, freeze, etc.
+            if let Some(events) = convert_json_to_health_events(value) {
+                // Return the first event (most common case is single event)
+                // For arrays, we could extend to return Vec<HealthEvent> if needed
+                events.into_iter().next()
+            } else {
+                None
             }
-
-            if let Some(obj) = value.as_object() {
-                // Check for _schema field from audio analysis nodes
-                let schema = obj.get("_schema").and_then(|v| v.as_str());
-
-                if let Some(schema) = schema {
-                    match schema {
-                        "silence_event" => {
-                            // Only emit if sustained silence or dropouts detected
-                            let is_sustained = obj.get("is_sustained_silence")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            let has_dropouts = obj.get("has_intermittent_dropouts")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-
-                            if is_sustained {
-                                let duration_ms = obj.get("silence_duration_ms")
-                                    .and_then(|v| v.as_f64())
-                                    .unwrap_or(0.0) as f32;
-                                let rms_db = obj.get("rms_db")
-                                    .and_then(|v| v.as_f64())
-                                    .unwrap_or(-60.0) as f32;
-                                debug!("Silence detected: {}ms at {}dB", duration_ms, rms_db);
-                                return Some(HealthEvent::silence(duration_ms, rms_db, None));
-                            }
-                            if has_dropouts {
-                                let count = obj.get("dropout_count")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as u32;
-                                debug!("Dropouts detected: {} in window", count);
-                                return Some(HealthEvent::dropouts(count, None));
-                            }
-                            return None;
-                        }
-                        "clipping_event" => {
-                            // Only emit if clipping detected
-                            let is_clipping = obj.get("is_clipping")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-
-                            if is_clipping {
-                                let ratio = obj.get("saturation_ratio")
-                                    .and_then(|v| v.as_f64())
-                                    .unwrap_or(0.0) as f32;
-                                let crest_db = obj.get("crest_factor_db")
-                                    .and_then(|v| v.as_f64())
-                                    .unwrap_or(0.0) as f32;
-                                debug!("Clipping detected: ratio={}, crest={}dB", ratio, crest_db);
-                                return Some(HealthEvent::clipping(ratio, crest_db, None));
-                            }
-                            return None;
-                        }
-                        "audio_level_event" => {
-                            // Only emit if low volume detected
-                            let is_low = obj.get("is_low_volume")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-
-                            if is_low {
-                                let rms_db = obj.get("rms_db")
-                                    .and_then(|v| v.as_f64())
-                                    .unwrap_or(-40.0) as f32;
-                                let peak_db = obj.get("peak_db")
-                                    .and_then(|v| v.as_f64())
-                                    .unwrap_or(-40.0) as f32;
-                                debug!("Low volume detected: rms={}dB, peak={}dB", rms_db, peak_db);
-                                return Some(HealthEvent::low_volume(rms_db, peak_db, None));
-                            }
-                            return None;
-                        }
-                        "channel_balance_event" => {
-                            // Only emit if imbalance or dead channel detected
-                            let is_imbalanced = obj.get("is_imbalanced")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            let has_dead = obj.get("has_dead_channel")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-
-                            if is_imbalanced || has_dead {
-                                let imbalance_db = obj.get("imbalance_db")
-                                    .and_then(|v| v.as_f64())
-                                    .unwrap_or(0.0) as f32;
-                                let dead_channel = obj.get("dead_channel")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("none")
-                                    .to_string();
-                                debug!("Channel imbalance: {}dB, dead={}", imbalance_db, dead_channel);
-                                return Some(HealthEvent::channel_imbalance(imbalance_db, dead_channel, None));
-                            }
-                            return None;
-                        }
-                        _ => {
-                            debug!("Unknown schema: {}", schema);
-                        }
-                    }
-                }
-
-                // Check for common event types in the JSON
-                // HealthEmitterNode uses "type" field, some other sources use "event_type"
-                let event_type = obj.get("type")
-                    .or_else(|| obj.get("event_type"))
-                    .and_then(|v| v.as_str());
-
-                if let Some(event_type) = event_type {
-                    match event_type {
-                        "health" => {
-                            let score = obj.get("score")
-                                .and_then(|v| v.as_f64())
-                                .unwrap_or(1.0);
-                            debug!("Converting health event with score: {}", score);
-                            return Some(HealthEvent::health(score, vec![]));
-                        }
-                        "silence" => {
-                            let duration_ms = obj.get("duration_ms")
-                                .and_then(|v| v.as_f64())
-                                .unwrap_or(0.0) as f32;
-                            let rms_db = obj.get("rms_db")
-                                .and_then(|v| v.as_f64())
-                                .unwrap_or(-60.0) as f32;
-                            return Some(HealthEvent::silence(duration_ms, rms_db, None));
-                        }
-                        "clipping" => {
-                            let ratio = obj.get("clipping_ratio")
-                                .and_then(|v| v.as_f64())
-                                .unwrap_or(0.0) as f32;
-                            return Some(HealthEvent::clipping(ratio, 0.0, None));
-                        }
-                        "low_volume" => {
-                            let rms_db = obj.get("rms_db")
-                                .and_then(|v| v.as_f64())
-                                .unwrap_or(-40.0) as f32;
-                            return Some(HealthEvent::low_volume(rms_db, rms_db, None));
-                        }
-                        "drift" | "freeze" | "cadence" | "av_skew" => {
-                            // These are also valid health-related events from HealthEmitterNode
-                            debug!("Converting {} event", event_type);
-                            return Some(HealthEvent::health(1.0, vec![]));
-                        }
-                        _ => {
-                            debug!("Unknown event type: {}", event_type);
-                        }
-                    }
-                }
-            }
-            None
         }
         RuntimeData::Audio { .. } => {
-            // For audio pass-through, we could analyze and emit events
-            // But typically the pipeline nodes handle this
+            // For audio pass-through, pipeline nodes handle analysis
             None
         }
         _ => None,

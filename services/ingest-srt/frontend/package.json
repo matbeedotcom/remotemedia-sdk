@@ -12,10 +12,11 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "clsx": "^2.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "zustand": "^5.0.0",
-    "clsx": "^2.1.0"
+    "react-router-dom": "^6.30.2",
+    "zustand": "^5.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

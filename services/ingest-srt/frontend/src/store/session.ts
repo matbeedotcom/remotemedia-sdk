@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Session, SessionStatus, GatewayMetrics, PipelineTemplate } from '@/types/session';
 import type { AnyStreamEvent, IncidentEvent } from '@/types/events';
+import { isDisplayableEvent } from '@/types/events';
 
 /** Grouped incident with its child events */
 export interface Incident {
@@ -52,7 +53,47 @@ interface SessionState {
   reset: () => void;
 }
 
-const MAX_EVENTS = 200;
+/** Maximum number of displayable events to keep in the timeline */
+const MAX_DISPLAYABLE_EVENTS = 200;
+
+/** System events that should never be evicted from the event list */
+const PRESERVED_EVENT_TYPES = new Set(['stream_started', 'stream_ended']);
+
+/**
+ * Smart event eviction that:
+ * 1. Never evicts preserved system events (stream_started, stream_ended)
+ * 2. Limits displayable events to MAX_DISPLAYABLE_EVENTS
+ * 3. Allows unlimited hidden events (they update metrics, not timeline)
+ */
+function evictOldEvents(events: AnyStreamEvent[]): AnyStreamEvent[] {
+  // Separate events into categories
+  const preserved: AnyStreamEvent[] = [];
+  const displayable: AnyStreamEvent[] = [];
+  const hidden: AnyStreamEvent[] = [];
+
+  for (const event of events) {
+    if (PRESERVED_EVENT_TYPES.has(event.event_type)) {
+      preserved.push(event);
+    } else if (isDisplayableEvent(event)) {
+      displayable.push(event);
+    } else {
+      hidden.push(event);
+    }
+  }
+
+  // Limit displayable events (keep newest)
+  const trimmedDisplayable = displayable.slice(0, MAX_DISPLAYABLE_EVENTS);
+
+  // Keep only recent hidden events (they're just for metrics, limit to 50)
+  const trimmedHidden = hidden.slice(0, 50);
+
+  // Merge back together, maintaining order (newest first)
+  const result = [...preserved, ...trimmedDisplayable, ...trimmedHidden];
+  // Re-sort by timestamp (newest first)
+  result.sort((a, b) => b.timestamp_us - a.timestamp_us);
+
+  return result;
+}
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   // Initial state
@@ -81,7 +122,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   addEvent: (event) => {
     const state = get();
-    const events = [event, ...state.events].slice(0, MAX_EVENTS);
+    const events = evictOldEvents([event, ...state.events]);
 
     // Handle incident events
     let incidents = state.incidents;

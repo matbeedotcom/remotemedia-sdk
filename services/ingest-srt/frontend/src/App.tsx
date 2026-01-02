@@ -2,6 +2,7 @@ import { useSessionStore } from '@/store/session';
 import { useSSE } from '@/hooks/useSSE';
 import { useMetrics } from '@/hooks/useMetrics';
 import { useSessionCreation } from '@/hooks/useSessionCreation';
+import { usePersonaFromURL } from '@/hooks/usePersona';
 import { StatusHeader } from '@/components/StatusHeader';
 import { Timeline } from '@/components/Timeline';
 import { EvidencePane } from '@/components/EvidencePane';
@@ -9,12 +10,16 @@ import { SessionSetup } from '@/components/SessionSetup';
 import { SessionSummary } from '@/components/SessionSummary';
 import { IngestCommand } from '@/components/IngestCommand';
 import { HealthScore } from '@/components/HealthScore';
+import { LocalCliCTA } from '@/components/LocalCliCTA';
 
 export default function App() {
   const session = useSessionStore((s) => s.session);
   const status = useSessionStore((s) => s.status);
   const selectedPipeline = useSessionStore((s) => s.selectedPipeline);
   const commandLocked = useSessionStore((s) => s.commandLocked);
+
+  // Initialize persona context from URL params or storage
+  usePersonaFromURL();
 
   // Connect SSE when session exists
   useSSE(session?.session_id ?? null);
@@ -52,10 +57,13 @@ export default function App() {
                 </div>
               )}
               {session ? (
-                <IngestCommand
-                  command={session.ffmpeg_command_copy}
-                  isLocked={commandLocked}
-                />
+                <div className="space-y-4">
+                  <IngestCommand
+                    command={session.ffmpeg_command_copy}
+                    isLocked={commandLocked}
+                  />
+                  {!commandLocked && <LocalCliCTA />}
+                </div>
               ) : isCreating ? (
                 <div className="text-sm text-text-muted">
                   Creating session...

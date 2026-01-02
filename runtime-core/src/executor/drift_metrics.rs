@@ -99,7 +99,12 @@ pub struct DriftThresholds {
     pub samples_to_clear: u32,
     /// EMA smoothing alpha for slope calculation (0.0-1.0)
     pub slope_ema_alpha: f64,
+    /// Number of samples to skip during warmup (alerts suppressed during this period)
+    pub warmup_samples: u32,
 }
+
+/// Default warmup period in samples (50 samples ~= 1-2 seconds at typical frame rates)
+pub const DEFAULT_WARMUP_SAMPLES: u32 = 50;
 
 impl Default for DriftThresholds {
     fn default() -> Self {
@@ -113,6 +118,7 @@ impl Default for DriftThresholds {
             samples_to_raise: 5,
             samples_to_clear: 10,
             slope_ema_alpha: 0.1,
+            warmup_samples: DEFAULT_WARMUP_SAMPLES,
         }
     }
 }
@@ -250,6 +256,8 @@ pub struct DriftMetrics {
     pub alert_states: AlertStates,
     /// Session start timestamp (monotonic)
     pub session_start_us: Option<u64>,
+    /// Total samples recorded (for warmup tracking)
+    pub total_samples: u32,
 }
 
 /// Collection of per-alert hysteresis states
@@ -298,6 +306,7 @@ impl DriftMetrics {
             current_av_skew_us: 0,
             alert_states,
             session_start_us: None,
+            total_samples: 0,
         }
     }
 
@@ -323,6 +332,9 @@ impl DriftMetrics {
         arrival_ts_us: u64,
         content_hash: Option<u64>,
     ) -> bool {
+        // Increment total samples counter
+        self.total_samples = self.total_samples.saturating_add(1);
+
         // Initialize session start if needed
         if self.session_start_us.is_none() {
             self.session_start_us = Some(arrival_ts_us);
@@ -375,6 +387,11 @@ impl DriftMetrics {
         // Update last timestamps
         self.clock_state.last_arrival_us = Some(arrival_ts_us);
         self.clock_state.last_media_us = Some(media_ts_us);
+
+        // Skip alert updates during warmup period to allow metrics to stabilize
+        if self.total_samples <= self.thresholds.warmup_samples {
+            return false;
+        }
 
         // Update alert states and return if any changed
         self.update_alerts()
@@ -753,6 +770,16 @@ impl DriftMetrics {
         self.clock_state.discontinuity_count
     }
 
+    /// Check if still in warmup period (alerts suppressed)
+    pub fn is_warming_up(&self) -> bool {
+        self.total_samples <= self.thresholds.warmup_samples
+    }
+
+    /// Get total samples recorded
+    pub fn total_samples(&self) -> u32 {
+        self.total_samples
+    }
+
     /// Export metrics in Prometheus format
     ///
     /// Note: stream_id is excluded from labels by default for cardinality safety.
@@ -1057,6 +1084,7 @@ mod tests {
             cadence_cv_threshold: 0.05,    // 5% threshold
             samples_to_raise: 2,           // Quick alert
             samples_to_clear: 5,
+            warmup_samples: 0,             // Disable warmup for test
             ..Default::default()
         };
         let mut metrics = DriftMetrics::new("multi_alert_stream".to_string(), thresholds);
@@ -1152,5 +1180,74 @@ mod tests {
         if metrics.alerts().contains(DriftAlerts::FREEZE) {
             assert!(json["alert_state"]["freeze"] == true, "freeze in JSON should match alerts()");
         }
+    }
+
+    #[test]
+    fn test_warmup_period_suppresses_alerts() {
+        // Test that alerts are suppressed during warmup period
+        let thresholds = DriftThresholds {
+            slope_threshold_ms_per_s: 1.0, // Very low threshold to trigger easily
+            samples_to_raise: 1,           // Immediate alert
+            warmup_samples: 10,            // 10 sample warmup
+            ..Default::default()
+        };
+        let mut metrics = DriftMetrics::new("warmup_test".to_string(), thresholds);
+
+        // Record samples that would normally trigger alerts (large drift)
+        for i in 0..5 {
+            let media_ts = i * 100_000;
+            let arrival_ts = i * 100_000 + (i * 50_000); // Increasing drift
+            metrics.record_sample(media_ts, arrival_ts, None);
+        }
+
+        // Should still be in warmup
+        assert!(metrics.is_warming_up(), "Should be in warmup period");
+        assert_eq!(metrics.total_samples(), 5);
+
+        // Alerts should be empty during warmup
+        assert!(
+            metrics.alerts().is_empty(),
+            "No alerts should be active during warmup"
+        );
+
+        // Continue recording samples to exit warmup
+        for i in 5..15 {
+            let media_ts = i * 100_000;
+            let arrival_ts = i * 100_000 + (i * 50_000); // Increasing drift
+            metrics.record_sample(media_ts, arrival_ts, None);
+        }
+
+        // Should no longer be in warmup
+        assert!(!metrics.is_warming_up(), "Should have exited warmup period");
+        assert_eq!(metrics.total_samples(), 15);
+
+        // Now alerts should be possible (drift slope should trigger)
+        // Note: may or may not have alerts depending on hysteresis
+    }
+
+    #[test]
+    fn test_warmup_zero_allows_immediate_alerts() {
+        // Test that setting warmup_samples=0 allows immediate alerts
+        let thresholds = DriftThresholds {
+            slope_threshold_ms_per_s: 0.1, // Very low threshold
+            samples_to_raise: 1,           // Immediate alert
+            warmup_samples: 0,             // No warmup
+            ..Default::default()
+        };
+        let mut metrics = DriftMetrics::new("no_warmup_test".to_string(), thresholds);
+
+        // Should not be in warmup after recording first sample
+        metrics.record_sample(0, 0, None);
+        assert!(!metrics.is_warming_up(), "Should not be in warmup with warmup_samples=0");
+
+        // Record samples with large drift
+        for i in 1..10 {
+            let media_ts = i * 100_000;
+            let arrival_ts = i * 100_000 + (i * 100_000); // Very large drift
+            metrics.record_sample(media_ts, arrival_ts, None);
+        }
+
+        // With zero warmup and low thresholds, alerts should be active
+        // (unless the measurements happen to be within threshold)
     }
 }

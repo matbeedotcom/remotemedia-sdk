@@ -237,7 +237,7 @@ impl AsyncStreamingNode for SpeakerDiarizationNode {
 
         #[cfg(feature = "speaker-diarization")]
         {
-            // Extract audio from RuntimeData
+            // Extract audio from RuntimeData - pass through non-audio data
             let (audio_samples, audio_sample_rate, audio_channels) = match &data {
                 RuntimeData::Audio {
                     samples,
@@ -246,9 +246,9 @@ impl AsyncStreamingNode for SpeakerDiarizationNode {
                     ..
                 } => (samples.clone(), *sample_rate, *channels),
                 _ => {
-                    return Err(Error::Execution(
-                        "SpeakerDiarizationNode requires audio input".into(),
-                    ));
+                    // Pass through non-audio data (e.g., video frames)
+                    callback(data)?;
+                    return Ok(1);
                 }
             };
 

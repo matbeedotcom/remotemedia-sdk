@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useSessionStore } from '@/store/session';
 import { getEventCategory, formatTimestamp, isDisplayableEvent, type AnyStreamEvent, type EventCategory } from '@/types/events';
+import { useEventCopy } from '@/hooks/useEventCopy';
 import clsx from 'clsx';
 
 /** Color mapping for event categories */
@@ -23,6 +24,16 @@ const GROUPABLE_EVENTS = new Set([
   'audio.channel_imbalance',
   'timing.jitter_spike',
   'timing.clock_drift',
+  // Drift/timing alerts from HealthEmitterNode
+  'drift',
+  'av_skew',
+  'cadence',
+  'freeze',
+  'dropouts',
+  'silence',
+  'clipping',
+  'low_volume',
+  'channel_imbalance',
 ]);
 
 /** Grouped event with count */
@@ -71,6 +82,7 @@ export function Timeline() {
   const selectedEventId = useSessionStore((s) => s.selectedEventId);
   const selectEvent = useSessionStore((s) => s.selectEvent);
   const startedAt = useSessionStore((s) => s.startedAt);
+  const { getEventLabel } = useEventCopy();
 
   const startUs = startedAt ? startedAt * 1000 : undefined;
 
@@ -104,6 +116,7 @@ export function Timeline() {
               isSelected={group.event.id === selectedEventId}
               onSelect={() => selectEvent(group.event.id === selectedEventId ? null : group.event.id)}
               startUs={startUs}
+              getEventLabel={getEventLabel}
             />
           ))}
         </div>
@@ -118,14 +131,15 @@ interface TimelineEventProps {
   isSelected: boolean;
   onSelect: () => void;
   startUs?: number;
+  getEventLabel: (eventType: string) => string;
 }
 
-function TimelineEvent({ event, count, isSelected, onSelect, startUs }: TimelineEventProps) {
+function TimelineEvent({ event, count, isSelected, onSelect, startUs, getEventLabel }: TimelineEventProps) {
   const category = getEventCategory(event.event_type);
   const time = formatTimestamp(event.timestamp_us, startUs);
 
-  // Get human-readable label
-  const label = getEventLabel(event);
+  // Get human-readable label (persona-aware via hook)
+  const label = getLabel(event, getEventLabel);
   const detail = getEventDetail(event);
 
   return (
@@ -167,45 +181,20 @@ function TimelineEvent({ event, count, isSelected, onSelect, startUs }: Timeline
   );
 }
 
-/** Get human-readable label for event */
-function getEventLabel(event: AnyStreamEvent): string {
-  switch (event.event_type) {
-    case 'stream_started':
-      return 'Stream started';
-    case 'stream_ended':
-      return 'Stream ended';
-    case 'speech.transition':
-    case 'speech.state':
-      return getSpeechLabel(event);
-    case 'conversation.flow':
-      return 'Conversation snapshot';
-    case 'session.health':
-      return `Session ${(event as { status: string }).status}`;
-    case 'timing.jitter_spike':
-      return 'Timing jitter spike';
-    case 'timing.clock_drift':
-      return 'Clock drift detected';
-    case 'timing.lead_jump':
-      return 'Lead time jump';
-    case 'timing.report':
-      return 'Timing report';
-    case 'audio.silence':
-      return 'Silence detected';
-    case 'audio.clipping':
-      return 'Audio clipping detected';
-    case 'audio.channel_imbalance':
-      return 'Channel imbalance detected';
-    case 'audio.low_volume':
-      return 'Low volume detected';
-    case 'incident.created':
-      return 'Incident started';
-    case 'incident.resolved':
-      return 'Incident resolved';
-    case 'webhook_delivered':
-      return 'Webhook delivered';
-    default:
-      return event.event_type.replace(/[._]/g, ' ');
+/** Get human-readable label for event using persona-aware copy */
+function getLabel(event: AnyStreamEvent, getEventLabel: (eventType: string) => string): string {
+  // Speech events need special handling for state-based labels
+  if (event.event_type === 'speech.transition' || event.event_type === 'speech.state') {
+    return getSpeechLabel(event);
   }
+
+  // Session health includes status in label
+  if (event.event_type === 'session.health') {
+    return `Session ${(event as { status: string }).status}`;
+  }
+
+  // Use persona-aware label for all other events
+  return getEventLabel(event.event_type);
 }
 
 /** Get detail text for event */
@@ -225,6 +214,25 @@ function getEventDetail(event: AnyStreamEvent): string | null {
     return `${e.jitter_ms.toFixed(0)}ms`;
   }
   if (event.event_type === 'session.health' && typeof e.score === 'number') {
+    return `Score: ${(e.score * 100).toFixed(0)}%`;
+  }
+  // Drift/timing alerts from HealthEmitterNode
+  if (event.event_type === 'drift' && typeof e.lead_ms === 'number') {
+    return `Lead: ${e.lead_ms}ms`;
+  }
+  if (event.event_type === 'av_skew' && typeof e.skew_ms === 'number') {
+    return `Skew: ${e.skew_ms}ms`;
+  }
+  if (event.event_type === 'cadence' && typeof e.cv === 'number') {
+    return `CV: ${(e.cv * 100).toFixed(0)}%`;
+  }
+  if (event.event_type === 'freeze' && typeof e.duration_ms === 'number') {
+    return `${(e.duration_ms / 1000).toFixed(1)}s`;
+  }
+  if (event.event_type === 'silence' && typeof e.duration_ms === 'number') {
+    return `${(e.duration_ms / 1000).toFixed(1)}s`;
+  }
+  if (event.event_type === 'health' && typeof e.score === 'number') {
     return `Score: ${(e.score * 100).toFixed(0)}%`;
   }
 

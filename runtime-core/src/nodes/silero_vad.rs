@@ -309,7 +309,7 @@ impl AsyncStreamingNode for SileroVADNode {
 
         #[cfg(feature = "silero-vad")]
         {
-            // Extract audio from RuntimeData
+            // Extract audio from RuntimeData - pass through non-audio data
             let (audio_samples, audio_sample_rate, audio_channels) = match &data {
                 RuntimeData::Audio {
                     samples,
@@ -318,9 +318,9 @@ impl AsyncStreamingNode for SileroVADNode {
                     ..
                 } => (samples.clone(), *sample_rate, *channels),
                 _ => {
-                    return Err(Error::Execution(
-                        "SileroVADNode requires audio input".into(),
-                    ))
+                    // Pass through non-audio data (e.g., video frames)
+                    callback(data)?;
+                    return Ok(1);
                 }
             };
 

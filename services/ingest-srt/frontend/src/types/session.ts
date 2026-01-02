@@ -12,6 +12,12 @@ export interface PipelineTemplate {
 /** Available pipelines */
 export const PIPELINES: PipelineTemplate[] = [
   {
+    id: 'ai_voice_agent_health_v1',
+    name: 'AI Voice Agent Health',
+    description: 'Agent response latency, turn-taking failures, silent agent errors',
+    category: 'business',
+  },
+  {
     id: 'contact_center_qa_v1',
     name: 'Contact Center QA',
     description: 'Speech presence, talk ratios, session health',

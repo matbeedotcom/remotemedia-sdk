@@ -96,7 +96,9 @@ thiserror = "1.0"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 sha2 = "0.10"
 hex = "0.4"
-base64 = "0.21"
+base64 = "0.22"
+ed25519-dalek = { version = "2.2", default-features = false }
+serde_json_canonicalizer = "0.3"
 num_cpus = "1.16"
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
 ctrlc = "3.4"
@@ -140,6 +142,9 @@ version = "0.8"
 
 [workspace.dependencies.chrono]
 version = "0.4"
+
+[workspace.dependencies.dirs]
+version = "5.0"
 
 [workspace.dependencies.hound]
 version = "3.5"

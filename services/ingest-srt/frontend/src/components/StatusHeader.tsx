@@ -1,4 +1,5 @@
 import { useSessionStore } from '@/store/session';
+import { useDemoMode } from '@/hooks/usePersona';
 import clsx from 'clsx';
 
 export function StatusHeader() {
@@ -6,6 +7,7 @@ export function StatusHeader() {
   const healthStatus = useSessionStore((s) => s.healthStatus);
   const activeContributors = useSessionStore((s) => s.activeContributors);
   const selectedPipeline = useSessionStore((s) => s.selectedPipeline);
+  const isDemo = useDemoMode();
 
   const isLive = status === 'streaming';
   const isReady = (status === 'created' || status === 'connecting') && selectedPipeline;
@@ -72,6 +74,11 @@ export function StatusHeader() {
           >
             {statusLabel}
           </span>
+          {isDemo && (
+            <span className="px-2 py-0.5 text-xs font-medium rounded bg-accent-speech/20 text-accent-speech">
+              DEMO
+            </span>
+          )}
         </div>
 
         {/* Status text */}
