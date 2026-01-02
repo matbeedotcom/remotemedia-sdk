@@ -360,10 +360,43 @@ impl HealthEvent {
     }
 }
 
+/// Watermark metadata block for demo/eval output identification.
+/// Embedded in all JSONL events and session reports.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Watermark {
+    /// Always true for demo/eval mode
+    pub demo: bool,
+    /// Customer identifier (None if unlicensed demo)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub customer_id: Option<String>,
+    /// License identifier (None if unlicensed demo)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license_id: Option<String>,
+    /// Watermark text
+    pub watermark: String,
+    /// License expiration (None if unlicensed demo)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+impl Watermark {
+    /// Create a demo mode watermark (no license)
+    pub fn demo() -> Self {
+        Self {
+            demo: true,
+            customer_id: None,
+            license_id: None,
+            watermark: "DEMO-UNLICENSED".to_string(),
+            expires_at: None,
+        }
+    }
+}
+
 /// Event emitter that writes JSONL to output and collects events for summary
 pub struct EventEmitter {
     writer: Box<dyn Write + Send>,
     events: Vec<HealthEvent>,
+    watermark: Option<Watermark>,
 }
 
 impl EventEmitter {
@@ -372,6 +405,7 @@ impl EventEmitter {
         Self {
             writer,
             events: Vec::new(),
+            watermark: None,
         }
     }
 
@@ -380,10 +414,31 @@ impl EventEmitter {
         Self::new(Box::new(std::io::stdout()))
     }
 
+    /// Set the watermark to embed in all output events
+    pub fn set_watermark(&mut self, watermark: Watermark) {
+        self.watermark = Some(watermark);
+    }
+
+    /// Get the current watermark (if any)
+    pub fn watermark(&self) -> Option<&Watermark> {
+        self.watermark.as_ref()
+    }
+
     /// Emit a health event as JSONL
     pub fn emit(&mut self, event: HealthEvent) -> std::io::Result<()> {
-        let line = serde_json::to_string(&event)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let line = if let Some(ref watermark) = self.watermark {
+            // Create an envelope with the event and watermark
+            let envelope = serde_json::json!({
+                "type": event.event_type(),
+                "ts": event.timestamp(),
+                "data": event,
+                "_rm": watermark
+            });
+            serde_json::to_string(&envelope)
+        } else {
+            serde_json::to_string(&event)
+        }
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         writeln!(self.writer, "{}", line)?;
         self.writer.flush()?;
         self.events.push(event);
@@ -504,5 +559,57 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("\"type\":\"drift\""));
         assert!(lines[1].contains("\"type\":\"health\""));
+    }
+
+    #[test]
+    fn test_event_emitter_with_watermark() {
+        use std::io::Cursor;
+        use std::sync::{Arc, Mutex};
+
+        let buffer = Arc::new(Mutex::new(Cursor::new(Vec::new())));
+
+        struct SharedBuffer(Arc<Mutex<Cursor<Vec<u8>>>>);
+
+        impl std::io::Write for SharedBuffer {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().write(buf)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.0.lock().unwrap().flush()
+            }
+        }
+
+        let buffer_clone = buffer.clone();
+        let mut emitter = EventEmitter::new(Box::new(SharedBuffer(buffer_clone)));
+
+        // Set a watermark
+        emitter.set_watermark(Watermark {
+            demo: true,
+            customer_id: Some("test-customer".to_string()),
+            license_id: Some("test-license".to_string()),
+            watermark: "EVAL-TEST".to_string(),
+            expires_at: Some("2027-01-01T00:00:00Z".to_string()),
+        });
+
+        emitter.emit(HealthEvent::drift(50, 50, None)).unwrap();
+
+        let inner = buffer.lock().unwrap();
+        let output = String::from_utf8(inner.get_ref().clone()).unwrap();
+
+        // Verify watermark is in output
+        assert!(output.contains("\"_rm\""));
+        assert!(output.contains("\"demo\":true"));
+        assert!(output.contains("\"customer_id\":\"test-customer\""));
+        assert!(output.contains("\"watermark\":\"EVAL-TEST\""));
+    }
+
+    #[test]
+    fn test_demo_watermark() {
+        let watermark = Watermark::demo();
+        assert!(watermark.demo);
+        assert!(watermark.customer_id.is_none());
+        assert!(watermark.license_id.is_none());
+        assert_eq!(watermark.watermark, "DEMO-UNLICENSED");
+        assert!(watermark.expires_at.is_none());
     }
 }

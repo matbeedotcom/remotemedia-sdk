@@ -23,6 +23,6 @@ mod events;
 mod sink;
 mod conversion;
 
-pub use events::{HealthEvent, EventEmitter};
+pub use events::{HealthEvent, EventEmitter, Watermark};
 pub use sink::{EventSink, TerminalSink, ChannelSink};
 pub use conversion::convert_json_to_health_events;
