@@ -81,6 +81,7 @@ help: ## Show this help message
 	@echo "  cli-demo                       Build stream health demo (audio only)"
 	@echo "  cli-demo-rtmp                  Build stream health demo with RTMP/RTSP/UDP"
 	@echo "  cli-embed                      Build pipeline-embed (set PIPELINE_YAML)"
+	@echo "  cli-license-signer             Build license signing tool (internal)"
 	@echo ""
 	@echo "Test Targets:"
 	@echo "  test                           Run all tests"
@@ -276,11 +277,11 @@ server-webrtc: ## Build WebRTC server binary
 # EXAMPLE/CLI TARGETS
 # =============================================================================
 
-.PHONY: cli cli-remotemedia cli-transcribe cli-embed cli-demo cli-demo-rtmp examples-all
+.PHONY: cli cli-remotemedia cli-transcribe cli-embed cli-demo cli-demo-rtmp cli-license-signer examples-all
 
 examples-all: cli ## Build all examples
 
-cli: cli-remotemedia cli-transcribe cli-demo ## Build all CLI tools
+cli: cli-remotemedia cli-transcribe cli-demo ## Build all CLI tools (excludes license-signer)
 
 cli-remotemedia: ## Build the main remotemedia CLI
 	cd examples && cargo build -p remotemedia-cli $(CARGO_FLAGS)
@@ -293,6 +294,9 @@ cli-demo: setup-ffmpeg ## Build stream health demo (audio only)
 
 cli-demo-rtmp: setup-ffmpeg adapter-rtmp ## Build stream health demo with RTMP/RTSP/UDP support
 	cd examples && cargo build -p stream-health-demo --features rtmp $(CARGO_FLAGS)
+
+cli-license-signer: ## Build license signing tool (internal use)
+	cd tools/license-signer && cargo build $(CARGO_FLAGS)
 
 ifeq ($(OS),Windows_NT)
 cli-embed: setup-ffmpeg ## Build pipeline-embed (set PIPELINE_YAML env var)
