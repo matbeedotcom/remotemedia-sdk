@@ -59,8 +59,10 @@ use remotemedia_runtime_core::ingestion::{
 use remotemedia_runtime_core::Error;
 
 mod demuxer;
+pub mod audio_samples;
 
 pub use demuxer::RtmpDemuxer;
+pub use audio_samples::{sample_formats, convert_packed_samples_to_f32, convert_planar_samples_to_f32, ffmpeg_error_string};
 
 /// Streaming protocol ingest plugin
 ///

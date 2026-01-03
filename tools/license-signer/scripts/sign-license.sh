@@ -20,6 +20,7 @@
 #   --bundle              Build and bundle the CLI binary with the license
 #   --bundle-dir PATH     Output directory for bundle (default: ./dist/<customer>)
 #   --target TARGET       Cross-compile target (e.g., x86_64-unknown-linux-gnu)
+#   --pipeline NAME       Pipeline to embed (name like demo_audio_quality_v1, or path)
 
 set -e
 
@@ -42,6 +43,7 @@ NOT_BEFORE=""
 BUNDLE=false
 BUNDLE_DIR=""
 TARGET=""
+PIPELINE=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -100,6 +102,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --target)
             TARGET="$2"
+            shift 2
+            ;;
+        --pipeline)
+            PIPELINE="$2"
             shift 2
             ;;
         --help|-h)
@@ -219,6 +225,12 @@ if [[ "$BUNDLE" == "true" ]]; then
     fi
     export REMOTEMEDIA_PUBLIC_KEY="$PUBLIC_KEY_FILE"
 
+    # Set pipeline if specified
+    if [[ -n "$PIPELINE" ]]; then
+        export REMOTEMEDIA_PIPELINE="$PIPELINE"
+        echo "Using pipeline: $PIPELINE"
+    fi
+
     CARGO_BUILD_CMD="cargo build --release"
     if [[ -n "$TARGET" ]]; then
         CARGO_BUILD_CMD="$CARGO_BUILD_CMD --target $TARGET"
@@ -227,7 +239,7 @@ if [[ "$BUNDLE" == "true" ]]; then
         BINARY_PATH="$EXAMPLES_TARGET/release/remotemedia-demo"
     fi
 
-    echo "Running: REMOTEMEDIA_LICENSE=$OUTPUT REMOTEMEDIA_PUBLIC_KEY=$PUBLIC_KEY_FILE $CARGO_BUILD_CMD"
+    echo "Running: REMOTEMEDIA_LICENSE=$OUTPUT REMOTEMEDIA_PUBLIC_KEY=$PUBLIC_KEY_FILE${PIPELINE:+ REMOTEMEDIA_PIPELINE=$PIPELINE} $CARGO_BUILD_CMD"
     eval $CARGO_BUILD_CMD
 
     # Create bundle directory

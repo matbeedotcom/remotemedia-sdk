@@ -8,6 +8,7 @@ members = [
     "transports/http",  # HTTP/REST transport with SSE
     "adapters/ingest-rtmp",  # RTMP ingestion adapter
     "libs/stream-health-analyzer",  # Shared stream health analysis
+    "libs/pipeline-runner",  # Shared pipeline execution
     "services/ingest-srt",  # SRT ingest gateway
 ]
 exclude = [
@@ -142,6 +143,7 @@ version = "0.8"
 
 [workspace.dependencies.chrono]
 version = "0.4"
+features = ["serde"]
 
 [workspace.dependencies.dirs]
 version = "5.0"

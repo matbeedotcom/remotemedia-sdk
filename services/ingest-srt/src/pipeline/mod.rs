@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use remotemedia_health_analyzer::{convert_json_to_health_events, HealthEvent};
+use remotemedia_pipeline_runner::convert_output_to_health_event;
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::manifest::Manifest;
 use remotemedia_runtime_core::transport::{PipelineExecutor, TransportData};
@@ -266,8 +266,8 @@ fn process_pipeline_output(
 ) -> Result<(), PipelineError> {
     let data = output.data;
 
-    // Convert RuntimeData to HealthEvent if applicable
-    if let Some(event) = convert_to_health_event(&data) {
+    // Use the shared library's conversion function
+    if let Some(event) = convert_output_to_health_event(&data) {
         match session.event_tx.send(event) {
             Ok(subscriber_count) => {
                 debug!(
@@ -286,30 +286,6 @@ fn process_pipeline_output(
     }
 
     Ok(())
-}
-
-/// Convert RuntimeData output to HealthEvent(s)
-///
-/// Uses the centralized conversion from remotemedia_health_analyzer crate.
-fn convert_to_health_event(data: &RuntimeData) -> Option<HealthEvent> {
-    match data {
-        RuntimeData::Json(value) => {
-            // Use the library's conversion function which properly handles all event types
-            // including drift, av_skew, cadence, freeze, etc.
-            if let Some(events) = convert_json_to_health_events(value) {
-                // Return the first event (most common case is single event)
-                // For arrays, we could extend to return Vec<HealthEvent> if needed
-                events.into_iter().next()
-            } else {
-                None
-            }
-        }
-        RuntimeData::Audio { .. } => {
-            // For audio pass-through, pipeline nodes handle analysis
-            None
-        }
-        _ => None,
-    }
 }
 
 /// Pipeline execution errors
@@ -334,23 +310,27 @@ mod tests {
 
     #[test]
     fn test_convert_health_event() {
+        // Uses "type" field, not "event_type", and requires "alerts" field
         let json = serde_json::json!({
-            "event_type": "health",
-            "score": 0.95
+            "type": "health",
+            "score": 0.95,
+            "alerts": []
         });
         let data = RuntimeData::Json(json);
-        let event = convert_to_health_event(&data);
+        let event = convert_output_to_health_event(&data);
         assert!(event.is_some());
     }
 
     #[test]
     fn test_convert_silence_event() {
+        // Silence requires duration_ms and rms_db
         let json = serde_json::json!({
-            "event_type": "silence",
-            "duration_ms": 5000
+            "type": "silence",
+            "duration_ms": 5000.0,
+            "rms_db": -60.0
         });
         let data = RuntimeData::Json(json);
-        let event = convert_to_health_event(&data);
+        let event = convert_output_to_health_event(&data);
         assert!(event.is_some());
     }
 }

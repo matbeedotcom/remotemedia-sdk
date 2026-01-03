@@ -34,9 +34,12 @@ mod demo_mode;
 mod license;
 mod summary;
 
+#[cfg(feature = "srt")]
+mod srt_listener;
+
 // Use shared health analyzer types
 use remotemedia_health_analyzer as events;
-use remotemedia_health_analyzer::convert_json_to_health_events;
+use remotemedia_pipeline_runner::convert_output_to_health_events;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -77,10 +80,15 @@ struct Args {
     #[arg(short = 'i', long, help = "Input file, pipe, or '-' for stdin")]
     input: Option<String>,
 
-    /// Ingest from URI (file://, rtmp://, rtmps://)
-    /// Uses the pluggable ingestion framework with auto-decoding
+    /// Ingest from URI (file://, rtmp://, rtmps://)\n    /// Uses the pluggable ingestion framework with auto-decoding
     #[arg(long, help = "Ingest URI (file://, rtmp://, rtmps://)")]
     ingest: Option<String>,
+
+    /// Listen for incoming SRT connection on specified port
+    /// Accepts MPEG-TS data from FFmpeg or other SRT clients
+    #[cfg(feature = "srt")]
+    #[arg(long, help = "Listen for SRT on this port (e.g., 9000)")]
+    listen_srt: Option<u16>,
 
     /// Output destination for JSONL events [default: stdout]
     #[arg(short = 'o', long, default_value = "-", help = "Output file or '-' for stdout")]
@@ -252,6 +260,10 @@ async fn main() -> Result<()> {
         if !args.json {
             banner::show_licensed_banner();
         }
+        #[cfg(feature = "srt")]
+        if args.listen_srt.is_some() {
+            return run_licensed_srt_session(&args).await;
+        }
         if args.ingest.is_some() {
             run_licensed_ingest_session(&args).await
         } else {
@@ -271,6 +283,15 @@ async fn main() -> Result<()> {
         }
 
         // Run with timer
+        #[cfg(feature = "srt")]
+        let result = if args.listen_srt.is_some() {
+            run_demo_srt_session(&args, &mut demo).await
+        } else if args.ingest.is_some() {
+            run_demo_ingest_session(&args, &mut demo).await
+        } else {
+            run_demo_session(&args, &mut demo).await
+        };
+        #[cfg(not(feature = "srt"))]
         let result = if args.ingest.is_some() {
             run_demo_ingest_session(&args, &mut demo).await
         } else {
@@ -415,6 +436,195 @@ async fn run_licensed_ingest_session(args: &Args) -> Result<()> {
 
     tracing::info!("Session ended");
     Ok(())
+}
+
+// ============================================================================
+// SRT Listener Mode
+// ============================================================================
+
+#[cfg(feature = "srt")]
+async fn run_licensed_srt_session(args: &Args) -> Result<()> {
+    let port = args.listen_srt.unwrap();
+    
+    // Setup Ctrl+C handler
+    let (ctrlc_tx, mut ctrlc_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        let _ = ctrlc_tx.send(());
+    });
+
+    tracing::info!("Running SRT listener in licensed mode (no time limit)");
+    tracing::info!("Press Ctrl+C to stop");
+
+    // Create a dummy timer that never fires
+    let (_never_tx, mut never_rx) = tokio::sync::oneshot::channel::<()>();
+
+    // Run SRT analysis
+    let (_emitter, _collected_events) = run_srt_analysis(args, port, &mut never_rx, &mut ctrlc_rx).await?;
+
+    tracing::info!("Session ended");
+    Ok(())
+}
+
+#[cfg(feature = "srt")]
+async fn run_demo_srt_session(
+    args: &Args,
+    demo: &mut demo_mode::DemoController,
+) -> Result<Vec<events::HealthEvent>> {
+    let port = args.listen_srt.unwrap();
+    let time_limit = demo.time_remaining();
+
+    // Setup timer for demo mode time limit
+    let (timer_tx, mut timer_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        tokio::time::sleep(time_limit).await;
+        let _ = timer_tx.send(());
+    });
+
+    // Setup Ctrl+C handler
+    let (ctrlc_tx, mut ctrlc_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        let _ = ctrlc_tx.send(());
+    });
+
+    tracing::info!("Running SRT listener in demo mode (time limit: {:?})", time_limit);
+
+    // Run SRT analysis
+    let (_emitter, collected_events) = run_srt_analysis(args, port, &mut timer_rx, &mut ctrlc_rx).await?;
+
+    Ok(collected_events)
+}
+
+#[cfg(feature = "srt")]
+async fn run_srt_analysis(
+    args: &Args,
+    port: u16,
+    timer_shutdown: &mut tokio::sync::oneshot::Receiver<()>,
+    ctrlc_shutdown: &mut tokio::sync::oneshot::Receiver<()>,
+) -> Result<(events::EventEmitter, Vec<events::HealthEvent>)> {
+    use srt_listener::SimpleSrtListener;
+    use remotemedia_ingest_srt::demuxer::{MpegTsDemuxer, DecodedAudio};
+    use tokio::sync::mpsc;
+
+    // Setup output writer
+    let writer: Box<dyn std::io::Write + Send> = if args.output == "-" {
+        Box::new(std::io::stdout())
+    } else {
+        Box::new(std::fs::File::create(&args.output)
+            .context("Failed to create output file")?)
+    };
+    let mut emitter = events::EventEmitter::new(writer);
+
+    // Create manifest for health pipeline
+    let manifest = create_health_manifest(args);
+    
+    // Listen for SRT connection
+    let listener = SimpleSrtListener::new(port);
+    let connection = listener.accept_single().await
+        .map_err(|e| anyhow::anyhow!("SRT listener error: {}", e))?;
+
+    tracing::info!("SRT connection established, streamid: {:?}", connection.streamid);
+
+    // Get data receiver from connection
+    let mut data_rx = connection.into_data_receiver();
+
+    // Create demuxer channels
+    let (demux_input_tx, demux_input_rx) = mpsc::channel::<Vec<u8>>(64);
+    let (demux_output_tx, mut demux_output_rx) = mpsc::channel::<DecodedAudio>(64);
+
+    // Spawn demuxer
+    let session_id = "srt-cli".to_string();
+    let demuxer = MpegTsDemuxer::new(
+        demux_input_rx,
+        demux_output_tx,
+        args.sample_rate,
+        args.channels,
+        session_id.clone(),
+    );
+    tokio::spawn(async move {
+        demuxer.run().await;
+    });
+
+    // Create pipeline runner and session
+    let runner = pipeline::create_runner()?;
+    let manifest_arc = Arc::new(manifest);
+    let mut session = pipeline::StreamingSession::new(&runner, manifest_arc).await?;
+
+    let mut collected_events = Vec::new();
+    let start_time = Instant::now();
+
+    loop {
+        tokio::select! {
+            biased;
+
+            // Check for timer shutdown
+            _ = &mut *timer_shutdown => {
+                tracing::info!("Time limit reached");
+                break;
+            }
+            // Check for Ctrl+C
+            _ = &mut *ctrlc_shutdown => {
+                tracing::info!("Interrupted by user");
+                break;
+            }
+            // Receive raw MPEG-TS data from SRT
+            maybe_data = data_rx.recv() => {
+                match maybe_data {
+                    Some(data) => {
+                        // Forward to demuxer
+                        if demux_input_tx.send(data).await.is_err() {
+                            tracing::debug!("Demuxer channel closed");
+                            break;
+                        }
+                    }
+                    None => {
+                        tracing::info!("SRT stream ended");
+                        break;
+                    }
+                }
+            }
+            // Receive decoded audio from demuxer
+            maybe_audio = demux_output_rx.recv() => {
+                match maybe_audio {
+                    Some(audio) => {
+                        // Create RuntimeData from decoded audio
+                        let data = RuntimeData::Audio {
+                            samples: audio.samples,
+                            sample_rate: audio.sample_rate,
+                            channels: audio.channels,
+                            stream_id: None,
+                            timestamp_us: Some(audio.timestamp_us),
+                            arrival_ts_us: None,
+                        };
+
+                        // Send to pipeline
+                        if let Err(e) = session.send(data).await {
+                            tracing::warn!("Failed to send to pipeline: {}", e);
+                        }
+
+                        // Try to receive any outputs
+                        while let Ok(Some(output)) = session.try_recv() {
+                            let events_to_emit = convert_output_to_health_events(&output);
+                            for event in events_to_emit {
+                                collected_events.push(event.clone());
+                                if let Err(e) = emitter.emit(event) {
+                                    tracing::warn!("Failed to emit event: {}", e);
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        // Demuxer finished
+                        tracing::debug!("Demuxer stream ended");
+                    }
+                }
+            }
+        }
+    }
+
+    tracing::info!("SRT session processed for {:?}", start_time.elapsed());
+    Ok((emitter, collected_events))
 }
 
 /// Create the health monitoring manifest with configured thresholds
@@ -823,25 +1033,17 @@ async fn run_streaming_analysis(
 
 /// Process health output from the pipeline and emit events
 fn process_health_output(output: RuntimeData, emitter: &mut events::EventEmitter) -> Result<()> {
-    match output {
-        RuntimeData::Json(json) => {
-            tracing::debug!("Received JSON output: {}", json);
-            // Convert JSON health events to HealthEvent enum
-            if let Some(events) = convert_json_to_health_events(&json) {
-                for event in events {
-                    tracing::debug!("Emitting event: {:?}", event);
-                    if let Err(e) = emitter.emit(event) {
-                        tracing::warn!("Failed to emit event: {}", e);
-                    }
-                }
-            } else {
-                tracing::debug!("No events converted from JSON");
+    // Use the shared library's conversion function
+    let events = convert_output_to_health_events(&output);
+    if !events.is_empty() {
+        for event in events {
+            tracing::debug!("Emitting event: {:?}", event);
+            if let Err(e) = emitter.emit(event) {
+                tracing::warn!("Failed to emit event: {}", e);
             }
         }
-        _ => {
-            // Ignore non-JSON outputs (e.g., audio passthrough)
-            tracing::trace!("Ignoring non-JSON output");
-        }
+    } else {
+        tracing::trace!("No events converted from output");
     }
     Ok(())
 }

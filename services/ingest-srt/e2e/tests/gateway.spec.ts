@@ -23,45 +23,83 @@ test.describe('SRT Ingest Gateway E2E', () => {
     });
   });
 
-  test.describe('Demo UI (React)', () => {
-    test('loads demo page', async ({ page }) => {
+  test.describe('Landing Page', () => {
+    test('loads landing page with persona content', async ({ page }) => {
       await page.goto('/');
 
       // Check page title
       await expect(page).toHaveTitle(/Stream Health Monitor/);
 
+      // Check main landing page elements are present
+      await expect(page.getByRole('heading', { name: /Observe the health of live media/ })).toBeVisible();
+      await expect(page.getByRole('button', { name: /Observe a live stream/ }).first()).toBeVisible();
+    });
+
+    test('CTA button navigates to observer UI and creates session', async ({ page }) => {
+      await page.goto('/');
+
+      // Click the primary CTA (first one in hero section)
+      await page.getByRole('button', { name: /Observe a live stream/ }).first().click();
+
+      // Should navigate to observer UI and auto-create session
+      await expect(page).toHaveURL(/\/observe/);
+      // With persona param, a session is auto-created, so FFmpeg command should appear
+      await expect(page.locator('pre').filter({ hasText: 'ffmpeg' })).toBeVisible({ timeout: 10000 });
+    });
+
+    test('persona routes load correctly', async ({ page }) => {
+      // Test contact center persona
+      await page.goto('/#/contact-center');
+      await expect(page.getByRole('heading', { name: /dead air, talk-over/i })).toBeVisible();
+
+      // Test telehealth persona
+      await page.goto('/#/telehealth');
+      await expect(page.getByRole('heading', { name: /patients can't hear you/i })).toBeVisible();
+    });
+  });
+
+  test.describe('Observer UI', () => {
+    test.beforeEach(async ({ page }) => {
+      // Clear storage to ensure clean state for each test
+      await page.goto('/');
+      await page.evaluate(() => {
+        sessionStorage.clear();
+        localStorage.clear();
+      });
+    });
+
+    test('shows pipeline selection when no persona param', async ({ page }) => {
+      await page.goto('/#/observe');
+
       // Check main elements are present - React app shows "Waiting for media..."
       await expect(page.getByText('Waiting for media...')).toBeVisible();
 
-      // Pipeline selection should be available
-      await expect(page.getByText('Pipeline', { exact: true })).toBeVisible();
+      // Pipeline selection should be available with categories
+      await expect(page.getByText('business', { exact: true })).toBeVisible();
+      await expect(page.getByText('technical', { exact: true })).toBeVisible();
       await expect(page.getByText('Contact Center QA')).toBeVisible();
     });
 
-    test('shows pipeline categories', async ({ page }) => {
-      await page.goto('/');
+    test('selecting a pipeline creates session', async ({ page }) => {
+      await page.goto('/#/observe');
 
-      // Check pipeline categories are shown (lowercase with uppercase CSS styling)
-      await expect(page.getByText('business', { exact: true })).toBeVisible();
-      await expect(page.getByText('technical', { exact: true })).toBeVisible();
-      await expect(page.getByText('audio', { exact: true })).toBeVisible();
+      // Click on Contact Center QA pipeline
+      const contactCenterBtn = page.getByRole('button', { name: /Contact Center QA/ });
+      await expect(contactCenterBtn).toBeVisible();
+      await contactCenterBtn.click();
+
+      // Session should be created (FFmpeg command appears)
+      await expect(page.locator('pre').filter({ hasText: 'ffmpeg' })).toBeVisible({ timeout: 10000 });
+      await expect(page.locator('pre').filter({ hasText: 'srt://' })).toBeVisible();
     });
 
-    test('can select different pipelines', async ({ page }) => {
-      await page.goto('/');
+    test('persona param auto-creates session', async ({ page }) => {
+      // Navigate with persona param - should auto-select pipeline and create session
+      await page.goto('/#/observe?persona=contact-center');
 
-      // Click on different pipeline options
-      const contactCenterQA = page.getByText('Contact Center QA');
-      await expect(contactCenterQA).toBeVisible();
-      await contactCenterQA.click();
-
-      // Check it's selected (has ring/border styling)
-      await expect(contactCenterQA.locator('..')).toHaveClass(/border-status-info/);
-
-      // Select a different pipeline
-      const technicalAnalysis = page.getByText('Technical Stream Analysis');
-      await technicalAnalysis.click();
-      await expect(technicalAnalysis.locator('..')).toHaveClass(/border-status-info/);
+      // Session should be created automatically
+      await expect(page.locator('pre').filter({ hasText: 'ffmpeg' })).toBeVisible({ timeout: 10000 });
+      await expect(page.locator('pre').filter({ hasText: 'contact_center_qa' })).toBeVisible();
     });
   });
 
@@ -195,26 +233,23 @@ test.describe('SRT Ingest Gateway E2E', () => {
   });
 
   test.describe('Session Creation via UI', () => {
-    test('creates session from form', async ({ page }) => {
+    test.beforeEach(async ({ page }) => {
+      // Clear storage to ensure clean state for each test
       await page.goto('/');
+      await page.evaluate(() => {
+        sessionStorage.clear();
+        localStorage.clear();
+      });
+    });
 
-      // Select pipeline (Contact Center QA is first/default)
-      await page.getByText('Contact Center QA').click();
+    test('creates session when pipeline selected', async ({ page }) => {
+      await page.goto('/#/observe');
 
-      // Click create session button
-      await page.getByRole('button', { name: 'Create Session' }).click();
+      // Select pipeline (auto-creates session)
+      await page.getByRole('button', { name: /Contact Center QA/ }).click();
 
-      // Wait for session info to appear
-      await expect(page.getByText('Session Active')).toBeVisible({ timeout: 10000 });
-
-      // Check session ID is displayed (in the monospace element)
-      const sessionIdElement = page.locator('.font-mono').filter({ hasText: /sess_/ }).first();
-      await expect(sessionIdElement).toBeVisible();
-      const sessionText = await sessionIdElement.textContent();
-      expect(sessionText).toMatch(/sess_/);
-
-      // Check FFmpeg command is shown
-      await expect(page.locator('pre').filter({ hasText: 'ffmpeg' })).toBeVisible();
+      // Wait for FFmpeg command to appear (indicates session created)
+      await expect(page.locator('pre').filter({ hasText: 'ffmpeg' })).toBeVisible({ timeout: 10000 });
       await expect(page.locator('pre').filter({ hasText: 'srt://' })).toBeVisible();
     });
 
@@ -222,11 +257,11 @@ test.describe('SRT Ingest Gateway E2E', () => {
       // Grant clipboard permissions
       await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 
-      await page.goto('/');
-      await page.getByText('Contact Center QA').click();
-      await page.getByRole('button', { name: 'Create Session' }).click();
+      await page.goto('/#/observe');
+      await page.getByRole('button', { name: /Contact Center QA/ }).click();
 
-      await expect(page.getByText('Session Active')).toBeVisible({ timeout: 10000 });
+      // Wait for session to be created
+      await expect(page.locator('pre').filter({ hasText: 'ffmpeg' })).toBeVisible({ timeout: 10000 });
 
       // Click copy button
       await page.getByRole('button', { name: 'Copy' }).click();
@@ -239,20 +274,8 @@ test.describe('SRT Ingest Gateway E2E', () => {
       expect(clipboardText).toContain('ffmpeg');
     });
 
-    test('end session button works', async ({ page }) => {
-      await page.goto('/');
-      await page.getByText('Contact Center QA').click();
-      await page.getByRole('button', { name: 'Create Session' }).click();
-
-      await expect(page.getByText('Session Active')).toBeVisible({ timeout: 10000 });
-
-      // Click end session
-      await page.getByRole('button', { name: 'End Session' }).click();
-
-      // Session should be hidden, form should be back
-      await expect(page.getByText('Session Active')).toBeHidden({ timeout: 5000 });
-      await expect(page.getByText('Waiting for media...')).toBeVisible();
-    });
+    // Note: There is no explicit "End Session" button in the current UI.
+    // Sessions end when the stream ends or when navigating away.
   });
 
   test.describe('SSE Events', () => {
@@ -268,7 +291,7 @@ test.describe('SRT Ingest Gateway E2E', () => {
       const session = await createResponse.json();
 
       // Navigate to page first so we have a context for fetch
-      await page.goto('/');
+      await page.goto('/#/observe');
 
       // For SSE, we can't use request.get() because it waits for completion
       // Instead, we'll use page.evaluate to create a quick EventSource connection test
@@ -303,7 +326,14 @@ test.describe('SRT Ingest Gateway E2E', () => {
     });
 
     test('UI connects to SSE on session creation', async ({ page }) => {
+      // Clear storage first
       await page.goto('/');
+      await page.evaluate(() => {
+        sessionStorage.clear();
+        localStorage.clear();
+      });
+
+      await page.goto('/#/observe');
 
       // Listen for SSE connection
       const ssePromise = page.waitForRequest(req =>
@@ -311,10 +341,11 @@ test.describe('SRT Ingest Gateway E2E', () => {
         { timeout: 15000 }
       );
 
-      await page.getByText('Contact Center QA').click();
-      await page.getByRole('button', { name: 'Create Session' }).click();
+      // Select pipeline to auto-create session
+      await page.getByRole('button', { name: /Contact Center QA/ }).click();
 
-      await expect(page.getByText('Session Active')).toBeVisible({ timeout: 10000 });
+      // Wait for session to be created
+      await expect(page.locator('pre').filter({ hasText: 'ffmpeg' })).toBeVisible({ timeout: 10000 });
 
       // Verify SSE connection was made
       const sseRequest = await ssePromise;
@@ -322,42 +353,57 @@ test.describe('SRT Ingest Gateway E2E', () => {
       expect(sseRequest.url()).toContain('/events');
     });
 
-    test('timeline shows waiting message initially', async ({ page }) => {
+    test('timeline shows waiting message when session active', async ({ page }) => {
+      // Clear storage first
       await page.goto('/');
-      await page.getByText('Contact Center QA').click();
-      await page.getByRole('button', { name: 'Create Session' }).click();
+      await page.evaluate(() => {
+        sessionStorage.clear();
+        localStorage.clear();
+      });
 
-      await expect(page.getByText('Session Active')).toBeVisible({ timeout: 10000 });
+      await page.goto('/#/observe');
+      await page.getByRole('button', { name: /Contact Center QA/ }).click();
 
-      // The timeline should show waiting message
-      await expect(page.getByText('Events will appear here when the stream starts')).toBeVisible();
+      // Wait for session to be created
+      await expect(page.locator('pre').filter({ hasText: 'ffmpeg' })).toBeVisible({ timeout: 10000 });
+
+      // The timeline should show waiting message (ready state, waiting for stream to connect)
+      await expect(page.getByText('Run the FFmpeg command to start streaming')).toBeVisible();
     });
   });
 
   test.describe('React App Layout', () => {
-    test('shows three-column layout when session active', async ({ page }) => {
+    test.beforeEach(async ({ page }) => {
+      // Clear storage for clean state
       await page.goto('/');
-      await page.getByText('Contact Center QA').click();
-      await page.getByRole('button', { name: 'Create Session' }).click();
+      await page.evaluate(() => {
+        sessionStorage.clear();
+        localStorage.clear();
+      });
+    });
 
-      await expect(page.getByText('Session Active')).toBeVisible({ timeout: 10000 });
+    test('shows three-column layout when session active', async ({ page }) => {
+      await page.goto('/#/observe');
+      await page.getByRole('button', { name: /Contact Center QA/ }).click();
 
-      // Left column: Session controls
-      await expect(page.getByText('Session Active')).toBeVisible();
+      // Wait for session to be created
+      await expect(page.locator('pre').filter({ hasText: 'ffmpeg' })).toBeVisible({ timeout: 10000 });
 
       // Center: Timeline heading
       await expect(page.getByRole('heading', { name: 'Timeline' })).toBeVisible();
 
       // Right: Evidence pane
-      await expect(page.getByText('Select an event from the timeline to see details')).toBeVisible();
+      await expect(page.getByText(/Select an event/i)).toBeVisible();
     });
 
     test('shows centered setup when idle', async ({ page }) => {
-      await page.goto('/');
+      await page.goto('/#/observe');
 
       // Should show centered card with setup form
       await expect(page.getByText('Waiting for media...')).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Create Session' })).toBeVisible();
+
+      // Pipeline buttons should be visible
+      await expect(page.getByRole('button', { name: /Contact Center QA/ })).toBeVisible();
 
       // Timeline heading should NOT be visible when idle
       await expect(page.getByRole('heading', { name: 'Timeline' })).not.toBeVisible();
@@ -365,26 +411,14 @@ test.describe('SRT Ingest Gateway E2E', () => {
   });
 
   test.describe('Error Handling', () => {
-    test('UI shows error for failed requests', async ({ page }) => {
-      await page.goto('/');
-
-      // Intercept and fail the request
-      await page.route('/api/ingest/sessions', route => {
-        route.fulfill({
-          status: 500,
-          contentType: 'application/json',
-          body: JSON.stringify({ error: 'Internal Server Error' })
-        });
+    test('API returns error status for invalid requests', async ({ request }) => {
+      // Test that the API handles completely invalid payloads gracefully
+      const response = await request.post('/api/ingest/sessions', {
+        data: 'not-a-valid-json-object'
       });
 
-      await page.getByText('Contact Center QA').click();
-      await page.getByRole('button', { name: 'Create Session' }).click();
-
-      // Error message should appear
-      await expect(page.getByText('Internal Server Error')).toBeVisible({ timeout: 5000 });
-
-      // Session should not be created
-      await expect(page.getByText('Session Active')).not.toBeVisible();
+      // Should return an error status for malformed request
+      expect(response.status()).toBeGreaterThanOrEqual(400);
     });
   });
 
@@ -414,32 +448,27 @@ test.describe('SRT Ingest Gateway E2E', () => {
   });
 
   test.describe('Full Session Lifecycle', () => {
-    test('complete session flow: create -> view -> end', async ({ page }) => {
+    test('complete session flow: create -> view', async ({ page }) => {
+      // Clear storage first
       await page.goto('/');
+      await page.evaluate(() => {
+        sessionStorage.clear();
+        localStorage.clear();
+      });
 
-      // Step 1: Verify initial state - centered setup
+      await page.goto('/#/observe');
+
+      // Step 1: Verify initial state - centered setup with pipeline selection
       await expect(page.getByText('Waiting for media...')).toBeVisible();
 
-      // Step 2: Select pipeline and create session
-      await page.getByText('Contact Center QA').click();
-      await page.getByRole('button', { name: 'Create Session' }).click();
+      // Step 2: Select pipeline to auto-create session
+      await page.getByRole('button', { name: /Contact Center QA/ }).click();
 
-      // Step 3: Verify session is active with three-column layout
-      await expect(page.getByText('Session Active')).toBeVisible({ timeout: 10000 });
+      // Step 3: Verify session is active with FFmpeg command
+      await expect(page.locator('pre').filter({ hasText: 'ffmpeg' })).toBeVisible({ timeout: 10000 });
       await expect(page.getByRole('heading', { name: 'Timeline' })).toBeVisible();
 
-      // Get session ID (in the monospace element)
-      const sessionIdElement = page.locator('.font-mono').filter({ hasText: /sess_/ }).first();
-      await expect(sessionIdElement).toBeVisible();
-      const sessionText = await sessionIdElement.textContent();
-      expect(sessionText).toMatch(/sess_/);
-
-      // Step 4: End session
-      await page.getByRole('button', { name: 'End Session' }).click();
-
-      // Step 5: Verify cleanup - back to centered setup
-      await expect(page.getByText('Session Active')).toBeHidden({ timeout: 5000 });
-      await expect(page.getByText('Waiting for media...')).toBeVisible();
+      // Note: Sessions end when the stream ends or navigating away (no explicit end button)
     });
   });
 });
@@ -517,7 +546,7 @@ test.describe('Full E2E Streaming', () => {
     console.log(`SRT URL: ${srtUrl}`);
 
     // Step 2: Navigate to page and set up SSE listener
-    await page.goto('/');
+    await page.goto('/#/observe');
 
     // Set up SSE event collection in the browser
     const eventsPromise = page.evaluate(async (sid: string) => {
@@ -776,6 +805,155 @@ test.describe('Full E2E Streaming', () => {
     expect(metrics.active_sessions).toBeLessThanOrEqual(activeSessionsDuringStream);
   });
 
+  test('receives stream_started and stream_ended system events', async ({ page, request }) => {
+    const { spawn } = await import('child_process');
+    const { resolve } = await import('path');
+
+    // Resolve the test video path
+    const videoPath = resolve(__dirname, '../../../..', TEST_VIDEO);
+
+    // Step 1: Create a session via API
+    const createResponse = await request.post('/api/ingest/sessions', {
+      data: {
+        pipeline: 'full_stream_health_v1',
+        audio_enabled: true,
+        video_enabled: true
+      }
+    });
+    expect(createResponse.ok()).toBeTruthy();
+    const session = await createResponse.json();
+    const sessionId = session.session_id;
+    const srtUrl = session.srt_url;
+
+    console.log(`Created session for system events test: ${sessionId}`);
+
+    // Step 2: Navigate to page and set up SSE listener for system events
+    await page.goto('/#/observe');
+
+    // Set up SSE event collection - specifically looking for stream_started and stream_ended
+    const eventsPromise = page.evaluate(async (sid: string) => {
+      return new Promise<{ events: any[], systemEvents: any[], error?: string }>((resolve) => {
+        const events: any[] = [];
+        const systemEvents: any[] = [];
+        const eventSource = new EventSource(`/api/ingest/sessions/${sid}/events`);
+
+        const timeout = setTimeout(() => {
+          eventSource.close();
+          resolve({ events, systemEvents });
+        }, 15000);
+
+        // Listen specifically for 'system' SSE events which contain stream_started/stream_ended
+        eventSource.addEventListener('system', (event: MessageEvent) => {
+          try {
+            const data = JSON.parse(event.data);
+            console.log('Received system event:', data);
+            events.push(data);
+            systemEvents.push(data);
+
+            // Check for stream_ended to know when we can finish
+            if (data.type === 'stream_ended') {
+              // Give a moment for any final events
+              setTimeout(() => {
+                clearTimeout(timeout);
+                eventSource.close();
+                resolve({ events, systemEvents });
+              }, 500);
+            }
+          } catch (e) {
+            // Ignore parse errors
+          }
+        });
+
+        // Also collect other events for context
+        ['health', 'alert', 'event'].forEach(eventType => {
+          eventSource.addEventListener(eventType, (event: MessageEvent) => {
+            try {
+              const data = JSON.parse(event.data);
+              events.push({ ...data, sse_type: eventType });
+            } catch (e) {
+              // Ignore
+            }
+          });
+        });
+
+        eventSource.onerror = () => {
+          clearTimeout(timeout);
+          eventSource.close();
+          resolve({ events, systemEvents, error: 'SSE connection error' });
+        };
+      });
+    }, sessionId);
+
+    // Step 3: Start FFmpeg to stream briefly (3 seconds)
+    const ffmpegArgs = [
+      '-re',
+      '-t', '3',
+      '-i', videoPath,
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-tune', 'zerolatency',
+      '-g', '30',
+      '-c:a', 'aac',
+      '-ar', '48000',
+      '-b:a', '128k',
+      '-f', 'mpegts',
+      srtUrl
+    ];
+
+    console.log('Starting FFmpeg with input:', videoPath);
+    const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    let ffmpegOutput = '';
+    ffmpeg.stderr?.on('data', (data: Buffer) => {
+      ffmpegOutput += data.toString();
+    });
+
+    // Wait for FFmpeg to finish
+    const ffmpegPromise = new Promise<{ success: boolean }>((resolve) => {
+      const ffmpegTimeout = setTimeout(() => {
+        ffmpeg.kill('SIGTERM');
+        resolve({ success: false });
+      }, 15000);
+
+      ffmpeg.on('close', (code: number | null) => {
+        clearTimeout(ffmpegTimeout);
+        resolve({ success: code === 0 });
+      });
+
+      ffmpeg.on('error', () => {
+        clearTimeout(ffmpegTimeout);
+        resolve({ success: false });
+      });
+    });
+
+    // Step 4: Wait for both FFmpeg and SSE events
+    const [ffmpegResult, sseResult] = await Promise.all([
+      ffmpegPromise,
+      eventsPromise
+    ]);
+
+    console.log('FFmpeg result:', ffmpegResult.success ? 'success' : 'failed');
+    console.log('Total events received:', sseResult.events.length);
+    console.log('System events received:', sseResult.systemEvents.length);
+    console.log('System events:', JSON.stringify(sseResult.systemEvents, null, 2));
+
+    // Step 5: Verify system events
+    // stream_started should have type: 'stream_started'
+    const streamStarted = sseResult.systemEvents.find((e: any) => e.type === 'stream_started');
+    expect(streamStarted).toBeDefined();
+    console.log('Found stream_started event:', streamStarted);
+
+    // stream_ended should have type: 'stream_ended' (emitted when FFmpeg disconnects)
+    const streamEnded = sseResult.systemEvents.find((e: any) => e.type === 'stream_ended');
+    expect(streamEnded).toBeDefined();
+    console.log('Found stream_ended event:', streamEnded);
+
+    // Clean up
+    await request.delete(`/api/ingest/sessions/${sessionId}`);
+  });
+
   test('speaker diarization pipeline receives diarization events', async ({ page, request }) => {
     const { spawn } = await import('child_process');
     const { resolve } = await import('path');
@@ -800,7 +978,7 @@ test.describe('Full E2E Streaming', () => {
     console.log(`SRT URL: ${srtUrl}`);
 
     // Step 2: Navigate to page and set up SSE listener
-    await page.goto('/');
+    await page.goto('/#/observe');
 
     // Set up SSE event collection in the browser
     const eventsPromise = page.evaluate(async (sid: string) => {

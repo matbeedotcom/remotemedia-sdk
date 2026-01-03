@@ -5951,6 +5951,7 @@ dependencies = [
  "jsonwebtoken",
  "remotemedia-health-analyzer",
  "remotemedia-ingest-rtmp",
+ "remotemedia-pipeline-runner",
  "remotemedia-runtime-core",
  "reqwest 0.11.27",
  "serde",
@@ -5969,6 +5970,23 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "remotemedia-pipeline-runner"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "remotemedia-health-analyzer",
+ "remotemedia-runtime-core",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+ "tracing",
 ]
 
 [[package]]

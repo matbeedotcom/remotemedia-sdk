@@ -1,7 +1,23 @@
 //! Build script for stream-health-demo
 //!
-//! Embeds the stream-health.yaml pipeline at compile time, similar to pipeline-embed.
-//! This creates a demo binary with the health monitoring pipeline baked in.
+//! Embeds a pipeline YAML at compile time. The pipeline can be specified via:
+//!
+//! 1. `REMOTEMEDIA_PIPELINE` env var - path to any YAML file, OR a pipeline name
+//!    from the shared pipelines directory (e.g., "demo_audio_quality_v1")
+//! 2. Default: `pipelines/stream-health.yaml` (local to this crate)
+//!
+//! ## Pipeline Selection
+//!
+//! ```bash
+//! # Use a specific pipeline by name (from libs/pipeline-runner/pipelines/)
+//! REMOTEMEDIA_PIPELINE=demo_audio_quality_v1 cargo build
+//!
+//! # Use a specific pipeline by path
+//! REMOTEMEDIA_PIPELINE=/path/to/custom.yaml cargo build
+//!
+//! # Use the default stream-health.yaml
+//! cargo build
+//! ```
 //!
 //! ## Embedded License
 //!
@@ -21,23 +37,8 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-fn main() {
-    let out_dir = env::var("OUT_DIR").unwrap();
-    let dest_path = Path::new(&out_dir).join("embedded_pipeline.rs");
-    let license_dest = Path::new(&out_dir).join("embedded_license.rs");
-
-    // Read the pipeline YAML from the pipelines directory
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let yaml_path = Path::new(&manifest_dir).join("pipelines/stream-health.yaml");
-    
-    let yaml_content = if yaml_path.exists() {
-        println!("cargo:rerun-if-changed={}", yaml_path.display());
-        fs::read_to_string(&yaml_path)
-            .unwrap_or_else(|e| panic!("Failed to read pipeline YAML '{}': {}", yaml_path.display(), e))
-    } else {
-        // Default pipeline if file doesn't exist yet
-        eprintln!("cargo:warning=Pipeline file not found at {}, using default", yaml_path.display());
-        r#"version: v1
+/// Default pipeline if no file is found
+const DEFAULT_PIPELINE: &str = r#"version: v1
 metadata:
   name: stream-health-monitor
   description: Real-time drift, freeze, and health monitoring
@@ -55,8 +56,73 @@ nodes:
       health_emit_interval_ms: 1000
 
 connections: []
-"#.to_string()
+"#;
+
+fn main() {
+    let out_dir = env::var("OUT_DIR").unwrap();
+    let dest_path = Path::new(&out_dir).join("embedded_pipeline.rs");
+    let license_dest = Path::new(&out_dir).join("embedded_license.rs");
+
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    
+    // Determine which pipeline to embed
+    // Priority: REMOTEMEDIA_PIPELINE env var > local pipelines/stream-health.yaml
+    let (yaml_content, yaml_source) = if let Ok(pipeline_spec) = env::var("REMOTEMEDIA_PIPELINE") {
+        let pipeline_path = Path::new(&pipeline_spec);
+        
+        if pipeline_path.exists() {
+            // It's a direct path to a YAML file
+            println!("cargo:rerun-if-changed={}", pipeline_spec);
+            let content = fs::read_to_string(pipeline_path)
+                .unwrap_or_else(|e| panic!("Failed to read pipeline '{}': {}", pipeline_spec, e));
+            (content, pipeline_spec)
+        } else {
+            // Try to find it in the shared pipelines directory
+            let shared_pipelines = Path::new(&manifest_dir)
+                .join("../../../libs/pipeline-runner/pipelines");
+            
+            // Try with and without .yaml extension
+            let names_to_try = vec![
+                format!("{}.yaml", pipeline_spec),
+                pipeline_spec.clone(),
+            ];
+            
+            let mut found = None;
+            for name in names_to_try {
+                let path = shared_pipelines.join(&name);
+                if path.exists() {
+                    println!("cargo:rerun-if-changed={}", path.display());
+                    let content = fs::read_to_string(&path)
+                        .unwrap_or_else(|e| panic!("Failed to read pipeline '{}': {}", path.display(), e));
+                    found = Some((content, format!("shared:{}", name)));
+                    break;
+                }
+            }
+            
+            if let Some(result) = found {
+                result
+            } else {
+                panic!("Pipeline '{}' not found. Available pipelines in shared directory:\n  - demo_audio_quality_v1\n  - demo_av_quality_v1\n  - demo_video_integrity_v1\n  - full_stream_health_v1\n  - contact_center_qa_v1\n  - speaker_diarization_v1\n  - technical_stream_analysis_v1",
+                    pipeline_spec);
+            }
+        }
+    } else {
+        // Default: local stream-health.yaml
+        let yaml_path = Path::new(&manifest_dir).join("pipelines/stream-health.yaml");
+        
+        if yaml_path.exists() {
+            println!("cargo:rerun-if-changed={}", yaml_path.display());
+            let content = fs::read_to_string(&yaml_path)
+                .unwrap_or_else(|e| panic!("Failed to read pipeline '{}': {}", yaml_path.display(), e));
+            (content, yaml_path.display().to_string())
+        } else {
+            // Default pipeline if file doesn't exist yet
+            eprintln!("cargo:warning=Pipeline file not found at {}, using default", yaml_path.display());
+            (DEFAULT_PIPELINE.to_string(), "builtin-default".to_string())
+        }
     };
+
+    eprintln!("cargo:warning=Embedding pipeline from: {}", yaml_source);
 
     // Extract metadata
     let (pipeline_name, pipeline_description) = if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&yaml_content) {
@@ -266,6 +332,7 @@ pub const EMBEDDED_PUBLIC_KEY: Option<[u8; 32]> = None;
     // Rerun if build script changes
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=pipelines/stream-health.yaml");
+    println!("cargo:rerun-if-env-changed=REMOTEMEDIA_PIPELINE");
     println!("cargo:rerun-if-env-changed=REMOTEMEDIA_LICENSE");
     println!("cargo:rerun-if-env-changed=REMOTEMEDIA_PUBLIC_KEY");
 }

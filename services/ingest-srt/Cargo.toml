@@ -16,6 +16,7 @@ path = "src/main.rs"
 # Core
 remotemedia-runtime-core = { path = "../../runtime-core" }
 remotemedia-health-analyzer = { path = "../../libs/stream-health-analyzer" }
+remotemedia-pipeline-runner = { path = "../../libs/pipeline-runner" }
 remotemedia-ingest-rtmp = { path = "../../adapters/ingest-rtmp" }
 
 # Async

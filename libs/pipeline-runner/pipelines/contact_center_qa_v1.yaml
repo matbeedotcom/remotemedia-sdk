@@ -1,0 +1,116 @@
+# Contact Center QA Pipeline
+# Business-layer metrics for conversation quality assessment
+# With speaker diarization for per-speaker channel separation
+
+version: "1.0"
+
+metadata:
+  name: Contact Center QA
+  description: Speech presence, talk ratios, and session health for QA with speaker diarization
+
+nodes:
+  # Voice Activity Detection (filters silence before diarization)
+  - id: vad
+    node_type: SileroVADNode
+    params:
+      threshold: 0.5
+      min_speech_duration_ms: 250
+      min_silence_duration_ms: 100
+      speech_pad_ms: 30
+      passthrough_audio: true
+    is_streaming: true
+
+  # Speaker diarization - identifies "who spoke when" (processes only speech frames)
+  - id: diarize
+    node_type: SpeakerDiarizationNode
+    params:
+      search_threshold: 0.5
+      sample_rate: 16000
+      passthrough_audio: true
+      max_speakers: 4
+    is_streaming: true
+
+  # Audio channel splitter - routes speakers to channels
+  - id: split_channels
+    node_type: AudioChannelSplitterNode
+    params:
+      output_mode: channels
+      max_speakers: 4
+      stream_id_prefix: speaker
+    is_streaming: true
+
+  # Audio level metering (feeds speech presence)
+  - id: audio_level
+    node_type: AudioLevelNode
+    params:
+      window_size_ms: 100
+      low_volume_threshold_db: -40.0
+      silence_threshold_db: -60.0
+    is_streaming: true
+
+  # Silence detection (for dead air tracking)
+  - id: silence_detector
+    node_type: SilenceDetectorNode
+    params:
+      silence_threshold_db: -50.0
+      sustained_silence_ms: 500.0
+    is_streaming: true
+
+  # Speech presence (speaking/silent/dead_air/overlap states)
+  # Now operates on multi-channel audio (one channel per speaker)
+  - id: speech_presence
+    node_type: SpeechPresenceNode
+    params:
+      dead_air_threshold_ms: 2000
+      overlap_threshold_ms: 500
+      emit_on_transition: true
+    is_streaming: true
+
+  # Conversation flow (talk ratios over sliding windows)
+  - id: conversation_flow
+    node_type: ConversationFlowNode
+    params:
+      window_ms: 30000
+      emit_interval_ms: 5000
+    is_streaming: true
+
+  # Session health aggregation (ok/degraded/unhealthy)
+  - id: session_health
+    node_type: SessionHealthNode
+    params:
+      degraded_threshold: 0.8
+      unhealthy_threshold: 0.5
+      emit_interval_ms: 5000
+    is_streaming: true
+
+  # Event correlator (groups alerts into incidents)
+  - id: event_correlator
+    node_type: EventCorrelatorNode
+    params:
+      correlation_window_ms: 5000
+      min_events_for_incident: 3
+    is_streaming: true
+
+# Connection topology:
+# - vad filters out silence before diarization
+# - diarize identifies speakers, outputs segments + passthrough audio
+# - split_channels routes each speaker to a separate channel
+# - audio_level and silence_detector receive the split multi-channel audio
+# - speech_presence now tracks per-channel (per-speaker) state
+# - conversation_flow tracks speech patterns from speech_presence
+# - session_health aggregates from speech_presence and silence_detector
+# - event_correlator receives alerts from all analysis nodes
+connections:
+  - { from: vad, to: diarize }
+  - { from: diarize, to: split_channels }
+  - { from: split_channels, to: audio_level }
+  - { from: split_channels, to: silence_detector }
+  - { from: audio_level, to: speech_presence }
+  - { from: audio_level, to: event_correlator }
+  - { from: silence_detector, to: session_health }
+  - { from: silence_detector, to: event_correlator }
+  - { from: speech_presence, to: conversation_flow }
+  - { from: speech_presence, to: session_health }
+  - { from: speech_presence, to: event_correlator }
+  - { from: conversation_flow, to: session_health }
+  - { from: conversation_flow, to: event_correlator }

@@ -811,109 +811,37 @@ fn worker_thread_main(
     }
 }
 
-/// Convert FFmpeg error code to string
-fn ffmpeg_error_string(errnum: i32) -> String {
-    let mut buf = [0u8; 256];
-    unsafe {
-        ffi::av_strerror(errnum, buf.as_mut_ptr() as *mut i8, buf.len());
-    }
-    String::from_utf8_lossy(&buf).trim_end_matches('\0').to_string()
-}
+// Use shared ffmpeg_error_string from ingest-rtmp
+use remotemedia_ingest_rtmp::ffmpeg_error_string;
 
 /// Extract audio samples from a decoded frame as f32
+///
+/// Uses the shared audio_samples module from remotemedia-ingest-rtmp
+/// for consistent audio format conversion across all demuxers.
 unsafe fn extract_audio_samples_raw(
     frame: *mut ffi::AVFrame,
     nb_samples: usize,
     channels: usize,
 ) -> Vec<f32> {
+    use remotemedia_ingest_rtmp::audio_samples::{
+        sample_formats, convert_packed_samples_to_f32, convert_planar_samples_to_f32,
+    };
+
     let format = (*frame).format;
-    let total_samples = nb_samples * channels;
 
-    // Check if planar format
-    let is_planar = ffi::av_sample_fmt_is_planar(std::mem::transmute(format)) != 0;
-
-    match format {
-        // AV_SAMPLE_FMT_FLT = 3, AV_SAMPLE_FMT_FLTP = 8
-        3 => {
-            // Packed float
-            let data = (*frame).data[0] as *const f32;
-            std::slice::from_raw_parts(data, total_samples).to_vec()
-        }
-        8 => {
-            // Planar float - interleave channels
-            let mut result = Vec::with_capacity(total_samples);
-            for i in 0..nb_samples {
-                for ch in 0..channels {
-                    let plane = (*frame).data[ch] as *const f32;
-                    result.push(*plane.add(i));
-                }
-            }
-            result
-        }
-        // AV_SAMPLE_FMT_S16 = 1, AV_SAMPLE_FMT_S16P = 6
-        1 => {
-            // Packed S16
-            let data = (*frame).data[0] as *const i16;
-            std::slice::from_raw_parts(data, total_samples)
-                .iter()
-                .map(|&s| s as f32 / 32768.0)
-                .collect()
-        }
-        6 => {
-            // Planar S16 - interleave channels
-            let mut result = Vec::with_capacity(total_samples);
-            for i in 0..nb_samples {
-                for ch in 0..channels {
-                    let plane = (*frame).data[ch] as *const i16;
-                    result.push(*plane.add(i) as f32 / 32768.0);
-                }
-            }
-            result
-        }
-        // AV_SAMPLE_FMT_S32 = 2, AV_SAMPLE_FMT_S32P = 7
-        2 => {
-            // Packed S32
-            let data = (*frame).data[0] as *const i32;
-            std::slice::from_raw_parts(data, total_samples)
-                .iter()
-                .map(|&s| s as f32 / 2147483648.0)
-                .collect()
-        }
-        7 => {
-            // Planar S32 - interleave channels
-            let mut result = Vec::with_capacity(total_samples);
-            for i in 0..nb_samples {
-                for ch in 0..channels {
-                    let plane = (*frame).data[ch] as *const i32;
-                    result.push(*plane.add(i) as f32 / 2147483648.0);
-                }
-            }
-            result
-        }
-        // AV_SAMPLE_FMT_DBL = 4, AV_SAMPLE_FMT_DBLP = 9
-        4 => {
-            // Packed double
-            let data = (*frame).data[0] as *const f64;
-            std::slice::from_raw_parts(data, total_samples)
-                .iter()
-                .map(|&s| s as f32)
-                .collect()
-        }
-        9 => {
-            // Planar double - interleave channels
-            let mut result = Vec::with_capacity(total_samples);
-            for i in 0..nb_samples {
-                for ch in 0..channels {
-                    let plane = (*frame).data[ch] as *const f64;
-                    result.push(*plane.add(i) as f32);
-                }
-            }
-            result
-        }
-        _ => {
-            tracing::warn!("Unsupported audio format: {}", format);
-            Vec::new()
-        }
+    // Check if planar format using our shared constants
+    if sample_formats::is_planar(format) {
+        // Collect plane pointers for each channel
+        let plane_data: Vec<*const u8> = (0..channels)
+            .map(|ch| (*frame).data[ch] as *const u8)
+            .collect();
+        
+        convert_planar_samples_to_f32(&plane_data, format, nb_samples)
+    } else {
+        // Packed format - all data in first plane
+        let data = (*frame).data[0] as *const u8;
+        let total_samples = nb_samples * channels;
+        convert_packed_samples_to_f32(data, format, total_samples)
     }
 }
 

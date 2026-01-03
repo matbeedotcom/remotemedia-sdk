@@ -1005,40 +1005,20 @@ fn decode_next_frame(state: &mut WorkerState) -> Result<Option<DecodedFrame>, St
                     continue;
                 }
 
-                let samples = match format {
-                    f if f == ffi::AV_SAMPLE_FMT_FLT => {
-                        std::slice::from_raw_parts(data as *const f32, total_samples).to_vec()
-                    }
-                    f if f == ffi::AV_SAMPLE_FMT_FLTP => {
-                        std::slice::from_raw_parts(data as *const f32, nb_samples as usize).to_vec()
-                    }
-                    f if f == ffi::AV_SAMPLE_FMT_S16 => {
-                        std::slice::from_raw_parts(data as *const i16, total_samples)
-                            .iter()
-                            .map(|&s| s as f32 / 32768.0)
-                            .collect()
-                    }
-                    f if f == ffi::AV_SAMPLE_FMT_S16P => {
-                        std::slice::from_raw_parts(data as *const i16, nb_samples as usize)
-                            .iter()
-                            .map(|&s| s as f32 / 32768.0)
-                            .collect()
-                    }
-                    f if f == ffi::AV_SAMPLE_FMT_S32 => {
-                        std::slice::from_raw_parts(data as *const i32, total_samples)
-                            .iter()
-                            .map(|&s| s as f32 / 2147483648.0)
-                            .collect()
-                    }
-                    f if f == ffi::AV_SAMPLE_FMT_S32P => {
-                        std::slice::from_raw_parts(data as *const i32, nb_samples as usize)
-                            .iter()
-                            .map(|&s| s as f32 / 2147483648.0)
-                            .collect()
-                    }
-                    _ => {
-                        tracing::warn!("Unknown audio format {}, treating as f32", format);
-                        std::slice::from_raw_parts(data as *const f32, nb_samples as usize).to_vec()
+                let samples = {
+                    use crate::audio_samples::{
+                        sample_formats, convert_packed_samples_to_f32, convert_planar_samples_to_f32,
+                    };
+                    
+                    if sample_formats::is_planar(format) {
+                        // Planar format - collect plane pointers  
+                        let plane_data: Vec<*const u8> = (0..channels)
+                            .map(|ch| ffi::ffw_frame_get_plane_data(state.frame, ch as i32) as *const u8)
+                            .collect();
+                        convert_planar_samples_to_f32(&plane_data, format, nb_samples as usize)
+                    } else {
+                        // Packed format
+                        convert_packed_samples_to_f32(data, format, total_samples)
                     }
                 };
 
