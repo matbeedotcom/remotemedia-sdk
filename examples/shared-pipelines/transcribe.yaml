@@ -10,7 +10,7 @@ metadata:
 
 nodes:
   - id: stt
-    node_type: WhisperNode
+    node_type: RustWhisperNode
     params:
       model: "base"
       language: "auto"
