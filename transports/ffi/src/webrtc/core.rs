@@ -11,7 +11,7 @@ use super::events::{
     PipelineOutputEvent, SessionEvent, WebRtcEvent,
 };
 use remotemedia_runtime_core::manifest::Manifest;
-use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_runtime_core::transport::PipelineExecutor;
 use remotemedia_webrtc::signaling::{WebRtcEventBridge, WebSocketServerHandle, WebSocketSignalingServer};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};

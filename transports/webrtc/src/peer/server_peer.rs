@@ -25,7 +25,7 @@ use prost::Message;
 use remotemedia_runtime_core::{
     data::RuntimeData,
     manifest::Manifest,
-    transport::{PipelineRunner, StreamSession, StreamSessionHandle, TransportData},
+    transport::{PipelineExecutor, SessionHandle, StreamSession, TransportData},
 };
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -53,7 +53,7 @@ pub struct ServerPeer {
     peer_connection: Arc<PeerConnection>,
 
     /// Pipeline runner
-    runner: Arc<PipelineRunner>,
+    executor: Arc<PipelineExecutor>,
 
     /// Pipeline manifest
     manifest: Arc<Manifest>,
@@ -86,7 +86,7 @@ impl ServerPeer {
     pub async fn new(
         peer_id: String,
         config: &WebRtcTransportConfig,
-        runner: Arc<PipelineRunner>,
+        executor: Arc<PipelineExecutor>,
         manifest: Arc<Manifest>,
     ) -> Result<Self> {
         info!("Creating server peer: {}", peer_id);
@@ -103,7 +103,7 @@ impl ServerPeer {
         Ok(Self {
             peer_id,
             peer_connection,
-            runner,
+            executor,
             manifest,
             track_registry,
             #[cfg(feature = "ws-signaling")]
@@ -130,7 +130,7 @@ impl ServerPeer {
     pub async fn new_with_events(
         peer_id: String,
         config: &WebRtcTransportConfig,
-        runner: Arc<PipelineRunner>,
+        executor: Arc<PipelineExecutor>,
         manifest: Arc<Manifest>,
         event_tx: Option<mpsc::Sender<WebRtcEventBridge>>,
     ) -> Result<Self> {
@@ -148,7 +148,7 @@ impl ServerPeer {
         Ok(Self {
             peer_id,
             peer_connection,
-            runner,
+            executor,
             manifest,
             track_registry,
             event_tx,
@@ -174,8 +174,8 @@ impl ServerPeer {
 
         // Create pipeline session FIRST
         let session_handle = self
-            .runner
-            .create_stream_session(Arc::clone(&self.manifest))
+            .executor
+            .create_session(Arc::clone(&self.manifest))
             .await
             .map_err(|e| {
                 Error::InternalError(format!("Failed to create pipeline session: {}", e))
@@ -272,7 +272,7 @@ impl ServerPeer {
     /// - Outgoing: pipeline output → RuntimeData → WebRTC tracks + data channel
     async fn setup_media_routing_and_data_channel(
         &self,
-        mut session_handle: StreamSessionHandle,
+        mut session_handle: SessionHandle,
     ) -> Result<()> {
         info!(
             "Setting up media routing and data channel for peer {}",
@@ -436,6 +436,8 @@ impl ServerPeer {
                                             sample_rate: 48000, // Opus always decodes to 48kHz
                                             channels: 1,
                                             stream_id: None, // From client, uses default track
+                                            timestamp_us: Some(0),
+                                            arrival_ts_us: None,
                                         },
                                         sequence: None,
                                         metadata: std::collections::HashMap::new(),

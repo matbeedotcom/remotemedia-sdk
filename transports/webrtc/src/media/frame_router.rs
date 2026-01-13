@@ -335,6 +335,8 @@ mod tests {
             sample_rate: 48000,
             channels: 1,
             stream_id: Some("voice".to_string()),
+            timestamp_us: None,
+            arrival_ts_us: None,
         };
 
         assert_eq!(extract_stream_id(&data), Some("voice"));
@@ -347,6 +349,8 @@ mod tests {
             sample_rate: 48000,
             channels: 1,
             stream_id: None,
+            timestamp_us: None,
+            arrival_ts_us: None,
         };
 
         assert_eq!(extract_stream_id(&data), None);
@@ -366,6 +370,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: Some("camera".to_string()),
+            arrival_ts_us: None,
         };
 
         assert_eq!(extract_stream_id(&data), Some("camera"));
@@ -384,6 +389,8 @@ mod tests {
             sample_rate: 48000,
             channels: 1,
             stream_id: None,
+            timestamp_us: None,
+            arrival_ts_us: None,
         };
 
         let modified = with_stream_id(data, Some("voice".to_string()));
@@ -393,6 +400,7 @@ mod tests {
             sample_rate,
             channels,
             stream_id,
+            ..
         } = modified
         {
             assert_eq!(samples, vec![1.0, 2.0, 3.0]);
@@ -418,6 +426,7 @@ mod tests {
             timestamp_us: 1000,
             is_keyframe: true,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         let modified = with_stream_id(data, Some("screen".to_string()));

@@ -19,7 +19,7 @@
 //! - `RUST_LOG`: Logging level (default: "info")
 
 use remotemedia_grpc::{init_tracing, GrpcServer, ServiceConfig};
-use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_runtime_core::transport::PipelineExecutor;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -43,11 +43,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // Create pipeline runner
-    // PipelineRunner encapsulates all executor and node registry logic
-    let runner = PipelineRunner::new()?;
+    // PipelineExecutor encapsulates all executor and node registry logic
+    let runner = PipelineExecutor::new()?;
     let runner = Arc::new(runner);
 
-    println!("✅ PipelineRunner initialized");
+    println!("✅ PipelineExecutor initialized");
     println!("   All nodes registered and ready");
     println!();
 

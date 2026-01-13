@@ -17,7 +17,7 @@ use remotemedia_grpc::generated::{
 };
 use remotemedia_grpc::metrics::ServiceMetrics;
 use remotemedia_grpc::{ServiceConfig, StreamingServiceImpl};
-use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_runtime_core::transport::PipelineExecutor;
 use std::sync::Arc;
 use tokio::time::{sleep, timeout, Duration};
 use tonic::transport::Server;
@@ -30,8 +30,8 @@ async fn start_test_server() -> (String, tokio::task::JoinHandle<()>) {
     let local_addr = listener.local_addr().unwrap();
     let server_url = format!("http://{}", local_addr);
 
-    // Create PipelineRunner
-    let runner = Arc::new(PipelineRunner::new().unwrap());
+    // Create PipelineExecutor
+    let runner = Arc::new(PipelineExecutor::new().unwrap());
 
     // Create service
     let config = ServiceConfig::default();

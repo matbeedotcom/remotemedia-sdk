@@ -176,7 +176,7 @@ async fn run_grpc_signaling_server(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
     use remotemedia_runtime_core::manifest::Manifest;
-    use remotemedia_runtime_core::transport::PipelineRunner;
+    use remotemedia_runtime_core::transport::PipelineExecutor;
     use remotemedia_webrtc::signaling::grpc::WebRtcSignalingService;
     use std::sync::Arc;
     use tonic::transport::Server;
@@ -196,9 +196,9 @@ async fn run_grpc_signaling_server(
     let manifest = Arc::new(manifest);
     info!("Loaded pipeline manifest: {:?}", args.manifest);
 
-    // Create PipelineRunner
-    let runner = Arc::new(PipelineRunner::new()?);
-    info!("PipelineRunner initialized");
+    // Create PipelineExecutor
+    let runner = Arc::new(PipelineExecutor::new()?);
+    info!("PipelineExecutor initialized");
 
     // Build WebRTC transport configuration from arguments
     let config = Arc::new(WebRtcTransportConfig {
