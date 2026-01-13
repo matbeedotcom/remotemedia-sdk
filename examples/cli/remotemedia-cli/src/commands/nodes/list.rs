@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use clap::Args;
+use remotemedia_runtime_core::transport::PipelineExecutor;
 
 use crate::output::{OutputFormat, Outputter};
 
@@ -10,10 +11,6 @@ pub struct ListArgs {
     /// Filter by name pattern
     #[arg(long)]
     pub filter: Option<String>,
-
-    /// Filter by category
-    #[arg(long)]
-    pub category: Option<String>,
 
     /// List from remote server
     #[arg(long)]
@@ -24,86 +21,27 @@ pub struct ListArgs {
 #[derive(serde::Serialize)]
 struct NodeInfo {
     node_type: String,
-    category: String,
-    streaming: bool,
-    input_type: String,
-    output_type: String,
 }
 
 pub async fn execute(args: ListArgs, format: OutputFormat) -> Result<()> {
     let outputter = Outputter::new(format);
 
-    // TODO: Get actual node types from runtime-core registry
-    // For now, provide a static list of known nodes
-    let mut nodes = vec![
-        NodeInfo {
-            node_type: "SileroVADNode".to_string(),
-            category: "audio".to_string(),
-            streaming: true,
-            input_type: "Audio".to_string(),
-            output_type: "Audio".to_string(),
-        },
-        NodeInfo {
-            node_type: "WhisperNode".to_string(),
-            category: "asr".to_string(),
-            streaming: true,
-            input_type: "Audio".to_string(),
-            output_type: "Text".to_string(),
-        },
-        NodeInfo {
-            node_type: "KokoroTTSNode".to_string(),
-            category: "tts".to_string(),
-            streaming: true,
-            input_type: "Text".to_string(),
-            output_type: "Audio".to_string(),
-        },
-        NodeInfo {
-            node_type: "RemotePipelineNode".to_string(),
-            category: "routing".to_string(),
-            streaming: true,
-            input_type: "Any".to_string(),
-            output_type: "Any".to_string(),
-        },
-        NodeInfo {
-            node_type: "EchoNode".to_string(),
-            category: "utility".to_string(),
-            streaming: false,
-            input_type: "Any".to_string(),
-            output_type: "Any".to_string(),
-        },
-        NodeInfo {
-            node_type: "PassthroughNode".to_string(),
-            category: "utility".to_string(),
-            streaming: true,
-            input_type: "Any".to_string(),
-            output_type: "Any".to_string(),
-        },
-        NodeInfo {
-            node_type: "ResampleNode".to_string(),
-            category: "audio".to_string(),
-            streaming: true,
-            input_type: "Audio".to_string(),
-            output_type: "Audio".to_string(),
-        },
-        NodeInfo {
-            node_type: "FormatConverterNode".to_string(),
-            category: "audio".to_string(),
-            streaming: true,
-            input_type: "Audio".to_string(),
-            output_type: "Audio".to_string(),
-        },
-    ];
+    // Get actual node types from runtime-core registry
+    let executor = PipelineExecutor::new()
+        .map_err(|e| anyhow::anyhow!("Failed to create executor: {}", e))?;
 
-    // Apply filters
+    let mut node_types = executor.list_node_types().await;
+
+    // Apply filter
     if let Some(filter) = &args.filter {
         let filter_lower = filter.to_lowercase();
-        nodes.retain(|n| n.node_type.to_lowercase().contains(&filter_lower));
+        node_types.retain(|n| n.to_lowercase().contains(&filter_lower));
     }
 
-    if let Some(category) = &args.category {
-        let category_lower = category.to_lowercase();
-        nodes.retain(|n| n.category.to_lowercase() == category_lower);
-    }
+    let nodes: Vec<NodeInfo> = node_types
+        .into_iter()
+        .map(|node_type| NodeInfo { node_type })
+        .collect();
 
     // Output based on format
     match format {
@@ -114,30 +52,19 @@ pub async fn execute(args: ListArgs, format: OutputFormat) -> Result<()> {
             use comfy_table::{presets::UTF8_FULL, Table};
             let mut table = Table::new();
             table.load_preset(UTF8_FULL);
-            table.set_header(vec!["NODE TYPE", "CATEGORY", "STREAMING", "INPUT", "OUTPUT"]);
+            table.set_header(vec!["NODE TYPE"]);
 
             for node in &nodes {
-                table.add_row(vec![
-                    node.node_type.as_str(),
-                    node.category.as_str(),
-                    if node.streaming { "yes" } else { "no" },
-                    node.input_type.as_str(),
-                    node.output_type.as_str(),
-                ]);
+                table.add_row(vec![node.node_type.as_str()]);
             }
 
             println!("{table}");
         }
         OutputFormat::Text => {
-            println!("{:<25} {:<12} {:<10}", "NODE TYPE", "CATEGORY", "STREAMING");
-            println!("{:-<25} {:-<12} {:-<10}", "", "", "");
+            println!("{:<40}", "NODE TYPE");
+            println!("{:-<40}", "");
             for node in &nodes {
-                println!(
-                    "{:<25} {:<12} {:<10}",
-                    node.node_type,
-                    node.category,
-                    if node.streaming { "yes" } else { "no" }
-                );
+                println!("{:<40}", node.node_type);
             }
         }
     }

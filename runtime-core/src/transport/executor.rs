@@ -264,6 +264,24 @@ impl PipelineExecutor {
         registry.register(factory);
     }
 
+    /// List all registered node types
+    ///
+    /// Returns a sorted list of node type names that can be used in pipelines.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let executor = PipelineExecutor::new()?;
+    /// let types = executor.list_node_types().await;
+    /// for node_type in types {
+    ///     println!("Available: {}", node_type);
+    /// }
+    /// ```
+    pub async fn list_node_types(&self) -> Vec<String> {
+        let registry = self.registry.read().await;
+        registry.list_types()
+    }
+
     /// Validate a manifest before execution
     ///
     /// Checks:
