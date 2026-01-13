@@ -1,12 +1,12 @@
-//! Integration tests for SpeculativeVADCoordinator using PipelineRunner
+//! Integration tests for SpeculativeVADCoordinator using PipelineExecutor
 //!
 //! These tests verify that SpeculativeVADCoordinator works correctly when
-//! executed through the standard pipeline infrastructure (PipelineRunner,
+//! executed through the standard pipeline infrastructure (PipelineExecutor,
 //! Manifest, StreamingNodeRegistry).
 
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::manifest::{Manifest, ManifestMetadata, NodeManifest};
-use remotemedia_runtime_core::transport::{PipelineRunner, StreamSession, TransportData};
+use remotemedia_runtime_core::transport::{PipelineExecutor, StreamSession, TransportData};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,7 +17,7 @@ fn create_coordinator_manifest() -> Manifest {
         metadata: ManifestMetadata {
             name: "speculative_vad_coordinator_test".to_string(),
             description: Some("Test pipeline for SpeculativeVADCoordinator".to_string()),
-            created_at: None,
+            ..Default::default()
         },
         nodes: vec![NodeManifest {
             id: "vad_coordinator".to_string(),
@@ -47,7 +47,7 @@ fn create_coordinator_manifest_with_config(
         metadata: ManifestMetadata {
             name: "custom_coordinator_test".to_string(),
             description: Some("Custom config test".to_string()),
-            created_at: None,
+            ..Default::default()
         },
         nodes: vec![NodeManifest {
             id: "vad_coordinator".to_string(),
@@ -78,14 +78,14 @@ fn generate_test_audio(duration_ms: u32, sample_rate: u32) -> Vec<f32> {
 #[tokio::test]
 async fn test_coordinator_via_pipeline_runner_streaming() {
     // Create pipeline runner
-    let runner = PipelineRunner::new().expect("Failed to create PipelineRunner");
+    let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
 
     // Create manifest
     let manifest = Arc::new(create_coordinator_manifest());
 
     // Create streaming session
     let mut session = runner
-        .create_stream_session(manifest)
+        .create_session(manifest)
         .await
         .expect("Failed to create streaming session");
 
@@ -96,6 +96,8 @@ async fn test_coordinator_via_pipeline_runner_streaming() {
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     };
 
     // Send audio to session (wrap in TransportData)
@@ -148,11 +150,11 @@ async fn test_coordinator_via_pipeline_runner_streaming() {
 async fn test_coordinator_immediate_forwarding_latency() {
     use std::time::Instant;
 
-    let runner = PipelineRunner::new().expect("Failed to create PipelineRunner");
+    let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
     let manifest = Arc::new(create_coordinator_manifest());
 
     let mut session = runner
-        .create_stream_session(manifest)
+        .create_session(manifest)
         .await
         .expect("Failed to create streaming session");
 
@@ -163,6 +165,8 @@ async fn test_coordinator_immediate_forwarding_latency() {
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     };
 
     // Measure time from send to first output
@@ -203,11 +207,11 @@ async fn test_coordinator_immediate_forwarding_latency() {
 
 #[tokio::test]
 async fn test_coordinator_multiple_chunks() {
-    let runner = PipelineRunner::new().expect("Failed to create PipelineRunner");
+    let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
     let manifest = Arc::new(create_coordinator_manifest());
 
     let mut session = runner
-        .create_stream_session(manifest)
+        .create_session(manifest)
         .await
         .expect("Failed to create streaming session");
 
@@ -219,6 +223,8 @@ async fn test_coordinator_multiple_chunks() {
             sample_rate: 16000,
             channels: 1,
             stream_id: Some(format!("chunk_{}", i)),
+            timestamp_us: None,
+            arrival_ts_us: None,
         };
 
         session
@@ -265,13 +271,13 @@ async fn test_coordinator_multiple_chunks() {
 
 #[tokio::test]
 async fn test_coordinator_with_custom_config() {
-    let runner = PipelineRunner::new().expect("Failed to create PipelineRunner");
+    let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
 
     // Use stricter config (longer min_speech_duration)
     let manifest = Arc::new(create_coordinator_manifest_with_config(500, 200));
 
     let mut session = runner
-        .create_stream_session(manifest)
+        .create_session(manifest)
         .await
         .expect("Failed to create streaming session");
 
@@ -282,6 +288,8 @@ async fn test_coordinator_with_custom_config() {
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     };
 
     session
@@ -310,7 +318,7 @@ async fn test_coordinator_with_custom_config() {
 #[tokio::test]
 async fn test_coordinator_unary_execution() {
     // Test unary execution (single input -> single output)
-    let runner = PipelineRunner::new().expect("Failed to create PipelineRunner");
+    let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
     let manifest = Arc::new(create_coordinator_manifest());
 
     let audio_samples = generate_test_audio(20, 16000);
@@ -319,6 +327,8 @@ async fn test_coordinator_unary_execution() {
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     };
 
     let transport_input = TransportData::new(audio_input);
@@ -345,17 +355,17 @@ async fn test_coordinator_unary_execution() {
 
 #[tokio::test]
 async fn test_coordinator_session_isolation() {
-    let runner = PipelineRunner::new().expect("Failed to create PipelineRunner");
+    let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
     let manifest = Arc::new(create_coordinator_manifest());
 
     // Create two separate sessions
     let mut session1 = runner
-        .create_stream_session(Arc::clone(&manifest))
+        .create_session(Arc::clone(&manifest))
         .await
         .expect("Failed to create session 1");
 
     let mut session2 = runner
-        .create_stream_session(Arc::clone(&manifest))
+        .create_session(Arc::clone(&manifest))
         .await
         .expect("Failed to create session 2");
 
@@ -365,6 +375,8 @@ async fn test_coordinator_session_isolation() {
         sample_rate: 16000,
         channels: 1,
         stream_id: Some("session1_audio".to_string()),
+        timestamp_us: None,
+        arrival_ts_us: None,
     };
 
     let audio2 = RuntimeData::Audio {
@@ -372,6 +384,8 @@ async fn test_coordinator_session_isolation() {
         sample_rate: 16000,
         channels: 1,
         stream_id: Some("session2_audio".to_string()),
+        timestamp_us: None,
+        arrival_ts_us: None,
     };
 
     session1.send_input(TransportData::new(audio1)).await.expect("Send to session 1");

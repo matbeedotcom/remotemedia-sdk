@@ -6,6 +6,7 @@ members = [
     "cli/remotemedia-cli",
     "cli/transcribe-srt",
     "cli/pipeline-embed",
+    "cli/stream-health-demo",
     # Future Rust examples can be added here
 ]
 resolver = "2"
@@ -23,6 +24,7 @@ remotemedia-runtime-core = { path = "../runtime-core" }
 remotemedia-grpc = { path = "../transports/grpc" }
 remotemedia-http = { path = "../transports/http" }
 remotemedia-webrtc = { path = "../transports/webrtc" }
+remotemedia-health-analyzer = { path = "../libs/stream-health-analyzer" }
 
 # CLI framework
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
@@ -58,6 +60,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.6", features = ["v4"] }
 directories = "5.0"
 url = "2.5"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Platform directories (alternative to directories)
+dirs = "5.0"
 
 [profile.release]
 lto = true

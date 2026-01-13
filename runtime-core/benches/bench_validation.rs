@@ -62,7 +62,7 @@ fn create_test_manifest(node_count: usize) -> Manifest {
         metadata: ManifestMetadata {
             name: "benchmark_pipeline".to_string(),
             description: Some("Performance test manifest".to_string()),
-            created_at: None,
+            ..Default::default()
         },
         nodes,
         connections: vec![],

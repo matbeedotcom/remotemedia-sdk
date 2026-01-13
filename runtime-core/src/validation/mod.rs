@@ -29,6 +29,13 @@ mod schema_validator;
 pub use error::{ValidationConstraint, ValidationError, ValidationWarning, WarningType};
 pub use schema_validator::SchemaValidator;
 
+// Re-export capability validation types for convenience
+pub use crate::capabilities::validation::CapabilityMismatch;
+
+use crate::capabilities::{
+    validation::{validate_pipeline as validate_caps_pipeline, CapabilityValidationResult},
+    MediaCapabilities,
+};
 use crate::manifest::Manifest;
 
 /// Result of validating a manifest
@@ -138,6 +145,45 @@ pub fn get_all_schemas(
     validator: &SchemaValidator,
 ) -> std::collections::HashMap<String, serde_json::Value> {
     validator.get_all_schemas()
+}
+
+/// Validate media capabilities compatibility in a manifest (spec 022).
+///
+/// Checks that all connections between nodes have compatible media capabilities.
+/// This validates:
+/// - Media types match between connected nodes
+/// - Specific constraints (sample rate, channels, format, etc.) are compatible
+///
+/// # Arguments
+/// * `manifest` - The pipeline manifest to validate
+///
+/// # Returns
+/// * `Ok(())` if all capabilities are compatible
+/// * `Err(mismatches)` if incompatibilities are found
+pub fn validate_capabilities(manifest: &Manifest) -> Result<(), Vec<CapabilityMismatch>> {
+    // Build a map of node ID -> MediaCapabilities
+    let mut node_caps: std::collections::HashMap<String, MediaCapabilities> =
+        std::collections::HashMap::new();
+
+    for node in &manifest.nodes {
+        if let Some(caps) = &node.media_capabilities {
+            node_caps.insert(node.id.clone(), caps.clone());
+        }
+        // Nodes without media_capabilities use empty (accept any)
+    }
+
+    // Build connections list
+    let connections: Vec<(String, String)> = manifest
+        .connections
+        .iter()
+        .map(|c| (c.from.clone(), c.to.clone()))
+        .collect();
+
+    // Validate using the capabilities validation module
+    match validate_caps_pipeline(&node_caps, &connections) {
+        CapabilityValidationResult::Valid => Ok(()),
+        CapabilityValidationResult::Invalid(mismatches) => Err(mismatches),
+    }
 }
 
 #[cfg(test)]

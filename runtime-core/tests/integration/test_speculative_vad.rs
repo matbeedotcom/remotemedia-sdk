@@ -71,6 +71,7 @@ impl AsyncStreamingNode for MockSpeculativeVADGate {
                 sample_rate,
                 channels,
                 stream_id,
+                ..
             } => {
                 // **Behavior 1: Forward audio immediately (speculative forwarding)**
                 let forwarded_audio = RuntimeData::Audio {
@@ -78,6 +79,8 @@ impl AsyncStreamingNode for MockSpeculativeVADGate {
                     sample_rate: *sample_rate,
                     channels: *channels,
                     stream_id: stream_id.clone(),
+                    timestamp_us: None,
+                    arrival_ts_us: None,
                 };
 
                 // Store in outputs for test validation
@@ -136,6 +139,8 @@ async fn test_speculative_forwarding_immediate() {
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     };
 
     let mut callback_outputs = Vec::new();
@@ -175,6 +180,8 @@ async fn test_cancellation_on_false_positive() {
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     };
 
     let mut callback_outputs = Vec::new();
@@ -247,6 +254,8 @@ async fn test_ring_buffer_storage() {
             sample_rate: 16000,
             channels: 1,
             stream_id: None,
+            timestamp_us: None,
+            arrival_ts_us: None,
         };
 
         let callback = |_: RuntimeData| Ok(());
@@ -279,6 +288,8 @@ async fn test_speculation_acceptance_tracking() {
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
     };
 
     // Accepted speculation (no cancellation)
@@ -328,6 +339,8 @@ async fn test_concurrent_sessions() {
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: None,
+                timestamp_us: None,
+                arrival_ts_us: None,
             };
 
             let callback = |_: RuntimeData| Ok(());

@@ -6,10 +6,78 @@
 use crate::generated::data_buffer::DataType;
 use crate::generated::{
     AudioBuffer, AudioFormat, BatchHint, BinaryBuffer, CancelSpeculation, ControlMessage,
-    DataBuffer, DeadlineWarning, JsonData, NumpyBuffer, TensorBuffer, TextBuffer, VideoFrame,
+    DataBuffer, DeadlineWarning, FileBuffer, JsonData, NumpyBuffer, TensorBuffer, TextBuffer, VideoFrame,
 };
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::transport::TransportData;
+
+/// Get current timestamp in microseconds for arrival time stamping (spec 026)
+///
+/// This should be called at the transport ingest boundary to capture
+/// the exact moment data enters the system for drift monitoring.
+pub fn now_micros() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as u64
+}
+
+/// Convert protobuf AudioBuffer to RuntimeData::Audio with arrival timestamp
+///
+/// This handles audio format conversion (F32, I16, I32) and stamps the arrival
+/// timestamp for spec 026 drift monitoring.
+///
+/// # Arguments
+/// * `audio` - The protobuf AudioBuffer
+/// * `arrival_ts_us` - Optional arrival timestamp (if None, uses now_micros())
+///
+/// # Returns
+/// RuntimeData::Audio or error if format is unsupported
+pub fn audio_buffer_to_runtime_data(
+    audio: &crate::generated::AudioBuffer,
+    arrival_ts_us: Option<u64>,
+) -> Result<RuntimeData, String> {
+    use crate::generated::AudioFormat as ProtoAudioFormat;
+
+    let samples: Vec<f32> = match ProtoAudioFormat::try_from(audio.format) {
+        Ok(ProtoAudioFormat::F32) => {
+            audio.samples
+                .chunks_exact(4)
+                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect()
+        }
+        Ok(ProtoAudioFormat::I16) => {
+            audio.samples
+                .chunks_exact(2)
+                .map(|chunk| {
+                    let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
+                    sample as f32 / 32768.0
+                })
+                .collect()
+        }
+        Ok(ProtoAudioFormat::I32) => {
+            audio.samples
+                .chunks_exact(4)
+                .map(|chunk| {
+                    let sample = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                    sample as f32 / 2147483648.0
+                })
+                .collect()
+        }
+        _ => {
+            return Err(format!("Unsupported audio format: {}", audio.format));
+        }
+    };
+
+    Ok(RuntimeData::Audio {
+        samples,
+        sample_rate: audio.sample_rate,
+        channels: audio.channels,
+        stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: arrival_ts_us.or_else(|| Some(now_micros())),
+    })
+}
 
 /// Convert runtime-core RuntimeData to Protobuf DataBuffer
 pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
@@ -18,7 +86,7 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             samples,
             sample_rate,
             channels,
-            stream_id: _,
+            ..
         } => DataType::Audio(AudioBuffer {
             samples: samples.iter().flat_map(|f| f.to_le_bytes()).collect(),
             sample_rate: *sample_rate,
@@ -35,7 +103,7 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             frame_number,
             timestamp_us,
             is_keyframe,
-            stream_id: _,
+            ..
         } => {
             DataType::Video(VideoFrame {
                 pixel_data: pixel_data.clone(),
@@ -121,6 +189,23 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
                 metadata: serde_json::to_string(metadata).unwrap_or_default(),
             })
         }
+        RuntimeData::File {
+            path,
+            filename,
+            mime_type,
+            size,
+            offset,
+            length,
+            stream_id,
+        } => DataType::File(FileBuffer {
+            path: path.clone(),
+            filename: filename.clone().unwrap_or_default(),
+            mime_type: mime_type.clone().unwrap_or_default(),
+            size: size.unwrap_or(0),
+            offset: offset.unwrap_or(0),
+            length: length.unwrap_or(0),
+            stream_id: stream_id.clone().unwrap_or_default(),
+        }),
     };
 
     DataBuffer {
@@ -130,7 +215,25 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
 }
 
 /// Convert Protobuf DataBuffer to runtime-core RuntimeData
+///
+/// Note: For spec 026 drift monitoring, use `data_buffer_to_runtime_data_with_arrival()`
+/// to stamp the arrival timestamp at transport ingest time.
 pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
+    data_buffer_to_runtime_data_with_arrival(buffer, None)
+}
+
+/// Convert Protobuf DataBuffer to runtime-core RuntimeData with arrival timestamp stamping
+///
+/// # Arguments
+/// * `buffer` - The protobuf DataBuffer to convert
+/// * `stamp_arrival` - If true, stamps arrival_ts_us with current time (spec 026)
+///
+/// This should be called at the transport ingest boundary to ensure accurate
+/// drift monitoring timestamps.
+pub fn data_buffer_to_runtime_data_with_arrival(buffer: &DataBuffer, arrival_ts_us: Option<u64>) -> Option<RuntimeData> {
+    // If caller wants arrival stamping but didn't provide a value, generate one now
+    let arrival_ts = arrival_ts_us.or_else(|| None);
+
     match &buffer.data_type {
         Some(DataType::Audio(audio)) => {
             // Convert bytes back to f32 samples
@@ -145,6 +248,8 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
                 sample_rate: audio.sample_rate,
                 channels: audio.channels,
                 stream_id: None,
+                timestamp_us: None,     // Could extract from proto metadata if available
+                arrival_ts_us: arrival_ts,
             })
         }
         Some(DataType::Video(video)) => {
@@ -182,6 +287,7 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
                 timestamp_us: video.timestamp_us,
                 is_keyframe: video.is_keyframe,
                 stream_id: None,
+                arrival_ts_us: arrival_ts,
             })
         }
         Some(DataType::Tensor(tensor)) => Some(RuntimeData::Tensor {
@@ -203,6 +309,35 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
             strides: numpy.strides.iter().map(|&s| s as isize).collect(),
             c_contiguous: numpy.c_contiguous,
             f_contiguous: numpy.f_contiguous,
+        }),
+        Some(DataType::File(file)) => Some(RuntimeData::File {
+            path: file.path.clone(),
+            filename: if file.filename.is_empty() {
+                None
+            } else {
+                Some(file.filename.clone())
+            },
+            mime_type: if file.mime_type.is_empty() {
+                None
+            } else {
+                Some(file.mime_type.clone())
+            },
+            size: if file.size == 0 { None } else { Some(file.size) },
+            offset: if file.offset == 0 {
+                None
+            } else {
+                Some(file.offset)
+            },
+            length: if file.length == 0 {
+                None
+            } else {
+                Some(file.length)
+            },
+            stream_id: if file.stream_id.is_empty() {
+                None
+            } else {
+                Some(file.stream_id.clone())
+            },
         }),
         _ => None,
     }
@@ -248,4 +383,178 @@ pub fn data_buffer_to_transport_data(buffer: &DataBuffer) -> Option<TransportDat
     }
 
     Some(transport_data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // File adapter roundtrip tests (Spec 001: RuntimeData.File)
+
+    #[test]
+    fn test_file_roundtrip_with_all_fields() {
+        let file = RuntimeData::File {
+            path: "/data/input/video.mp4".to_string(),
+            filename: Some("video.mp4".to_string()),
+            mime_type: Some("video/mp4".to_string()),
+            size: Some(104_857_600),
+            offset: Some(1_048_576),
+            length: Some(65_536),
+            stream_id: Some("video_track".to_string()),
+        };
+
+        let buffer = runtime_data_to_data_buffer(&file);
+        let recovered = data_buffer_to_runtime_data(&buffer).unwrap();
+
+        match recovered {
+            RuntimeData::File {
+                path,
+                filename,
+                mime_type,
+                size,
+                offset,
+                length,
+                stream_id,
+            } => {
+                assert_eq!(path, "/data/input/video.mp4");
+                assert_eq!(filename, Some("video.mp4".to_string()));
+                assert_eq!(mime_type, Some("video/mp4".to_string()));
+                assert_eq!(size, Some(104_857_600));
+                assert_eq!(offset, Some(1_048_576));
+                assert_eq!(length, Some(65_536));
+                assert_eq!(stream_id, Some("video_track".to_string()));
+            }
+            _ => panic!("Expected RuntimeData::File"),
+        }
+    }
+
+    #[test]
+    fn test_file_roundtrip_minimal() {
+        let file = RuntimeData::File {
+            path: "/tmp/output.bin".to_string(),
+            filename: None,
+            mime_type: None,
+            size: None,
+            offset: None,
+            length: None,
+            stream_id: None,
+        };
+
+        let buffer = runtime_data_to_data_buffer(&file);
+        let recovered = data_buffer_to_runtime_data(&buffer).unwrap();
+
+        match recovered {
+            RuntimeData::File {
+                path,
+                filename,
+                mime_type,
+                size,
+                offset,
+                length,
+                stream_id,
+            } => {
+                assert_eq!(path, "/tmp/output.bin");
+                // Empty strings in protobuf become None
+                assert_eq!(filename, None);
+                assert_eq!(mime_type, None);
+                // 0 values become None
+                assert_eq!(size, None);
+                assert_eq!(offset, None);
+                assert_eq!(length, None);
+                assert_eq!(stream_id, None);
+            }
+            _ => panic!("Expected RuntimeData::File"),
+        }
+    }
+
+    #[test]
+    fn test_file_roundtrip_byte_range() {
+        let file = RuntimeData::File {
+            path: "/data/large_file.bin".to_string(),
+            filename: None,
+            mime_type: None,
+            size: Some(1_073_741_824), // 1 GB
+            offset: Some(10 * 1024 * 1024), // 10 MB offset
+            length: Some(64 * 1024),        // 64 KB chunk
+            stream_id: None,
+        };
+
+        let buffer = runtime_data_to_data_buffer(&file);
+        let recovered = data_buffer_to_runtime_data(&buffer).unwrap();
+
+        match recovered {
+            RuntimeData::File {
+                path,
+                size,
+                offset,
+                length,
+                ..
+            } => {
+                assert_eq!(path, "/data/large_file.bin");
+                assert_eq!(size, Some(1_073_741_824));
+                assert_eq!(offset, Some(10 * 1024 * 1024));
+                assert_eq!(length, Some(64 * 1024));
+            }
+            _ => panic!("Expected RuntimeData::File"),
+        }
+    }
+
+    #[test]
+    fn test_file_to_protobuf_structure() {
+        let file = RuntimeData::File {
+            path: "/test/path.txt".to_string(),
+            filename: Some("path.txt".to_string()),
+            mime_type: Some("text/plain".to_string()),
+            size: Some(1024),
+            offset: Some(0),
+            length: Some(512),
+            stream_id: Some("main".to_string()),
+        };
+
+        let buffer = runtime_data_to_data_buffer(&file);
+
+        match buffer.data_type {
+            Some(DataType::File(file_buf)) => {
+                assert_eq!(file_buf.path, "/test/path.txt");
+                assert_eq!(file_buf.filename, "path.txt");
+                assert_eq!(file_buf.mime_type, "text/plain");
+                assert_eq!(file_buf.size, 1024);
+                assert_eq!(file_buf.offset, 0);
+                assert_eq!(file_buf.length, 512);
+                assert_eq!(file_buf.stream_id, "main");
+            }
+            _ => panic!("Expected DataType::File"),
+        }
+    }
+
+    #[test]
+    fn test_file_transport_data_roundtrip() {
+        let file = RuntimeData::File {
+            path: "/data/video.mp4".to_string(),
+            filename: Some("video.mp4".to_string()),
+            mime_type: Some("video/mp4".to_string()),
+            size: Some(50_000_000),
+            offset: None,
+            length: None,
+            stream_id: None,
+        };
+
+        let mut transport = TransportData::new(file);
+        transport.sequence = Some(42);
+        transport.metadata.insert("source".to_string(), "upload".to_string());
+
+        let buffer = transport_data_to_data_buffer(&transport);
+        let recovered = data_buffer_to_transport_data(&buffer).unwrap();
+
+        assert_eq!(recovered.sequence, Some(42));
+        assert_eq!(recovered.metadata.get("source"), Some(&"upload".to_string()));
+
+        match recovered.data {
+            RuntimeData::File { path, size, .. } => {
+                assert_eq!(path, "/data/video.mp4");
+                assert_eq!(size, Some(50_000_000));
+            }
+            _ => panic!("Expected RuntimeData::File"),
+        }
+    }
 }

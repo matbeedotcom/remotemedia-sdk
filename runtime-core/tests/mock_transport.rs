@@ -7,17 +7,17 @@ use async_trait::async_trait;
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::manifest::Manifest;
 use remotemedia_runtime_core::transport::{
-    PipelineRunner, PipelineTransport, StreamSession, TransportData,
+    PipelineExecutor, PipelineTransport, StreamSession, TransportData,
 };
 use remotemedia_runtime_core::{Error, Result};
 use std::sync::Arc;
 
 /// Mock transport for testing
 ///
-/// This transport uses the real PipelineRunner but is useful for
+/// This transport uses the real PipelineExecutor but is useful for
 /// testing transport-level logic without network overhead.
 pub struct MockTransport {
-    runner: PipelineRunner,
+    runner: PipelineExecutor,
     /// Optional transformation to apply to outputs
     transform_output: Option<Box<dyn Fn(RuntimeData) -> RuntimeData + Send + Sync>>,
 }
@@ -26,7 +26,7 @@ impl MockTransport {
     /// Create new mock transport
     pub fn new() -> Result<Self> {
         Ok(Self {
-            runner: PipelineRunner::new()?,
+            runner: PipelineExecutor::new()?,
             transform_output: None,
         })
     }
@@ -60,7 +60,7 @@ impl PipelineTransport for MockTransport {
     }
 
     async fn stream(&self, manifest: Arc<Manifest>) -> Result<Box<dyn StreamSession>> {
-        let session = self.runner.create_stream_session(manifest).await?;
+        let session = self.runner.create_session(manifest).await?;
         Ok(Box::new(session))
     }
 }

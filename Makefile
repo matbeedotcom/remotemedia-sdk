@@ -30,71 +30,89 @@ endif
 
 .PHONY: help
 help: ## Show this help message
-	@echo.
-	@echo RemoteMedia SDK Build System
-	@echo ==============================
-	@echo.
-	@echo Usage: make [target] [PROFILE=dev/release/fast]
-	@echo.
-	@echo Runtime Core Targets:
-	@echo   core-default                   Build runtime-core with default features
-	@echo   core-cuda                      Build with CUDA support (requires CUDA 12.x)
-	@echo   core-minimal                   Build with no default features
-	@echo   core-multiprocess              Build with only multiprocess feature
-	@echo   core-silero                    Build with only silero-vad feature
-	@echo   core-docker                    Build with only docker feature
-	@echo   core-video                     Build with video feature (FFmpeg-based)
-	@echo   core-video-pure-rust           Build with pure-Rust video codecs
-	@echo   core-grpc-client               Build with gRPC client
-	@echo   core-all-features              Build with all features enabled
-	@echo.
-	@echo Transport Targets:
-	@echo   transports-all                 Build all transports
-	@echo   transport-grpc                 Build gRPC transport
-	@echo   transport-grpc-server          Build gRPC transport with server
-	@echo   transport-http                 Build HTTP transport
-	@echo   transport-http-server          Build HTTP transport with server
-	@echo   transport-webrtc               Build WebRTC transport
-	@echo   transport-webrtc-full          Build WebRTC with all features
-	@echo   transport-ffi                  Build FFI transport (Python)
-	@echo   transport-ffi-napi             Build FFI transport (Node.js)
-	@echo.
-	@echo Server Targets:
-	@echo   servers-all                    Build all server binaries
-	@echo   server-grpc                    Build gRPC server binary
-	@echo   server-http                    Build HTTP server binary
-	@echo   server-webrtc                  Build WebRTC server binary
-	@echo.
-	@echo CLI Targets:
-	@echo   cli                            Build all CLI tools
-	@echo   cli-remotemedia                Build main remotemedia CLI
-	@echo   cli-transcribe                 Build transcribe-srt CLI
-	@echo   cli-embed                      Build pipeline-embed (set PIPELINE_YAML)
-	@echo.
-	@echo Test Targets:
-	@echo   test                           Run all tests
-	@echo   test-core                      Run runtime-core tests
-	@echo   test-core-unit                 Run runtime-core unit tests
-	@echo   test-core-integration          Run runtime-core integration tests
-	@echo   test-core-docker               Run Docker-specific tests
-	@echo   test-core-vad                  Run VAD-specific tests
-	@echo   test-transports                Run all transport tests
-	@echo.
-	@echo Benchmark Targets:
-	@echo   bench                          Run all benchmarks
-	@echo   bench-latency                  Run latency benchmarks
-	@echo   bench-vad                      Run VAD benchmarks
-	@echo   bench-docker                   Run Docker benchmarks
-	@echo   bench-pipeline                 Run pipeline benchmarks
-	@echo.
-	@echo Utility Targets:
-	@echo   check                          Check all packages compile
-	@echo   clippy                         Run clippy on all packages
-	@echo   fmt                            Format all Rust code
-	@echo   doc                            Build documentation
-	@echo   clean                          Clean build artifacts
-	@echo   clean-all                      Clean everything including examples
-	@echo.
+	@echo ""
+	@echo "RemoteMedia SDK Build System"
+	@echo "=============================="
+	@echo ""
+	@echo "Usage: make [target] [PROFILE=dev/release/fast]"
+	@echo ""
+	@echo "Runtime Core Targets:"
+	@echo "  core-default                   Build runtime-core with default features"
+	@echo "  core-cuda                      Build with CUDA support (requires CUDA 12.x)"
+	@echo "  core-minimal                   Build with no default features"
+	@echo "  core-multiprocess              Build with only multiprocess feature"
+	@echo "  core-silero                    Build with only silero-vad feature"
+	@echo "  core-docker                    Build with only docker feature"
+	@echo "  core-video                     Build with video feature (FFmpeg-based)"
+	@echo "  core-video-pure-rust           Build with pure-Rust video codecs"
+	@echo "  core-grpc-client               Build with gRPC client"
+	@echo "  core-all-features              Build with all features enabled"
+	@echo ""
+	@echo "Transport Targets:"
+	@echo "  transports-all                 Build all transports"
+	@echo "  transport-grpc                 Build gRPC transport"
+	@echo "  transport-grpc-server          Build gRPC transport with server"
+	@echo "  transport-http                 Build HTTP transport"
+	@echo "  transport-http-server          Build HTTP transport with server"
+	@echo "  transport-webrtc               Build WebRTC transport"
+	@echo "  transport-webrtc-full          Build WebRTC with all features"
+	@echo "  transport-ffi                  Build FFI transport (Python)"
+	@echo "  transport-ffi-napi             Build FFI transport (Node.js)"
+	@echo ""
+	@echo "Server Targets:"
+	@echo "  servers-all                    Build all server binaries"
+	@echo "  server-grpc                    Build gRPC server binary"
+	@echo "  server-http                    Build HTTP server binary"
+	@echo "  server-webrtc                  Build WebRTC server binary"
+	@echo ""
+	@echo "Adapter Targets:"
+	@echo "  adapters-all                   Build all ingestion adapters"
+	@echo "  adapter-rtmp                   Build RTMP/RTSP/UDP/SRT ingestion adapter"
+	@echo ""
+	@echo "Service Targets:"
+	@echo "  services-all                   Build all services"
+	@echo "  ingest-srt                     Build SRT ingest gateway service"
+	@echo "  run-ingest-srt                 Run SRT ingest gateway"
+	@echo ""
+	@echo "CLI Targets:"
+	@echo "  cli                            Build all CLI tools"
+	@echo "  cli-remotemedia                Build main remotemedia CLI"
+	@echo "  cli-transcribe                 Build transcribe-srt CLI"
+	@echo "  cli-demo                       Build stream health demo (audio only)"
+	@echo "  cli-demo-rtmp                  Build stream health demo with RTMP/RTSP/UDP"
+	@echo "  cli-embed                      Build pipeline-embed (set PIPELINE_YAML)"
+	@echo "  cli-license-signer             Build license signing tool (internal)"
+	@echo ""
+	@echo "Test Targets:"
+	@echo "  test                           Run all tests"
+	@echo "  test-core                      Run runtime-core tests"
+	@echo "  test-core-unit                 Run runtime-core unit tests"
+	@echo "  test-core-integration          Run runtime-core integration tests"
+	@echo "  test-core-docker               Run Docker-specific tests"
+	@echo "  test-core-vad                  Run VAD-specific tests"
+	@echo "  test-core-ingestion            Run ingestion module tests"
+	@echo "  test-transports                Run all transport tests"
+	@echo "  test-adapters                  Run all adapter tests"
+	@echo "  test-adapter-rtmp              Run RTMP/RTSP adapter tests"
+	@echo "  test-services                  Run all service tests"
+	@echo "  test-ingest-srt                Run SRT ingest gateway tests"
+	@echo "  test-demo                      Run stream health demo tests"
+	@echo ""
+	@echo "Benchmark Targets:"
+	@echo "  bench                          Run all benchmarks"
+	@echo "  bench-latency                  Run latency benchmarks"
+	@echo "  bench-vad                      Run VAD benchmarks"
+	@echo "  bench-docker                   Run Docker benchmarks"
+	@echo "  bench-pipeline                 Run pipeline benchmarks"
+	@echo ""
+	@echo "Utility Targets:"
+	@echo "  check                          Check all packages compile"
+	@echo "  clippy                         Run clippy on all packages"
+	@echo "  fmt                            Format all Rust code"
+	@echo "  doc                            Build documentation"
+	@echo "  clean                          Clean build artifacts"
+	@echo "  clean-all                      Clean everything including examples"
+	@echo ""
 
 # =============================================================================
 # SETUP TARGETS
@@ -214,6 +232,31 @@ transport-ffi-napi-webrtc: ## Build FFI transport with WebRTC support for Node.j
 	cargo build -p remotemedia-ffi --no-default-features --features napi-webrtc $(CARGO_FLAGS)
 
 # =============================================================================
+# INGESTION ADAPTERS
+# =============================================================================
+
+.PHONY: adapters-all adapter-rtmp
+
+adapters-all: adapter-rtmp ## Build all ingestion adapters
+
+adapter-rtmp: setup-ffmpeg ## Build RTMP/RTSP/UDP/SRT ingestion adapter
+	cargo build -p remotemedia-ingest-rtmp $(CARGO_FLAGS)
+
+# =============================================================================
+# SERVICES (INGEST GATEWAYS)
+# =============================================================================
+
+.PHONY: services-all ingest-srt
+
+services-all: ingest-srt ## Build all services
+
+ingest-srt: setup-ffmpeg adapter-rtmp ## Build SRT ingest gateway service
+	cargo build -p remotemedia-ingest-srt $(CARGO_FLAGS)
+
+run-ingest-srt: ingest-srt ## Run SRT ingest gateway
+	cargo run -p remotemedia-ingest-srt $(CARGO_FLAGS)
+
+# =============================================================================
 # SERVER BINARIES
 # =============================================================================
 
@@ -234,17 +277,26 @@ server-webrtc: ## Build WebRTC server binary
 # EXAMPLE/CLI TARGETS
 # =============================================================================
 
-.PHONY: cli cli-remotemedia cli-transcribe cli-embed examples-all
+.PHONY: cli cli-remotemedia cli-transcribe cli-embed cli-demo cli-demo-rtmp cli-license-signer examples-all
 
 examples-all: cli ## Build all examples
 
-cli: cli-remotemedia cli-transcribe ## Build all CLI tools
+cli: cli-remotemedia cli-transcribe cli-demo ## Build all CLI tools (excludes license-signer)
 
 cli-remotemedia: ## Build the main remotemedia CLI
 	cd examples && cargo build -p remotemedia-cli $(CARGO_FLAGS)
 
 cli-transcribe: ## Build the transcribe-srt CLI tool
 	cd examples && cargo build -p transcribe-srt $(CARGO_FLAGS)
+
+cli-demo: setup-ffmpeg ## Build stream health demo (audio only)
+	cd examples && cargo build -p stream-health-demo $(CARGO_FLAGS)
+
+cli-demo-rtmp: setup-ffmpeg adapter-rtmp ## Build stream health demo with RTMP/RTSP/UDP support
+	cd examples && cargo build -p stream-health-demo --features rtmp $(CARGO_FLAGS)
+
+cli-license-signer: ## Build license signing tool (internal use)
+	cd tools/license-signer && cargo build $(CARGO_FLAGS)
 
 ifeq ($(OS),Windows_NT)
 cli-embed: setup-ffmpeg ## Build pipeline-embed (set PIPELINE_YAML env var)
@@ -349,6 +401,22 @@ test-ffi: ## Run FFI transport tests
 test-cli: ## Run CLI example tests
 	cd examples && cargo test -p remotemedia-cli
 
+test-adapters: test-adapter-rtmp ## Run all adapter tests
+
+test-adapter-rtmp: ## Run RTMP/RTSP ingestion adapter tests
+	cargo test -p remotemedia-ingest-rtmp
+
+test-core-ingestion: ## Run runtime-core ingestion module tests
+	cargo test -p remotemedia-runtime-core ingestion
+
+test-demo: ## Run stream health demo tests
+	cd examples && cargo test -p stream-health-demo
+
+test-services: test-ingest-srt ## Run all service tests
+
+test-ingest-srt: ## Run SRT ingest gateway tests
+	cargo test -p remotemedia-ingest-srt
+
 # =============================================================================
 # BENCHMARK TARGETS
 # =============================================================================
@@ -385,9 +453,9 @@ bench-speculative: ## Run speculative coordinator benchmarks
 # CHECK & LINT TARGETS
 # =============================================================================
 
-.PHONY: check check-core check-transports check-examples clippy fmt
+.PHONY: check check-core check-transports check-adapters check-services check-examples clippy fmt
 
-check: check-core check-transports check-examples ## Check all packages compile
+check: check-core check-transports check-adapters check-services check-examples ## Check all packages compile
 
 check-core: ## Check runtime-core compiles
 	cargo check -p remotemedia-runtime-core
@@ -397,6 +465,12 @@ check-transports: ## Check all transports compile
 	cargo check -p remotemedia-http
 	cargo check -p remotemedia-webrtc
 	cargo check -p remotemedia-ffi
+
+check-adapters: ## Check all adapters compile
+	cargo check -p remotemedia-ingest-rtmp
+
+check-services: ## Check all services compile
+	-cargo check -p remotemedia-ingest-srt 2>/dev/null || echo "ingest-srt not yet implemented"
 
 check-examples: ## Check examples compile
 	cd examples && cargo check --workspace

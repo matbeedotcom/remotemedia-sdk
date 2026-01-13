@@ -1,0 +1,73 @@
+# Audio Quality Analysis Pipeline
+# Detects common audio issues in real-time
+
+version: "1.0"
+
+metadata:
+  name: Audio Quality Analysis
+  description: Detects silence, clipping, low volume, and channel imbalance
+
+nodes:
+  # Audio level metering (RMS, peak, crest factor)
+  - id: audio_level
+    node_type: AudioLevelNode
+    params:
+      window_size_ms: 100
+      low_volume_threshold_db: -40.0
+      silence_threshold_db: -60.0
+    is_streaming: true
+
+  # Silence and dropout detection
+  - id: silence_detector
+    node_type: SilenceDetectorNode
+    params:
+      silence_threshold_db: -50.0
+      sustained_silence_ms: 500.0
+      dropout_count_threshold: 3
+    is_streaming: true
+
+  # Clipping/distortion detection
+  - id: clipping_detector
+    node_type: ClippingDetectorNode
+    params:
+      clipping_threshold: 0.99
+      saturation_ratio_threshold: 0.01
+    is_streaming: true
+
+  # Channel imbalance detection (for stereo)
+  - id: channel_balance
+    node_type: ChannelBalanceNode
+    params:
+      imbalance_threshold_db: 6.0
+    is_streaming: true
+
+  # Event correlator (groups alerts into incidents)
+  - id: event_correlator
+    node_type: EventCorrelatorNode
+    params:
+      correlation_window_ms: 5000
+      min_events_for_incident: 3
+    is_streaming: true
+
+  # Health score aggregation and event emission
+  - id: health_emitter
+    node_type: HealthEmitterNode
+    params:
+      lead_threshold_ms: 50
+      freeze_threshold_ms: 500
+      health_threshold: 0.7
+    is_streaming: true
+
+# Connection topology:
+# - Analysis nodes (audio_level, silence_detector, clipping_detector, channel_balance) receive raw audio
+# - Event correlator receives alerts from all analysis nodes
+# - Health emitter receives metrics from all analysis nodes
+connections:
+  - { from: audio_level, to: event_correlator }
+  - { from: audio_level, to: health_emitter }
+  - { from: silence_detector, to: event_correlator }
+  - { from: silence_detector, to: health_emitter }
+  - { from: clipping_detector, to: event_correlator }
+  - { from: clipping_detector, to: health_emitter }
+  - { from: channel_balance, to: event_correlator }
+  - { from: channel_balance, to: health_emitter }

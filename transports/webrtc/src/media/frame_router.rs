@@ -295,6 +295,8 @@ pub fn with_stream_id(data: RuntimeData, new_stream_id: Option<String>) -> Runti
             sample_rate,
             channels,
             stream_id: new_stream_id,
+            timestamp_us: None,
+            arrival_ts_us: None,
         },
         RuntimeData::Video {
             pixel_data,
@@ -316,6 +318,7 @@ pub fn with_stream_id(data: RuntimeData, new_stream_id: Option<String>) -> Runti
             timestamp_us,
             is_keyframe,
             stream_id: new_stream_id,
+            arrival_ts_us: None,
         },
         other => other, // Non-media types pass through unchanged
     }

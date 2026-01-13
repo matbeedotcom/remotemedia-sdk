@@ -17,7 +17,7 @@
 
 use async_trait::async_trait;
 use remotemedia_runtime_core::transport::{
-    ClientConfig, PipelineClient, PipelineRunner, PipelineTransport, ServerConfig, TransportPlugin,
+    ClientConfig, PipelineClient, PipelineExecutor, PipelineTransport, ServerConfig, TransportPlugin,
 };
 use remotemedia_runtime_core::Result;
 use std::sync::Arc;
@@ -76,7 +76,7 @@ impl TransportPlugin for GrpcTransportPlugin {
     /// # Arguments
     ///
     /// * `config` - Server configuration containing bind address and authentication settings
-    /// * `runner` - Pipeline runner instance for executing pipelines
+    /// * `executor` - Pipeline executor for executing pipelines (spec 026 migration)
     ///
     /// # Returns
     ///
@@ -91,7 +91,7 @@ impl TransportPlugin for GrpcTransportPlugin {
     async fn create_server(
         &self,
         config: &ServerConfig,
-        runner: Arc<PipelineRunner>,
+        executor: Arc<PipelineExecutor>,
     ) -> Result<Box<dyn PipelineTransport>> {
         use crate::server::GrpcServer;
         use crate::ServiceConfig;
@@ -105,8 +105,8 @@ impl TransportPlugin for GrpcTransportPlugin {
             json_logging: true,
         };
 
-        // Create GrpcServer
-        let server = GrpcServer::new(service_config, runner)
+        // Create GrpcServer with PipelineExecutor (spec 026 migration)
+        let server = GrpcServer::new(service_config, executor)
             .map_err(|e| remotemedia_runtime_core::Error::Transport(e.to_string()))?;
 
         Ok(Box::new(server))

@@ -21,7 +21,7 @@
 //! - `RUST_LOG`: Logging level (default: `info`, options: `trace`, `debug`, `info`, `warn`, `error`)
 
 use remotemedia_http::HttpServer;
-use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_runtime_core::transport::PipelineExecutor;
 use std::sync::Arc;
 use tracing::{error, info};
 
@@ -52,17 +52,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     runtime.block_on(async move {
-        // Create pipeline runner
-        let runner = match PipelineRunner::new() {
-            Ok(runner) => Arc::new(runner),
+        // Create pipeline executor (spec 026 migration)
+        let executor = match PipelineExecutor::new() {
+            Ok(executor) => Arc::new(executor),
             Err(e) => {
-                error!("Failed to create pipeline runner: {}", e);
+                error!("Failed to create pipeline executor: {}", e);
                 return Err(Box::new(e) as Box<dyn std::error::Error>);
             }
         };
 
         // Create HTTP server
-        let server = HttpServer::new(bind_address, runner).await.map_err(|e| {
+        let server = HttpServer::new(bind_address, executor).await.map_err(|e| {
             error!("Failed to create HTTP server: {}", e);
             e
         })?;

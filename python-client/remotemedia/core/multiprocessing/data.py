@@ -21,6 +21,8 @@ class DataType(Enum):
     TEXT = 3
     TENSOR = 4
     CONTROL_MESSAGE = 5  # Spec 007: Control messages for low-latency streaming
+    NUMPY = 6            # NumPy array with full metadata
+    FILE = 7             # Spec 001: File reference with metadata
 
 
 class AudioFormat(Enum):
@@ -139,6 +141,38 @@ class ControlMessageMetadata:
 
 
 @dataclass
+class FileMetadata:
+    """
+    File reference metadata (Spec 001: RuntimeData.File).
+
+    Represents a reference to a file on the local filesystem.
+    Does NOT contain file contents - only metadata for referencing.
+    """
+    path: str                          # File path (required)
+    filename: Optional[str] = None     # Original filename
+    mime_type: Optional[str] = None    # MIME type hint
+    size: Optional[int] = None         # File size in bytes
+    offset: Optional[int] = None       # Byte offset for range requests
+    length: Optional[int] = None       # Length for range requests
+    stream_id: Optional[str] = None    # Stream ID for multi-track routing
+
+    @classmethod
+    def from_ipc(cls, path: str, filename: Optional[str], mime_type: Optional[str],
+                 size: Optional[int], offset: Optional[int], length: Optional[int],
+                 stream_id: Optional[str]) -> 'FileMetadata':
+        """Create from IPC deserialized data."""
+        return cls(
+            path=path,
+            filename=filename,
+            mime_type=mime_type,
+            size=size,
+            offset=offset,
+            length=length,
+            stream_id=stream_id
+        )
+
+
+@dataclass
 class RuntimeData:
     """
     Zero-copy data container for IPC.
@@ -148,10 +182,10 @@ class RuntimeData:
     """
 
     type: DataType
-    payload: Union[np.ndarray, bytes, str, dict]  # dict for control messages
+    payload: Union[np.ndarray, bytes, str, dict]  # dict for control messages, file metadata
     session_id: str
     timestamp: float
-    metadata: Optional[Union[AudioMetadata, VideoMetadata, TextMetadata, TensorMetadata, ControlMessageMetadata]] = None
+    metadata: Optional[Union[AudioMetadata, VideoMetadata, TextMetadata, TensorMetadata, ControlMessageMetadata, FileMetadata]] = None
 
     def __post_init__(self):
         """Validate and normalize data after initialization."""
@@ -183,6 +217,22 @@ class RuntimeData:
                     self.metadata = ControlMessageMetadata.from_json(payload_json)
                 else:
                     raise ValueError("ControlMessage requires ControlMessageMetadata or JSON payload")
+        elif self.type == DataType.FILE:
+            # File references should have FileMetadata
+            if self.metadata is None or not isinstance(self.metadata, FileMetadata):
+                # Try to parse from payload if it's a dict
+                if isinstance(self.payload, dict):
+                    self.metadata = FileMetadata(
+                        path=self.payload.get('path', ''),
+                        filename=self.payload.get('filename'),
+                        mime_type=self.payload.get('mime_type'),
+                        size=self.payload.get('size'),
+                        offset=self.payload.get('offset'),
+                        length=self.payload.get('length'),
+                        stream_id=self.payload.get('stream_id')
+                    )
+                else:
+                    raise ValueError("File requires FileMetadata or dict payload with 'path' field")
 
     @property
     def size(self) -> int:
@@ -416,6 +466,84 @@ class RuntimeData:
             metadata=metadata
         )
 
+    @classmethod
+    def file(cls,
+             path: str,
+             session_id: str = "",
+             filename: Optional[str] = None,
+             mime_type: Optional[str] = None,
+             size: Optional[int] = None,
+             offset: Optional[int] = None,
+             length: Optional[int] = None,
+             stream_id: Optional[str] = None) -> "RuntimeData":
+        """
+        Create file reference runtime data (Spec 001: RuntimeData.File).
+
+        Creates a reference to a file on the local filesystem without loading
+        the file contents into memory. Supports byte range requests via
+        offset/length parameters.
+
+        Args:
+            path: File path (absolute or relative)
+            session_id: Session identifier
+            filename: Original filename (optional, preserved separately from path)
+            mime_type: MIME type hint (optional)
+            size: File size in bytes (optional)
+            offset: Byte offset for range requests (optional)
+            length: Length for range requests (optional)
+            stream_id: Stream ID for multi-track routing (optional)
+
+        Returns:
+            RuntimeData instance for file reference
+
+        Example:
+            # Simple file reference
+            file_data = RuntimeData.file("/data/input/video.mp4")
+
+            # File with metadata
+            file_data = RuntimeData.file(
+                path="/data/input/video.mp4",
+                filename="video.mp4",
+                mime_type="video/mp4",
+                size=104_857_600
+            )
+
+            # Byte range request (64KB chunk at 1MB offset)
+            chunk = RuntimeData.file(
+                path="/data/large_file.bin",
+                offset=1024 * 1024,
+                length=64 * 1024
+            )
+        """
+        metadata = FileMetadata(
+            path=path,
+            filename=filename,
+            mime_type=mime_type,
+            size=size,
+            offset=offset,
+            length=length,
+            stream_id=stream_id
+        )
+
+        # Payload is a dict representation for easy access
+        payload = {
+            'path': path,
+            'filename': filename,
+            'mime_type': mime_type,
+            'size': size,
+            'offset': offset,
+            'length': length,
+            'stream_id': stream_id
+        }
+
+        return cls(
+            type=DataType.FILE,
+            payload=payload,
+            session_id=session_id,
+            timestamp=time.time(),
+            metadata=metadata
+        )
+
     def data_type(self) -> str:
         """Get the data type as a string."""
         return self.type.name.lower()
@@ -445,6 +573,28 @@ class RuntimeData:
     def is_tensor(self) -> bool:
         """Check if this is tensor data."""
         return self.type == DataType.TENSOR
+
+    def is_file(self) -> bool:
+        """Check if this is a file reference."""
+        return self.type == DataType.FILE
+
+    def get_file_path(self) -> str:
+        """
+        Get the file path from a file reference.
+
+        Returns:
+            File path string
+
+        Raises:
+            ValueError: If this is not file data
+        """
+        if not self.is_file():
+            raise ValueError("Can only get path from FILE data")
+        if isinstance(self.metadata, FileMetadata):
+            return self.metadata.path
+        if isinstance(self.payload, dict):
+            return self.payload.get('path', '')
+        raise ValueError("Cannot extract file path from payload")
 
     def to_bytes(self) -> bytes:
         """

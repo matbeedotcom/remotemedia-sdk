@@ -44,6 +44,9 @@ message DataBuffer {
     JsonData json = 4;
     TextBuffer text = 5;
     BinaryBuffer binary = 6;
+    ControlMessage control = 7;  // Spec 007: Control messages for low-latency streaming
+    NumpyBuffer numpy = 8;  // NumPy array data with full metadata
+    FileBuffer file = 9;  // Spec 001: File reference with metadata
   }
 
   // Optional metadata for extensibility
@@ -284,6 +287,172 @@ message BinaryBuffer {
 }
 
 // ============================================================================
+// NumPy Array Types
+// ============================================================================
+
+// NumPy array data with full memory layout metadata
+//
+// Preserves all NumPy metadata required for zero-copy reconstruction:
+// - shape: array dimensions
+// - dtype: data type string (e.g., "float32", "int16")
+// - strides: byte offsets for each dimension
+// - c_contiguous/f_contiguous: memory layout flags
+//
+// Example (stereo audio float32 array):
+//   NumpyBuffer {
+//     data: <raw bytes>,
+//     shape: [960, 2],
+//     dtype: "float32",
+//     strides: [8, 4],
+//     c_contiguous: true,
+//     f_contiguous: false
+//   }
+message NumpyBuffer {
+  // Raw array data (bytes)
+  bytes data = 1;
+
+  // Array shape (dimensions)
+  // Example: [960] for 1D, [960, 2] for stereo audio
+  repeated uint64 shape = 2;
+
+  // Data type string
+  // Examples: "float32", "float64", "int16", "int32", "uint8"
+  string dtype = 3;
+
+  // Array strides (bytes to step in each dimension)
+  // Critical for memory layout reconstruction
+  repeated int64 strides = 4;
+
+  // Whether array is C-contiguous (row-major)
+  bool c_contiguous = 5;
+
+  // Whether array is Fortran-contiguous (column-major)
+  bool f_contiguous = 6;
+}
+
+// ============================================================================
+// File Types (Spec 001: RuntimeData.File)
+// ============================================================================
+
+// File reference with metadata and byte range support
+//
+// Represents a reference to a file on the local filesystem.
+// Does NOT contain file contents - only metadata for referencing.
+//
+// Usage patterns:
+// 1. Simple reference: path only, metadata optional
+// 2. Byte range read: path + offset + length
+// 3. Output file: path + stream_id for multi-track routing
+//
+// Example (input file reference):
+//   FileBuffer {
+//     path: "/data/input/video.mp4",
+//     filename: "video.mp4",
+//     mime_type: "video/mp4",
+//     size: 104857600  // 100 MB
+//   }
+//
+// Example (byte range request):
+//   FileBuffer {
+//     path: "/data/input/video.mp4",
+//     offset: 1048576,  // 1 MB offset
+//     length: 65536     // 64 KB chunk
+//   }
+message FileBuffer {
+  // File path (required, UTF-8)
+  // May be absolute (/path/to/file) or relative (./file)
+  // Path resolution is responsibility of processing node
+  string path = 1;
+
+  // Original filename (optional)
+  // Preserved separately from path for cases where the filename
+  // should be maintained independent of storage location
+  // Empty string = not specified (use path basename)
+  string filename = 2;
+
+  // MIME type hint (optional)
+  // RFC 6838 format: type/subtype (e.g., "video/mp4", "image/png")
+  // Empty string = not specified (node may auto-detect)
+  string mime_type = 3;
+
+  // File size in bytes (optional)
+  // 0 = unknown (common for output files before writing)
+  uint64 size = 4;
+
+  // Byte offset for range read/write (optional)
+  // 0 = start of file (default behavior)
+  // Used for seeking to specific positions in media files
+  uint64 offset = 5;
+
+  // Length for range requests (optional)
+  // 0 = read/write to end of file (default behavior)
+  // Used with offset for partial file I/O
+  uint64 length = 6;
+
+  // Stream identifier for multi-track routing (optional)
+  // Follows same pattern as Audio/Video stream_id (spec 013)
+  // Empty string = default track
+  string stream_id = 7;
+}
+
+// ============================================================================
+// Control Message Types (Spec 007)
+// ============================================================================
+
+// Control message for pipeline flow control
+//
+// Enables low-latency optimizations:
+// - CancelSpeculation: Cancel processing of speculative audio segments
+// - BatchHint: Suggest batching parameters to downstream nodes
+// - DeadlineWarning: Signal approaching soft deadlines
+//
+// Example (Cancel speculation):
+//   ControlMessage {
+//     message_type: { cancel_speculation: { from_timestamp: 1000, to_timestamp: 2000 } },
+//     segment_id: "seg_abc123",
+//     timestamp_ms: 1500
+//   }
+message ControlMessage {
+  // Control message type (exactly one must be set)
+  oneof message_type {
+    CancelSpeculation cancel_speculation = 1;
+    BatchHint batch_hint = 2;
+    DeadlineWarning deadline_warning = 3;
+  }
+
+  // Optional target segment ID for cancellation
+  string segment_id = 4;
+
+  // Message creation timestamp (milliseconds since epoch)
+  uint64 timestamp_ms = 5;
+
+  // Extensible metadata (JSON encoded)
+  // Example: {"reason": "vad_false_positive", "confidence": 0.3}
+  string metadata = 6;
+}
+
+// Cancel a speculative segment (retroactive cancellation)
+message CancelSpeculation {
+  // Start timestamp of segment to cancel (sample index or microseconds)
+  uint64 from_timestamp = 1;
+
+  // End timestamp of segment to cancel
+  uint64 to_timestamp = 2;
+}
+
+// Hint to increase batch size for throughput
+message BatchHint {
+  // Suggested batch size for downstream nodes
+  uint32 suggested_batch_size = 1;
+}
+
+// Soft deadline approaching (not a hard timeout)
+message DeadlineWarning {
+  // Deadline in microseconds from now
+  uint64 deadline_us = 1;
+}
+
+// ============================================================================
 // Type System (NEW)
 // ============================================================================
 
@@ -314,6 +483,9 @@ enum DataTypeHint {
   // Accept any type (polymorphic node)
   // Example: generic logger, passthrough, inspector
   DATA_TYPE_HINT_ANY = 7;
+
+  // File reference (Spec 001: RuntimeData.File)
+  DATA_TYPE_HINT_FILE = 8;
 }
 
 // ============================================================================

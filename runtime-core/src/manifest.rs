@@ -5,6 +5,7 @@
 //!
 //! Schema specification: ../schemas/manifest.v1.json
 
+use crate::capabilities::MediaCapabilities;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 
@@ -25,9 +26,10 @@ pub struct Manifest {
 }
 
 /// Pipeline metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ManifestMetadata {
     /// Pipeline name
+    #[serde(default)]
     pub name: String,
 
     /// Optional description
@@ -37,6 +39,14 @@ pub struct ManifestMetadata {
     /// Creation timestamp
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+
+    /// Enable automatic capability negotiation (spec 022, FR-014).
+    ///
+    /// When true, the system automatically inserts conversion nodes
+    /// to resolve capability mismatches. When false, mismatches result
+    /// in validation errors.
+    #[serde(default)]
+    pub auto_negotiate: bool,
 }
 
 /// Node manifest entry
@@ -56,9 +66,29 @@ pub struct NodeManifest {
     #[serde(default)]
     pub is_streaming: bool,
 
-    /// Optional capability requirements
+    /// Whether this node should stream outputs to the client (spec 021, User Story 3)
+    ///
+    /// By default, only terminal nodes (sinks - nodes with no outputs) send data to
+    /// the client. Setting `is_output_node: true` allows intermediate nodes to also
+    /// stream their outputs to the client alongside terminal nodes.
+    ///
+    /// Use cases:
+    /// - Debugging: see intermediate processing results
+    /// - Monitoring: track VAD results while also getting final transcription
+    /// - Branching: receive outputs from multiple stages of the pipeline
+    #[serde(default)]
+    pub is_output_node: bool,
+
+    /// Optional capability requirements (GPU, CPU, memory)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<CapabilityRequirements>,
+
+    /// Media format capabilities for input/output constraints (spec 022).
+    ///
+    /// Declares what media formats this node accepts as input and produces
+    /// as output. Used for capability negotiation and pipeline validation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_capabilities: Option<MediaCapabilities>,
 
     /// Optional execution host
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -76,6 +106,28 @@ pub struct NodeManifest {
     #[cfg(feature = "docker")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker: Option<crate::python::multiprocess::docker_support::DockerNodeConfig>,
+
+    /// Use low-latency fast path execution (spec 026)
+    ///
+    /// When enabled, the node uses `execute_streaming_node_fast()` which provides:
+    /// - Lock-free circuit breaker check (atomic read only)
+    /// - No timeout wrapper (avoids tokio timer overhead)
+    /// - No HDR histogram metrics (just atomic sum/count/min/max)
+    /// - try_acquire() for semaphore (non-blocking when permits available)
+    ///
+    /// Target overhead: <100ns vs ~250ns for full path.
+    ///
+    /// Recommended for:
+    /// - Audio/video transforms that are CPU-bound and fast (<1ms)
+    /// - High-frequency nodes (>100 calls/sec)
+    /// - Nodes where timeout protection isn't critical
+    ///
+    /// NOT recommended for:
+    /// - External API calls (need timeout protection)
+    /// - Nodes that may hang (need circuit breaker full features)
+    /// - Nodes requiring detailed latency percentiles (P50/P95/P99)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fast_path: bool,
 }
 
 /// Runtime hint for Python node execution (Phase 1.10.5)
@@ -256,13 +308,62 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "test".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![],
             connections: vec![],
         };
 
         assert!(validate(&manifest).is_err());
+    }
+
+    /// Test is_output_node field parsing from JSON (spec 021 User Story 3)
+    #[test]
+    fn test_parse_is_output_node_field() {
+        // Test with is_output_node explicitly set to true
+        let json = r#"{
+            "version": "v1",
+            "metadata": { "name": "test-pipeline" },
+            "nodes": [
+                {
+                    "id": "node1",
+                    "node_type": "AudioSource",
+                    "params": {},
+                    "is_output_node": true
+                },
+                {
+                    "id": "node2",
+                    "node_type": "AudioSink",
+                    "params": {},
+                    "is_output_node": false
+                }
+            ],
+            "connections": [{"from": "node1", "to": "node2"}]
+        }"#;
+
+        let manifest = parse(json).unwrap();
+        assert_eq!(manifest.nodes.len(), 2);
+        assert!(manifest.nodes[0].is_output_node);  // Explicitly true
+        assert!(!manifest.nodes[1].is_output_node); // Explicitly false
+    }
+
+    /// Test is_output_node defaults to false when not specified
+    #[test]
+    fn test_is_output_node_defaults_to_false() {
+        let json = r#"{
+            "version": "v1",
+            "metadata": { "name": "test-pipeline" },
+            "nodes": [
+                {
+                    "id": "node1",
+                    "node_type": "AudioSource",
+                    "params": {}
+                }
+            ],
+            "connections": []
+        }"#;
+
+        let manifest = parse(json).unwrap();
+        assert!(!manifest.nodes[0].is_output_node); // Defaults to false
     }
 }

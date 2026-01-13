@@ -23,7 +23,7 @@ pub struct DataBuffer {
         ::prost::alloc::string::String,
     >,
     /// Data type discriminator (exactly one must be set)
-    #[prost(oneof = "data_buffer::DataType", tags = "1, 2, 3, 4, 5, 6, 7, 8")]
+    #[prost(oneof = "data_buffer::DataType", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9")]
     pub data_type: ::core::option::Option<data_buffer::DataType>,
 }
 /// Nested message and enum types in `DataBuffer`.
@@ -49,6 +49,9 @@ pub mod data_buffer {
         /// NumPy array data with full metadata
         #[prost(message, tag = "8")]
         Numpy(super::NumpyBuffer),
+        /// Spec 001: File reference with metadata
+        #[prost(message, tag = "9")]
+        File(super::FileBuffer),
     }
 }
 /// Multi-channel audio data with sample rate and format metadata
@@ -257,6 +260,69 @@ pub struct NumpyBuffer {
     /// Whether array is Fortran-contiguous (column-major)
     #[prost(bool, tag = "6")]
     pub f_contiguous: bool,
+}
+/// File reference with metadata and byte range support
+///
+/// Represents a reference to a file on the local filesystem.
+/// Does NOT contain file contents - only metadata for referencing.
+///
+/// Usage patterns:
+///
+/// 1. Simple reference: path only, metadata optional
+/// 1. Byte range read: path + offset + length
+/// 1. Output file: path + stream_id for multi-track routing
+///
+/// Example (input file reference):
+/// FileBuffer {
+/// path: "/data/input/video.mp4",
+/// filename: "video.mp4",
+/// mime_type: "video/mp4",
+/// size: 104857600  // 100 MB
+/// }
+///
+/// Example (byte range request):
+/// FileBuffer {
+/// path: "/data/input/video.mp4",
+/// offset: 1048576,  // 1 MB offset
+/// length: 65536     // 64 KB chunk
+/// }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct FileBuffer {
+    /// File path (required, UTF-8)
+    /// May be absolute (/path/to/file) or relative (./file)
+    /// Path resolution is responsibility of processing node
+    #[prost(string, tag = "1")]
+    pub path: ::prost::alloc::string::String,
+    /// Original filename (optional)
+    /// Preserved separately from path for cases where the filename
+    /// should be maintained independent of storage location
+    /// Empty string = not specified (use path basename)
+    #[prost(string, tag = "2")]
+    pub filename: ::prost::alloc::string::String,
+    /// MIME type hint (optional)
+    /// RFC 6838 format: type/subtype (e.g., "video/mp4", "image/png")
+    /// Empty string = not specified (node may auto-detect)
+    #[prost(string, tag = "3")]
+    pub mime_type: ::prost::alloc::string::String,
+    /// File size in bytes (optional)
+    /// 0 = unknown (common for output files before writing)
+    #[prost(uint64, tag = "4")]
+    pub size: u64,
+    /// Byte offset for range read/write (optional)
+    /// 0 = start of file (default behavior)
+    /// Used for seeking to specific positions in media files
+    #[prost(uint64, tag = "5")]
+    pub offset: u64,
+    /// Length for range requests (optional)
+    /// 0 = read/write to end of file (default behavior)
+    /// Used with offset for partial file I/O
+    #[prost(uint64, tag = "6")]
+    pub length: u64,
+    /// Stream identifier for multi-track routing (optional)
+    /// Follows same pattern as Audio/Video stream_id (spec 013)
+    /// Empty string = default track
+    #[prost(string, tag = "7")]
+    pub stream_id: ::prost::alloc::string::String,
 }
 /// Control message for pipeline flow control
 ///
@@ -672,6 +738,8 @@ pub enum DataTypeHint {
     /// Accept any type (polymorphic node)
     /// Example: generic logger, passthrough, inspector
     Any = 7,
+    /// File reference (Spec 001: RuntimeData.File)
+    File = 8,
 }
 impl DataTypeHint {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -688,6 +756,7 @@ impl DataTypeHint {
             Self::Text => "DATA_TYPE_HINT_TEXT",
             Self::Binary => "DATA_TYPE_HINT_BINARY",
             Self::Any => "DATA_TYPE_HINT_ANY",
+            Self::File => "DATA_TYPE_HINT_FILE",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -701,6 +770,7 @@ impl DataTypeHint {
             "DATA_TYPE_HINT_TEXT" => Some(Self::Text),
             "DATA_TYPE_HINT_BINARY" => Some(Self::Binary),
             "DATA_TYPE_HINT_ANY" => Some(Self::Any),
+            "DATA_TYPE_HINT_FILE" => Some(Self::File),
             _ => None,
         }
     }

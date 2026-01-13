@@ -1,0 +1,39 @@
+[package]
+name = "license-signer"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["RemoteMedia SDK Contributors"]
+description = "Internal tool for signing evaluation license files"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "license-signer"
+path = "src/main.rs"
+
+[dependencies]
+# CLI framework
+clap = { version = "4.4", features = ["derive"] }
+
+# Cryptography
+ed25519-dalek = { version = "2.2", features = ["rand_core"] }
+rand = { version = "0.8", features = ["getrandom"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_json_canonicalizer = "0.3"
+base64 = "0.22"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID generation
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"

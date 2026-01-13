@@ -40,7 +40,9 @@ extern crate self as remotemedia_runtime_core;
 
 // Core execution modules
 pub mod audio;
+pub mod capabilities;
 pub mod executor;
+pub mod ingestion;
 pub mod nodes;
 pub mod python;
 pub mod validation;
@@ -118,6 +120,8 @@ pub mod data {
         Binary = 6,
         /// Any type
         Any = 7,
+        /// File reference (spec 001)
+        File = 8,
     }
 
     // Note: PixelFormat moved to data::video module (spec 012)
@@ -137,6 +141,14 @@ pub mod data {
             /// When None, uses default track for backward compatibility
             #[serde(default, skip_serializing_if = "Option::is_none")]
             stream_id: Option<String>,
+            /// Media timestamp in microseconds (spec 026)
+            /// Represents the presentation timestamp of this audio chunk
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            timestamp_us: Option<u64>,
+            /// Arrival timestamp in microseconds (spec 026)
+            /// Set by transport ingest layer for drift monitoring
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            arrival_ts_us: Option<u64>,
         },
         /// Video frame
         Video {
@@ -162,6 +174,10 @@ pub mod data {
             /// When None, uses default track for backward compatibility
             #[serde(default, skip_serializing_if = "Option::is_none")]
             stream_id: Option<String>,
+            /// Arrival timestamp in microseconds (spec 026)
+            /// Set by transport ingest layer for drift monitoring
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            arrival_ts_us: Option<u64>,
         },
     /// Tensor data
     Tensor {
@@ -206,6 +222,57 @@ pub mod data {
             /// Extensible metadata
             metadata: serde_json::Value,
         },
+        /// File reference with metadata and byte range support (spec 001)
+        ///
+        /// Represents a reference to a file on the local filesystem.
+        /// Does NOT contain file contents - only metadata for referencing.
+        ///
+        /// # Example
+        ///
+        /// ```
+        /// use remotemedia_runtime_core::data::RuntimeData;
+        ///
+        /// // Simple file reference
+        /// let file = RuntimeData::File {
+        ///     path: "/data/input/video.mp4".to_string(),
+        ///     filename: Some("video.mp4".to_string()),
+        ///     mime_type: Some("video/mp4".to_string()),
+        ///     size: Some(104_857_600),  // 100 MB
+        ///     offset: None,
+        ///     length: None,
+        ///     stream_id: None,
+        /// };
+        ///
+        /// assert_eq!(file.data_type(), "file");
+        /// ```
+        File {
+            /// File path (absolute or relative, UTF-8)
+            path: String,
+
+            /// Original filename (optional, preserved separately from path)
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            filename: Option<String>,
+
+            /// MIME type hint (optional)
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            mime_type: Option<String>,
+
+            /// File size in bytes (optional, None = unknown)
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            size: Option<u64>,
+
+            /// Byte offset for range read/write (optional)
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            offset: Option<u64>,
+
+            /// Number of bytes for range request (optional, None = to EOF)
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            length: Option<u64>,
+
+            /// Stream identifier for multi-track routing
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            stream_id: Option<String>,
+        },
     }
 
     impl RuntimeData {
@@ -220,6 +287,101 @@ pub mod data {
                 RuntimeData::Text(_) => "text",
                 RuntimeData::Binary(_) => "binary",
                 RuntimeData::ControlMessage { .. } => "control_message",
+                RuntimeData::File { .. } => "file",
+            }
+        }
+
+        /// Get timing information for drift monitoring (spec 026)
+        ///
+        /// Returns (media_timestamp_us, arrival_timestamp_us) for Audio and Video variants.
+        /// For Audio, media timestamp comes from `timestamp_us` field.
+        /// For Video, media timestamp comes from `timestamp_us` field (presentation timestamp).
+        ///
+        /// # Returns
+        /// - `(Some(media_ts), Some(arrival_ts))` - Both timestamps available
+        /// - `(Some(media_ts), None)` - Only media timestamp (arrival not stamped yet)
+        /// - `(None, None)` - Not a timed media type or no timestamps set
+        pub fn timing(&self) -> (Option<u64>, Option<u64>) {
+            match self {
+                RuntimeData::Audio {
+                    timestamp_us,
+                    arrival_ts_us,
+                    ..
+                } => (*timestamp_us, *arrival_ts_us),
+                RuntimeData::Video {
+                    timestamp_us,
+                    arrival_ts_us,
+                    ..
+                } => (Some(*timestamp_us), *arrival_ts_us),
+                _ => (None, None),
+            }
+        }
+
+        /// Get stream identifier if present (spec 026)
+        ///
+        /// Returns the stream_id for Audio, Video, and File variants.
+        /// Used for multi-track routing and per-stream drift monitoring.
+        pub fn stream_id(&self) -> Option<&str> {
+            match self {
+                RuntimeData::Audio { stream_id, .. } => stream_id.as_deref(),
+                RuntimeData::Video { stream_id, .. } => stream_id.as_deref(),
+                RuntimeData::File { stream_id, .. } => stream_id.as_deref(),
+                _ => None,
+            }
+        }
+
+        /// Check if this is audio data (spec 026)
+        pub fn is_audio(&self) -> bool {
+            matches!(self, RuntimeData::Audio { .. })
+        }
+
+        /// Check if this is video data (spec 026)
+        pub fn is_video(&self) -> bool {
+            matches!(self, RuntimeData::Video { .. })
+        }
+
+        /// Check if this is a timed media type (audio or video)
+        ///
+        /// Timed media types have timestamps for drift monitoring.
+        pub fn is_timed_media(&self) -> bool {
+            self.is_audio() || self.is_video()
+        }
+
+        /// Set arrival timestamp for drift monitoring (spec 026)
+        ///
+        /// Should be called by transport ingest layer when data arrives.
+        /// Only affects Audio and Video variants.
+        ///
+        /// # Returns
+        /// `true` if timestamp was set, `false` if not applicable to this variant
+        pub fn set_arrival_timestamp(&mut self, arrival_us: u64) -> bool {
+            match self {
+                RuntimeData::Audio { arrival_ts_us, .. } => {
+                    *arrival_ts_us = Some(arrival_us);
+                    true
+                }
+                RuntimeData::Video { arrival_ts_us, .. } => {
+                    *arrival_ts_us = Some(arrival_us);
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        /// Set media timestamp for audio (spec 026)
+        ///
+        /// Used to set presentation timestamp on audio chunks.
+        /// Only affects Audio variant.
+        ///
+        /// # Returns
+        /// `true` if timestamp was set, `false` if not an Audio variant
+        pub fn set_audio_timestamp(&mut self, media_ts_us: u64) -> bool {
+            match self {
+                RuntimeData::Audio { timestamp_us, .. } => {
+                    *timestamp_us = Some(media_ts_us);
+                    true
+                }
+                _ => false,
             }
         }
 
@@ -238,6 +400,7 @@ pub mod data {
                 RuntimeData::Text(s) => s.len(),
                 RuntimeData::Binary(b) => b.len(),
                 RuntimeData::ControlMessage { .. } => 1,
+                RuntimeData::File { .. } => 1, // One file reference
             }
         }
 
@@ -269,6 +432,20 @@ pub mod data {
                         .map(|s| s.len())
                         .unwrap_or(0);
                     std::mem::size_of::<ControlMessageType>() + 8 + segment_id_size + metadata_size
+                }
+                RuntimeData::File {
+                    path,
+                    filename,
+                    mime_type,
+                    stream_id,
+                    ..
+                } => {
+                    // Approximate memory footprint of the reference (not file contents)
+                    path.len()
+                        + filename.as_ref().map(|s| s.len()).unwrap_or(0)
+                        + mime_type.as_ref().map(|s| s.len()).unwrap_or(0)
+                        + stream_id.as_ref().map(|s| s.len()).unwrap_or(0)
+                        + 24 // 3 u64 fields (size, offset, length)
                 }
             }
         }
@@ -476,6 +653,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         assert!(frame.validate_video_frame().is_ok());
@@ -493,6 +671,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         let result = frame.validate_video_frame();
@@ -513,6 +692,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         let result = frame.validate_video_frame();
@@ -533,6 +713,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         let result = frame.validate_video_frame();
@@ -553,6 +734,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         assert!(frame.validate_video_frame().is_ok());
@@ -571,8 +753,253 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: true,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         assert!(frame.validate_video_frame().is_ok());
+    }
+
+    // spec 026: Tests for RuntimeData timing methods
+    #[test]
+    fn test_runtime_data_timing_audio() {
+        let audio = data::RuntimeData::Audio {
+            samples: vec![0.0; 100],
+            sample_rate: 44100,
+            channels: 1,
+            stream_id: Some("audio_main".to_string()),
+            timestamp_us: Some(1_000_000),
+            arrival_ts_us: Some(1_001_000),
+        };
+
+        let (media_ts, arrival_ts) = audio.timing();
+        assert_eq!(media_ts, Some(1_000_000));
+        assert_eq!(arrival_ts, Some(1_001_000));
+        assert_eq!(audio.stream_id(), Some("audio_main"));
+        assert!(audio.is_audio());
+        assert!(!audio.is_video());
+        assert!(audio.is_timed_media());
+    }
+
+    #[test]
+    fn test_runtime_data_timing_video() {
+        let video = data::RuntimeData::Video {
+            pixel_data: vec![0u8; 1000],
+            width: 100,
+            height: 100,
+            format: PixelFormat::Rgb24,
+            codec: None,
+            frame_number: 0,
+            timestamp_us: 2_000_000,
+            is_keyframe: true,
+            stream_id: Some("video_main".to_string()),
+            arrival_ts_us: Some(2_001_000),
+        };
+
+        let (media_ts, arrival_ts) = video.timing();
+        assert_eq!(media_ts, Some(2_000_000));
+        assert_eq!(arrival_ts, Some(2_001_000));
+        assert_eq!(video.stream_id(), Some("video_main"));
+        assert!(!video.is_audio());
+        assert!(video.is_video());
+        assert!(video.is_timed_media());
+    }
+
+    #[test]
+    fn test_runtime_data_timing_non_media() {
+        let text = data::RuntimeData::Text("hello".to_string());
+
+        let (media_ts, arrival_ts) = text.timing();
+        assert_eq!(media_ts, None);
+        assert_eq!(arrival_ts, None);
+        assert_eq!(text.stream_id(), None);
+        assert!(!text.is_audio());
+        assert!(!text.is_video());
+        assert!(!text.is_timed_media());
+    }
+
+    #[test]
+    fn test_runtime_data_set_timestamps() {
+        let mut audio = data::RuntimeData::Audio {
+            samples: vec![0.0; 100],
+            sample_rate: 44100,
+            channels: 1,
+            stream_id: None,
+            timestamp_us: None,
+            arrival_ts_us: None,
+        };
+
+        // Set arrival timestamp
+        assert!(audio.set_arrival_timestamp(5_000_000));
+        let (_, arrival_ts) = audio.timing();
+        assert_eq!(arrival_ts, Some(5_000_000));
+
+        // Set media timestamp
+        assert!(audio.set_audio_timestamp(4_000_000));
+        let (media_ts, _) = audio.timing();
+        assert_eq!(media_ts, Some(4_000_000));
+
+        // Non-audio types should return false
+        let mut text = data::RuntimeData::Text("hello".to_string());
+        assert!(!text.set_arrival_timestamp(1000));
+        assert!(!text.set_audio_timestamp(1000));
+    }
+
+    // T010-T013: Unit tests for RuntimeData::File (spec 001)
+    #[test]
+    fn test_file_data_type() {
+        let file = data::RuntimeData::File {
+            path: "/data/input/video.mp4".to_string(),
+            filename: Some("video.mp4".to_string()),
+            mime_type: Some("video/mp4".to_string()),
+            size: Some(104_857_600),
+            offset: None,
+            length: None,
+            stream_id: None,
+        };
+
+        assert_eq!(file.data_type(), "file");
+    }
+
+    #[test]
+    fn test_file_item_count() {
+        let file = data::RuntimeData::File {
+            path: "/data/input/video.mp4".to_string(),
+            filename: None,
+            mime_type: None,
+            size: None,
+            offset: None,
+            length: None,
+            stream_id: None,
+        };
+
+        assert_eq!(file.item_count(), 1);
+    }
+
+    #[test]
+    fn test_file_size_bytes() {
+        let file = data::RuntimeData::File {
+            path: "/data/input/video.mp4".to_string(),
+            filename: Some("video.mp4".to_string()),
+            mime_type: Some("video/mp4".to_string()),
+            size: Some(104_857_600),
+            offset: None,
+            length: None,
+            stream_id: Some("main".to_string()),
+        };
+
+        // path(21) + filename(9) + mime_type(9) + stream_id(4) + 24 (3 u64s) = 67
+        assert_eq!(file.size_bytes(), 67);
+    }
+
+    #[test]
+    fn test_file_with_all_fields() {
+        let file = data::RuntimeData::File {
+            path: "/data/input/video.mp4".to_string(),
+            filename: Some("video.mp4".to_string()),
+            mime_type: Some("video/mp4".to_string()),
+            size: Some(104_857_600),
+            offset: Some(1024 * 1024),      // 1 MB offset
+            length: Some(64 * 1024),        // 64 KB chunk
+            stream_id: Some("video_track".to_string()),
+        };
+
+        assert_eq!(file.data_type(), "file");
+        assert_eq!(file.item_count(), 1);
+    }
+
+    #[test]
+    fn test_file_with_only_path() {
+        // Minimal file reference with only required field
+        let file = data::RuntimeData::File {
+            path: "/tmp/output.bin".to_string(),
+            filename: None,
+            mime_type: None,
+            size: None,
+            offset: None,
+            length: None,
+            stream_id: None,
+        };
+
+        assert_eq!(file.data_type(), "file");
+        assert_eq!(file.item_count(), 1);
+        // path(15) + 24 (3 u64s) = 39
+        assert_eq!(file.size_bytes(), 39);
+    }
+
+    #[test]
+    fn test_file_serde_serialization() {
+        let file = data::RuntimeData::File {
+            path: "/data/input/video.mp4".to_string(),
+            filename: Some("video.mp4".to_string()),
+            mime_type: Some("video/mp4".to_string()),
+            size: Some(104_857_600),
+            offset: None,
+            length: None,
+            stream_id: None,
+        };
+
+        // Test serialization
+        let json = serde_json::to_string(&file).unwrap();
+        assert!(json.contains("File"));
+        assert!(json.contains("/data/input/video.mp4"));
+        assert!(json.contains("video.mp4"));
+        assert!(json.contains("video/mp4"));
+        assert!(json.contains("104857600"));
+
+        // Test deserialization roundtrip
+        let deserialized: data::RuntimeData = serde_json::from_str(&json).unwrap();
+        assert_eq!(file, deserialized);
+    }
+
+    #[test]
+    fn test_file_serde_skip_none_fields() {
+        // File with minimal fields should have compact serialization
+        let file = data::RuntimeData::File {
+            path: "/tmp/test.txt".to_string(),
+            filename: None,
+            mime_type: None,
+            size: None,
+            offset: None,
+            length: None,
+            stream_id: None,
+        };
+
+        let json = serde_json::to_string(&file).unwrap();
+        // None fields should be omitted due to skip_serializing_if
+        assert!(!json.contains("filename"));
+        assert!(!json.contains("mime_type"));
+        assert!(!json.contains("offset"));
+        assert!(!json.contains("length"));
+        assert!(!json.contains("stream_id"));
+
+        // Roundtrip should still work
+        let deserialized: data::RuntimeData = serde_json::from_str(&json).unwrap();
+        assert_eq!(file, deserialized);
+    }
+
+    #[test]
+    fn test_file_byte_range_fields() {
+        // Test byte range request
+        let range_request = data::RuntimeData::File {
+            path: "/data/large_file.bin".to_string(),
+            filename: None,
+            mime_type: None,
+            size: Some(1_073_741_824), // 1 GB
+            offset: Some(10 * 1024 * 1024), // 10 MB offset
+            length: Some(64 * 1024),        // 64 KB chunk
+            stream_id: None,
+        };
+
+        assert_eq!(range_request.data_type(), "file");
+
+        // Verify serialization includes offset and length
+        let json = serde_json::to_string(&range_request).unwrap();
+        assert!(json.contains("10485760"));  // offset
+        assert!(json.contains("65536"));     // length
+    }
+
+    #[test]
+    fn test_data_type_hint_file() {
+        assert_eq!(data::DataTypeHint::File as i32, 8);
     }
 }

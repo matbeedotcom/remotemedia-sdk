@@ -129,7 +129,7 @@ impl Scheduler {
 
         // Check circuit breaker
         {
-            let breaker = self.circuit_breaker.read().await;
+            let mut breaker = self.circuit_breaker.write().await;
             if breaker.is_open() {
                 return Err(Error::execution(format!(
                     "Circuit breaker is open for node '{}' - too many consecutive failures",

@@ -306,7 +306,7 @@ pub fn register_default_plugins() -> Result<()> {
 mod tests {
     use super::*;
     use crate::transport::client::PipelineClient;
-    use crate::transport::runner::PipelineRunner;
+    use crate::transport::executor::PipelineExecutor;
     use crate::transport::{ClientConfig, PipelineTransport, ServerConfig};
     use async_trait::async_trait;
 
@@ -328,7 +328,7 @@ mod tests {
         async fn create_server(
             &self,
             _config: &ServerConfig,
-            _runner: Arc<PipelineRunner>,
+            _executor: Arc<PipelineExecutor>,
         ) -> Result<Box<dyn PipelineTransport>> {
             unimplemented!("Mock plugin - not used in registry tests")
         }

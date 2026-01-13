@@ -79,6 +79,12 @@ struct NodeArgs {
     produces: Option<String>,
     /// Whether this node produces multiple outputs per input
     multi_output: bool,
+    /// Capability behavior: static, configured, passthrough, adaptive, runtime_discovered
+    capabilities: Option<String>,
+    /// Input capability constraints DSL (e.g., "audio(sample_rate=16000, channels=1)")
+    input_caps: Option<String>,
+    /// Output capability constraints DSL (e.g., "audio(sample_rate=16000..48000)")
+    output_caps: Option<String>,
 }
 
 /// Classification of a field as either config or state
@@ -112,6 +118,9 @@ fn parse_node_args(args: &[NestedMeta]) -> Result<NodeArgs, syn::Error> {
     let mut accepts = None;
     let mut produces = None;
     let mut multi_output = false;
+    let mut capabilities = None;
+    let mut input_caps = None;
+    let mut output_caps = None;
 
     for arg in args {
         match arg {
@@ -150,6 +159,21 @@ fn parse_node_args(args: &[NestedMeta]) -> Result<NodeArgs, syn::Error> {
                             multi_output = b.value;
                         }
                     }
+                    "capabilities" => {
+                        if let Lit::Str(s) = &nv.lit {
+                            capabilities = Some(s.value());
+                        }
+                    }
+                    "input_caps" => {
+                        if let Lit::Str(s) = &nv.lit {
+                            input_caps = Some(s.value());
+                        }
+                    }
+                    "output_caps" => {
+                        if let Lit::Str(s) = &nv.lit {
+                            output_caps = Some(s.value());
+                        }
+                    }
                     other => {
                         return Err(syn::Error::new_spanned(&nv.path, format!("unknown attribute: {}", other)));
                     }
@@ -171,6 +195,9 @@ fn parse_node_args(args: &[NestedMeta]) -> Result<NodeArgs, syn::Error> {
         accepts,
         produces,
         multi_output,
+        capabilities,
+        input_caps,
+        output_caps,
     })
 }
 
@@ -599,6 +626,364 @@ fn generate_inventory_registration(struct_name: &syn::Ident) -> proc_macro2::Tok
     }
 }
 
+// =============================================================================
+// Capability DSL Parsing and Code Generation (spec 023)
+// =============================================================================
+
+/// Parse a capability behavior string into the corresponding enum variant.
+///
+/// Valid values: "static", "configured", "passthrough", "adaptive", "runtime_discovered"
+fn parse_capability_behavior(behavior: &str) -> proc_macro2::TokenStream {
+    match behavior.to_lowercase().as_str() {
+        "static" => quote! { remotemedia_runtime_core::capabilities::CapabilityBehavior::Static },
+        "configured" => quote! { remotemedia_runtime_core::capabilities::CapabilityBehavior::Configured },
+        "passthrough" => quote! { remotemedia_runtime_core::capabilities::CapabilityBehavior::Passthrough },
+        "adaptive" => quote! { remotemedia_runtime_core::capabilities::CapabilityBehavior::Adaptive },
+        "runtime_discovered" | "runtimediscovered" => {
+            quote! { remotemedia_runtime_core::capabilities::CapabilityBehavior::RuntimeDiscovered }
+        }
+        _ => quote! { compile_error!(concat!("Unknown capability behavior: ", #behavior, ". Expected: static, configured, passthrough, adaptive, runtime_discovered")) },
+    }
+}
+
+/// Parse a constraint value DSL string into code.
+///
+/// DSL formats:
+/// - Exact: `16000` or `"F32"` (for enums)
+/// - Range: `16000..48000`
+/// - Set: `[16000, 44100, 48000]`
+fn parse_constraint_value_dsl(value: &str, field_type: &str) -> proc_macro2::TokenStream {
+    let trimmed = value.trim();
+
+    // Check for range syntax: min..max
+    if trimmed.contains("..") {
+        let parts: Vec<&str> = trimmed.split("..").collect();
+        if parts.len() == 2 {
+            let min = parts[0].trim();
+            let max = parts[1].trim();
+
+            // Try to parse as integers
+            if let (Ok(min_val), Ok(max_val)) = (min.parse::<u32>(), max.parse::<u32>()) {
+                return quote! {
+                    Some(remotemedia_runtime_core::capabilities::ConstraintValue::Range {
+                        min: #min_val,
+                        max: #max_val,
+                    })
+                };
+            }
+
+            // Try as floats
+            if let (Ok(min_val), Ok(max_val)) = (min.parse::<f32>(), max.parse::<f32>()) {
+                return quote! {
+                    Some(remotemedia_runtime_core::capabilities::ConstraintValue::Range {
+                        min: #min_val,
+                        max: #max_val,
+                    })
+                };
+            }
+        }
+    }
+
+    // Check for set syntax: [val1, val2, ...]
+    if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        let inner = &trimmed[1..trimmed.len()-1];
+        let values: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
+
+        // Try to parse as integers
+        let parsed_ints: Result<Vec<u32>, _> = values.iter().map(|s| s.parse::<u32>()).collect();
+        if let Ok(int_vals) = parsed_ints {
+            return quote! {
+                Some(remotemedia_runtime_core::capabilities::ConstraintValue::Set(
+                    vec![#(#int_vals),*]
+                ))
+            };
+        }
+
+        // Try as audio sample formats
+        if field_type == "format" {
+            let format_tokens: Vec<_> = values.iter().map(|s| {
+                parse_audio_format_dsl(s.trim().trim_matches('"'))
+            }).collect();
+            return quote! {
+                Some(remotemedia_runtime_core::capabilities::ConstraintValue::Set(
+                    vec![#(#format_tokens),*]
+                ))
+            };
+        }
+    }
+
+    // Exact value
+    // Try integer
+    if let Ok(int_val) = trimmed.parse::<u32>() {
+        return quote! {
+            Some(remotemedia_runtime_core::capabilities::ConstraintValue::Exact(#int_val))
+        };
+    }
+
+    // Try float
+    if let Ok(float_val) = trimmed.parse::<f32>() {
+        return quote! {
+            Some(remotemedia_runtime_core::capabilities::ConstraintValue::Exact(#float_val))
+        };
+    }
+
+    // Try audio sample format
+    if field_type == "format" {
+        let format_token = parse_audio_format_dsl(trimmed.trim_matches('"'));
+        return quote! {
+            Some(remotemedia_runtime_core::capabilities::ConstraintValue::Exact(#format_token))
+        };
+    }
+
+    // String value
+    quote! {
+        Some(remotemedia_runtime_core::capabilities::ConstraintValue::Exact(#trimmed.to_string()))
+    }
+}
+
+/// Parse audio sample format string to enum variant.
+fn parse_audio_format_dsl(format: &str) -> proc_macro2::TokenStream {
+    match format.to_uppercase().as_str() {
+        "F32" => quote! { remotemedia_runtime_core::capabilities::AudioSampleFormat::F32 },
+        "I16" => quote! { remotemedia_runtime_core::capabilities::AudioSampleFormat::I16 },
+        "I32" => quote! { remotemedia_runtime_core::capabilities::AudioSampleFormat::I32 },
+        "U8" => quote! { remotemedia_runtime_core::capabilities::AudioSampleFormat::U8 },
+        _ => quote! { compile_error!(concat!("Unknown audio format: ", #format)) },
+    }
+}
+
+/// Parse input/output caps DSL string into MediaConstraints code.
+///
+/// DSL format: `media_type(field1=value1, field2=value2, ...)`
+///
+/// Examples:
+/// - `audio(sample_rate=16000, channels=1, format=F32)`
+/// - `audio(sample_rate=16000..48000, channels=1..2)`
+/// - `video(width=1920, height=1080, framerate=30.0)`
+/// - `text(encoding="UTF-8")`
+/// - `binary`
+fn parse_media_constraints_dsl(dsl: &str) -> proc_macro2::TokenStream {
+    let trimmed = dsl.trim();
+
+    // Handle simple types without parameters
+    match trimmed.to_lowercase().as_str() {
+        "binary" => return quote! { remotemedia_runtime_core::capabilities::MediaConstraints::Binary },
+        "text" => return quote! { remotemedia_runtime_core::capabilities::MediaConstraints::Text(Default::default()) },
+        "json" => return quote! { remotemedia_runtime_core::capabilities::MediaConstraints::Json(Default::default()) },
+        _ => {}
+    }
+
+    // Parse type(params) format
+    let paren_start = match trimmed.find('(') {
+        Some(idx) => idx,
+        None => {
+            // No parameters - just the type
+            return match trimmed.to_lowercase().as_str() {
+                "audio" => quote! { remotemedia_runtime_core::capabilities::MediaConstraints::Audio(Default::default()) },
+                "video" => quote! { remotemedia_runtime_core::capabilities::MediaConstraints::Video(Default::default()) },
+                "tensor" => quote! { remotemedia_runtime_core::capabilities::MediaConstraints::Tensor(Default::default()) },
+                "file" => quote! { remotemedia_runtime_core::capabilities::MediaConstraints::File(Default::default()) },
+                _ => quote! { compile_error!(concat!("Unknown media type: ", #trimmed)) },
+            };
+        }
+    };
+
+    let media_type = &trimmed[..paren_start].trim().to_lowercase();
+    let params_str = &trimmed[paren_start+1..trimmed.len()-1]; // Strip ( and )
+
+    // Parse parameters
+    let params: Vec<(&str, &str)> = params_str
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .filter_map(|param| {
+            let parts: Vec<&str> = param.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                Some((parts[0].trim(), parts[1].trim()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    match media_type.as_str() {
+        "audio" => {
+            let mut sample_rate = quote! { None };
+            let mut channels = quote! { None };
+            let mut format = quote! { None };
+
+            for (key, value) in params {
+                match key {
+                    "sample_rate" | "samplerate" => {
+                        sample_rate = parse_constraint_value_dsl(value, "sample_rate");
+                    }
+                    "channels" => {
+                        channels = parse_constraint_value_dsl(value, "channels");
+                    }
+                    "format" => {
+                        format = parse_constraint_value_dsl(value, "format");
+                    }
+                    _ => {}
+                }
+            }
+
+            quote! {
+                remotemedia_runtime_core::capabilities::MediaConstraints::Audio(
+                    remotemedia_runtime_core::capabilities::AudioConstraints {
+                        sample_rate: #sample_rate,
+                        channels: #channels,
+                        format: #format,
+                    }
+                )
+            }
+        }
+        "video" => {
+            let mut width = quote! { None };
+            let mut height = quote! { None };
+            let mut framerate = quote! { None };
+            let mut pixel_format = quote! { None };
+
+            for (key, value) in params {
+                match key {
+                    "width" => {
+                        width = parse_constraint_value_dsl(value, "width");
+                    }
+                    "height" => {
+                        height = parse_constraint_value_dsl(value, "height");
+                    }
+                    "framerate" | "fps" => {
+                        framerate = parse_constraint_value_dsl(value, "framerate");
+                    }
+                    "pixel_format" | "format" => {
+                        pixel_format = parse_constraint_value_dsl(value, "pixel_format");
+                    }
+                    _ => {}
+                }
+            }
+
+            quote! {
+                remotemedia_runtime_core::capabilities::MediaConstraints::Video(
+                    remotemedia_runtime_core::capabilities::VideoConstraints {
+                        width: #width,
+                        height: #height,
+                        framerate: #framerate,
+                        pixel_format: #pixel_format,
+                    }
+                )
+            }
+        }
+        "text" => {
+            let mut encoding = quote! { None };
+            let mut text_format = quote! { None };
+
+            for (key, value) in params {
+                match key {
+                    "encoding" => {
+                        encoding = parse_constraint_value_dsl(value, "encoding");
+                    }
+                    "format" => {
+                        text_format = parse_constraint_value_dsl(value, "format");
+                    }
+                    _ => {}
+                }
+            }
+
+            quote! {
+                remotemedia_runtime_core::capabilities::MediaConstraints::Text(
+                    remotemedia_runtime_core::capabilities::TextConstraints {
+                        encoding: #encoding,
+                        format: #text_format,
+                    }
+                )
+            }
+        }
+        _ => quote! { compile_error!(concat!("Unknown media type: ", #media_type)) },
+    }
+}
+
+/// Generate capability_behavior() implementation for StreamingNode and StreamingNodeFactory.
+fn generate_capability_behavior_impl(
+    struct_name: &syn::Ident,
+    args: &NodeArgs,
+) -> proc_macro2::TokenStream {
+    // If no capabilities attribute, don't generate any implementation
+    let behavior = match &args.capabilities {
+        Some(b) => parse_capability_behavior(b),
+        None => return quote! {},
+    };
+
+    let config_name = syn::Ident::new(&format!("{}Config", struct_name), struct_name.span());
+
+    quote! {
+        impl #struct_name {
+            /// Returns the capability behavior for this node type.
+            pub fn capability_behavior_static() -> remotemedia_runtime_core::capabilities::CapabilityBehavior {
+                #behavior
+            }
+        }
+
+        impl #config_name {
+            /// Returns the capability behavior for this node type.
+            pub fn capability_behavior() -> remotemedia_runtime_core::capabilities::CapabilityBehavior {
+                #behavior
+            }
+        }
+    }
+}
+
+/// Generate media_capabilities() implementation from input_caps/output_caps DSL.
+fn generate_media_capabilities_impl(
+    struct_name: &syn::Ident,
+    args: &NodeArgs,
+) -> proc_macro2::TokenStream {
+    // Only generate if at least one of input_caps or output_caps is specified
+    if args.input_caps.is_none() && args.output_caps.is_none() {
+        return quote! {};
+    }
+
+    let config_name = syn::Ident::new(&format!("{}Config", struct_name), struct_name.span());
+
+    let inputs_code = match &args.input_caps {
+        Some(dsl) => {
+            let constraints = parse_media_constraints_dsl(dsl);
+            quote! {
+                inputs.insert("default".to_string(), #constraints);
+            }
+        }
+        None => quote! {},
+    };
+
+    let outputs_code = match &args.output_caps {
+        Some(dsl) => {
+            let constraints = parse_media_constraints_dsl(dsl);
+            quote! {
+                outputs.insert("default".to_string(), #constraints);
+            }
+        }
+        None => quote! {},
+    };
+
+    quote! {
+        impl #struct_name {
+            /// Returns the media capabilities for this node.
+            pub fn media_capabilities_static() -> remotemedia_runtime_core::capabilities::MediaCapabilities {
+                use std::collections::HashMap;
+                let mut inputs: HashMap<String, remotemedia_runtime_core::capabilities::MediaConstraints> = HashMap::new();
+                let mut outputs: HashMap<String, remotemedia_runtime_core::capabilities::MediaConstraints> = HashMap::new();
+                #inputs_code
+                #outputs_code
+                remotemedia_runtime_core::capabilities::MediaCapabilities { inputs, outputs }
+            }
+        }
+
+        impl #config_name {
+            /// Returns the media capabilities for this node type.
+            pub fn media_capabilities(_params: &serde_json::Value) -> remotemedia_runtime_core::capabilities::MediaCapabilities {
+                #struct_name::media_capabilities_static()
+            }
+        }
+    }
+}
+
 /// Unified node definition macro.
 ///
 /// Combines config struct generation, `AsyncStreamingNode` trait implementation,
@@ -620,7 +1005,30 @@ fn generate_inventory_registration(struct_name: &syn::Ident) -> proc_macro2::Tok
 /// - `produces` - Produced output types (comma-separated)
 /// - `multi_output` - Flag for multi-output streaming nodes
 ///
-/// # Example
+/// # Capability Attributes (spec 023)
+///
+/// - `capabilities` - Capability behavior: "static", "configured", "passthrough", "adaptive", "runtime_discovered"
+/// - `input_caps` - Input capability constraints DSL (e.g., "audio(sample_rate=16000, channels=1)")
+/// - `output_caps` - Output capability constraints DSL (e.g., "text")
+///
+/// ## Capability DSL Syntax
+///
+/// The `input_caps` and `output_caps` attributes use a simple DSL for declaring constraints:
+///
+/// ### Media Types
+/// - `audio(sample_rate=16000, channels=1, format=F32)`
+/// - `video(width=1920, height=1080, framerate=30.0)`
+/// - `text(encoding="UTF-8")`
+/// - `binary`
+///
+/// ### Constraint Values
+/// - Exact: `16000` or `"F32"`
+/// - Range: `16000..48000`
+/// - Set: `[16000, 44100, 48000]`
+///
+/// # Examples
+///
+/// ## Basic Node
 ///
 /// ```ignore
 /// #[node(
@@ -638,10 +1046,44 @@ fn generate_inventory_registration(struct_name: &syn::Ident) -> proc_macro2::Tok
 /// }
 ///
 /// impl EchoNode {
-///     // For regular nodes, implement process_impl
 ///     async fn process_impl(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
 ///         // Your implementation here
 ///     }
+/// }
+/// ```
+///
+/// ## Node with Static Capabilities (spec 023)
+///
+/// ```ignore
+/// #[node(
+///     node_type = "Whisper",
+///     category = "ml",
+///     capabilities = "static",
+///     input_caps = "audio(sample_rate=16000, channels=1, format=F32)",
+///     output_caps = "text"
+/// )]
+/// pub struct WhisperNode {
+///     #[config]
+///     pub model: String,
+///
+///     #[state]
+///     model_loaded: bool,
+/// }
+/// ```
+///
+/// ## Node with Adaptive Capabilities (spec 023)
+///
+/// ```ignore
+/// #[node(
+///     node_type = "AudioResample",
+///     category = "audio",
+///     capabilities = "adaptive",
+///     input_caps = "audio(sample_rate=8000..192000)",
+///     output_caps = "audio"  // Output adapts to downstream requirements
+/// )]
+/// pub struct AudioResampleNode {
+///     #[state]
+///     resampler: Option<Resampler>,
 /// }
 /// ```
 #[proc_macro_attribute]
@@ -687,12 +1129,18 @@ pub fn node(attr: TokenStream, item: TokenStream) -> TokenStream {
     let trait_impl = generate_trait_impl(struct_name, &args);
     let inventory_reg = generate_inventory_registration(struct_name);
 
+    // Generate capability-related implementations (spec 023)
+    let capability_behavior_impl = generate_capability_behavior_impl(struct_name, &args);
+    let media_capabilities_impl = generate_media_capabilities_impl(struct_name, &args);
+
     let expanded = quote! {
         #config_struct
         #node_struct
         #schema_impl
         #trait_impl
         #inventory_reg
+        #capability_behavior_impl
+        #media_capabilities_impl
     };
 
     TokenStream::from(expanded)

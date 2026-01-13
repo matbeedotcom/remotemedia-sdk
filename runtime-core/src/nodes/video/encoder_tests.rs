@@ -49,6 +49,7 @@ mod tests {
                 timestamp_us: 0,
                 is_keyframe: true,
                 stream_id: None,
+                arrival_ts_us: None,
             };
 
             let result = encoder.process(encoded_frame).await;
@@ -89,6 +90,7 @@ mod tests {
                 timestamp_us: 0,
                 is_keyframe: false,
                 stream_id: None,
+                arrival_ts_us: None,
             };
 
             // Should accept raw frame (but encoding may fail if FFmpeg not available)
@@ -147,6 +149,7 @@ mod tests {
                 timestamp_us: 0,
                 is_keyframe: false,
                 stream_id: None,
+                arrival_ts_us: None,
             };
 
             // Encode with H.264
@@ -192,6 +195,7 @@ mod tests {
                 timestamp_us: 0,
                 is_keyframe: false,
                 stream_id: None,
+                arrival_ts_us: None,
             };
 
             // Encode with AV1

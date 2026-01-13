@@ -5,7 +5,7 @@ mod fixtures;
 use fixtures::mock_transport_plugin::MockTransportPlugin;
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::manifest::{Manifest, ManifestMetadata, NodeManifest};
-use remotemedia_runtime_core::transport::runner::PipelineRunner;
+use remotemedia_runtime_core::transport::executor::PipelineExecutor;
 use remotemedia_runtime_core::transport::{
     ClientConfig, ServerConfig, TransportData, TransportPluginRegistry,
 };
@@ -89,8 +89,7 @@ async fn test_transport(registry: &TransportPluginRegistry, transport_name: &str
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "test-transport-pipeline".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![NodeManifest {
                 id: "test".to_string(),
@@ -152,7 +151,7 @@ async fn test_server_creation_for_all_transports() {
     }
 
     // Create a dummy pipeline runner
-    let runner = Arc::new(PipelineRunner::new().expect("Failed to create pipeline runner"));
+    let runner = Arc::new(PipelineExecutor::new().expect("Failed to create pipeline runner"));
 
     // Test mock server creation
     test_server_creation(&registry, "mock", "mock://test", runner.clone()).await;
@@ -174,7 +173,7 @@ async fn test_server_creation(
     registry: &TransportPluginRegistry,
     transport_name: &str,
     bind_addr: &str,
-    runner: Arc<PipelineRunner>,
+    runner: Arc<PipelineExecutor>,
 ) {
     println!("Testing server creation for: {}", transport_name);
 

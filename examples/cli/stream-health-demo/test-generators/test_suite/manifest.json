@@ -1,0 +1,136 @@
+{
+  "version": "2.0",
+  "description": "Stream Health Monitor Test Suite",
+  "event_taxonomy": {
+    "note": "Canonical event types used in expected_alerts",
+    "content_faults": [
+      "silence",
+      "low_volume",
+      "clipping",
+      "channel_imbalance",
+      "dropouts"
+    ],
+    "timing_faults": [
+      "drift",
+      "freeze",
+      "cadence",
+      "av_skew"
+    ],
+    "semantic_faults": [
+      "keyword"
+    ]
+  },
+  "audio_config": {
+    "sample_rate": 16000,
+    "channels": 1,
+    "duration_secs": 10.0
+  },
+  "files": [
+    {
+      "path": "clean.wav",
+      "fault": "none",
+      "expected_alerts": [],
+      "forbidden_alerts": [
+        "silence",
+        "clipping",
+        "low_volume",
+        "channel_imbalance",
+        "dropouts"
+      ],
+      "description": "Clean reference audio - no faults should be detected"
+    },
+    {
+      "path": "fault_silence.wav",
+      "fault": "silence",
+      "expected_alerts": [
+        "silence"
+      ],
+      "forbidden_alerts": [
+        "clipping"
+      ],
+      "fault_start_sec": 3.0,
+      "fault_duration_sec": 2.0,
+      "description": "Sustained silence (2s dropout at 3s mark)"
+    },
+    {
+      "path": "fault_low_volume.wav",
+      "fault": "low_volume",
+      "expected_alerts": [
+        "low_volume"
+      ],
+      "forbidden_alerts": [
+        "clipping",
+        "channel_imbalance"
+      ],
+      "volume_db": -20.0,
+      "description": "Audio at -20dB (below threshold)"
+    },
+    {
+      "path": "fault_clipping.wav",
+      "fault": "clipping",
+      "expected_alerts": [
+        "clipping"
+      ],
+      "forbidden_alerts": [
+        "silence",
+        "low_volume"
+      ],
+      "gain": 3.0,
+      "description": "Over-amplified audio (3x gain) causing saturation"
+    },
+    {
+      "path": "fault_one_sided.wav",
+      "fault": "channel_imbalance",
+      "expected_alerts": [
+        "channel_imbalance"
+      ],
+      "forbidden_alerts": [
+        "clipping"
+      ],
+      "muted_channel": "right",
+      "description": "Stereo audio with one channel completely muted"
+    },
+    {
+      "path": "fault_dropouts.wav",
+      "fault": "dropouts",
+      "expected_alerts": [
+        "dropouts",
+        "silence"
+      ],
+      "forbidden_alerts": [
+        "clipping"
+      ],
+      "dropout_count": 5,
+      "dropout_duration_ms": 300.0,
+      "description": "Intermittent 300ms silences (5x)"
+    },
+    {
+      "path": "fault_drift.wav",
+      "fault": "drift",
+      "skip": true,
+      "skip_reason": "WAV files cannot test timing-based faults - requires real-time streaming",
+      "expected_alerts": [],
+      "drift_rate_ms_per_sec": 10.0,
+      "description": "Audio with timing drift - SKIPPED for WAV tests"
+    },
+    {
+      "path": "fault_jitter.wav",
+      "fault": "jitter",
+      "skip": true,
+      "skip_reason": "WAV files cannot test timing-based faults - requires real-time streaming",
+      "expected_alerts": [],
+      "jitter_variance_ms": 50.0,
+      "description": "Audio with timing jitter - SKIPPED for WAV tests"
+    },
+    {
+      "path": "fault_combined.wav",
+      "fault": "combined",
+      "expected_alerts": [
+        "clipping",
+        "low_volume"
+      ],
+      "forbidden_alerts": [],
+      "description": "Multiple faults: low_volume@2s, dropout@4.5s, clipping@8s"
+    }
+  ]
+}

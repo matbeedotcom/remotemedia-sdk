@@ -297,7 +297,61 @@ send_data_to_node(node_id, session_id, data)
   -> background draining task converts and sends to router_tx
 ```
 
-#### 3. Session-Scoped Channel Naming
+#### 3. Graph-Based Multi-Node Pipeline Execution (spec 021)
+
+The streaming session runner uses `PipelineGraph` from `executor/mod.rs` for proper multi-node execution:
+
+```rust
+// At session creation (runner.rs:create_stream_session)
+let graph = PipelineGraph::from_manifest(&manifest)?;
+// Validates connections, detects cycles, computes topological order
+
+// Graph provides:
+// - execution_order: Vec<String>  // Topologically sorted node IDs
+// - sources: Vec<String>          // Entry points (no inputs)
+// - sinks: Vec<String>            // Terminal nodes (no outputs)
+// - nodes: HashMap<String, GraphNode>  // Each node's inputs/outputs
+```
+
+**Multi-node execution flow:**
+
+```
+Input arrives at session
+    ↓
+Source nodes receive input (nodes with no predecessors)
+    ↓
+For each node in topological order:
+    ├─ Collect inputs from predecessor nodes (via connections)
+    ├─ Execute node
+    └─ Store outputs for downstream nodes
+    ↓
+Sink nodes (terminals) send outputs to client
+```
+
+**Key behaviors:**
+- **Topological execution**: Nodes execute in dependency order (A before B if A→B)
+- **Fan-out support**: One node's output routes to multiple dependents
+- **Fan-in support**: Node receives all inputs from multiple predecessors
+- **Error propagation**: If node fails, dependent nodes skip that input
+- **Backward compatible**: Single-node pipelines work unchanged
+
+**Example pipeline:**
+```yaml
+nodes:
+  - id: resampler
+    node_type: RustResampleNode
+  - id: vad
+    node_type: RustVADNode
+  - id: transcriber
+    node_type: WhisperNode
+connections:
+  - { from: resampler, to: vad }
+  - { from: vad, to: transcriber }
+# Execution order: resampler → vad → transcriber
+# Client receives output from transcriber (sink)
+```
+
+#### 4. Session-Scoped Channel Naming
 
 All iceoryx2 channels are prefixed with `session_id` to avoid conflicts:
 
@@ -480,6 +534,67 @@ Python processes communicate **only** via iceoryx2 IPC, not via Python multiproc
 - Memory from `/proc` filesystem (Linux) or system APIs (macOS)
 - iceoryx2 requires `libc` for shared memory
 
+## Pipeline Capability Resolution (spec 023)
+
+The capability resolution system automatically validates and resolves media format constraints during pipeline construction.
+
+### Capability Behaviors
+
+| Behavior | Description | Example Node |
+|----------|-------------|--------------|
+| `Static` | Fixed at compile time | Whisper (16kHz mono) |
+| `Configured` | Resolved from node params | MicInput with explicit sample_rate |
+| `Passthrough` | Output matches input | SpeakerOutput |
+| `Adaptive` | Output matches downstream requirements | AudioResample |
+| `RuntimeDiscovered` | Two-phase: potential → actual | MicInput with device="default" |
+
+### Declaring Capabilities
+
+**Option 1: Using the `#[node]` macro (recommended for static capabilities):**
+
+```rust
+#[node(
+    node_type = "Whisper",
+    capabilities = "static",
+    input_caps = "audio(sample_rate=16000, channels=1, format=F32)",
+    output_caps = "text"
+)]
+pub struct WhisperNode { ... }
+```
+
+**DSL syntax for `input_caps`/`output_caps`:**
+- Exact: `audio(sample_rate=16000)`
+- Range: `audio(sample_rate=8000..48000)`
+- Set: `audio(format=[F32, I16])`
+
+**Option 2: Implementing trait methods (for dynamic capabilities):**
+
+```rust
+impl StreamingNodeFactory for MyNodeFactory {
+    fn capability_behavior(&self) -> CapabilityBehavior {
+        CapabilityBehavior::Configured
+    }
+
+    fn media_capabilities(&self, params: &Value) -> Option<MediaCapabilities> {
+        // Return capabilities based on params
+    }
+}
+```
+
+### Resolution Flow
+
+1. Forward pass (topological order): Static → Configured → Passthrough → RuntimeDiscovered
+2. Reverse pass (reverse order): Adaptive nodes resolve output from downstream
+3. Validation: Check all connections are compatible
+4. Errors include actionable suggestions (e.g., "Insert AudioResample between mic and whisper")
+
+### Key Files
+
+- `runtime-core/src/capabilities/resolver.rs` - CapabilityResolver implementation
+- `runtime-core/src/capabilities/dynamic.rs` - CapabilityBehavior, ResolutionState
+- `runtime-core/src/capabilities/validation.rs` - CapabilityMismatch with suggestions
+- `specs/023-pipeline-capability-resolution/` - Full specification
+
 ## Related Documentation
 
 For deeper architectural context, see:
@@ -487,3 +602,26 @@ For deeper architectural context, see:
 - `docs/PERFORMANCE_TUNING.md` - Optimization strategies
 - `specs/001-native-rust-acceleration/` - Original design specs
 - `specs/002-grpc-multiprocess-integration/` - IPC architecture specs
+- `specs/023-pipeline-capability-resolution/` - Capability resolution specs
+
+## Active Technologies
+- Rust 1.75+, Python 3.11+, Node.js 18+ + serde, prost (protobuf), pyo3 (FFI), iceoryx2 (IPC), tokio (async I/O) (001-runtimedata-file-type)
+- Local filesystem (file paths); no database (001-runtimedata-file-type)
+- Rust 1.75+ + tokio (async runtime), serde_json (params), tracing (logging) (021-graph-integration)
+- N/A (in-memory graph, no persistence) (021-graph-integration)
+- N/A (in-memory data structures, manifest files) (022-media-caps-negotiation)
+- Rust 1.75+ + serde, serde_json, tokio (async runtime), existing `capabilities` module (spec 022) (023-pipeline-capability-resolution)
+- N/A (in-memory during pipeline construction) (023-pipeline-capability-resolution)
+- Rust 1.75+ + tokio (async runtime), serde/serde_json (serialization), existing `capabilities` module (spec 022/023) (025-capability-repropagation)
+- N/A (in-memory during pipeline lifecycle) (025-capability-repropagation)
+- Rust 1.75+ (workspace rust-version) + tokio (async runtime), hdrhistogram (P50/P95/P99), bitflags 2.4+ (alerts), serde (serialization) (026-streaming-scheduler-migration)
+- In-memory only (metrics, drift buffers); no persistence (026-streaming-scheduler-migration)
+- TypeScript 5.6, React 19, Node.js 18+ + React 19, Zustand 5, Tailwind CSS 3.4, Vite 6, clsx (030-single-page-observer-ui)
+- N/A (in-memory state via Zustand, no persistence) (030-single-page-observer-ui)
+- TypeScript 5.6, React 19, Node.js 18+ + React 19, Zustand 5, Tailwind CSS 3.4, Vite 6, clsx, react-router-dom (new) (031-persona-landing-pages)
+- N/A (in-memory state via Zustand, persona context in URL params and sessionStorage) (031-persona-landing-pages)
+- Rust 1.75+ (workspace rust-version) + ed25519-dalek (cryptography), base64 (encoding), serde/serde_json (serialization), chrono (time), clap (CLI), dirs (config paths), tracing (logging) (032-eval-license)
+- Local filesystem (`~/.config/remotemedia/license.json`) (032-eval-license)
+
+## Recent Changes
+- 001-runtimedata-file-type: Added Rust 1.75+, Python 3.11+, Node.js 18+ + serde, prost (protobuf), pyo3 (FFI), iceoryx2 (IPC), tokio (async I/O)

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "customer_id": "443d6116-9f7b-4179-ba16-0da71abd3138",
+  "license_id": "3cde39ce-d061-469a-9190-065c50b9d0d9",
+  "issued_at": "2026-01-02T07:04:09.171113219+00:00",
+  "expires_at": "2027-01-01T23:59:59+00:00",
+  "entitlements": {
+    "allow_ingest_schemes": [
+      "file",
+      "udp",
+      "srt",
+      "rtmp"
+    ],
+    "allow_video": true
+  },
+  "watermark": "EVAL-TEST-CORP",
+  "signature": "+uiDg+pvKhyXTORZO9r/sscW8rjT/7dvyQhykQzlGOoMxhnsMcL4tPP8D4EmsMsM9ZIpf84XrQ5zJbUYwTwTDg=="
+}

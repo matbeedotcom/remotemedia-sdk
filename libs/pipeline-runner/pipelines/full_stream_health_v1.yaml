@@ -1,0 +1,123 @@
+# Full Stream Health Pipeline
+# Complete monitoring with business and technical layers
+
+version: "1.0"
+
+metadata:
+  name: Full Stream Health
+  description: Complete stream health monitoring
+
+nodes:
+  # === Audio Quality Layer ===
+  - id: audio_level
+    node_type: AudioLevelNode
+    params:
+      window_size_ms: 100
+      low_volume_threshold_db: -40.0
+      silence_threshold_db: -60.0
+    is_streaming: true
+
+  - id: silence_detector
+    node_type: SilenceDetectorNode
+    params:
+      silence_threshold_db: -50.0
+      sustained_silence_ms: 500.0
+    is_streaming: true
+
+  - id: clipping_detector
+    node_type: ClippingDetectorNode
+    params:
+      clipping_threshold: 0.99
+      saturation_ratio_threshold: 0.01
+    is_streaming: true
+
+  - id: channel_balance
+    node_type: ChannelBalanceNode
+    params:
+      imbalance_threshold_db: 6.0
+    is_streaming: true
+
+  # === Business Layer (Contact Center QA) ===
+  - id: speech_presence
+    node_type: SpeechPresenceNode
+    params:
+      dead_air_threshold_ms: 2000
+      overlap_threshold_ms: 500
+      emit_on_transition: true
+    is_streaming: true
+
+  - id: conversation_flow
+    node_type: ConversationFlowNode
+    params:
+      window_ms: 30000
+      emit_interval_ms: 5000
+    is_streaming: true
+
+  - id: session_health
+    node_type: SessionHealthNode
+    params:
+      degraded_threshold: 0.8
+      unhealthy_threshold: 0.5
+      emit_interval_ms: 5000
+    is_streaming: true
+
+  # === Technical Layer (Infrastructure) ===
+  - id: timing_drift
+    node_type: TimingDriftNode
+    params:
+      jitter_threshold_ms: 50
+      drift_threshold_ms_per_s: 5.0
+      emit_interval_ms: 1000
+    is_streaming: true
+
+  - id: event_correlator
+    node_type: EventCorrelatorNode
+    params:
+      correlation_window_ms: 5000
+      min_events_for_incident: 2
+    is_streaming: true
+
+  - id: audio_evidence
+    node_type: AudioEvidenceNode
+    params:
+      buffer_duration_s: 10
+      pre_alert_s: 3
+      post_alert_s: 2
+      enabled: true
+    is_streaming: true
+
+  # === Aggregation ===
+  - id: health_emitter
+    node_type: HealthEmitterNode
+    params:
+      health_threshold: 0.7
+    is_streaming: true
+
+# Connection topology:
+# Audio Quality Layer: analysis nodes receive raw audio, feed correlator and health_emitter
+# Business Layer: speech_presence → conversation_flow → session_health
+# Technical Layer: timing_drift → event_correlator → audio_evidence
+connections:
+  # Audio quality → event correlator
+  - { from: audio_level, to: event_correlator }
+  - { from: silence_detector, to: event_correlator }
+  - { from: clipping_detector, to: event_correlator }
+  - { from: channel_balance, to: event_correlator }
+  # Audio quality → health emitter
+  - { from: audio_level, to: health_emitter }
+  - { from: silence_detector, to: health_emitter }
+  - { from: clipping_detector, to: health_emitter }
+  - { from: channel_balance, to: health_emitter }
+  # Business layer chain
+  - { from: audio_level, to: speech_presence }
+  - { from: speech_presence, to: conversation_flow }
+  - { from: speech_presence, to: session_health }
+  - { from: speech_presence, to: event_correlator }
+  - { from: conversation_flow, to: session_health }
+  - { from: conversation_flow, to: event_correlator }
+  - { from: silence_detector, to: session_health }
+  # Technical layer chain
+  - { from: timing_drift, to: event_correlator }
+  - { from: event_correlator, to: audio_evidence }
+  # Session health → health emitter
+  - { from: session_health, to: health_emitter }

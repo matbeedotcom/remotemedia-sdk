@@ -20,6 +20,9 @@
 //! Produces `RuntimeData::Audio` chunks continuously until stopped.
 
 use async_trait::async_trait;
+use remotemedia_runtime_core::capabilities::{
+    AudioConstraints, AudioSampleFormat, ConstraintValue, MediaCapabilities, MediaConstraints,
+};
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::executor::node_executor::{NodeContext, NodeExecutor};
 use remotemedia_runtime_core::Result;
@@ -230,6 +233,28 @@ impl MicInputNode {
         }
     }
 
+    /// Returns the media capabilities for this node (spec 022).
+    ///
+    /// **Output capabilities:**
+    /// - Audio: configurable sample rate and channels, f32 format
+    ///
+    /// This is a source node with no inputs. Output format is determined
+    /// by the node configuration (sample_rate, channels params).
+    ///
+    /// Default output: 16kHz mono f32 audio (matches Whisper requirements).
+    pub fn media_capabilities(config: &MicInputConfig) -> MediaCapabilities {
+        MediaCapabilities::with_output(MediaConstraints::Audio(AudioConstraints {
+            sample_rate: Some(ConstraintValue::Exact(config.sample_rate)),
+            channels: Some(ConstraintValue::Exact(config.channels as u32)),
+            format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+        }))
+    }
+
+    /// Returns the default media capabilities (16kHz mono f32).
+    pub fn default_media_capabilities() -> MediaCapabilities {
+        Self::media_capabilities(&MicInputConfig::default())
+    }
+
     /// Create from JSON params
     pub fn from_params(params: Value) -> Self {
         let config: MicInputConfig = serde_json::from_value(params).unwrap_or_default();
@@ -313,6 +338,8 @@ impl NodeExecutor for MicInputNode {
                 sample_rate: self.config.sample_rate,
                 channels: self.config.channels as u32,
                 stream_id: None,
+                timestamp_us: None,
+                arrival_ts_us: None,
             };
 
             let value = serde_json::to_value(&audio_data)?;
@@ -363,5 +390,46 @@ mod tests {
         assert_eq!(node.config.channels, 2);
         assert_eq!(node.config.device, Some("USB Mic".to_string()));
         assert_eq!(node.config.chunk_size, 8000);
+    }
+
+    #[test]
+    fn test_default_media_capabilities() {
+        let caps = MicInputNode::default_media_capabilities();
+
+        // Source node has no inputs
+        assert!(caps.accepts_any());
+
+        // Check output constraints (default 16kHz mono f32)
+        let output = caps.default_output().expect("Should have default output");
+        match output {
+            MediaConstraints::Audio(audio) => {
+                assert_eq!(audio.sample_rate, Some(ConstraintValue::Exact(16000)));
+                assert_eq!(audio.channels, Some(ConstraintValue::Exact(1)));
+                assert_eq!(
+                    audio.format,
+                    Some(ConstraintValue::Exact(AudioSampleFormat::F32))
+                );
+            }
+            _ => panic!("Expected Audio output constraints"),
+        }
+    }
+
+    #[test]
+    fn test_custom_media_capabilities() {
+        let config = MicInputConfig {
+            sample_rate: 48000,
+            channels: 2,
+            ..Default::default()
+        };
+        let caps = MicInputNode::media_capabilities(&config);
+
+        let output = caps.default_output().expect("Should have default output");
+        match output {
+            MediaConstraints::Audio(audio) => {
+                assert_eq!(audio.sample_rate, Some(ConstraintValue::Exact(48000)));
+                assert_eq!(audio.channels, Some(ConstraintValue::Exact(2)));
+            }
+            _ => panic!("Expected Audio output constraints"),
+        }
     }
 }

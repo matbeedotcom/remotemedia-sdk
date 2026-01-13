@@ -234,7 +234,7 @@ impl AsyncStreamingNode for VideoFlipNode {
                 frame_number,
                 timestamp_us,
                 is_keyframe,
-                stream_id: _,
+                ..
             } => {
                 use crate::data::video::PixelFormat;
 
@@ -264,6 +264,7 @@ impl AsyncStreamingNode for VideoFlipNode {
                     timestamp_us,
                     is_keyframe,
                     stream_id: None,
+                    arrival_ts_us: None,
                 })
             }
             _ => Err(Error::Execution(
@@ -305,6 +306,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         let output = node.process(input_data).await.unwrap();
@@ -347,6 +349,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         let output = node.process(input_data).await.unwrap();
@@ -394,6 +397,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         let output = node.process(input_data).await.unwrap();

@@ -253,6 +253,8 @@ async fn stream_pipeline(
                     sample_rate: wav_sample_rate,
                     channels: wav_channels,
                     stream_id: None,
+                    timestamp_us: None,
+                    arrival_ts_us: None,
                 };
 
                 session.send(audio).await?;
@@ -292,6 +294,8 @@ async fn stream_pipeline(
                                 sample_rate: args.sample_rate,
                                 channels: args.channels as u32,
                                 stream_id: None,
+                                timestamp_us: None,
+                                arrival_ts_us: None,
                             };
                             session.send(audio).await?;
                         }
@@ -316,6 +320,8 @@ async fn stream_pipeline(
                         sample_rate: args.sample_rate,
                         channels: args.channels as u32,
                         stream_id: None,
+                        timestamp_us: None,
+                        arrival_ts_us: None,
                     };
 
                     session.send(audio).await?;

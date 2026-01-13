@@ -248,6 +248,7 @@ impl VideoEncoderBackend for FFmpegEncoder {
             timestamp_us,
             is_keyframe,
             stream_id: None,
+            arrival_ts_us: None,
         })
     }
 
@@ -377,6 +378,7 @@ impl VideoDecoderBackend for FFmpegDecoder {
                 timestamp_us,
                 is_keyframe: false,
                 stream_id: None,
+                arrival_ts_us: None,
             })
         } else {
             // No frame available yet (decoder may need more packets)
@@ -391,6 +393,7 @@ impl VideoDecoderBackend for FFmpegDecoder {
                 timestamp_us: 0,
                 is_keyframe: false,
                 stream_id: None,
+                arrival_ts_us: None,
             })
         }
     }

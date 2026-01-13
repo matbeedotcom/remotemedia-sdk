@@ -176,6 +176,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             stream_id: None,
             frame_number: 100,
             timestamp_us: 3000000,
+            arrival_ts_us: None,
         };
 
         session.send_input(TransportData::new(input_data)).await?;
@@ -227,6 +228,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 stream_id: None,
                 frame_number: i as u64,
                 timestamp_us: i as u64 * 33333,
+                arrival_ts_us: None,
             };
             session.send_input(TransportData::new(input_data)).await?;
         }

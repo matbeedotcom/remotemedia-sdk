@@ -1,9 +1,24 @@
 //! Default streaming node registry with built-in node factories
 
+use crate::capabilities::{
+    AudioConstraints, AudioSampleFormat, CapabilityBehavior, ConstraintValue, MediaCapabilities,
+    MediaConstraints,
+};
 use crate::nodes::calculator::CalculatorNode;
 use crate::nodes::passthrough::PassThroughNode;
 use crate::nodes::python_streaming::PythonStreamingNode;
+use crate::nodes::health_emitter::HealthEmitterNodeFactory;
 use crate::nodes::remote_pipeline::RemotePipelineNodeFactory;
+use crate::nodes::audio_level::AudioLevelNodeFactory;
+use crate::nodes::clipping_detector::ClippingDetectorNodeFactory;
+use crate::nodes::channel_balance::ChannelBalanceNodeFactory;
+use crate::nodes::silence_detector::SilenceDetectorNodeFactory;
+use crate::nodes::speech_presence::SpeechPresenceNodeFactory;
+use crate::nodes::conversation_flow::ConversationFlowNodeFactory;
+use crate::nodes::session_health::SessionHealthNodeFactory;
+use crate::nodes::timing_drift::TimingDriftNodeFactory;
+use crate::nodes::event_correlator::EventCorrelatorNodeFactory;
+use crate::nodes::audio_evidence::AudioEvidenceNodeFactory;
 use crate::nodes::whisper::RustWhisperNode;
 // Temporarily disabled - incomplete implementation
 // use crate::nodes::sync_av::SynchronizedAudioVideoNode;
@@ -610,6 +625,15 @@ impl StreamingNodeFactory for RustWhisperNodeFactory {
                 .accepts([RuntimeDataType::Audio])
                 .produces([RuntimeDataType::Json, RuntimeDataType::Text])
         )
+    }
+
+    fn media_capabilities(&self, _params: &Value) -> Option<MediaCapabilities> {
+        // Whisper has static capabilities regardless of params
+        Some(RustWhisperNode::media_capabilities())
+    }
+
+    fn capability_behavior(&self) -> CapabilityBehavior {
+        CapabilityBehavior::Static
     }
 }
 
@@ -1284,32 +1308,37 @@ struct FastResampleNodeFactory;
 impl StreamingNodeFactory for FastResampleNodeFactory {
     fn create(
         &self,
-        _node_id: String,
+        node_id: String,
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
         use crate::nodes::audio::{FastResampleNode, ResampleQuality};
-        use crate::nodes::audio_resample_streaming::ResampleStreamingNode;
+        use crate::nodes::audio_resample_streaming::{AutoResampleConfig, AutoResampleStreamingNode, ResampleStreamingNode};
 
+        // Parse optional source_rate (can be "auto" or omitted for auto-detection)
         let source_rate = params
             .get("sourceRate")
             .or(params.get("source_rate"))
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| Error::InvalidInput {
-                message: "sourceRate parameter required".into(),
-                node_id: "FastResampleNode".into(),
-                context: "create".into(),
-            })? as u32;
+            .and_then(|v| {
+                // Allow "auto" string to mean auto-detect
+                if v.as_str() == Some("auto") {
+                    None
+                } else {
+                    v.as_u64().map(|n| n as u32)
+                }
+            });
 
+        // Parse optional target_rate (can be "auto" or omitted for passthrough/adaptive)
         let target_rate = params
             .get("targetRate")
             .or(params.get("target_rate"))
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| Error::InvalidInput {
-                message: "targetRate parameter required".into(),
-                node_id: "FastResampleNode".into(),
-                context: "create".into(),
-            })? as u32;
+            .and_then(|v| {
+                if v.as_str() == Some("auto") {
+                    None
+                } else {
+                    v.as_u64().map(|n| n as u32)
+                }
+            });
 
         let quality_str = params
             .get("quality")
@@ -1323,7 +1352,28 @@ impl StreamingNodeFactory for FastResampleNodeFactory {
             _ => ResampleQuality::Medium,
         };
 
-        let channels = params.get("channels").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+        let channels = params.get("channels").and_then(|v| v.as_u64()).map(|n| n as usize);
+
+        // Use AutoResampleStreamingNode when source or target rate is not specified
+        // This enables lazy initialization with auto-detection from incoming data
+        if source_rate.is_none() || target_rate.is_none() {
+            use crate::nodes::audio_resample_streaming::AutoResampleStreamingNodeWrapper;
+
+            let config = AutoResampleConfig {
+                source_rate,
+                target_rate,
+                quality,
+                channels,
+            };
+            let node = AutoResampleStreamingNode::new(node_id, config);
+            // Use AutoResampleStreamingNodeWrapper for spec 025 configure_from_upstream support
+            return Ok(Box::new(AutoResampleStreamingNodeWrapper::new(node)));
+        }
+
+        // Both rates specified - use the original fixed-rate resampler
+        let source_rate = source_rate.unwrap();
+        let target_rate = target_rate.unwrap();
+        let channels = channels.unwrap_or(1);
 
         let inner = FastResampleNode::new(source_rate, target_rate, quality, channels)?;
         let node = ResampleStreamingNode::new(inner, target_rate);
@@ -1342,25 +1392,26 @@ impl StreamingNodeFactory for FastResampleNodeFactory {
         use crate::nodes::schema::{NodeSchema, RuntimeDataType};
         Some(
             NodeSchema::new("FastResampleNode")
-                .description("High-quality audio resampling using sinc interpolation")
+                .description("High-quality audio resampling using sinc interpolation. Supports auto-detection of sample rates from connected nodes.")
                 .category("audio")
                 .accepts([RuntimeDataType::Audio])
                 .produces([RuntimeDataType::Audio])
                 .config_schema(serde_json::json!({
                     "type": "object",
-                    "required": ["source_rate", "target_rate"],
                     "properties": {
                         "source_rate": {
-                            "type": "integer",
-                            "description": "Source sample rate in Hz",
-                            "minimum": 8000,
-                            "maximum": 192000
+                            "oneOf": [
+                                { "type": "integer", "minimum": 8000, "maximum": 192000 },
+                                { "type": "string", "enum": ["auto"] }
+                            ],
+                            "description": "Source sample rate in Hz. Use 'auto' or omit to detect from incoming audio."
                         },
                         "target_rate": {
-                            "type": "integer",
-                            "description": "Target sample rate in Hz",
-                            "minimum": 8000,
-                            "maximum": 192000
+                            "oneOf": [
+                                { "type": "integer", "minimum": 8000, "maximum": 192000 },
+                                { "type": "string", "enum": ["auto"] }
+                            ],
+                            "description": "Target sample rate in Hz. Use 'auto' or omit to adapt to downstream requirements."
                         },
                         "quality": {
                             "type": "string",
@@ -1370,14 +1421,83 @@ impl StreamingNodeFactory for FastResampleNodeFactory {
                         },
                         "channels": {
                             "type": "integer",
-                            "description": "Number of audio channels",
-                            "default": 1,
+                            "description": "Number of audio channels. Omit to detect from incoming audio.",
                             "minimum": 1,
                             "maximum": 8
                         }
                     }
                 })),
         )
+    }
+
+    fn media_capabilities(&self, params: &Value) -> Option<MediaCapabilities> {
+        // Check if explicit source and target rates are provided
+        let source_rate = params
+            .get("sourceRate")
+            .or(params.get("source_rate"))
+            .and_then(|v| {
+                if v.as_str() == Some("auto") { None } else { v.as_u64().map(|n| n as u32) }
+            });
+
+        let target_rate = params
+            .get("targetRate")
+            .or(params.get("target_rate"))
+            .and_then(|v| {
+                if v.as_str() == Some("auto") { None } else { v.as_u64().map(|n| n as u32) }
+            });
+
+        let channels = params
+            .get("channels")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32);
+
+        // When both source and target rates are explicit, return Configured capabilities
+        // Note: Channels are kept flexible on input (range 1-8) to allow the resample node
+        // to accept any channel count and output the configured count.
+        // This is similar to how a resampler can accept various input rates.
+        if let (Some(_source), Some(target)) = (source_rate, target_rate) {
+            // Output channel constraint (exact if specified, else flexible)
+            let output_channel_constraint = channels
+                .map(ConstraintValue::Exact)
+                .unwrap_or(ConstraintValue::Range { min: 1, max: 8 });
+
+            return Some(MediaCapabilities::with_input_output(
+                // Input: accept wide range of sample rates and channels
+                MediaConstraints::Audio(AudioConstraints {
+                    sample_rate: Some(ConstraintValue::Range { min: 8000, max: 192000 }),
+                    channels: Some(ConstraintValue::Range { min: 1, max: 8 }),
+                    format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+                }),
+                // Output: exact target rate with optional exact channels
+                MediaConstraints::Audio(AudioConstraints {
+                    sample_rate: Some(ConstraintValue::Exact(target)),
+                    channels: Some(output_channel_constraint),
+                    format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+                }),
+            ));
+        }
+
+        // When auto-configuration is needed, return Adaptive capabilities:
+        // - Input: accepts a wide range of sample rates (8kHz - 192kHz)
+        // - Output: None initially - adapts to downstream requirements during reverse pass
+        Some(MediaCapabilities::with_input(MediaConstraints::Audio(
+            AudioConstraints {
+                sample_rate: Some(ConstraintValue::Range {
+                    min: 8000,
+                    max: 192000,
+                }),
+                channels: Some(ConstraintValue::Range { min: 1, max: 8 }),
+                format: Some(ConstraintValue::Exact(AudioSampleFormat::F32)),
+            },
+        )))
+    }
+
+    fn capability_behavior(&self) -> CapabilityBehavior {
+        // Default to Adaptive - the actual behavior is determined by media_capabilities():
+        // - If media_capabilities() returns both input AND output, it acts as Configured
+        // - If media_capabilities() returns only input, it acts as Adaptive
+        // The resolver checks for output capabilities to determine if adaptation is needed.
+        CapabilityBehavior::Adaptive
     }
 }
 
@@ -1598,11 +1718,38 @@ pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
     registry.register(Arc::new(WhisperXNodeFactory));     // Python WhisperX with alignment
     registry.register(Arc::new(HFWhisperNodeFactory));    // Python HuggingFace with word timestamps
 
+    // Register health monitoring nodes (spec 027)
+    registry.register(Arc::new(HealthEmitterNodeFactory));
+    
+    // Register audio analysis nodes for fault detection (spec 027)
+    registry.register(Arc::new(AudioLevelNodeFactory));
+    registry.register(Arc::new(ClippingDetectorNodeFactory));
+    registry.register(Arc::new(ChannelBalanceNodeFactory));
+    registry.register(Arc::new(SilenceDetectorNodeFactory));
+
+    // Register stream health monitoring nodes (business layer)
+    registry.register(Arc::new(SpeechPresenceNodeFactory));
+    registry.register(Arc::new(ConversationFlowNodeFactory));
+    registry.register(Arc::new(SessionHealthNodeFactory));
+
+    // Register stream health monitoring nodes (technical layer)
+    registry.register(Arc::new(TimingDriftNodeFactory));
+    registry.register(Arc::new(EventCorrelatorNodeFactory));
+    registry.register(Arc::new(AudioEvidenceNodeFactory));
+
     // Register Speculative VAD Gate (Spec 007 - low-latency streaming)
     registry.register(Arc::new(SpeculativeVADGateFactory));
 
     // Register Speculative VAD Coordinator (integrates forwarding + Silero VAD)
     registry.register(Arc::new(SpeculativeVADCoordinatorFactory));
+
+    // Register speaker diarization node (identifies who spoke when)
+    #[cfg(feature = "speaker-diarization")]
+    registry.register(Arc::new(crate::nodes::speaker_diarization::SpeakerDiarizationNodeFactory));
+
+    // Register audio channel splitter node (routes audio by speaker)
+    registry.register(Arc::new(crate::nodes::audio_channel_splitter::AudioChannelSplitterNodeFactory));
+
 
     // Register Python TTS nodes
     registry.register(Arc::new(KokoroTTSNodeFactory));

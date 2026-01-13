@@ -1,0 +1,55 @@
+version: v1
+metadata:
+  name: stream-health-monitor
+  description: Real-time audio analysis with drift, freeze, silence, clipping, and balance detection
+  cli_defaults:
+    stream: true
+    sample_rate: 16000
+    channels: 1
+
+nodes:
+  # Audio level detection (RMS, silence, low volume)
+  - id: audio_level
+    node_type: AudioLevelNode
+    params:
+      low_volume_threshold_db: -20.0
+      silence_threshold_db: -50.0
+
+  # Silence and dropout detection
+  - id: silence_detector
+    node_type: SilenceDetectorNode
+    params:
+      silence_threshold_db: -50.0
+      sustained_silence_ms: 500.0
+      dropout_count_threshold: 3
+      dropout_window_ms: 5000.0
+
+  # Clipping/distortion detection
+  - id: clipping_detector
+    node_type: ClippingDetectorNode
+    params:
+      saturation_threshold: 0.99
+      saturation_ratio_threshold: 1.0
+      crest_factor_threshold_db: 3.0
+
+  # Channel balance detection (for stereo)
+  - id: channel_balance
+    node_type: ChannelBalanceNode
+    params:
+      imbalance_threshold_db: 10.0
+      dead_channel_threshold_db: -60.0
+
+  # Timing-based health (drift, freeze, skew)
+  - id: health_timing
+    node_type: HealthEmitterNode
+    params:
+      lead_threshold_ms: 50
+      freeze_threshold_ms: 500
+      health_emit_interval_ms: 1000
+      av_skew_threshold_ms: 80
+      cadence_cv_threshold: 0.3
+      health_threshold: 0.7
+
+# No connections - each node processes input independently
+# All outputs are collected by the session router
+connections: []

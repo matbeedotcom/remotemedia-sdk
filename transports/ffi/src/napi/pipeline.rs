@@ -368,6 +368,42 @@ impl NapiRuntimeData {
         })
     }
 
+    /// Create file reference data (Spec 001: RuntimeData.File)
+    ///
+    /// Creates a file reference that can be passed through the pipeline without
+    /// loading file contents into memory.
+    ///
+    /// # Arguments
+    /// * `path` - File path (absolute or relative)
+    /// * `filename` - Optional original filename
+    /// * `mime_type` - Optional MIME type hint
+    /// * `size` - Optional file size in bytes
+    /// * `offset` - Optional byte offset for range requests
+    /// * `length` - Optional length for range requests
+    /// * `stream_id` - Optional stream identifier for multi-track routing
+    #[napi(factory)]
+    pub fn file(
+        path: String,
+        filename: Option<String>,
+        mime_type: Option<String>,
+        size: Option<i64>,
+        offset: Option<i64>,
+        length: Option<i64>,
+        stream_id: Option<String>,
+    ) -> Self {
+        Self {
+            inner: RuntimeData::File {
+                path,
+                filename,
+                mime_type,
+                size: size.map(|s| s as u64),
+                offset: offset.map(|o| o as u64),
+                length: length.map(|l| l as u64),
+                stream_id,
+            },
+        }
+    }
+
     /// Get the data type
     #[napi(getter)]
     pub fn data_type(&self) -> u8 {
@@ -380,6 +416,7 @@ impl NapiRuntimeData {
             RuntimeData::Numpy { .. } => 6,
             RuntimeData::Json(_) => 7,
             RuntimeData::Binary(_) => 8,
+            RuntimeData::File { .. } => 9,
         }
     }
 
@@ -623,6 +660,69 @@ impl NapiRuntimeData {
         match &self.inner {
             RuntimeData::Numpy { dtype, .. } => Ok(dtype.clone()),
             _ => Err(napi::Error::from_reason("Not numpy data")),
+        }
+    }
+
+    /// Get file path
+    #[napi]
+    pub fn get_file_path(&self) -> napi::Result<String> {
+        match &self.inner {
+            RuntimeData::File { path, .. } => Ok(path.clone()),
+            _ => Err(napi::Error::from_reason("Not file data")),
+        }
+    }
+
+    /// Get file filename (optional)
+    #[napi]
+    pub fn get_file_filename(&self) -> napi::Result<Option<String>> {
+        match &self.inner {
+            RuntimeData::File { filename, .. } => Ok(filename.clone()),
+            _ => Err(napi::Error::from_reason("Not file data")),
+        }
+    }
+
+    /// Get file MIME type (optional)
+    #[napi]
+    pub fn get_file_mime_type(&self) -> napi::Result<Option<String>> {
+        match &self.inner {
+            RuntimeData::File { mime_type, .. } => Ok(mime_type.clone()),
+            _ => Err(napi::Error::from_reason("Not file data")),
+        }
+    }
+
+    /// Get file size in bytes (optional)
+    #[napi]
+    pub fn get_file_size(&self) -> napi::Result<Option<i64>> {
+        match &self.inner {
+            RuntimeData::File { size, .. } => Ok(size.map(|s| s as i64)),
+            _ => Err(napi::Error::from_reason("Not file data")),
+        }
+    }
+
+    /// Get file offset for byte range (optional)
+    #[napi]
+    pub fn get_file_offset(&self) -> napi::Result<Option<i64>> {
+        match &self.inner {
+            RuntimeData::File { offset, .. } => Ok(offset.map(|o| o as i64)),
+            _ => Err(napi::Error::from_reason("Not file data")),
+        }
+    }
+
+    /// Get file length for byte range (optional)
+    #[napi]
+    pub fn get_file_length(&self) -> napi::Result<Option<i64>> {
+        match &self.inner {
+            RuntimeData::File { length, .. } => Ok(length.map(|l| l as i64)),
+            _ => Err(napi::Error::from_reason("Not file data")),
+        }
+    }
+
+    /// Get file stream_id for multi-track routing (optional)
+    #[napi]
+    pub fn get_file_stream_id(&self) -> napi::Result<Option<String>> {
+        match &self.inner {
+            RuntimeData::File { stream_id, .. } => Ok(stream_id.clone()),
+            _ => Err(napi::Error::from_reason("Not file data")),
         }
     }
 }
@@ -1015,5 +1115,78 @@ mod tests {
         let data = NapiRuntimeData::text("Hello, World!".to_string());
         assert_eq!(data.data_type(), 3); // Text
         assert_eq!(data.get_text().unwrap(), "Hello, World!");
+    }
+
+    // File type tests (Spec 001: RuntimeData.File)
+
+    #[test]
+    fn test_napi_runtime_data_file_minimal() {
+        let data = NapiRuntimeData::file(
+            "/tmp/test.bin".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(data.data_type(), 9); // File
+        assert_eq!(data.get_file_path().unwrap(), "/tmp/test.bin");
+        assert!(data.get_file_filename().unwrap().is_none());
+        assert!(data.get_file_mime_type().unwrap().is_none());
+        assert!(data.get_file_size().unwrap().is_none());
+        assert!(data.get_file_offset().unwrap().is_none());
+        assert!(data.get_file_length().unwrap().is_none());
+        assert!(data.get_file_stream_id().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_napi_runtime_data_file_all_fields() {
+        let data = NapiRuntimeData::file(
+            "/data/input/video.mp4".to_string(),
+            Some("video.mp4".to_string()),
+            Some("video/mp4".to_string()),
+            Some(104_857_600),
+            Some(1_048_576),
+            Some(65_536),
+            Some("video_track".to_string()),
+        );
+        assert_eq!(data.data_type(), 9); // File
+        assert_eq!(data.get_file_path().unwrap(), "/data/input/video.mp4");
+        assert_eq!(data.get_file_filename().unwrap(), Some("video.mp4".to_string()));
+        assert_eq!(data.get_file_mime_type().unwrap(), Some("video/mp4".to_string()));
+        assert_eq!(data.get_file_size().unwrap(), Some(104_857_600));
+        assert_eq!(data.get_file_offset().unwrap(), Some(1_048_576));
+        assert_eq!(data.get_file_length().unwrap(), Some(65_536));
+        assert_eq!(data.get_file_stream_id().unwrap(), Some("video_track".to_string()));
+    }
+
+    #[test]
+    fn test_napi_runtime_data_file_byte_range() {
+        let data = NapiRuntimeData::file(
+            "/data/large_file.bin".to_string(),
+            None,
+            None,
+            Some(1_073_741_824), // 1 GB
+            Some(10 * 1024 * 1024), // 10 MB offset
+            Some(64 * 1024), // 64 KB chunk
+            None,
+        );
+        assert_eq!(data.get_file_path().unwrap(), "/data/large_file.bin");
+        assert_eq!(data.get_file_size().unwrap(), Some(1_073_741_824));
+        assert_eq!(data.get_file_offset().unwrap(), Some(10 * 1024 * 1024));
+        assert_eq!(data.get_file_length().unwrap(), Some(64 * 1024));
+    }
+
+    #[test]
+    fn test_file_getters_error_on_non_file() {
+        let data = NapiRuntimeData::text("Not a file".to_string());
+        assert!(data.get_file_path().is_err());
+        assert!(data.get_file_filename().is_err());
+        assert!(data.get_file_mime_type().is_err());
+        assert!(data.get_file_size().is_err());
+        assert!(data.get_file_offset().is_err());
+        assert!(data.get_file_length().is_err());
+        assert!(data.get_file_stream_id().is_err());
     }
 }

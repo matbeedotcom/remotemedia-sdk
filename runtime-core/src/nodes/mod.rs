@@ -48,6 +48,42 @@ pub use audio_buffer_accumulator::AudioBufferAccumulatorNode;
 pub mod audio_chunker;
 pub use audio_chunker::AudioChunkerNode;
 
+pub mod health_emitter;
+pub use health_emitter::{HealthEmitterNode, HealthEmitterConfig, HealthEmitterNodeFactory};
+
+// Audio analysis nodes for stream health monitoring
+pub mod audio_level;
+pub use audio_level::{AudioLevelNode, AudioLevelConfig, AudioLevelNodeFactory, AudioLevelEvent};
+
+pub mod clipping_detector;
+pub use clipping_detector::{ClippingDetectorNode, ClippingConfig, ClippingDetectorNodeFactory, ClippingEvent};
+
+pub mod channel_balance;
+pub use channel_balance::{ChannelBalanceNode, ChannelBalanceConfig, ChannelBalanceNodeFactory, ChannelBalanceEvent};
+
+pub mod silence_detector;
+pub use silence_detector::{SilenceDetectorNode, SilenceConfig, SilenceDetectorNodeFactory, SilenceEvent};
+
+// Stream health monitoring nodes (business layer)
+pub mod speech_presence;
+pub use speech_presence::{SpeechPresenceNode, SpeechPresenceConfig, SpeechPresenceNodeFactory};
+
+pub mod conversation_flow;
+pub use conversation_flow::{ConversationFlowNode, ConversationFlowConfig, ConversationFlowNodeFactory};
+
+pub mod session_health;
+pub use session_health::{SessionHealthNode, SessionHealthConfig, SessionHealthNodeFactory};
+
+// Stream health monitoring nodes (technical layer)
+pub mod timing_drift;
+pub use timing_drift::{TimingDriftNode, TimingDriftConfig, TimingDriftNodeFactory};
+
+pub mod event_correlator;
+pub use event_correlator::{EventCorrelatorNode, EventCorrelatorConfig, EventCorrelatorNodeFactory};
+
+pub mod audio_evidence;
+pub use audio_evidence::{AudioEvidenceNode, AudioEvidenceConfig, AudioEvidenceNodeFactory};
+
 pub mod audio_resample_streaming;
 pub use audio_resample_streaming::ResampleStreamingNode;
 
@@ -63,6 +99,17 @@ pub use speculative_vad_gate::{SpeculativeVADGate, SpeculativeVADGateConfig, VAD
 
 pub mod speculative_vad_coordinator;
 pub use speculative_vad_coordinator::{SpeculativeVADCoordinator, SpeculativeVADCoordinatorConfig};
+
+// Speaker diarization (identifies who spoke when)
+#[cfg(feature = "speaker-diarization")]
+pub mod speaker_diarization;
+#[cfg(feature = "speaker-diarization")]
+pub use speaker_diarization::{SpeakerDiarizationNode, SpeakerDiarizationConfig, SpeakerDiarizationNodeFactory};
+
+// Audio channel splitter (routes audio by speaker)
+pub mod audio_channel_splitter;
+pub use audio_channel_splitter::{AudioChannelSplitterNode, AudioChannelSplitterConfig, AudioChannelSplitterNodeFactory, OutputMode};
+
 
 pub use registry::{CompositeRegistry, NodeFactory as NodeFactoryTrait, RuntimeHint};
 pub use streaming_node::{

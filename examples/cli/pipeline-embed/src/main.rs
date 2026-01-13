@@ -526,12 +526,14 @@ async fn run_unary_mode(
                 sample_rate,
                 channels: channels as u32,
                 stream_id: None,
+                timestamp_us: None,
+                arrival_ts_us: None,
             }
         } else if let InputSource::File(path) = &source {
             // Try FFmpeg for other file formats
             tracing::info!("Decoding with FFmpeg");
             let (samples, sample_rate, channels) = ffmpeg::decode_audio_file(path)?;
-            RuntimeData::Audio { samples, sample_rate, channels, stream_id: None }
+            RuntimeData::Audio { samples, sample_rate, channels, stream_id: None, timestamp_us: None, arrival_ts_us: None }
         } else if data.starts_with(b"{") || data.starts_with(b"[") {
             // JSON input
             tracing::info!("Detected JSON input");
@@ -709,6 +711,8 @@ async fn run_streaming_mode(
                             sample_rate,
                             channels,
                             stream_id: None,
+                            timestamp_us: None,
+                            arrival_ts_us: None,
                         };
                         
                         if let Err(e) = session.send(audio).await {

@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use remotemedia_runtime_core::transport::{
-    ClientConfig, PipelineClient, PipelineRunner, ServerConfig, TransportPlugin,
+    ClientConfig, PipelineClient, PipelineExecutor, ServerConfig, TransportPlugin,
 };
 use remotemedia_runtime_core::Result;
 use std::sync::Arc;
@@ -49,14 +49,14 @@ impl TransportPlugin for WebRtcTransportPlugin {
     async fn create_server(
         &self,
         config: &ServerConfig,
-        runner: Arc<PipelineRunner>,
+        executor: Arc<PipelineExecutor>,
     ) -> Result<Box<dyn remotemedia_runtime_core::transport::PipelineTransport>> {
         use crate::config::WebRtcTransportConfig;
         use crate::transport::WebRtcTransport;
 
-        // Note: runner is provided but WebRtcTransport creates its own PipelineRunner
+        // Note: executor is provided but WebRtcTransport creates its own PipelineExecutor
         // in execute()/stream() methods per the trait implementation
-        let _ = runner;
+        let _ = executor;
 
         // Use default WebRTC configuration
         // TODO: ServerConfig currently doesn't have extra_config field.

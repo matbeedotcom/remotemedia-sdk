@@ -126,7 +126,7 @@ impl VideoScalerBackend for FFmpegScaler {
                 frame_number,
                 timestamp_us,
                 is_keyframe,
-                stream_id: _,
+                ..
             } => (pixel_data, width, height, format, codec, frame_number, timestamp_us, is_keyframe),
             _ => return Err("Expected video frame".to_string()),
         };
@@ -151,6 +151,7 @@ impl VideoScalerBackend for FFmpegScaler {
                 timestamp_us,
                 is_keyframe,
                 stream_id: None,
+                arrival_ts_us: None,
             });
         }
 
@@ -232,6 +233,7 @@ impl VideoScalerBackend for FFmpegScaler {
             timestamp_us,
             is_keyframe,
             stream_id: None,
+            arrival_ts_us: None,
         })
     }
 }
@@ -339,6 +341,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         // Scale to 720p
@@ -395,6 +398,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         let result = scaler.process(input_frame).await;

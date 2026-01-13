@@ -18,7 +18,7 @@ use crate::{
 use async_trait::async_trait;
 use remotemedia_runtime_core::manifest::Manifest;
 use remotemedia_runtime_core::transport::{
-    PipelineRunner, PipelineTransport, StreamSession, TransportData,
+    PipelineExecutor, PipelineTransport, StreamSession, TransportData,
 };
 use std::sync::Arc;
 use tonic::{service::LayerExt as _, transport::Server};
@@ -28,24 +28,25 @@ use tracing::info;
 pub struct GrpcServer {
     config: ServiceConfig,
     metrics: Arc<ServiceMetrics>,
-    runner: Arc<PipelineRunner>,
+    executor: Arc<PipelineExecutor>,
 }
 
 impl GrpcServer {
-    /// Create new server with configuration and pipeline runner
+    /// Create new server with configuration and pipeline executor
     ///
-    /// The runner encapsulates all executor and node registry details.
+    /// The executor encapsulates all scheduler, node registry, and drift metrics.
     /// The server is only responsible for the gRPC transport layer.
+    /// (Migrated from PipelineRunner per spec 026)
     pub fn new(
         config: ServiceConfig,
-        runner: Arc<PipelineRunner>,
+        executor: Arc<PipelineExecutor>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let metrics = Arc::new(ServiceMetrics::with_default_registry()?);
 
         Ok(Self {
             config,
             metrics,
-            runner,
+            executor,
         })
     }
 
@@ -70,19 +71,19 @@ impl GrpcServer {
             "Starting gRPC server"
         );
 
-        // Create service implementations with PipelineRunner
+        // Create service implementations with PipelineExecutor (spec 026 migration)
         let execution_service = ExecutionServiceImpl::new(
             self.config.auth.clone(),
             self.config.limits.clone(),
             Arc::clone(&self.metrics),
-            Arc::clone(&self.runner),
+            Arc::clone(&self.executor),
         );
 
         let streaming_service = StreamingServiceImpl::new(
             self.config.auth.clone(),
             self.config.limits.clone(),
             Arc::clone(&self.metrics),
-            Arc::clone(&self.runner),
+            Arc::clone(&self.executor),
         );
 
         // Wrap services with gRPC-Web and CORS support using tower ServiceBuilder
@@ -148,19 +149,19 @@ impl GrpcServer {
             "Starting gRPC server with shutdown flag"
         );
 
-        // Create service implementations with PipelineRunner
+        // Create service implementations with PipelineExecutor (spec 026 migration)
         let execution_service = ExecutionServiceImpl::new(
             self.config.auth.clone(),
             self.config.limits.clone(),
             Arc::clone(&self.metrics),
-            Arc::clone(&self.runner),
+            Arc::clone(&self.executor),
         );
 
         let streaming_service = StreamingServiceImpl::new(
             self.config.auth.clone(),
             self.config.limits.clone(),
             Arc::clone(&self.metrics),
-            Arc::clone(&self.runner),
+            Arc::clone(&self.executor),
         );
 
         // Wrap services with gRPC-Web and CORS support using tower ServiceBuilder
@@ -269,16 +270,16 @@ mod tests {
     #[test]
     fn test_server_creation() {
         let config = ServiceConfig::default();
-        let runner = Arc::new(PipelineRunner::new().unwrap());
-        let server = GrpcServer::new(config, runner);
+        let executor = Arc::new(PipelineExecutor::new().unwrap());
+        let server = GrpcServer::new(config, executor);
         assert!(server.is_ok());
     }
 
     #[test]
     fn test_metrics_access() {
         let config = ServiceConfig::default();
-        let runner = Arc::new(PipelineRunner::new().unwrap());
-        let server = GrpcServer::new(config, runner).unwrap();
+        let executor = Arc::new(PipelineExecutor::new().unwrap());
+        let server = GrpcServer::new(config, executor).unwrap();
         let metrics = server.metrics();
 
         // Test metrics are accessible
@@ -289,8 +290,8 @@ mod tests {
     #[test]
     fn test_metrics_text_export() {
         let config = ServiceConfig::default();
-        let runner = Arc::new(PipelineRunner::new().unwrap());
-        let server = GrpcServer::new(config, runner).unwrap();
+        let executor = Arc::new(PipelineExecutor::new().unwrap());
+        let server = GrpcServer::new(config, executor).unwrap();
 
         let text = server.metrics_text();
         assert!(text.contains("remotemedia_grpc"));
@@ -301,8 +302,8 @@ mod tests {
         let mut config = ServiceConfig::default();
         config.auth.require_auth = false;
 
-        let runner = Arc::new(PipelineRunner::new().unwrap());
-        let server = GrpcServer::new(config, runner).unwrap();
+        let executor = Arc::new(PipelineExecutor::new().unwrap());
+        let server = GrpcServer::new(config, executor).unwrap();
         assert!(!server.auth_config().require_auth);
     }
 }
@@ -310,28 +311,55 @@ mod tests {
 /// Implement PipelineTransport for GrpcServer
 ///
 /// This allows GrpcServer to be used as a transport server that can execute
-/// pipelines via the PipelineRunner.
+/// pipelines via the PipelineExecutor. (Migrated from PipelineRunner per spec 026)
 #[async_trait]
 impl PipelineTransport for GrpcServer {
     /// Execute a pipeline with unary semantics
     ///
-    /// Delegates to the PipelineRunner to execute the pipeline synchronously.
+    /// Delegates to the PipelineExecutor to execute the pipeline synchronously.
     async fn execute(
         &self,
         manifest: Arc<Manifest>,
         input: TransportData,
     ) -> remotemedia_runtime_core::Result<TransportData> {
-        self.runner.execute_unary(manifest, input).await
+        self.executor.execute_unary(manifest, input).await
     }
 
     /// Start a streaming pipeline session
     ///
-    /// Delegates to the PipelineRunner to create a streaming session.
+    /// Delegates to the PipelineExecutor to create a streaming session.
     async fn stream(
         &self,
         manifest: Arc<Manifest>,
     ) -> remotemedia_runtime_core::Result<Box<dyn StreamSession>> {
-        let session = self.runner.create_stream_session(manifest).await?;
-        Ok(Box::new(session))
+        let session = self.executor.create_session(manifest).await?;
+        // Wrap in SessionHandleWrapper for StreamSession trait compatibility
+        Ok(Box::new(SessionHandleWrapper(session)))
+    }
+}
+
+/// Wrapper to adapt PipelineExecutor's SessionHandle to StreamSession trait
+struct SessionHandleWrapper(remotemedia_runtime_core::transport::SessionHandle);
+
+#[async_trait]
+impl StreamSession for SessionHandleWrapper {
+    async fn send_input(&mut self, data: TransportData) -> remotemedia_runtime_core::Result<()> {
+        self.0.send_input(data).await
+    }
+
+    async fn recv_output(&mut self) -> remotemedia_runtime_core::Result<Option<TransportData>> {
+        self.0.recv_output().await
+    }
+
+    async fn close(&mut self) -> remotemedia_runtime_core::Result<()> {
+        self.0.close().await
+    }
+
+    fn session_id(&self) -> &str {
+        &self.0.session_id
+    }
+
+    fn is_active(&self) -> bool {
+        self.0.is_active()
     }
 }

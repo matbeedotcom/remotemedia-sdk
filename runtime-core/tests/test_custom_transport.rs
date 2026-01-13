@@ -21,9 +21,8 @@ async fn test_remote_pipeline_node_with_mock_transport() {
         version: "v1".to_string(),
         metadata: ManifestMetadata {
             name: "test-pipeline".to_string(),
-            description: None,
-            created_at: None,
-        },
+                ..Default::default()
+            },
         nodes: vec![NodeManifest {
             id: "echo_node".to_string(),
             node_type: "PassthroughNode".to_string(),
@@ -81,9 +80,8 @@ async fn test_remote_pipeline_node_streaming_with_mock_transport() {
         version: "v1".to_string(),
         metadata: ManifestMetadata {
             name: "test-streaming-pipeline".to_string(),
-            description: None,
-            created_at: None,
-        },
+                ..Default::default()
+            },
         nodes: vec![NodeManifest {
             id: "stream_node".to_string(),
             node_type: "PassthroughNode".to_string(),

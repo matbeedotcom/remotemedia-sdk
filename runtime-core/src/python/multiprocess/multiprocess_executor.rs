@@ -734,7 +734,7 @@ impl MultiprocessExecutor {
                 samples,
                 sample_rate,
                 channels,
-                stream_id: _,
+                ..
             } => {
                 // RuntimeData::Audio has inline f32 samples, convert directly
                 IPCRuntimeData::audio(samples, *sample_rate, *channels as u16, session_id)
@@ -777,6 +777,27 @@ impl MultiprocessExecutor {
                     session_id,
                 )
             }
+            MainRD::File {
+                path,
+                filename,
+                mime_type,
+                size,
+                offset,
+                length,
+                stream_id,
+            } => {
+                // Spec 001: File reference with metadata
+                IPCRuntimeData::file(
+                    path,
+                    filename.as_deref(),
+                    mime_type.as_deref(),
+                    *size,
+                    *offset,
+                    *length,
+                    stream_id.as_deref(),
+                    session_id,
+                )
+            }
             _ => {
                 // For now, convert unsupported types to text representation
                 IPCRuntimeData::text(&format!("{:?}", data), session_id)
@@ -809,6 +830,8 @@ impl MultiprocessExecutor {
                     sample_rate: 24000, // TODO: Extract from IPC metadata
                     channels: 1,        // TODO: Extract from IPC metadata
                     stream_id: None,
+                    timestamp_us: Some(ipc_data.timestamp), // spec 026
+                    arrival_ts_us: None, // spec 026: Set by transport layer
                 })
             }
             DataType::Video => {
@@ -892,6 +915,7 @@ impl MultiprocessExecutor {
                     timestamp_us: ipc_data.timestamp,
                     is_keyframe,
                     stream_id: None,
+                    arrival_ts_us: None, // spec 026: Set by transport layer
                 })
             }
             DataType::Numpy => {
@@ -983,6 +1007,22 @@ impl MultiprocessExecutor {
                     strides,
                     c_contiguous,
                     f_contiguous,
+                })
+            }
+            DataType::File => {
+                // Spec 001: Deserialize file reference from IPC payload
+                let (path, filename, mime_type, size, offset, length, stream_id) = ipc_data
+                    .file_metadata()
+                    .map_err(|e| Error::Execution(format!("Invalid file payload: {}", e)))?;
+
+                Ok(MainRD::File {
+                    path,
+                    filename,
+                    mime_type,
+                    size,
+                    offset,
+                    length,
+                    stream_id,
                 })
             }
             _ => Err(Error::Execution(format!(

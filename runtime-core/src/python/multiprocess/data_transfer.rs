@@ -149,6 +149,205 @@ impl RuntimeData {
         }
     }
 
+    /// Create file reference runtime data (Spec 001: RuntimeData.File)
+    ///
+    /// Serializes file reference with metadata for IPC transfer.
+    ///
+    /// # Binary Format
+    /// ```text
+    /// path_len (2 bytes) | path (variable) |
+    /// filename_len (2 bytes) | filename (variable) |
+    /// mime_type_len (2 bytes) | mime_type (variable) |
+    /// size (8 bytes) | offset (8 bytes) | length (8 bytes) |
+    /// stream_id_len (2 bytes) | stream_id (variable)
+    /// ```
+    ///
+    /// # Arguments
+    /// * `path` - File path (absolute or relative)
+    /// * `filename` - Original filename (optional, empty string if None)
+    /// * `mime_type` - MIME type hint (optional, empty string if None)
+    /// * `size` - File size in bytes (0 if unknown)
+    /// * `offset` - Byte offset for range requests (0 for start)
+    /// * `length` - Length for range requests (0 for to-EOF)
+    /// * `stream_id` - Stream identifier for multi-track routing (optional)
+    /// * `session_id` - Session identifier
+    pub fn file(
+        path: &str,
+        filename: Option<&str>,
+        mime_type: Option<&str>,
+        size: Option<u64>,
+        offset: Option<u64>,
+        length: Option<u64>,
+        stream_id: Option<&str>,
+        session_id: &str,
+    ) -> Self {
+        let mut payload = Vec::new();
+
+        // Path (required)
+        let path_bytes = path.as_bytes();
+        payload.extend_from_slice(&(path_bytes.len() as u16).to_le_bytes());
+        payload.extend_from_slice(path_bytes);
+
+        // Filename (optional, empty if None)
+        let filename_bytes = filename.unwrap_or("").as_bytes();
+        payload.extend_from_slice(&(filename_bytes.len() as u16).to_le_bytes());
+        payload.extend_from_slice(filename_bytes);
+
+        // MIME type (optional, empty if None)
+        let mime_type_bytes = mime_type.unwrap_or("").as_bytes();
+        payload.extend_from_slice(&(mime_type_bytes.len() as u16).to_le_bytes());
+        payload.extend_from_slice(mime_type_bytes);
+
+        // Size (0 if None)
+        payload.extend_from_slice(&size.unwrap_or(0).to_le_bytes());
+
+        // Offset (0 if None)
+        payload.extend_from_slice(&offset.unwrap_or(0).to_le_bytes());
+
+        // Length (0 if None)
+        payload.extend_from_slice(&length.unwrap_or(0).to_le_bytes());
+
+        // Stream ID (optional, empty if None)
+        let stream_id_bytes = stream_id.unwrap_or("").as_bytes();
+        payload.extend_from_slice(&(stream_id_bytes.len() as u16).to_le_bytes());
+        payload.extend_from_slice(stream_id_bytes);
+
+        Self {
+            data_type: DataType::File,
+            session_id: session_id.to_string(),
+            timestamp: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_micros() as u64,
+            payload,
+        }
+    }
+
+    /// Deserialize file reference from payload (Spec 001)
+    ///
+    /// Extracts file metadata from the payload and returns a tuple:
+    /// (path, filename, mime_type, size, offset, length, stream_id)
+    ///
+    /// # Returns
+    /// * `Ok(tuple)` - File metadata
+    /// * `Err(String)` - If payload is malformed
+    pub fn file_metadata(
+        &self,
+    ) -> Result<(String, Option<String>, Option<String>, Option<u64>, Option<u64>, Option<u64>, Option<String>), String>
+    {
+        if self.data_type != DataType::File {
+            return Err("Not a file reference".to_string());
+        }
+
+        if self.payload.len() < 32 {
+            // Minimum: 2+0 + 2+0 + 2+0 + 8 + 8 + 8 + 2+0 = 32
+            return Err("File payload too short".to_string());
+        }
+
+        let mut pos = 0;
+
+        // Path
+        let path_len = u16::from_le_bytes([self.payload[pos], self.payload[pos + 1]]) as usize;
+        pos += 2;
+        if pos + path_len > self.payload.len() {
+            return Err("Invalid path length".to_string());
+        }
+        let path = String::from_utf8_lossy(&self.payload[pos..pos + path_len]).to_string();
+        pos += path_len;
+
+        // Filename
+        if pos + 2 > self.payload.len() {
+            return Err("Invalid filename length".to_string());
+        }
+        let filename_len = u16::from_le_bytes([self.payload[pos], self.payload[pos + 1]]) as usize;
+        pos += 2;
+        let filename = if filename_len > 0 {
+            if pos + filename_len > self.payload.len() {
+                return Err("Invalid filename".to_string());
+            }
+            Some(String::from_utf8_lossy(&self.payload[pos..pos + filename_len]).to_string())
+        } else {
+            None
+        };
+        pos += filename_len;
+
+        // MIME type
+        if pos + 2 > self.payload.len() {
+            return Err("Invalid mime_type length".to_string());
+        }
+        let mime_type_len = u16::from_le_bytes([self.payload[pos], self.payload[pos + 1]]) as usize;
+        pos += 2;
+        let mime_type = if mime_type_len > 0 {
+            if pos + mime_type_len > self.payload.len() {
+                return Err("Invalid mime_type".to_string());
+            }
+            Some(String::from_utf8_lossy(&self.payload[pos..pos + mime_type_len]).to_string())
+        } else {
+            None
+        };
+        pos += mime_type_len;
+
+        // Size, Offset, Length (8 bytes each)
+        if pos + 24 > self.payload.len() {
+            return Err("Invalid size/offset/length fields".to_string());
+        }
+        let size = u64::from_le_bytes([
+            self.payload[pos],
+            self.payload[pos + 1],
+            self.payload[pos + 2],
+            self.payload[pos + 3],
+            self.payload[pos + 4],
+            self.payload[pos + 5],
+            self.payload[pos + 6],
+            self.payload[pos + 7],
+        ]);
+        pos += 8;
+        let offset = u64::from_le_bytes([
+            self.payload[pos],
+            self.payload[pos + 1],
+            self.payload[pos + 2],
+            self.payload[pos + 3],
+            self.payload[pos + 4],
+            self.payload[pos + 5],
+            self.payload[pos + 6],
+            self.payload[pos + 7],
+        ]);
+        pos += 8;
+        let length = u64::from_le_bytes([
+            self.payload[pos],
+            self.payload[pos + 1],
+            self.payload[pos + 2],
+            self.payload[pos + 3],
+            self.payload[pos + 4],
+            self.payload[pos + 5],
+            self.payload[pos + 6],
+            self.payload[pos + 7],
+        ]);
+        pos += 8;
+
+        // Stream ID
+        if pos + 2 > self.payload.len() {
+            return Err("Invalid stream_id length".to_string());
+        }
+        let stream_id_len = u16::from_le_bytes([self.payload[pos], self.payload[pos + 1]]) as usize;
+        pos += 2;
+        let stream_id = if stream_id_len > 0 {
+            if pos + stream_id_len > self.payload.len() {
+                return Err("Invalid stream_id".to_string());
+            }
+            Some(String::from_utf8_lossy(&self.payload[pos..pos + stream_id_len]).to_string())
+        } else {
+            None
+        };
+
+        // Convert 0 values to None for optional fields
+        let size = if size == 0 { None } else { Some(size) };
+        let offset = if offset == 0 { None } else { Some(offset) };
+        let length = if length == 0 { None } else { Some(length) };
+
+        Ok((path, filename, mime_type, size, offset, length, stream_id))
+    }
+
     /// Create numpy runtime data
     ///
     /// Serializes numpy array metadata and data for zero-copy IPC transfer.
@@ -320,6 +519,7 @@ impl RuntimeData {
             4 => DataType::Tensor,
             5 => DataType::ControlMessage,
             6 => DataType::Numpy,
+            7 => DataType::File,
             _ => return Err(format!("Invalid data type: {}", bytes[pos])),
         };
         pos += 1;
@@ -381,6 +581,7 @@ pub enum DataType {
     Tensor = 4,
     ControlMessage = 5, // Spec 007: Control messages for low-latency streaming
     Numpy = 6,          // Numpy arrays with metadata for zero-copy passthrough
+    File = 7,           // Spec 001: File reference with metadata
 }
 
 #[cfg(test)]
@@ -662,5 +863,101 @@ mod tests {
             payload_json["metadata"]["reason"].as_str().unwrap(),
             "test_cancellation"
         );
+    }
+
+    #[test]
+    fn test_file_roundtrip() {
+        // Test file reference serialization/deserialization with all fields
+        let data = RuntimeData::file(
+            "/data/input/video.mp4",
+            Some("video.mp4"),
+            Some("video/mp4"),
+            Some(104_857_600), // 100 MB
+            Some(1_048_576),   // 1 MB offset
+            Some(65_536),      // 64 KB chunk
+            Some("video_track"),
+            "test_session",
+        );
+
+        // Verify data type
+        assert_eq!(data.data_type, DataType::File);
+        assert_eq!(data.session_id, "test_session");
+
+        // Roundtrip through binary serialization
+        let bytes = data.to_bytes();
+        let recovered = RuntimeData::from_bytes(&bytes).unwrap();
+
+        assert_eq!(recovered.data_type, DataType::File);
+        assert_eq!(recovered.session_id, "test_session");
+
+        // Verify metadata extraction
+        let (path, filename, mime_type, size, offset, length, stream_id) =
+            recovered.file_metadata().unwrap();
+
+        assert_eq!(path, "/data/input/video.mp4");
+        assert_eq!(filename, Some("video.mp4".to_string()));
+        assert_eq!(mime_type, Some("video/mp4".to_string()));
+        assert_eq!(size, Some(104_857_600));
+        assert_eq!(offset, Some(1_048_576));
+        assert_eq!(length, Some(65_536));
+        assert_eq!(stream_id, Some("video_track".to_string()));
+    }
+
+    #[test]
+    fn test_file_minimal_roundtrip() {
+        // Test file reference with only required path field
+        let data = RuntimeData::file(
+            "/tmp/output.bin",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "test_session",
+        );
+
+        // Roundtrip through binary serialization
+        let bytes = data.to_bytes();
+        let recovered = RuntimeData::from_bytes(&bytes).unwrap();
+
+        assert_eq!(recovered.data_type, DataType::File);
+
+        // Verify metadata extraction
+        let (path, filename, mime_type, size, offset, length, stream_id) =
+            recovered.file_metadata().unwrap();
+
+        assert_eq!(path, "/tmp/output.bin");
+        assert_eq!(filename, None);
+        assert_eq!(mime_type, None);
+        assert_eq!(size, None);
+        assert_eq!(offset, None);
+        assert_eq!(length, None);
+        assert_eq!(stream_id, None);
+    }
+
+    #[test]
+    fn test_file_byte_range() {
+        // Test file reference for byte range request
+        let data = RuntimeData::file(
+            "/data/large_file.bin",
+            None,
+            None,
+            Some(1_073_741_824), // 1 GB total size
+            Some(10 * 1024 * 1024), // 10 MB offset
+            Some(64 * 1024),        // 64 KB chunk
+            None,
+            "test_session",
+        );
+
+        let bytes = data.to_bytes();
+        let recovered = RuntimeData::from_bytes(&bytes).unwrap();
+
+        let (path, _, _, size, offset, length, _) = recovered.file_metadata().unwrap();
+
+        assert_eq!(path, "/data/large_file.bin");
+        assert_eq!(size, Some(1_073_741_824));
+        assert_eq!(offset, Some(10 * 1024 * 1024));
+        assert_eq!(length, Some(64 * 1024));
     }
 }

@@ -23,13 +23,22 @@ pub mod executor_bridge;
 pub mod latency_metrics;
 pub mod node_capabilities;
 
+// StreamingScheduler and DriftMetrics (spec 026)
+pub mod drift_metrics;
+pub mod streaming_scheduler;
+
 // Re-export key types for convenience
 pub use error::ExecutionErrorExt;
 pub use graph::{PipelineGraph as Graph, PipelineNode as Node};
 pub use metrics::{NodeMetrics, PipelineMetrics};
-pub use retry::RetryPolicy;
+pub use retry::{CircuitBreaker, CircuitState, RetryPolicy};
 pub use scheduler::{ExecutionContext, Scheduler};
 
+// spec 026: Re-export drift metrics and streaming scheduler
+pub use drift_metrics::{DriftAlerts, DriftMetrics, DriftSample, DriftThresholds, StreamClockState};
+pub use streaming_scheduler::{NodeStats, SchedulerConfig, StreamingScheduler};
+
+use crate::capabilities::{CapabilitySource, ResolutionContext, ResolvedCapabilities};
 use crate::executor::node_executor::{NodeContext, NodeExecutor};
 use crate::manifest::Manifest;
 use crate::nodes::{CompositeRegistry, NodeRegistry};
@@ -240,6 +249,12 @@ pub struct Executor {
     // NOTE: py_cache removed - Python FFI belongs in FFI transport crate
     /// Pipeline metrics collection
     metrics: Arc<RwLock<PipelineMetrics>>,
+
+    /// Resolved capability context (spec 023)
+    ///
+    /// Stores the result of capability resolution after pipeline construction.
+    /// Enables introspection of resolved capabilities at each node.
+    resolution_context: Arc<RwLock<Option<ResolutionContext>>>,
 }
 
 /// Executor configuration
@@ -288,6 +303,7 @@ impl Executor {
             runtime_selector: RuntimeSelector::new(),
             // py_cache removed - belongs in FFI transport
             metrics: Arc::new(RwLock::new(PipelineMetrics::new("pipeline"))),
+            resolution_context: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -321,6 +337,108 @@ impl Executor {
     }
 
     // NOTE: py_cache() method removed - Python FFI belongs in FFI transport crate
+
+    // =========================================================================
+    // Capability Introspection API (spec 023 - US4)
+    // =========================================================================
+
+    /// Store the resolution context after capability resolution.
+    ///
+    /// Called internally after pipeline construction to enable introspection.
+    pub async fn set_resolution_context(&self, ctx: ResolutionContext) {
+        let mut lock = self.resolution_context.write().await;
+        *lock = Some(ctx);
+    }
+
+    /// Get the resolved capabilities for a specific node.
+    ///
+    /// Returns `None` if the node wasn't found or capabilities haven't been resolved.
+    ///
+    /// # Arguments
+    /// * `node_id` - The unique identifier of the node
+    ///
+    /// # Example
+    /// ```ignore
+    /// let caps = executor.get_resolved_capabilities("whisper").await;
+    /// if let Some(resolved) = caps {
+    ///     println!("Whisper input: {:?}", resolved.capabilities.default_input());
+    /// }
+    /// ```
+    pub async fn get_resolved_capabilities(&self, node_id: &str) -> Option<ResolvedCapabilities> {
+        let lock = self.resolution_context.read().await;
+        lock.as_ref()
+            .and_then(|ctx| ctx.resolved.get(node_id).cloned())
+    }
+
+    /// Get all resolved capabilities from the last pipeline resolution.
+    ///
+    /// Returns a clone of the entire resolution context's resolved capabilities map.
+    /// Returns `None` if no capabilities have been resolved yet.
+    ///
+    /// # Example
+    /// ```ignore
+    /// if let Some(all_caps) = executor.all_resolved_capabilities().await {
+    ///     for (node_id, resolved) in all_caps {
+    ///         println!("{}: {:?}", node_id, resolved.capabilities);
+    ///     }
+    /// }
+    /// ```
+    pub async fn all_resolved_capabilities(
+        &self,
+    ) -> Option<std::collections::HashMap<String, ResolvedCapabilities>> {
+        let lock = self.resolution_context.read().await;
+        lock.as_ref().map(|ctx| ctx.resolved.clone())
+    }
+
+    /// Get the capability source for a specific node and port.
+    ///
+    /// Returns how the capability was determined (Static, Configured, Passthrough, etc.)
+    ///
+    /// # Arguments
+    /// * `node_id` - The unique identifier of the node
+    /// * `port` - The port name (e.g., "default", "audio_in", "video_out")
+    ///
+    /// # Returns
+    /// * `Some(CapabilitySource)` - How the capability was determined
+    /// * `None` - Node or port not found
+    ///
+    /// # Example
+    /// ```ignore
+    /// let source = executor.get_capability_source("resample", "default").await;
+    /// match source {
+    ///     Some(CapabilitySource::Negotiated) => println!("Output was negotiated"),
+    ///     Some(CapabilitySource::Static) => println!("Input is static"),
+    ///     _ => {}
+    /// }
+    /// ```
+    pub async fn get_capability_source(&self, node_id: &str, port: &str) -> Option<CapabilitySource> {
+        let lock = self.resolution_context.read().await;
+        lock.as_ref()
+            .and_then(|ctx| ctx.resolved.get(node_id))
+            .and_then(|resolved| resolved.source(port).cloned())
+    }
+
+    /// Check if capabilities have been resolved for this executor.
+    pub async fn has_resolved_capabilities(&self) -> bool {
+        let lock = self.resolution_context.read().await;
+        lock.is_some()
+    }
+
+    /// Get the full resolution context (for advanced introspection).
+    ///
+    /// Returns a clone of the entire resolution context including:
+    /// - Resolved capabilities for all nodes
+    /// - Node behaviors and states
+    /// - Connection graph
+    /// - Any errors from resolution
+    pub async fn get_resolution_context(&self) -> Option<ResolutionContext> {
+        let lock = self.resolution_context.read().await;
+        lock.clone()
+    }
+
+    // =========================================================================
+    // Pipeline Execution Methods
+    // =========================================================================
 
     /// Execute a pipeline synchronously (for WASM compatibility)
     ///
@@ -646,7 +764,7 @@ impl Executor {
                                 samples,
                                 sample_rate,
                                 channels,
-                                stream_id: _,
+                                ..
                             } => format!(
                                 "Audio({} samples, {}Hz, {} ch)",
                                 samples.len(),
@@ -1604,8 +1722,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "linear-test".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 crate::manifest::NodeManifest {
@@ -1694,8 +1811,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "dag-test".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 crate::manifest::NodeManifest {
@@ -1792,8 +1908,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "cycle-test".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 crate::manifest::NodeManifest {
@@ -1858,7 +1973,7 @@ mod tests {
             metadata: ManifestMetadata {
                 name: "exec-test".to_string(),
                 description: Some("Test execution".to_string()),
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 crate::manifest::NodeManifest {
@@ -1918,8 +2033,7 @@ mod tests {
             version: "v1".to_string(),
             metadata: ManifestMetadata {
                 name: "execution-test".to_string(),
-                description: None,
-                created_at: None,
+                ..Default::default()
             },
             nodes: vec![
                 crate::manifest::NodeManifest {

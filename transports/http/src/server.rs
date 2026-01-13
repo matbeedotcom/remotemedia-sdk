@@ -20,7 +20,7 @@ use axum::{
 use futures::stream::Stream;
 use remotemedia_runtime_core::manifest::Manifest;
 use remotemedia_runtime_core::transport::{
-    PipelineRunner, PipelineTransport, StreamSession, StreamSessionHandle, TransportData,
+    PipelineExecutor, PipelineTransport, StreamSession, TransportData,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -33,8 +33,8 @@ use tokio_stream::StreamExt as _;
 /// HTTP server state shared across handlers
 #[derive(Clone)]
 struct ServerState {
-    /// Pipeline runner for executing pipelines
-    runner: Arc<PipelineRunner>,
+    /// Pipeline executor for executing pipelines (spec 026 migration)
+    executor: Arc<PipelineExecutor>,
     /// Active streaming sessions
     sessions: Arc<RwLock<HashMap<String, SessionHandle>>>,
 }
@@ -44,8 +44,8 @@ struct ServerState {
 struct SessionHandle {
     /// Session ID
     session_id: String,
-    /// Stream session from runtime
-    session: StreamSessionHandle,
+    /// Stream session from executor (spec 026 migration)
+    session: SessionHandleWrapper,
     /// Broadcast channel for sending outputs to multiple SSE subscribers
     output_tx: broadcast::Sender<TransportData>,
 }
@@ -64,15 +64,15 @@ impl HttpServer {
     /// # Arguments
     ///
     /// * `bind_address` - Address to bind to (e.g., "127.0.0.1:8080")
-    /// * `runner` - Pipeline runner for executing pipelines
+    /// * `executor` - Pipeline executor for executing pipelines (spec 026 migration)
     ///
     /// # Returns
     ///
     /// * `Ok(HttpServer)` - Server created successfully
     /// * `Err(Error)` - Failed to create server
-    pub async fn new(bind_address: String, runner: Arc<PipelineRunner>) -> Result<Self> {
+    pub async fn new(bind_address: String, executor: Arc<PipelineExecutor>) -> Result<Self> {
         let state = ServerState {
-            runner,
+            executor,
             sessions: Arc::new(RwLock::new(HashMap::new())),
         };
 
@@ -131,7 +131,7 @@ impl PipelineTransport for HttpServer {
         manifest: Arc<Manifest>,
         input: TransportData,
     ) -> remotemedia_runtime_core::Result<TransportData> {
-        self.state.runner.execute_unary(manifest, input).await
+        self.state.executor.execute_unary(manifest, input).await
     }
 
     async fn stream(
@@ -139,8 +139,36 @@ impl PipelineTransport for HttpServer {
         manifest: Arc<Manifest>,
     ) -> remotemedia_runtime_core::Result<Box<dyn remotemedia_runtime_core::transport::StreamSession>>
     {
-        let session = self.state.runner.create_stream_session(manifest).await?;
-        Ok(Box::new(session))
+        let session = self.state.executor.create_session(manifest).await?;
+        // Convert SessionHandle to Box<dyn StreamSession>
+        // Note: SessionHandle implements the streaming interface
+        Ok(Box::new(SessionHandleWrapper(session)))
+    }
+}
+
+/// Wrapper to adapt PipelineExecutor's SessionHandle to StreamSession trait
+struct SessionHandleWrapper(remotemedia_runtime_core::transport::SessionHandle);
+
+#[async_trait]
+impl StreamSession for SessionHandleWrapper {
+    async fn send_input(&mut self, data: TransportData) -> remotemedia_runtime_core::Result<()> {
+        self.0.send_input(data).await
+    }
+
+    async fn recv_output(&mut self) -> remotemedia_runtime_core::Result<Option<TransportData>> {
+        self.0.recv_output().await
+    }
+
+    async fn close(&mut self) -> remotemedia_runtime_core::Result<()> {
+        self.0.close().await
+    }
+
+    fn session_id(&self) -> &str {
+        &self.0.session_id
+    }
+
+    fn is_active(&self) -> bool {
+        self.0.is_active()
     }
 }
 
@@ -241,7 +269,7 @@ async fn execute_handler(
 
     // Execute pipeline - uses map_runtime_error for proper validation error handling
     let output = state
-        .runner
+        .executor
         .execute_unary(Arc::new(manifest), request.input)
         .await
         .map_err(map_runtime_error)?;
@@ -280,21 +308,21 @@ async fn create_stream_handler(
 
     // Create stream session - uses map_runtime_error for proper validation error handling
     let session = state
-        .runner
-        .create_stream_session(Arc::new(manifest))
+        .executor
+        .create_session(Arc::new(manifest))
         .await
         .map_err(map_runtime_error)?;
 
-    let session_id = session.session_id().to_string();
+    let session_id = session.session_id.clone();
 
     // Create broadcast channel for SSE (supports multiple subscribers)
     // Capacity of 100 means it can buffer up to 100 outputs before dropping oldest
     let (output_tx, _output_rx) = broadcast::channel(100);
 
-    // Store session
+    // Store session (wrap in SessionHandleWrapper for trait compatibility)
     let handle = SessionHandle {
         session_id: session_id.clone(),
-        session,
+        session: SessionHandleWrapper(session),
         output_tx,
     };
 

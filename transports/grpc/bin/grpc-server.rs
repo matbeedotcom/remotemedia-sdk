@@ -32,7 +32,7 @@
 //! - `RUST_LOG`: Logging level (default: `info`, options: `trace`, `debug`, `info`, `warn`, `error`)
 
 use remotemedia_grpc::{init_tracing, server::GrpcServer, ServiceConfig};
-use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_runtime_core::transport::PipelineExecutor;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::{error, info};
@@ -108,19 +108,15 @@ async fn async_main(shutdown_flag: Arc<AtomicBool>) -> Result<(), Box<dyn std::e
         "Configuration loaded"
     );
 
-    // Create pipeline runner
-    // PipelineRunner encapsulates the executor and all node registries
-    let runner = PipelineRunner::new()?;
-    info!("PipelineRunner initialized with all nodes");
+    // Create pipeline executor (spec 026 migration)
+    // PipelineExecutor encapsulates the scheduler, node registry, and drift metrics
+    let executor = PipelineExecutor::new()?;
+    info!("PipelineExecutor initialized with StreamingScheduler");
 
-    // TODO: Get node type information from PipelineRunner for logging
-    // Currently PipelineRunner doesn't expose this information
-    // The nodes are registered internally during PipelineRunner::new()
-
-    let runner = Arc::new(runner);
+    let executor = Arc::new(executor);
 
     // Create and start server
-    let server = GrpcServer::new(config, runner)?;
+    let server = GrpcServer::new(config, executor)?;
 
     info!("Server initialized, starting listener...");
 

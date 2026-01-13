@@ -1,0 +1,60 @@
+# Speaker Diarization Pipeline
+# Identifies speakers and outputs each as a separate audio channel
+# Uses SileroVAD to filter silence before diarization for efficiency
+
+version: "1.0"
+
+metadata:
+  name: Speaker Diarization
+  description: Identify speakers and route each to a separate audio channel
+  category: audio
+
+nodes:
+  # Voice Activity Detection (filters silence before diarization)
+  - id: vad
+    node_type: SileroVADNode
+    params:
+      threshold: 0.5
+      min_speech_duration_ms: 250
+      min_silence_duration_ms: 100
+      speech_pad_ms: 30
+      passthrough_audio: true
+    is_streaming: true
+
+  # Speaker diarization - identifies "who spoke when"
+  - id: diarize
+    node_type: SpeakerDiarizationNode
+    params:
+      search_threshold: 0.5
+      sample_rate: 16000
+      passthrough_audio: true
+      max_speakers: 4
+    is_streaming: true
+
+  # Audio channel splitter - routes speakers to channels
+  - id: split_channels
+    node_type: AudioChannelSplitterNode
+    params:
+      output_mode: channels
+      max_speakers: 4
+      stream_id_prefix: speaker
+    is_streaming: true
+
+  # Audio level monitoring for each speaker channel
+  - id: audio_level
+    node_type: AudioLevelNode
+    params:
+      window_size_ms: 100
+      low_volume_threshold_db: -40.0
+      silence_threshold_db: -60.0
+    is_streaming: true
+
+# Connection topology:
+# - vad filters out silence before diarization (more efficient)
+# - diarize receives speech frames, outputs JSON segments + passthrough audio
+# - split_channels receives both, outputs multi-channel audio (one per speaker)
+# - audio_level monitors the multi-channel output
+connections:
+  - { from: vad, to: diarize }
+  - { from: diarize, to: split_channels }
+  - { from: split_channels, to: audio_level }

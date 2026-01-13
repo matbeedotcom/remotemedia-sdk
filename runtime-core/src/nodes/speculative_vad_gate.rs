@@ -163,7 +163,7 @@ impl SpeculativeVADGate {
                 samples,
                 sample_rate,
                 channels,
-                stream_id: _,
+                ..
             } => (samples.clone(), *sample_rate, *channels),
             _ => {
                 return Err(Error::Execution(
@@ -228,6 +228,8 @@ impl SpeculativeVADGate {
             sample_rate,
             channels,
             stream_id: None,
+            timestamp_us: None,
+            arrival_ts_us: None,
         };
         outputs.push(audio_output);
 
@@ -365,6 +367,8 @@ mod tests {
             sample_rate: 16000,
             channels: 1,
             stream_id: None,
+            timestamp_us: None,
+            arrival_ts_us: None,
         };
 
         let mut outputs = Vec::new();
@@ -404,6 +408,8 @@ mod tests {
             sample_rate: 16000,
             channels: 1,
             stream_id: None,
+            timestamp_us: None,
+            arrival_ts_us: None,
         };
 
         use crate::nodes::AsyncStreamingNode;
@@ -430,6 +436,8 @@ mod tests {
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: None,
+                timestamp_us: None,
+                arrival_ts_us: None,
             };
 
             use crate::nodes::AsyncStreamingNode;

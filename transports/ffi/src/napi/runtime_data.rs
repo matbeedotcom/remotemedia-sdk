@@ -11,7 +11,7 @@
 //! ┌─────────────────────────────────────────────────────────────────┐
 //! │ Offset │ Field          │ Size     │ Description               │
 //! ├────────┼────────────────┼──────────┼───────────────────────────┤
-//! │ 0      │ data_type      │ 1 byte   │ Type discriminant (1-6)   │
+//! │ 0      │ data_type      │ 1 byte   │ Type discriminant (1-7)   │
 //! │ 1      │ session_len    │ 2 bytes  │ Session ID length (LE)    │
 //! │ 3      │ session_id     │ N bytes  │ UTF-8 session identifier  │
 //! │ 3+N    │ timestamp_ns   │ 8 bytes  │ Unix timestamp (LE u64)   │
@@ -33,6 +33,7 @@ pub enum DataType {
     Tensor = 4,
     ControlMessage = 5,
     Numpy = 6,
+    File = 7,
 }
 
 /// Audio buffer header size (sample_rate + channels + padding + num_samples)
@@ -75,6 +76,28 @@ pub struct VideoMetadata {
     pub frame_num: i64,
     pub is_keyframe: bool,
     pub pixel_data_offset: u32,
+}
+
+/// File reference metadata (Spec 001: RuntimeData.File)
+///
+/// Represents a file reference with optional metadata for byte range requests
+/// and multi-track routing.
+#[napi(object)]
+pub struct FileMetadata {
+    /// File path (absolute or relative)
+    pub path: String,
+    /// Original filename (optional)
+    pub filename: Option<String>,
+    /// MIME type hint (optional)
+    pub mime_type: Option<String>,
+    /// File size in bytes (optional, None if unknown)
+    pub size: Option<i64>,
+    /// Byte offset for range requests (optional, None for start)
+    pub offset: Option<i64>,
+    /// Length for range requests (optional, None for to-EOF)
+    pub length: Option<i64>,
+    /// Stream identifier for multi-track routing (optional)
+    pub stream_id: Option<String>,
 }
 
 /// Parse RuntimeData header from buffer
@@ -232,6 +255,154 @@ pub fn parse_video_metadata(buffer: Buffer, payload_offset: u32) -> napi::Result
     })
 }
 
+/// Parse file reference metadata from payload (Spec 001: RuntimeData.File)
+///
+/// # Binary Format
+/// ```text
+/// path_len (2 bytes) | path (variable) |
+/// filename_len (2 bytes) | filename (variable) |
+/// mime_type_len (2 bytes) | mime_type (variable) |
+/// size (8 bytes) | offset (8 bytes) | length (8 bytes) |
+/// stream_id_len (2 bytes) | stream_id (variable)
+/// ```
+#[napi]
+pub fn parse_file_metadata(buffer: Buffer, payload_offset: u32) -> napi::Result<FileMetadata> {
+    let bytes = buffer.as_ref();
+    let mut pos = payload_offset as usize;
+
+    // Minimum size check: 2+0 + 2+0 + 2+0 + 8 + 8 + 8 + 2+0 = 32 bytes
+    if bytes.len() < pos + 32 {
+        return Err(
+            IpcError::SerializationError("Buffer too small for file metadata".to_string()).into(),
+        );
+    }
+
+    // Path (required)
+    let path_len = u16::from_le_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+    pos += 2;
+    if pos + path_len > bytes.len() {
+        return Err(IpcError::SerializationError("Invalid path length".to_string()).into());
+    }
+    let path = String::from_utf8_lossy(&bytes[pos..pos + path_len]).to_string();
+    pos += path_len;
+
+    // Filename (optional)
+    if pos + 2 > bytes.len() {
+        return Err(IpcError::SerializationError("Invalid filename length field".to_string()).into());
+    }
+    let filename_len = u16::from_le_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+    pos += 2;
+    let filename = if filename_len > 0 {
+        if pos + filename_len > bytes.len() {
+            return Err(IpcError::SerializationError("Invalid filename".to_string()).into());
+        }
+        Some(String::from_utf8_lossy(&bytes[pos..pos + filename_len]).to_string())
+    } else {
+        None
+    };
+    pos += filename_len;
+
+    // MIME type (optional)
+    if pos + 2 > bytes.len() {
+        return Err(IpcError::SerializationError("Invalid mime_type length field".to_string()).into());
+    }
+    let mime_type_len = u16::from_le_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+    pos += 2;
+    let mime_type = if mime_type_len > 0 {
+        if pos + mime_type_len > bytes.len() {
+            return Err(IpcError::SerializationError("Invalid mime_type".to_string()).into());
+        }
+        Some(String::from_utf8_lossy(&bytes[pos..pos + mime_type_len]).to_string())
+    } else {
+        None
+    };
+    pos += mime_type_len;
+
+    // Size, Offset, Length (8 bytes each)
+    if pos + 24 > bytes.len() {
+        return Err(
+            IpcError::SerializationError("Invalid size/offset/length fields".to_string()).into(),
+        );
+    }
+    let size_val = u64::from_le_bytes([
+        bytes[pos],
+        bytes[pos + 1],
+        bytes[pos + 2],
+        bytes[pos + 3],
+        bytes[pos + 4],
+        bytes[pos + 5],
+        bytes[pos + 6],
+        bytes[pos + 7],
+    ]);
+    pos += 8;
+    let offset_val = u64::from_le_bytes([
+        bytes[pos],
+        bytes[pos + 1],
+        bytes[pos + 2],
+        bytes[pos + 3],
+        bytes[pos + 4],
+        bytes[pos + 5],
+        bytes[pos + 6],
+        bytes[pos + 7],
+    ]);
+    pos += 8;
+    let length_val = u64::from_le_bytes([
+        bytes[pos],
+        bytes[pos + 1],
+        bytes[pos + 2],
+        bytes[pos + 3],
+        bytes[pos + 4],
+        bytes[pos + 5],
+        bytes[pos + 6],
+        bytes[pos + 7],
+    ]);
+    pos += 8;
+
+    // Stream ID (optional)
+    if pos + 2 > bytes.len() {
+        return Err(
+            IpcError::SerializationError("Invalid stream_id length field".to_string()).into(),
+        );
+    }
+    let stream_id_len = u16::from_le_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+    pos += 2;
+    let stream_id = if stream_id_len > 0 {
+        if pos + stream_id_len > bytes.len() {
+            return Err(IpcError::SerializationError("Invalid stream_id".to_string()).into());
+        }
+        Some(String::from_utf8_lossy(&bytes[pos..pos + stream_id_len]).to_string())
+    } else {
+        None
+    };
+
+    // Convert 0 values to None for optional numeric fields
+    let size = if size_val == 0 {
+        None
+    } else {
+        Some(size_val as i64)
+    };
+    let offset = if offset_val == 0 {
+        None
+    } else {
+        Some(offset_val as i64)
+    };
+    let length = if length_val == 0 {
+        None
+    } else {
+        Some(length_val as i64)
+    };
+
+    Ok(FileMetadata {
+        path,
+        filename,
+        mime_type,
+        size,
+        offset,
+        length,
+        stream_id,
+    })
+}
+
 /// Check if data type is Audio
 #[napi]
 pub fn is_audio(data_type: u8) -> bool {
@@ -256,6 +427,12 @@ pub fn is_control_message(data_type: u8) -> bool {
     data_type == DataType::ControlMessage as u8
 }
 
+/// Check if data type is File
+#[napi]
+pub fn is_file(data_type: u8) -> bool {
+    data_type == DataType::File as u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,6 +445,7 @@ mod tests {
         assert_eq!(DataType::Tensor as u8, 4);
         assert_eq!(DataType::ControlMessage as u8, 5);
         assert_eq!(DataType::Numpy as u8, 6);
+        assert_eq!(DataType::File as u8, 7);
     }
 
     #[test]
@@ -277,5 +455,7 @@ mod tests {
         assert!(is_video(2));
         assert!(is_text(3));
         assert!(is_control_message(5));
+        assert!(is_file(7));
+        assert!(!is_file(1));
     }
 }

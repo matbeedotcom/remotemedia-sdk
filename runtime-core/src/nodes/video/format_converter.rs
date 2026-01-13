@@ -90,7 +90,7 @@ impl VideoFormatConverterBackend for FFmpegFormatConverter {
                 frame_number,
                 timestamp_us,
                 is_keyframe,
-                stream_id: _,
+                ..
             } => (pixel_data, width, height, format, codec, frame_number, timestamp_us, is_keyframe),
             _ => return Err("Expected video frame".to_string()),
         };
@@ -112,6 +112,7 @@ impl VideoFormatConverterBackend for FFmpegFormatConverter {
                 timestamp_us,
                 is_keyframe,
                 stream_id: None,
+                arrival_ts_us: None,
             });
         }
 
@@ -197,6 +198,7 @@ impl VideoFormatConverterBackend for FFmpegFormatConverter {
             timestamp_us,
             is_keyframe,
             stream_id: None,
+            arrival_ts_us: None,
         })
     }
 }
@@ -313,6 +315,7 @@ mod tests {
             timestamp_us: 0,
             is_keyframe: false,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         // Convert to same format (should be no-op)
