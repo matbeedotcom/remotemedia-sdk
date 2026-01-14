@@ -401,66 +401,10 @@ async fn test_manifest_caching() {
     assert!(cache.get("test-key").is_none());
 }
 
-/// Test HTTP transport client creation
-#[tokio::test]
-async fn test_http_transport_client() {
-    use remotemedia_runtime_core::transport::client::http::HttpPipelineClient;
-
-    let client = HttpPipelineClient::new("http://localhost:8080", None).await;
-    assert!(client.is_ok());
-
-    // Invalid URL should fail
-    let client = HttpPipelineClient::new("invalid-url", None).await;
-    assert!(client.is_err());
-}
-
-/// Test WebRTC transport client creation
-#[tokio::test]
-async fn test_webrtc_transport_client() {
-    use remotemedia_runtime_core::transport::client::webrtc::WebRtcPipelineClient;
-
-    let client = WebRtcPipelineClient::new(
-        "wss://signaling.example.com",
-        vec!["stun:stun.example.com:3478".to_string()],
-        None,
-    )
-    .await;
-    assert!(client.is_ok());
-
-    // Invalid signaling URL should fail
-    let client = WebRtcPipelineClient::new("http://invalid.com", vec![], None).await;
-    assert!(client.is_err());
-}
-
-/// Test transport factory
-#[tokio::test]
-async fn test_transport_factory() {
-    use remotemedia_runtime_core::transport::client::{
-        create_transport_client, TransportConfig, TransportType,
-    };
-
-    // Test HTTP transport
-    let config = TransportConfig {
-        transport_type: TransportType::Http,
-        endpoint: "http://localhost:8080".to_string(),
-        auth_token: None,
-        extra_config: None,
-    };
-    let client = create_transport_client(config).await;
-    assert!(client.is_ok());
-
-    // Test WebRTC transport
-    let config = TransportConfig {
-        transport_type: TransportType::Webrtc,
-        endpoint: "wss://signaling.example.com".to_string(),
-        auth_token: None,
-        extra_config: Some(json!({
-            "ice_servers": ["stun:stun.example.com:3478"]
-        })),
-    };
-    let client = create_transport_client(config).await;
-    assert!(client.is_ok());
-}
+// NOTE: HTTP and WebRTC transport client tests removed - clients are now in separate crates:
+// - remotemedia-http for HttpPipelineClient
+// - remotemedia-webrtc for WebRtcPipelineClient
+// See docs/MIGRATION_TO_PLUGINS.md for plugin-based transport usage.
 
 /// Test transport config validation
 #[tokio::test]

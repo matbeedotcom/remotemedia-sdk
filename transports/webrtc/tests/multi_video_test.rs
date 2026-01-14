@@ -41,6 +41,7 @@ fn create_video_frame(stream_id: Option<String>, width: u32, height: u32) -> Run
         timestamp_us: 0,
         is_keyframe: false,
         stream_id,
+        arrival_ts_us: None,
     }
 }
 

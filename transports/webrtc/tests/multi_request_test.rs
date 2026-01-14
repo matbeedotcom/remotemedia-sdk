@@ -47,7 +47,7 @@ async fn test_multi_request_streaming_session() {
 
     // Create streaming session
     let mut session = runner
-        .create_stream_session(Arc::clone(&manifest))
+        .create_session(Arc::clone(&manifest))
         .await
         .expect("Failed to create streaming session");
 

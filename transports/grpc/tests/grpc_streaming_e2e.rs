@@ -15,6 +15,7 @@ use remotemedia_grpc::generated::{
     streaming_pipeline_service_client::StreamingPipelineServiceClient, DataBuffer, DataChunk,
     PipelineManifest, StreamControl, StreamInit, StreamRequest,
 };
+use remotemedia_grpc::generated::StreamResponse;
 use remotemedia_grpc::metrics::ServiceMetrics;
 use remotemedia_grpc::{ServiceConfig, StreamingServiceImpl};
 use remotemedia_runtime_core::transport::PipelineExecutor;
@@ -22,6 +23,39 @@ use std::sync::Arc;
 use tokio::time::{sleep, timeout, Duration};
 use tonic::transport::Server;
 use tonic::Request;
+
+/// Wait for StreamReady response, skipping any intermediate status messages
+async fn wait_for_stream_ready(
+    response_stream: &mut tonic::Streaming<StreamResponse>,
+) -> StreamResponse {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let response = timeout(Duration::from_secs(5), response_stream.message())
+            .await
+            .expect("Timeout waiting for StreamReady")
+            .expect("Stream error")
+            .expect("No response");
+
+        match &response.response {
+            Some(StreamResponseType::Ready(_)) => return response,
+            Some(StreamResponseType::Result(result)) => {
+                // Skip status/initialization messages
+                if result.data_outputs.contains_key("_status") {
+                    continue;
+                }
+                panic!("Unexpected Result before StreamReady: {:?}", result);
+            }
+            Some(StreamResponseType::Error(e)) => {
+                panic!("Expected StreamReady but got Error: {:?}", e);
+            }
+            _ => {}
+        }
+
+        if tokio::time::Instant::now() > deadline {
+            panic!("Timeout waiting for StreamReady");
+        }
+    }
+}
 
 /// Start gRPC server in background
 async fn start_test_server() -> (String, tokio::task::JoinHandle<()>) {
@@ -166,22 +200,14 @@ async fn test_grpc_streaming_video_pipeline() {
         .expect("Failed to start stream")
         .into_inner();
 
-    // Wait for StreamReady
-    let ready_response = timeout(Duration::from_secs(5), response_stream.message())
-        .await
-        .expect("Timeout waiting for StreamReady")
-        .expect("Stream error")
-        .expect("No response");
-
-    match ready_response.response {
-        Some(StreamResponseType::Ready(ready)) => {
-            println!("  ✓ Session created: {}", ready.session_id);
-            println!(
-                "  ✓ Recommended chunk size: {}",
-                ready.recommended_chunk_size
-            );
-        }
-        _ => panic!("Expected StreamReady response"),
+    // Wait for StreamReady (skip any intermediate status messages)
+    let ready_response = wait_for_stream_ready(&mut response_stream).await;
+    if let Some(StreamResponseType::Ready(ready)) = ready_response.response {
+        println!("  ✓ Session created: {}", ready.session_id);
+        println!(
+            "  ✓ Recommended chunk size: {}",
+            ready.recommended_chunk_size
+        );
     }
 
     // Step 4: Send video frames through pipeline
@@ -211,79 +237,89 @@ async fn test_grpc_streaming_video_pipeline() {
     // Step 5: Receive processed video frames
     println!("\n📦 Step 5: Receiving processed video frames...");
     for i in 0..NUM_FRAMES {
-        let response = timeout(Duration::from_secs(5), response_stream.message())
-            .await
-            .expect(&format!("Timeout waiting for frame {}", i))
-            .expect("Stream error")
-            .expect(&format!("No response for frame {}", i));
+        // Loop to skip status messages and metrics
+        let result = loop {
+            let response = timeout(Duration::from_secs(5), response_stream.message())
+                .await
+                .expect(&format!("Timeout waiting for frame {}", i))
+                .expect("Stream error")
+                .expect(&format!("No response for frame {}", i));
 
-        match response.response {
-            Some(StreamResponseType::Result(result)) => {
-                println!("  ← Received frame {} result", i);
-
-                // Verify we got video data back in data_outputs
-                assert!(
-                    !result.data_outputs.is_empty(),
-                    "Frame {} missing data_outputs",
-                    i
-                );
-
-                // Extract the video frame from the "flip" node output
-                let output_buffer = result
-                    .data_outputs
-                    .get("flip")
-                    .expect(&format!("Frame {} missing 'flip' output", i));
-
-                let video_frame = match &output_buffer.data_type {
-                    Some(DataType::Video(frame)) => frame,
-                    _ => panic!("Frame {} output is not video", i),
-                };
-
-                assert_eq!(video_frame.width, 2, "Frame {} wrong width", i);
-                assert_eq!(video_frame.height, 2, "Frame {} wrong height", i);
-                assert_eq!(
-                    video_frame.pixel_data.len(),
-                    12,
-                    "Frame {} wrong data size",
-                    i
-                );
-
-                // Step 6: Verify VideoFlip processed the frame correctly
-                println!(
-                    "\n✅ Step 6: Verifying VideoFlip processing for frame {}...",
-                    i
-                );
-
-                // After vertical flip, the pixels should be reordered:
-                // Original top row: red (255,0,0), green (0,255,0)
-                // Original bottom row: blue (0,0,255), white (255,255,255)
-                // Flipped top row: blue, white
-                // Flipped bottom row: red, green
-
-                let pixels = &video_frame.pixel_data;
-                assert_eq!(pixels[0..3], [0, 0, 255], "Frame {} pixel 0 (blue)", i);
-                assert_eq!(pixels[3..6], [255, 255, 255], "Frame {} pixel 1 (white)", i);
-                assert_eq!(pixels[6..9], [255, 0, 0], "Frame {} pixel 2 (red)", i);
-                assert_eq!(pixels[9..12], [0, 255, 0], "Frame {} pixel 3 (green)", i);
-
-                println!("  ✓ Frame {} correctly flipped!", i);
-                println!("    - Top row: blue, white (was bottom)");
-                println!("    - Bottom row: red, green (was top)");
-
-                // Verify sequence number
-                assert_eq!(result.sequence, i as u64, "Frame {} wrong sequence", i);
-                println!("  ✓ Sequence number correct: {}", result.sequence);
-
-                // Verify processing time exists
-                println!("  ✓ Processing time: {:.2}ms", result.processing_time_ms);
+            match response.response {
+                Some(StreamResponseType::Result(r)) => {
+                    // Skip status messages
+                    if r.data_outputs.contains_key("_status") {
+                        continue;
+                    }
+                    break r;
+                }
+                Some(StreamResponseType::Metrics(metrics)) => {
+                    println!("  📊 Received metrics update");
+                    println!("    - Chunks processed: {}", metrics.chunks_processed);
+                    println!("    - Avg latency: {:.2}ms", metrics.average_latency_ms);
+                    continue;
+                }
+                other => panic!("Expected Result but got: {:?}", other),
             }
-            Some(StreamResponseType::Metrics(metrics)) => {
-                println!("  📊 Received metrics update");
-                println!("    - Chunks processed: {}", metrics.chunks_processed);
-                println!("    - Avg latency: {:.2}ms", metrics.average_latency_ms);
-            }
-            _ => panic!("Unexpected response type for frame {}", i),
-        }
+        };
+
+        println!("  ← Received frame {} result", i);
+
+        // Verify we got video data back in data_outputs
+        assert!(
+            !result.data_outputs.is_empty(),
+            "Frame {} missing data_outputs",
+            i
+        );
+
+        // Extract the video frame from the "flip" node output
+        let output_buffer = result
+            .data_outputs
+            .get("flip")
+            .expect(&format!("Frame {} missing 'flip' output", i));
+
+        let video_frame = match &output_buffer.data_type {
+            Some(DataType::Video(frame)) => frame,
+            _ => panic!("Frame {} output is not video", i),
+        };
+
+        assert_eq!(video_frame.width, 2, "Frame {} wrong width", i);
+        assert_eq!(video_frame.height, 2, "Frame {} wrong height", i);
+        assert_eq!(
+            video_frame.pixel_data.len(),
+            12,
+            "Frame {} wrong data size",
+            i
+        );
+
+        // Step 6: Verify VideoFlip processed the frame correctly
+        println!(
+            "\n✅ Step 6: Verifying VideoFlip processing for frame {}...",
+            i
+        );
+
+        // After vertical flip, the pixels should be reordered:
+        // Original top row: red (255,0,0), green (0,255,0)
+        // Original bottom row: blue (0,0,255), white (255,255,255)
+        // Flipped top row: blue, white
+        // Flipped bottom row: red, green
+
+        let pixels = &video_frame.pixel_data;
+        assert_eq!(pixels[0..3], [0, 0, 255], "Frame {} pixel 0 (blue)", i);
+        assert_eq!(pixels[3..6], [255, 255, 255], "Frame {} pixel 1 (white)", i);
+        assert_eq!(pixels[6..9], [255, 0, 0], "Frame {} pixel 2 (red)", i);
+        assert_eq!(pixels[9..12], [0, 255, 0], "Frame {} pixel 3 (green)", i);
+
+        println!("  ✓ Frame {} correctly flipped!", i);
+        println!("    - Top row: blue, white (was bottom)");
+        println!("    - Bottom row: red, green (was top)");
+
+        // Verify sequence number
+        assert_eq!(result.sequence, i as u64, "Frame {} wrong sequence", i);
+        println!("  ✓ Sequence number correct: {}", result.sequence);
+
+        // Verify processing time exists
+        println!("  ✓ Processing time: {:.2}ms", result.processing_time_ms);
     }
 
     // Step 7: Close session gracefully
@@ -368,8 +404,8 @@ async fn test_grpc_streaming_multiple_sessions() {
                 .unwrap()
                 .into_inner();
 
-            // Wait for ready
-            let ready = response_stream.message().await.unwrap().unwrap();
+            // Wait for ready (skip status messages)
+            let ready = wait_for_stream_ready(&mut response_stream).await;
             assert!(matches!(ready.response, Some(StreamResponseType::Ready(_))));
 
             // Send one frame
@@ -385,12 +421,17 @@ async fn test_grpc_streaming_multiple_sessions() {
             .await
             .unwrap();
 
-            // Receive result
-            let result = response_stream.message().await.unwrap().unwrap();
-            assert!(matches!(
-                result.response,
-                Some(StreamResponseType::Result(_))
-            ));
+            // Receive result (skip any additional status messages)
+            loop {
+                let result = response_stream.message().await.unwrap().unwrap();
+                match &result.response {
+                    Some(StreamResponseType::Result(r)) if !r.data_outputs.contains_key("_status") => {
+                        break;
+                    }
+                    Some(StreamResponseType::Result(_)) => continue, // Skip status messages
+                    _ => panic!("Expected Result but got: {:?}", result.response),
+                }
+            }
 
             "session1 complete"
         }
@@ -423,8 +464,8 @@ async fn test_grpc_streaming_multiple_sessions() {
                 .unwrap()
                 .into_inner();
 
-            // Wait for ready
-            let ready = response_stream.message().await.unwrap().unwrap();
+            // Wait for ready (skip status messages)
+            let ready = wait_for_stream_ready(&mut response_stream).await;
             assert!(matches!(ready.response, Some(StreamResponseType::Ready(_))));
 
             // Send one frame
@@ -440,12 +481,17 @@ async fn test_grpc_streaming_multiple_sessions() {
             .await
             .unwrap();
 
-            // Receive result
-            let result = response_stream.message().await.unwrap().unwrap();
-            assert!(matches!(
-                result.response,
-                Some(StreamResponseType::Result(_))
-            ));
+            // Receive result (skip any additional status messages)
+            loop {
+                let result = response_stream.message().await.unwrap().unwrap();
+                match &result.response {
+                    Some(StreamResponseType::Result(r)) if !r.data_outputs.contains_key("_status") => {
+                        break;
+                    }
+                    Some(StreamResponseType::Result(_)) => continue, // Skip status messages
+                    _ => panic!("Expected Result but got: {:?}", result.response),
+                }
+            }
 
             "session2 complete"
         }
