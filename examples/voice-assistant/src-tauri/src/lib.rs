@@ -5,6 +5,7 @@ pub mod events;
 pub mod modes;
 
 use parking_lot::RwLock;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tauri::Manager;
 
@@ -16,8 +17,8 @@ pub struct AppState {
     pub pipeline: RwLock<Option<PipelineState>>,
     /// Settings
     pub settings: RwLock<Settings>,
-    /// Audio capture state
-    pub audio_active: RwLock<bool>,
+    /// Audio capture active flag (atomic for thread-safe access)
+    pub audio_active: Arc<AtomicBool>,
 }
 
 impl Default for AppState {
@@ -26,7 +27,7 @@ impl Default for AppState {
             mode: RwLock::new(modes::ExecutionMode::Local),
             pipeline: RwLock::new(None),
             settings: RwLock::new(Settings::default()),
-            audio_active: RwLock::new(false),
+            audio_active: Arc::new(AtomicBool::new(false)),
         }
     }
 }

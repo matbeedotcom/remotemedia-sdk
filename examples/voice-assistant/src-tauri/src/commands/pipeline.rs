@@ -59,7 +59,7 @@ pub async fn shutdown_pipeline(state: State<'_, Arc<AppState>>) -> Result<(), St
     tracing::info!("Shutting down pipeline");
 
     // Stop audio if active
-    *state.audio_active.write() = false;
+    state.audio_active.store(false, std::sync::atomic::Ordering::SeqCst);
 
     // Clear pipeline state
     *state.pipeline.write() = None;

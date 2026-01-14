@@ -30,11 +30,11 @@
 //! ```
 
 use async_trait::async_trait;
-use remotemedia_runtime_core::capabilities::{
+use remotemedia_core::capabilities::{
     ConstraintValue, MediaCapabilities, MediaConstraints, TextConstraints,
 };
-use remotemedia_runtime_core::executor::node_executor::{NodeContext, NodeExecutor};
-use remotemedia_runtime_core::Result;
+use remotemedia_core::executor::node_executor::{NodeContext, NodeExecutor};
+use remotemedia_core::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

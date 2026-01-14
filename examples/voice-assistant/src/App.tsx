@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { MicrophoneButton } from './components/MicrophoneButton';
 import { TranscriptPanel } from './components/TranscriptPanel';
@@ -15,6 +15,7 @@ function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
+  const initRef = useRef(false);
 
   const { messages } = useConversationStore();
   const { settings, mode, setMode } = useSettingsStore();
@@ -24,6 +25,9 @@ function App() {
 
   // Initialize pipeline on mount
   useEffect(() => {
+    if (initRef.current) return;
+    initRef.current = true;
+
     const initPipeline = async () => {
       try {
         await invoke('initialize_pipeline', {

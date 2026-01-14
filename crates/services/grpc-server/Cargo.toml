@@ -1,0 +1,30 @@
+[package]
+name = "remotemedia-grpc-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "gRPC server binary for RemoteMedia pipeline execution"
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "grpc-server"
+path = "src/main.rs"
+
+[dependencies]
+# Transport library
+remotemedia-grpc = { path = "../../transports/grpc", default-features = true }
+
+# Core runtime
+remotemedia-core = { path = "../../core", default-features = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Server utilities
+ctrlc = { workspace = true }
+num_cpus = { workspace = true }

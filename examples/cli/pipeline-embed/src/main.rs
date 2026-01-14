@@ -140,8 +140,8 @@ use remotemedia_cli::{
     io::{detect_input_source, detect_output_sink, InputReader, InputSource, OutputWriter},
     pipeline,
 };
-use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::manifest::{Manifest, NodeManifest, Connection};
+use remotemedia_core::data::RuntimeData;
+use remotemedia_core::manifest::{Manifest, NodeManifest, Connection};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -500,7 +500,7 @@ async fn main() -> Result<()> {
 async fn run_unary_mode(
     args: &Args,
     config: &EffectiveConfig,
-    manifest: Arc<remotemedia_runtime_core::manifest::Manifest>,
+    manifest: Arc<remotemedia_core::manifest::Manifest>,
 ) -> Result<()> {
     // Read input if provided
     let input_data = if let Some(input_path) = &args.input {
@@ -622,7 +622,7 @@ async fn run_unary_mode(
 async fn run_streaming_mode(
     args: &Args,
     config: &EffectiveConfig,
-    manifest: Arc<remotemedia_runtime_core::manifest::Manifest>,
+    manifest: Arc<remotemedia_core::manifest::Manifest>,
 ) -> Result<()> {
     // Use CLI nodes for MicInput, SpeakerOutput support
     let runner = pipeline::create_runner_with_cli_nodes().await?;
