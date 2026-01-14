@@ -5607,10 +5607,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "ctrlc",
  "futures",
  "hyper 1.8.1",
- "num_cpus",
  "prometheus",
  "prost",
  "prost-build",
@@ -5637,6 +5635,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "remotemedia-grpc-server"
+version = "0.4.0"
+dependencies = [
+ "ctrlc",
+ "num_cpus",
+ "remotemedia-core",
+ "remotemedia-grpc",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "remotemedia-health-analyzer"
 version = "0.4.0"
 dependencies = [
@@ -5658,7 +5668,6 @@ dependencies = [
  "axum-extra",
  "futures",
  "hyper 1.8.1",
- "num_cpus",
  "remotemedia-core",
  "reqwest 0.12.28",
  "serde",
@@ -5672,6 +5681,18 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "remotemedia-http-server"
+version = "0.4.0"
+dependencies = [
+ "num_cpus",
+ "remotemedia-core",
+ "remotemedia-http",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -5751,14 +5772,11 @@ dependencies = [
  "base64 0.22.1",
  "bollard",
  "bytes",
- "clap",
  "criterion",
- "ctrlc",
  "futures",
  "futures-util",
  "http 1.4.0",
  "media-codec-vpx",
- "num_cpus",
  "openh264",
  "opus",
  "prost",
@@ -5782,6 +5800,25 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "webrtc",
+]
+
+[[package]]
+name = "remotemedia-webrtc-server"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "ctrlc",
+ "http 1.4.0",
+ "num_cpus",
+ "remotemedia-core",
+ "remotemedia-webrtc",
+ "serde_json",
+ "tokio",
+ "tonic",
+ "tonic-web",
+ "tower-http 0.6.8",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

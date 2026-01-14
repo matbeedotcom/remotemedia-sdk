@@ -12,10 +12,6 @@ repository.workspace = true
 name = "remotemedia_webrtc"
 crate-type = ["rlib"]
 
-[[bin]]
-name = "webrtc_server"
-path = "src/bin/webrtc_server.rs"
-
 [dependencies]
 # Core runtime (with default features: multiprocess, silero-vad, docker)
 remotemedia-core = { path = "../../core", default-features = true }
@@ -69,11 +65,6 @@ tokio-stream = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { version = "0.6", features = ["cors"], optional = true }
 http = { version = "1.0", optional = true }
-
-# Server utilities
-ctrlc = "3.4"
-num_cpus = "1.16"
-clap = { version = "4.5", features = ["derive", "env"] }
 
 # Docker execution
 bollard = { workspace = true }

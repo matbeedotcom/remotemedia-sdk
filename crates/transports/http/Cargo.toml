@@ -40,9 +40,7 @@ anyhow = { workspace = true }
 # Utilities
 async-trait = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, optional = true }
 uuid = { workspace = true }
-num_cpus = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -50,12 +48,4 @@ tracing-subscriber = { workspace = true }
 
 [features]
 # Default features: basic HTTP pipeline execution and streaming
-default = ["server"]
-
-# Server feature: includes dependencies needed to run http-server binary
-server = ["num_cpus", "tracing-subscriber"]
-
-[[bin]]
-name = "http-server"
-path = "bin/http-server.rs"
-required-features = ["server"]
+default = []

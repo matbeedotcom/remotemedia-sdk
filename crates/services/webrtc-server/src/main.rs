@@ -6,18 +6,18 @@
 //!
 //! ```bash
 //! # Start gRPC signaling server (default: 0.0.0.0:50051)
-//! cargo run --bin webrtc_server --features grpc-signaling -- \
+//! cargo run -p remotemedia-webrtc-server -- \
 //!   --mode grpc \
 //!   --grpc-address 0.0.0.0:50051 \
 //!   --manifest ./examples/loopback.yaml
 //!
 //! # Start WebSocket client mode (connects to signaling server)
-//! cargo run --bin webrtc_server -- \
+//! cargo run -p remotemedia-webrtc-server -- \
 //!   --mode websocket \
 //!   --signaling-url ws://localhost:8080
 //!
 //! # Configure STUN/TURN servers
-//! cargo run --bin webrtc_server -- \
+//! cargo run -p remotemedia-webrtc-server -- \
 //!   --stun-servers stun:stun.l.google.com:19302 \
 //!   --max-peers 20
 //! ```
@@ -150,15 +150,8 @@ async fn async_main(
 
     match args.mode {
         ServerMode::Grpc => {
-            #[cfg(feature = "grpc-signaling")]
-            {
-                info!("Starting in gRPC signaling server mode");
-                run_grpc_signaling_server(args, shutdown_flag).await?;
-            }
-            #[cfg(not(feature = "grpc-signaling"))]
-            {
-                return Err("gRPC signaling requested but feature not enabled. Build with --features grpc-signaling".into());
-            }
+            info!("Starting in gRPC signaling server mode");
+            run_grpc_signaling_server(args, shutdown_flag).await?;
         }
         ServerMode::Websocket => {
             info!("Starting in WebSocket signaling client mode");
@@ -169,7 +162,6 @@ async fn async_main(
     Ok(())
 }
 
-#[cfg(feature = "grpc-signaling")]
 async fn run_grpc_signaling_server(
     args: Args,
     shutdown_flag: Arc<AtomicBool>,

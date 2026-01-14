@@ -20,7 +20,6 @@ This crate provides a gRPC service that exposes RemoteMedia pipeline execution v
 ### Remaining
 - ⏸️ Update StreamingServiceImpl to use PipelineRunner
 - ⏸️ Update ExecutionServiceImpl to use PipelineRunner
-- ⏸️ Update grpc-server binary entry point
 - ⏸️ Integration tests
 - ⏸️ Deployment examples
 
@@ -31,20 +30,40 @@ This crate provides a gRPC service that exposes RemoteMedia pipeline execution v
 - `tower`, `tower-http` - Middleware
 - `prometheus` - Metrics
 
-## Usage (After Full Implementation)
+## Usage
+
+### As a Library
 
 ```rust
 use remotemedia_grpc::{GrpcServer, ServiceConfig};
+use remotemedia_core::transport::PipelineExecutor;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ServiceConfig::default();
-    let server = GrpcServer::new(config)?;
+    let executor = Arc::new(PipelineExecutor::new()?);
+    let server = GrpcServer::new(config, executor)?;
 
     server.serve().await?;
     Ok(())
 }
 ```
+
+### Using the Server Binary
+
+```bash
+# Start gRPC server with defaults (localhost:50051)
+cargo run -p remotemedia-grpc-server
+
+# With custom address
+GRPC_BIND_ADDRESS="0.0.0.0:50051" cargo run -p remotemedia-grpc-server
+
+# With logging
+RUST_LOG=debug cargo run -p remotemedia-grpc-server
+```
+
+The server binary is located in `crates/services/grpc-server/`.
 
 ## Architecture
 
@@ -79,7 +98,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - `src/auth.rs` - Authentication middleware
 - `src/metrics.rs` - Prometheus metrics
 - `src/session_router.rs` - Session routing logic
-- `bin/grpc-server.rs` - Server binary entry point
 - `protos/` - Protocol buffer definitions
 - `build.rs` - Protobuf code generation
 

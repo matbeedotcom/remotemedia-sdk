@@ -10,6 +10,9 @@ members = [
     "crates/libs/stream-health-analyzer",  # Shared stream health analysis
     "crates/libs/pipeline-runner",  # Shared pipeline execution
     "crates/services/ingest-srt",  # SRT ingest gateway
+    "crates/services/grpc-server",  # gRPC server binary
+    "crates/services/http-server",  # HTTP server binary
+    "crates/services/webrtc-server",  # WebRTC server binary
 ]
 exclude = [
     "examples/*",  # Examples are independent projects demonstrating usage

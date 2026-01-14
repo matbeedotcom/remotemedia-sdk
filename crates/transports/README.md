@@ -1,21 +1,38 @@
 # RemoteMedia Transports
 
-This directory contains transport implementation crates that depend on `remotemedia-runtime-core`.
+This directory contains transport **library** crates that depend on `remotemedia-core`.
 
 ## Available Transports
 
-- **remotemedia-grpc**: gRPC transport for remote pipeline execution
-- **remotemedia-http**: HTTP/REST transport with SSE streaming
+- **remotemedia-grpc**: gRPC transport library for remote pipeline execution
+- **remotemedia-http**: HTTP/REST transport library with SSE streaming
 - **remotemedia-ffi**: Python FFI transport for Python SDK integration
-- **remotemedia-webrtc**: WebRTC transport for real-time media streaming
+- **remotemedia-webrtc**: WebRTC transport library for real-time media streaming
+
+## Server Binaries
+
+Server binaries are located in `crates/services/`:
+
+```bash
+# gRPC server
+cargo run -p remotemedia-grpc-server
+
+# HTTP server
+cargo run -p remotemedia-http-server
+
+# WebRTC server
+cargo run -p remotemedia-webrtc-server
+```
 
 ## Architecture
 
-Each transport is an independent crate that:
-1. Depends on `remotemedia-runtime-core`
+Each transport is an independent **library** crate that:
+1. Depends on `remotemedia-core`
 2. Implements the `PipelineTransport` trait
 3. Handles its own serialization format
 4. Can be independently versioned and deployed
+
+Server binaries in `crates/services/` depend on these transport libraries and provide CLI entry points.
 
 See `docs/TRANSPORT_DECOUPLING_ARCHITECTURE.md` for details.
 

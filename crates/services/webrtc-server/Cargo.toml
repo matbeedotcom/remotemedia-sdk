@@ -1,0 +1,41 @@
+[package]
+name = "remotemedia-webrtc-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "WebRTC server binary for RemoteMedia real-time media streaming"
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "webrtc-server"
+path = "src/main.rs"
+
+[dependencies]
+# Transport library
+remotemedia-webrtc = { path = "../../transports/webrtc", features = ["grpc-signaling"] }
+
+# Core runtime
+remotemedia-core = { path = "../../core", default-features = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# gRPC (for signaling server mode)
+tonic = { workspace = true }
+tonic-web = { workspace = true }
+tower-http = { version = "0.6", features = ["cors"] }
+http = "1.0"
+
+# Serialization
+serde_json = { workspace = true }
+
+# Server utilities
+ctrlc = { workspace = true }
+num_cpus = { workspace = true }
+clap = { version = "4.5", features = ["derive", "env"] }

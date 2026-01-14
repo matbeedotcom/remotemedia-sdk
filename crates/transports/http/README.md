@@ -78,18 +78,20 @@ let server = HttpServer::new("127.0.0.1:8080".to_string(), runner).await?;
 server.serve().await?;
 ```
 
-### Using the Binary
+### Using the Server Binary
 
 ```bash
 # Start HTTP server with defaults (127.0.0.1:8080)
-cargo run --bin http-server
+cargo run -p remotemedia-http-server
 
 # Start with custom address
-HTTP_BIND_ADDRESS="0.0.0.0:8080" cargo run --bin http-server
+HTTP_BIND_ADDRESS="0.0.0.0:8080" cargo run -p remotemedia-http-server
 
 # With logging
-RUST_LOG=debug cargo run --bin http-server
+RUST_LOG=debug cargo run -p remotemedia-http-server
 ```
+
+The server binary is located in `crates/services/http-server/`.
 
 ## Plugin Registration
 

@@ -6,19 +6,19 @@
 //!
 //! ```bash
 //! # Start with defaults (localhost:50051, auth required)
-//! cargo run --bin grpc_server --features grpc-transport
+//! cargo run -p remotemedia-grpc-server
 //!
 //! # Start with custom address
-//! GRPC_BIND_ADDRESS="0.0.0.0:50051" cargo run --bin grpc_server --features grpc-transport
+//! GRPC_BIND_ADDRESS="0.0.0.0:50051" cargo run -p remotemedia-grpc-server
 //!
 //! # Start without authentication (dev mode)
-//! GRPC_REQUIRE_AUTH=false cargo run --bin grpc_server --features grpc-transport
+//! GRPC_REQUIRE_AUTH=false cargo run -p remotemedia-grpc-server
 //!
 //! # Start with API tokens
-//! GRPC_AUTH_TOKENS="token1,token2" cargo run --bin grpc_server --features grpc-transport
+//! GRPC_AUTH_TOKENS="token1,token2" cargo run -p remotemedia-grpc-server
 //!
 //! # Configure resource limits
-//! GRPC_MAX_MEMORY_MB=200 GRPC_MAX_TIMEOUT_SEC=10 cargo run --bin grpc_server --features grpc-transport
+//! GRPC_MAX_MEMORY_MB=200 GRPC_MAX_TIMEOUT_SEC=10 cargo run -p remotemedia-grpc-server
 //! ```
 //!
 //! # Environment Variables

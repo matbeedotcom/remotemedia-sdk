@@ -535,21 +535,19 @@ See [examples/signaling_server/README.md](examples/signaling_server/README.md) f
 
 ## Running the WebRTC Server
 
-A standalone server executable is provided for testing and deployment:
+A standalone server executable is provided in `crates/services/webrtc-server/`:
 
 ```bash
-# Build the server
-cd transports/webrtc
-cargo build --bin webrtc_server --release
+# Run with default configuration (WebSocket mode)
+cargo run -p remotemedia-webrtc-server
 
-# Run with default configuration
-./target/release/webrtc_server
+# Run in gRPC signaling mode
+cargo run -p remotemedia-webrtc-server -- --mode grpc --grpc-address 0.0.0.0:50051
 
 # Or with custom configuration
 WEBRTC_SIGNALING_URL="ws://signaling.example.com" \
 WEBRTC_MAX_PEERS=20 \
-WEBRTC_STUN_SERVERS="stun:stun.l.google.com:19302" \
-./target/release/webrtc_server
+cargo run -p remotemedia-webrtc-server
 ```
 
 **Environment Variables:**
@@ -574,42 +572,35 @@ The WebRTC transport now supports **gRPC bidirectional streaming** as an alterna
 ### Building with gRPC Signaling
 
 ```bash
-cd transports/webrtc
-
-# Build with gRPC signaling only
-cargo build --bin webrtc_server --release --features grpc-signaling
-
-# Build with all features (codecs + gRPC)
-cargo build --bin webrtc_server --release --features full
+# The server binary is in crates/services/webrtc-server/
+# It includes grpc-signaling by default
+cargo build -p remotemedia-webrtc-server --release
 ```
 
 ### Running with gRPC Signaling
 
 ```bash
 # Basic gRPC signaling server (port 50051)
-WEBRTC_ENABLE_GRPC_SIGNALING=true \
-GRPC_SIGNALING_ADDRESS="0.0.0.0:50051" \
-WEBRTC_PIPELINE_MANIFEST="./examples/loopback.yaml" \
-cargo run --release --bin webrtc_server --features grpc-signaling
+cargo run -p remotemedia-webrtc-server --release -- \
+  --mode grpc \
+  --grpc-address 0.0.0.0:50051 \
+  --manifest ./examples/loopback.yaml
 
 # With STUN/TURN servers
-WEBRTC_ENABLE_GRPC_SIGNALING=true \
-GRPC_SIGNALING_ADDRESS="0.0.0.0:50051" \
-WEBRTC_STUN_SERVERS="stun:stun.l.google.com:19302" \
-WEBRTC_TURN_SERVERS="turn:turn.example.com:3478:user:pass" \
-WEBRTC_PIPELINE_MANIFEST="./manifests/vad.yaml" \
-cargo run --release --bin webrtc_server --features grpc-signaling
+cargo run -p remotemedia-webrtc-server --release -- \
+  --mode grpc \
+  --grpc-address 0.0.0.0:50051 \
+  --stun-servers stun:stun.l.google.com:19302 \
+  --manifest ./manifests/vad.yaml
 
-# Full configuration (gRPC + WebSocket simultaneously)
-WEBRTC_SIGNALING_URL="ws://0.0.0.0:8080" \
-WEBRTC_ENABLE_GRPC_SIGNALING=true \
-GRPC_SIGNALING_ADDRESS="0.0.0.0:50051" \
-WEBRTC_STUN_SERVERS="stun:stun.l.google.com:19302" \
+# Full configuration with environment variables
 WEBRTC_MAX_PEERS=20 \
 WEBRTC_JITTER_BUFFER_MS=100 \
-WEBRTC_PIPELINE_MANIFEST="./manifests/audio_processing.yaml" \
 RUST_LOG=info \
-cargo run --release --bin webrtc_server --features full
+cargo run -p remotemedia-webrtc-server --release -- \
+  --mode grpc \
+  --grpc-address 0.0.0.0:50051 \
+  --manifest ./manifests/audio_processing.yaml
 ```
 
 ### gRPC Environment Variables

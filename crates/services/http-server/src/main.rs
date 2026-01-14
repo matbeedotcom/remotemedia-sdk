@@ -6,13 +6,13 @@
 //!
 //! ```bash
 //! # Start with defaults (localhost:8080)
-//! cargo run --bin http-server
+//! cargo run -p remotemedia-http-server
 //!
 //! # Start with custom address
-//! HTTP_BIND_ADDRESS="0.0.0.0:8080" cargo run --bin http-server
+//! HTTP_BIND_ADDRESS="0.0.0.0:8080" cargo run -p remotemedia-http-server
 //!
 //! # With logging
-//! RUST_LOG=debug cargo run --bin http-server
+//! RUST_LOG=debug cargo run -p remotemedia-http-server
 //! ```
 //!
 //! # Environment Variables
