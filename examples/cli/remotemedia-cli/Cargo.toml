@@ -17,7 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 # SDK dependencies
-remotemedia-runtime-core = { workspace = true, features = ["video"] }
+remotemedia-core = { workspace = true, features = ["video"] }
 
 # FFmpeg for decoding any media format
 ac-ffmpeg = "0.19"

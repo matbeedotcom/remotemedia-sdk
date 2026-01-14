@@ -19,9 +19,9 @@
 //! Accepts `RuntimeData::Audio` data and plays it through the speaker.
 
 use async_trait::async_trait;
-use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::executor::node_executor::{NodeContext, NodeExecutor};
-use remotemedia_runtime_core::Result;
+use remotemedia_core::data::RuntimeData;
+use remotemedia_core::executor::node_executor::{NodeContext, NodeExecutor};
+use remotemedia_core::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -101,14 +101,14 @@ fn start_playback_thread(config: &SpeakerOutputConfig) -> Result<(PlaybackHandle
 
     // Get host and device on main thread to capture device name
     let host = crate::audio::get_host(playback_config.host.as_deref()).map_err(|e| {
-        remotemedia_runtime_core::Error::Execution(format!("Failed to get audio host: {}", e))
+        remotemedia_core::Error::Execution(format!("Failed to get audio host: {}", e))
     })?;
 
     let device = match &playback_config.device {
         Some(selector) => {
             crate::audio::find_output_device(selector, playback_config.host.as_deref()).map_err(
                 |e| {
-                    remotemedia_runtime_core::Error::Execution(format!(
+                    remotemedia_core::Error::Execution(format!(
                         "Failed to find output device: {}",
                         e
                     ))
@@ -116,7 +116,7 @@ fn start_playback_thread(config: &SpeakerOutputConfig) -> Result<(PlaybackHandle
             )?
         }
         None => host.default_output_device().ok_or_else(|| {
-            remotemedia_runtime_core::Error::Execution(
+            remotemedia_core::Error::Execution(
                 "No default output device available".to_string(),
             )
         })?,
@@ -308,7 +308,7 @@ impl NodeExecutor for SpeakerOutputNode {
 
     async fn process(&mut self, input: Value) -> Result<Vec<Value>> {
         let handle = self.playback_handle.as_ref().ok_or_else(|| {
-            remotemedia_runtime_core::Error::Execution(
+            remotemedia_core::Error::Execution(
                 "Audio playback not initialized".to_string(),
             )
         })?;
@@ -321,7 +321,7 @@ impl NodeExecutor for SpeakerOutputNode {
                 .sender
                 .send(PlaybackCommand::Queue(samples.clone()))
                 .map_err(|e| {
-                    remotemedia_runtime_core::Error::Execution(format!(
+                    remotemedia_core::Error::Execution(format!(
                         "Failed to queue audio: {}",
                         e
                     ))

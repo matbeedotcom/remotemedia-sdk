@@ -5449,179 +5449,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
-name = "remotemedia-ffi"
-version = "0.4.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "futures",
- "http 1.4.0",
- "iceoryx2",
- "napi",
- "napi-build",
- "napi-derive",
- "numpy",
- "pyo3",
- "pyo3-async-runtimes",
- "remotemedia-runtime-core",
- "remotemedia-webrtc",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tonic",
- "tonic-web",
- "tower-http 0.6.8",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "remotemedia-grpc"
-version = "0.4.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "ctrlc",
- "futures",
- "hyper 1.8.1",
- "num_cpus",
- "prometheus",
- "prost",
- "prost-build",
- "prost-types",
- "protobuf-src",
- "regex",
- "remotemedia-runtime-core",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
- "tokio-test",
- "tonic",
- "tonic-build",
- "tonic-prost",
- "tonic-prost-build",
- "tonic-web",
- "tower 0.4.13",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "remotemedia-health-analyzer"
-version = "0.4.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-test",
-]
-
-[[package]]
-name = "remotemedia-http"
-version = "0.4.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum 0.7.9",
- "axum-extra",
- "futures",
- "hyper 1.8.1",
- "num_cpus",
- "remotemedia-runtime-core",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
- "tokio-test",
- "tower 0.4.13",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "remotemedia-ingest-rtmp"
-version = "0.4.0"
-dependencies = [
- "ac-ffmpeg",
- "async-trait",
- "remotemedia-runtime-core",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-test",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "remotemedia-ingest-srt"
-version = "0.4.0"
-dependencies = [
- "anyhow",
- "async-stream",
- "async-trait",
- "axum 0.7.9",
- "bytes",
- "chrono",
- "ffmpeg-next",
- "futures",
- "jsonwebtoken",
- "remotemedia-health-analyzer",
- "remotemedia-ingest-rtmp",
- "remotemedia-pipeline-runner",
- "remotemedia-runtime-core",
- "reqwest 0.11.27",
- "serde",
- "serde_json",
- "serde_yaml",
- "srt-tokio",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
- "tokio-test",
- "toml",
- "tower 0.4.13",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "remotemedia-pipeline-runner"
-version = "0.4.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "remotemedia-health-analyzer",
- "remotemedia-runtime-core",
- "serde",
- "serde_json",
- "serde_yaml",
- "thiserror 1.0.69",
- "tokio",
- "tokio-test",
- "tracing",
-]
-
-[[package]]
-name = "remotemedia-runtime-core"
+name = "remotemedia-core"
 version = "0.4.0"
 dependencies = [
  "ac-ffmpeg",
@@ -5663,8 +5491,8 @@ dependencies = [
  "pyannote-rs",
  "rand 0.8.5",
  "regex",
+ "remotemedia-core-derive",
  "remotemedia-grpc",
- "remotemedia-runtime-core-derive",
  "reqwest 0.11.27",
  "rodio",
  "rubato",
@@ -5692,12 +5520,184 @@ dependencies = [
 ]
 
 [[package]]
-name = "remotemedia-runtime-core-derive"
+name = "remotemedia-core-derive"
 version = "0.4.0"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "remotemedia-ffi"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "futures",
+ "http 1.4.0",
+ "iceoryx2",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "numpy",
+ "pyo3",
+ "pyo3-async-runtimes",
+ "remotemedia-core",
+ "remotemedia-webrtc",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tonic",
+ "tonic-web",
+ "tower-http 0.6.8",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "remotemedia-grpc"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "ctrlc",
+ "futures",
+ "hyper 1.8.1",
+ "num_cpus",
+ "prometheus",
+ "prost",
+ "prost-build",
+ "prost-types",
+ "protobuf-src",
+ "regex",
+ "remotemedia-core",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tokio-test",
+ "tonic",
+ "tonic-build",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tonic-web",
+ "tower 0.4.13",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "remotemedia-health-analyzer"
+version = "0.4.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+]
+
+[[package]]
+name = "remotemedia-http"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum 0.7.9",
+ "axum-extra",
+ "futures",
+ "hyper 1.8.1",
+ "num_cpus",
+ "remotemedia-core",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tokio-test",
+ "tower 0.4.13",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "remotemedia-ingest-rtmp"
+version = "0.4.0"
+dependencies = [
+ "ac-ffmpeg",
+ "async-trait",
+ "remotemedia-core",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "remotemedia-ingest-srt"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "async-trait",
+ "axum 0.7.9",
+ "bytes",
+ "chrono",
+ "ffmpeg-next",
+ "futures",
+ "jsonwebtoken",
+ "remotemedia-core",
+ "remotemedia-health-analyzer",
+ "remotemedia-ingest-rtmp",
+ "remotemedia-pipeline-runner",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "srt-tokio",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tokio-test",
+ "toml",
+ "tower 0.4.13",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "remotemedia-pipeline-runner"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "remotemedia-core",
+ "remotemedia-health-analyzer",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+ "tracing",
 ]
 
 [[package]]
@@ -5721,7 +5721,7 @@ dependencies = [
  "opus",
  "prost",
  "protobuf-src",
- "remotemedia-runtime-core",
+ "remotemedia-core",
  "remotemedia-webrtc",
  "serde",
  "serde_json",

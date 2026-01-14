@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use clap::Args;
-use remotemedia_runtime_core::transport::PipelineExecutor;
+use remotemedia_core::transport::PipelineExecutor;
 
 use crate::output::{OutputFormat, Outputter};
 

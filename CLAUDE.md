@@ -91,17 +91,17 @@ cargo bench -- --list
 ### Python Client
 
 ```bash
-cd python-client
+cd clients/python
 
 # Install in development mode (without deps for faster iteration)
 pip install -e . --no-deps
 
 # Build and link Rust runtime (for remotemedia.runtime)
-cd ../transports/ffi
+cd ../../crates/transports/ffi
 ./dev-install.sh
 
 # Run tests
-cd ../../python-client
+cd ../../../clients/python
 pytest
 
 # Lint
@@ -433,7 +433,7 @@ Python deserializes in `node.py:_receive_input()`.
 
 ### Adding a Multiprocess Python Node
 
-1. Create Python class in `python-client/remotemedia/nodes/`
+1. Create Python class in `clients/python/remotemedia/nodes/`
 2. Extend `MultiprocessNode` base class:
    ```python
    class NewNode(MultiprocessNode):
@@ -590,9 +590,9 @@ impl StreamingNodeFactory for MyNodeFactory {
 
 ### Key Files
 
-- `runtime-core/src/capabilities/resolver.rs` - CapabilityResolver implementation
-- `runtime-core/src/capabilities/dynamic.rs` - CapabilityBehavior, ResolutionState
-- `runtime-core/src/capabilities/validation.rs` - CapabilityMismatch with suggestions
+- `crates/core/src/capabilities/resolver.rs` - CapabilityResolver implementation
+- `crates/core/src/capabilities/dynamic.rs` - CapabilityBehavior, ResolutionState
+- `crates/core/src/capabilities/validation.rs` - CapabilityMismatch with suggestions
 - `specs/023-pipeline-capability-resolution/` - Full specification
 
 ## Related Documentation
@@ -622,6 +622,8 @@ For deeper architectural context, see:
 - N/A (in-memory state via Zustand, persona context in URL params and sessionStorage) (031-persona-landing-pages)
 - Rust 1.75+ (workspace rust-version) + ed25519-dalek (cryptography), base64 (encoding), serde/serde_json (serialization), chrono (time), clap (CLI), dirs (config paths), tracing (logging) (032-eval-license)
 - Local filesystem (`~/.config/remotemedia/license.json`) (032-eval-license)
+- Rust 1.87+ (workspace rust-version) + abi_stable (ABI stability), libloading (dynamic loading), PyO3 (Python embedding) (033-loadable-node-libraries)
+- Filesystem only - library directory (~/.config/remotemedia/nodes/ or $REMOTEMEDIA_NODES_DIR) (033-loadable-node-libraries)
 
 ## Recent Changes
 - 001-runtimedata-file-type: Added Rust 1.75+, Python 3.11+, Node.js 18+ + serde, prost (protobuf), pyo3 (FFI), iceoryx2 (IPC), tokio (async I/O)

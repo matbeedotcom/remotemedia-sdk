@@ -10,12 +10,12 @@
 //!
 //! Total implementation: ~80 lines (well under 100-line target)
 
-use remotemedia_runtime_core::transport::{
+use remotemedia_core::transport::{
     PipelineTransport, PipelineExecutor, StreamSession, TransportData,
 };
-use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::manifest::Manifest;
-use remotemedia_runtime_core::Result;
+use remotemedia_core::data::RuntimeData;
+use remotemedia_core::manifest::Manifest;
+use remotemedia_core::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
 

@@ -4,12 +4,12 @@
 //! using the media capabilities system and that the CapabilityResolver
 //! correctly resolves and validates capabilities.
 
-use remotemedia_runtime_core::capabilities::{
+use remotemedia_core::capabilities::{
     validation::{validate_pipeline, CapabilityValidationResult},
     AudioConstraints, AudioSampleFormat, CapabilityBehavior, CapabilityResolver, ConstraintValue,
     MediaCapabilities, MediaConstraints, TextConstraints,
 };
-use remotemedia_runtime_core::nodes::streaming_node::StreamingNodeRegistry;
+use remotemedia_core::nodes::streaming_node::StreamingNodeRegistry;
 use std::collections::HashMap;
 
 /// Simulates the media capabilities for the transcribe-srt-mic-input pipeline:
@@ -630,8 +630,8 @@ fn test_resolver_adaptive_without_resample_fails() {
 
 #[tokio::test]
 async fn test_executor_introspection_api() {
-    use remotemedia_runtime_core::capabilities::{CapabilitySource, ResolutionContext, ResolvedCapabilities};
-    use remotemedia_runtime_core::executor::Executor;
+    use remotemedia_core::capabilities::{CapabilitySource, ResolutionContext, ResolvedCapabilities};
+    use remotemedia_core::executor::Executor;
 
     // Create executor
     let executor = Executor::new();
@@ -724,8 +724,8 @@ async fn test_executor_introspection_api() {
 
 #[tokio::test]
 async fn test_introspection_with_adaptive_node() {
-    use remotemedia_runtime_core::capabilities::{CapabilitySource, ResolutionContext};
-    use remotemedia_runtime_core::executor::Executor;
+    use remotemedia_core::capabilities::{CapabilitySource, ResolutionContext};
+    use remotemedia_core::executor::Executor;
 
     let executor = Executor::new();
     let registry = create_test_registry();
@@ -795,13 +795,13 @@ async fn test_introspection_with_adaptive_node() {
 
 /// Mock RuntimeDiscovered factory for testing two-phase resolution
 mod mock_runtime_discovered {
-    use remotemedia_runtime_core::capabilities::{
+    use remotemedia_core::capabilities::{
         AudioConstraints, AudioSampleFormat, CapabilityBehavior, ConstraintValue, MediaCapabilities,
         MediaConstraints,
     };
-    use remotemedia_runtime_core::data::RuntimeData;
-    use remotemedia_runtime_core::nodes::streaming_node::{StreamingNode, StreamingNodeFactory};
-    use remotemedia_runtime_core::Error;
+    use remotemedia_core::data::RuntimeData;
+    use remotemedia_core::nodes::streaming_node::{StreamingNode, StreamingNodeFactory};
+    use remotemedia_core::Error;
     use serde_json::Value;
     use std::sync::Arc;
 
@@ -935,8 +935,8 @@ mod mock_runtime_discovered {
 #[test]
 fn test_runtime_discovered_phase1_resolution() {
     use mock_runtime_discovered::MockRuntimeDiscoveredFactory;
-    use remotemedia_runtime_core::capabilities::ResolutionState;
-    use remotemedia_runtime_core::nodes::streaming_node::StreamingNodeRegistry;
+    use remotemedia_core::capabilities::ResolutionState;
+    use remotemedia_core::nodes::streaming_node::StreamingNodeRegistry;
 
     // Create registry with mock RuntimeDiscovered node
     let mut registry = StreamingNodeRegistry::new();
@@ -1000,8 +1000,8 @@ fn test_runtime_discovered_phase1_resolution() {
 #[test]
 fn test_runtime_discovered_phase2_revalidation_success() {
     use mock_runtime_discovered::MockRuntimeDiscoveredFactory;
-    use remotemedia_runtime_core::capabilities::{MediaCapabilities, MediaConstraints, AudioConstraints, AudioSampleFormat, ConstraintValue};
-    use remotemedia_runtime_core::nodes::streaming_node::StreamingNodeRegistry;
+    use remotemedia_core::capabilities::{MediaCapabilities, MediaConstraints, AudioConstraints, AudioSampleFormat, ConstraintValue};
+    use remotemedia_core::nodes::streaming_node::StreamingNodeRegistry;
 
     // Create registry
     let mut registry = StreamingNodeRegistry::new();
@@ -1053,8 +1053,8 @@ fn test_runtime_discovered_phase2_revalidation_success() {
 #[test]
 fn test_runtime_discovered_phase2_revalidation_failure() {
     use mock_runtime_discovered::MockRuntimeDiscoveredFactory;
-    use remotemedia_runtime_core::capabilities::{MediaCapabilities, MediaConstraints, AudioConstraints, AudioSampleFormat, ConstraintValue};
-    use remotemedia_runtime_core::nodes::streaming_node::StreamingNodeRegistry;
+    use remotemedia_core::capabilities::{MediaCapabilities, MediaConstraints, AudioConstraints, AudioSampleFormat, ConstraintValue};
+    use remotemedia_core::nodes::streaming_node::StreamingNodeRegistry;
 
     // Create registry
     let mut registry = StreamingNodeRegistry::new();
@@ -1119,23 +1119,23 @@ fn test_capability_hints_refines_adaptive_output() {
     // Without hints: FastResampleNode output matches FlexibleNode's input range (8-48kHz)
     // With hints: FastResampleNode output narrows to preferred_sample_rate (16000)
 
-    use remotemedia_runtime_core::capabilities::{
+    use remotemedia_core::capabilities::{
         AudioConstraints, AudioSampleFormat, CapabilityBehavior, CapabilityHints, ConstraintValue,
         MediaCapabilities, MediaConstraints, NodeHints,
     };
-    use remotemedia_runtime_core::nodes::streaming_node::{
+    use remotemedia_core::nodes::streaming_node::{
         StreamingNode, StreamingNodeFactory, StreamingNodeRegistry,
     };
 
     // Create a mock "FlexibleNode" that accepts a range of sample rates
     mod mock_flexible {
         use async_trait::async_trait;
-        use remotemedia_runtime_core::capabilities::{
+        use remotemedia_core::capabilities::{
             AudioConstraints, AudioSampleFormat, CapabilityBehavior, ConstraintValue,
             MediaCapabilities, MediaConstraints,
         };
-        use remotemedia_runtime_core::data::RuntimeData;
-        use remotemedia_runtime_core::nodes::streaming_node::{StreamingNode, StreamingNodeFactory};
+        use remotemedia_core::data::RuntimeData;
+        use remotemedia_core::nodes::streaming_node::{StreamingNode, StreamingNodeFactory};
         use serde_json::Value;
         use std::collections::HashMap;
 
@@ -1143,10 +1143,10 @@ fn test_capability_hints_refines_adaptive_output() {
 
         #[async_trait]
         impl StreamingNode for FlexibleNode {
-            async fn process_async(&self, _input: RuntimeData) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+            async fn process_async(&self, _input: RuntimeData) -> Result<RuntimeData, remotemedia_core::Error> {
                 Ok(RuntimeData::Text(String::new()))
             }
-            async fn process_multi_async(&self, _inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+            async fn process_multi_async(&self, _inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, remotemedia_core::Error> {
                 Ok(RuntimeData::Text(String::new()))
             }
             fn is_multi_input(&self) -> bool { false }
@@ -1170,7 +1170,7 @@ fn test_capability_hints_refines_adaptive_output() {
         pub struct FlexibleNodeFactory;
 
         impl StreamingNodeFactory for FlexibleNodeFactory {
-            fn create(&self, _node_id: String, _params: &Value, _session_id: Option<String>) -> Result<Box<dyn StreamingNode>, remotemedia_runtime_core::Error> {
+            fn create(&self, _node_id: String, _params: &Value, _session_id: Option<String>) -> Result<Box<dyn StreamingNode>, remotemedia_core::Error> {
                 Ok(Box::new(FlexibleNode))
             }
             fn node_type(&self) -> &str { "FlexibleNode" }
@@ -1535,22 +1535,22 @@ fn test_capability_hints_ignored_when_outside_range() {
     // Pipeline: MicInput(48kHz) -> FastResampleNode (Adaptive) -> FlexibleNode (accepts 8-24kHz)
     // Hint requests 48000, but downstream only accepts 8-24kHz, so hint should be ignored.
 
-    use remotemedia_runtime_core::capabilities::{
+    use remotemedia_core::capabilities::{
         AudioConstraints, AudioSampleFormat, CapabilityBehavior, CapabilityHints, ConstraintValue,
         MediaCapabilities, MediaConstraints, NodeHints,
     };
-    use remotemedia_runtime_core::nodes::streaming_node::{
+    use remotemedia_core::nodes::streaming_node::{
         StreamingNode, StreamingNodeFactory, StreamingNodeRegistry,
     };
 
     mod mock_limited {
         use async_trait::async_trait;
-        use remotemedia_runtime_core::capabilities::{
+        use remotemedia_core::capabilities::{
             AudioConstraints, AudioSampleFormat, CapabilityBehavior, ConstraintValue,
             MediaCapabilities, MediaConstraints,
         };
-        use remotemedia_runtime_core::data::RuntimeData;
-        use remotemedia_runtime_core::nodes::streaming_node::{StreamingNode, StreamingNodeFactory};
+        use remotemedia_core::data::RuntimeData;
+        use remotemedia_core::nodes::streaming_node::{StreamingNode, StreamingNodeFactory};
         use serde_json::Value;
         use std::collections::HashMap;
 
@@ -1558,10 +1558,10 @@ fn test_capability_hints_ignored_when_outside_range() {
 
         #[async_trait]
         impl StreamingNode for LimitedNode {
-            async fn process_async(&self, _input: RuntimeData) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+            async fn process_async(&self, _input: RuntimeData) -> Result<RuntimeData, remotemedia_core::Error> {
                 Ok(RuntimeData::Text(String::new()))
             }
-            async fn process_multi_async(&self, _inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+            async fn process_multi_async(&self, _inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, remotemedia_core::Error> {
                 Ok(RuntimeData::Text(String::new()))
             }
             fn is_multi_input(&self) -> bool { false }
@@ -1586,7 +1586,7 @@ fn test_capability_hints_ignored_when_outside_range() {
         pub struct LimitedNodeFactory;
 
         impl StreamingNodeFactory for LimitedNodeFactory {
-            fn create(&self, _node_id: String, _params: &Value, _session_id: Option<String>) -> Result<Box<dyn StreamingNode>, remotemedia_runtime_core::Error> {
+            fn create(&self, _node_id: String, _params: &Value, _session_id: Option<String>) -> Result<Box<dyn StreamingNode>, remotemedia_core::Error> {
                 Ok(Box::new(LimitedNode))
             }
             fn node_type(&self) -> &str { "LimitedNode" }
@@ -1708,8 +1708,8 @@ fn test_capability_hints_ignored_when_outside_range() {
 
 mod manifest_integration_tests {
     use super::*;
-    use remotemedia_runtime_core::executor::PipelineGraph;
-    use remotemedia_runtime_core::manifest::{Connection, Manifest, ManifestMetadata, NodeManifest};
+    use remotemedia_core::executor::PipelineGraph;
+    use remotemedia_core::manifest::{Connection, Manifest, ManifestMetadata, NodeManifest};
 
     /// Helper to create a Manifest programmatically
     fn create_manifest(
@@ -1747,8 +1747,8 @@ mod manifest_integration_tests {
     /// Helper to resolve capabilities from a manifest using the graph
     fn resolve_from_manifest(
         manifest: &Manifest,
-        registry: &remotemedia_runtime_core::nodes::streaming_node::StreamingNodeRegistry,
-    ) -> remotemedia_runtime_core::capabilities::ResolutionContext {
+        registry: &remotemedia_core::nodes::streaming_node::StreamingNodeRegistry,
+    ) -> remotemedia_core::capabilities::ResolutionContext {
         let graph = PipelineGraph::from_manifest(manifest).expect("Failed to build graph");
         let resolver = CapabilityResolver::new(registry);
 
@@ -2098,12 +2098,12 @@ mod manifest_integration_tests {
 
 mod dual_runtime_discovered_tests {
     use super::*;
-    use remotemedia_runtime_core::capabilities::{
+    use remotemedia_core::capabilities::{
         AudioConstraints, AudioSampleFormat, CapabilityBehavior, ConstraintValue,
         MediaCapabilities, MediaConstraints, ResolutionState,
     };
-    use remotemedia_runtime_core::data::RuntimeData;
-    use remotemedia_runtime_core::nodes::streaming_node::{
+    use remotemedia_core::data::RuntimeData;
+    use remotemedia_core::nodes::streaming_node::{
         StreamingNode, StreamingNodeFactory, StreamingNodeRegistry,
     };
     use serde_json::Value;
@@ -2141,7 +2141,7 @@ mod dual_runtime_discovered_tests {
             &self.node_id
         }
 
-        async fn initialize(&self) -> Result<(), remotemedia_runtime_core::Error> {
+        async fn initialize(&self) -> Result<(), remotemedia_core::Error> {
             // Simulate device discovery
             self.initialized.store(true, std::sync::atomic::Ordering::SeqCst);
             Ok(())
@@ -2150,7 +2150,7 @@ mod dual_runtime_discovered_tests {
         async fn process_async(
             &self,
             _data: RuntimeData,
-        ) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+        ) -> Result<RuntimeData, remotemedia_core::Error> {
             // Return audio with discovered sample rate
             Ok(RuntimeData::Audio {
                 samples: vec![0.0; 1024],
@@ -2165,7 +2165,7 @@ mod dual_runtime_discovered_tests {
         async fn process_multi_async(
             &self,
             _inputs: std::collections::HashMap<String, RuntimeData>,
-        ) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+        ) -> Result<RuntimeData, remotemedia_core::Error> {
             self.process_async(RuntimeData::Text(String::new())).await
         }
 
@@ -2242,7 +2242,7 @@ mod dual_runtime_discovered_tests {
             &self.node_id
         }
 
-        async fn initialize(&self) -> Result<(), remotemedia_runtime_core::Error> {
+        async fn initialize(&self) -> Result<(), remotemedia_core::Error> {
             self.initialized.store(true, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         }
@@ -2250,7 +2250,7 @@ mod dual_runtime_discovered_tests {
         async fn process_async(
             &self,
             data: RuntimeData,
-        ) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+        ) -> Result<RuntimeData, remotemedia_core::Error> {
             // Passthrough - just return the data
             Ok(data)
         }
@@ -2258,7 +2258,7 @@ mod dual_runtime_discovered_tests {
         async fn process_multi_async(
             &self,
             inputs: std::collections::HashMap<String, RuntimeData>,
-        ) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+        ) -> Result<RuntimeData, remotemedia_core::Error> {
             Ok(inputs.into_values().next().unwrap_or(RuntimeData::Text(String::new())))
         }
 
@@ -2325,7 +2325,7 @@ mod dual_runtime_discovered_tests {
             node_id: String,
             _params: &Value,
             _session_id: Option<String>,
-        ) -> Result<Box<dyn StreamingNode>, remotemedia_runtime_core::Error> {
+        ) -> Result<Box<dyn StreamingNode>, remotemedia_core::Error> {
             Ok(Box::new(MockRuntimeDiscoveredSource::new(
                 node_id,
                 self.actual_sample_rate,
@@ -2373,7 +2373,7 @@ mod dual_runtime_discovered_tests {
             node_id: String,
             _params: &Value,
             _session_id: Option<String>,
-        ) -> Result<Box<dyn StreamingNode>, remotemedia_runtime_core::Error> {
+        ) -> Result<Box<dyn StreamingNode>, remotemedia_core::Error> {
             Ok(Box::new(MockRuntimeDiscoveredSink::new(
                 node_id,
                 self.actual_sample_rate,
@@ -2738,12 +2738,12 @@ mod dual_runtime_discovered_tests {
         // Create a mock sink that accepts a RANGE of sample rates (not RuntimeDiscovered)
         mod mock_flexible_sink {
             use async_trait::async_trait;
-            use remotemedia_runtime_core::capabilities::{
+            use remotemedia_core::capabilities::{
                 AudioConstraints, AudioSampleFormat, CapabilityBehavior, ConstraintValue,
                 MediaCapabilities, MediaConstraints,
             };
-            use remotemedia_runtime_core::data::RuntimeData;
-            use remotemedia_runtime_core::nodes::streaming_node::{StreamingNode, StreamingNodeFactory};
+            use remotemedia_core::data::RuntimeData;
+            use remotemedia_core::nodes::streaming_node::{StreamingNode, StreamingNodeFactory};
             use serde_json::Value;
             use std::collections::HashMap;
 
@@ -2752,10 +2752,10 @@ mod dual_runtime_discovered_tests {
             #[async_trait]
             impl StreamingNode for FlexibleSinkNode {
                 fn node_type(&self) -> &str { "FlexibleSinkNode" }
-                async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+                async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, remotemedia_core::Error> {
                     Ok(data)
                 }
-                async fn process_multi_async(&self, _inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+                async fn process_multi_async(&self, _inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, remotemedia_core::Error> {
                     Ok(RuntimeData::Text(String::new()))
                 }
                 fn is_multi_input(&self) -> bool { false }
@@ -2779,7 +2779,7 @@ mod dual_runtime_discovered_tests {
             pub struct FlexibleSinkFactory;
 
             impl StreamingNodeFactory for FlexibleSinkFactory {
-                fn create(&self, _id: String, _p: &Value, _s: Option<String>) -> Result<Box<dyn StreamingNode>, remotemedia_runtime_core::Error> {
+                fn create(&self, _id: String, _p: &Value, _s: Option<String>) -> Result<Box<dyn StreamingNode>, remotemedia_core::Error> {
                     Ok(Box::new(FlexibleSinkNode))
                 }
                 fn node_type(&self) -> &str { "FlexibleSinkNode" }
@@ -2846,12 +2846,12 @@ mod dual_runtime_discovered_tests {
         // Create a mock sink that only accepts up to 48kHz
         mod mock_limited_sink {
             use async_trait::async_trait;
-            use remotemedia_runtime_core::capabilities::{
+            use remotemedia_core::capabilities::{
                 AudioConstraints, AudioSampleFormat, CapabilityBehavior, ConstraintValue,
                 MediaCapabilities, MediaConstraints,
             };
-            use remotemedia_runtime_core::data::RuntimeData;
-            use remotemedia_runtime_core::nodes::streaming_node::{StreamingNode, StreamingNodeFactory};
+            use remotemedia_core::data::RuntimeData;
+            use remotemedia_core::nodes::streaming_node::{StreamingNode, StreamingNodeFactory};
             use serde_json::Value;
             use std::collections::HashMap;
 
@@ -2860,10 +2860,10 @@ mod dual_runtime_discovered_tests {
             #[async_trait]
             impl StreamingNode for LimitedSinkNode {
                 fn node_type(&self) -> &str { "LimitedSinkNode" }
-                async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+                async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, remotemedia_core::Error> {
                     Ok(data)
                 }
-                async fn process_multi_async(&self, _inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+                async fn process_multi_async(&self, _inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, remotemedia_core::Error> {
                     Ok(RuntimeData::Text(String::new()))
                 }
                 fn is_multi_input(&self) -> bool { false }
@@ -2887,7 +2887,7 @@ mod dual_runtime_discovered_tests {
             pub struct LimitedSinkFactory;
 
             impl StreamingNodeFactory for LimitedSinkFactory {
-                fn create(&self, _id: String, _p: &Value, _s: Option<String>) -> Result<Box<dyn StreamingNode>, remotemedia_runtime_core::Error> {
+                fn create(&self, _id: String, _p: &Value, _s: Option<String>) -> Result<Box<dyn StreamingNode>, remotemedia_core::Error> {
                     Ok(Box::new(LimitedSinkNode))
                 }
                 fn node_type(&self) -> &str { "LimitedSinkNode" }
@@ -2960,12 +2960,12 @@ mod dual_runtime_discovered_tests {
         // Add a RuntimeDiscovered processor in the middle
         mod mock_processor {
             use async_trait::async_trait;
-            use remotemedia_runtime_core::capabilities::{
+            use remotemedia_core::capabilities::{
                 AudioConstraints, AudioSampleFormat, CapabilityBehavior, ConstraintValue,
                 MediaCapabilities, MediaConstraints,
             };
-            use remotemedia_runtime_core::data::RuntimeData;
-            use remotemedia_runtime_core::nodes::streaming_node::{StreamingNode, StreamingNodeFactory};
+            use remotemedia_core::data::RuntimeData;
+            use remotemedia_core::nodes::streaming_node::{StreamingNode, StreamingNodeFactory};
             use serde_json::Value;
             use std::collections::HashMap;
             use std::sync::atomic::AtomicBool;
@@ -2980,15 +2980,15 @@ mod dual_runtime_discovered_tests {
                 fn node_type(&self) -> &str { "RuntimeDiscoveredProcessor" }
                 fn node_id(&self) -> &str { &self.node_id }
 
-                async fn initialize(&self) -> Result<(), remotemedia_runtime_core::Error> {
+                async fn initialize(&self) -> Result<(), remotemedia_core::Error> {
                     self.initialized.store(true, std::sync::atomic::Ordering::SeqCst);
                     Ok(())
                 }
 
-                async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+                async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, remotemedia_core::Error> {
                     Ok(data)
                 }
-                async fn process_multi_async(&self, inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+                async fn process_multi_async(&self, inputs: HashMap<String, RuntimeData>) -> Result<RuntimeData, remotemedia_core::Error> {
                     Ok(inputs.into_values().next().unwrap_or(RuntimeData::Text(String::new())))
                 }
                 fn is_multi_input(&self) -> bool { false }
@@ -3041,7 +3041,7 @@ mod dual_runtime_discovered_tests {
             pub struct RuntimeDiscoveredProcessorFactory;
 
             impl StreamingNodeFactory for RuntimeDiscoveredProcessorFactory {
-                fn create(&self, node_id: String, _p: &Value, _s: Option<String>) -> Result<Box<dyn StreamingNode>, remotemedia_runtime_core::Error> {
+                fn create(&self, node_id: String, _p: &Value, _s: Option<String>) -> Result<Box<dyn StreamingNode>, remotemedia_core::Error> {
                     Ok(Box::new(RuntimeDiscoveredProcessor {
                         node_id,
                         initialized: AtomicBool::new(false),
@@ -3117,12 +3117,12 @@ mod dual_runtime_discovered_tests {
 
 mod node_lifecycle_tests {
     use super::*;
-    use remotemedia_runtime_core::capabilities::{
+    use remotemedia_core::capabilities::{
         AudioConstraints, AudioSampleFormat, CapabilityBehavior, ConstraintValue,
         MediaCapabilities, MediaConstraints,
     };
-    use remotemedia_runtime_core::data::RuntimeData;
-    use remotemedia_runtime_core::nodes::streaming_node::{
+    use remotemedia_core::data::RuntimeData;
+    use remotemedia_core::nodes::streaming_node::{
         StreamingNode, StreamingNodeFactory, StreamingNodeRegistry,
     };
     use serde_json::Value;
@@ -3198,7 +3198,7 @@ mod node_lifecycle_tests {
             &self.node_id
         }
 
-        async fn initialize(&self) -> Result<(), remotemedia_runtime_core::Error> {
+        async fn initialize(&self) -> Result<(), remotemedia_core::Error> {
             // This is where we "discover" the device capabilities
             let (sample_rate, channels) = self.device.open();
 
@@ -3217,7 +3217,7 @@ mod node_lifecycle_tests {
         async fn process_async(
             &self,
             _data: RuntimeData,
-        ) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+        ) -> Result<RuntimeData, remotemedia_core::Error> {
             let (sample_rate, channels) = (
                 self.device.device_sample_rate.load(Ordering::SeqCst),
                 self.device.device_channels.load(Ordering::SeqCst),
@@ -3235,7 +3235,7 @@ mod node_lifecycle_tests {
         async fn process_multi_async(
             &self,
             _inputs: std::collections::HashMap<String, RuntimeData>,
-        ) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+        ) -> Result<RuntimeData, remotemedia_core::Error> {
             self.process_async(RuntimeData::Text(String::new())).await
         }
 
@@ -3287,7 +3287,7 @@ mod node_lifecycle_tests {
             node_id: String,
             _params: &Value,
             _session_id: Option<String>,
-        ) -> Result<Box<dyn StreamingNode>, remotemedia_runtime_core::Error> {
+        ) -> Result<Box<dyn StreamingNode>, remotemedia_core::Error> {
             Ok(Box::new(TrueRuntimeDiscoveredNode::new(
                 node_id,
                 self.device.clone(),
@@ -3578,7 +3578,7 @@ mod node_lifecycle_tests {
             fn node_type(&self) -> &str { "TrueRuntimeDiscoveredSinkNode" }
             fn node_id(&self) -> &str { &self.node_id }
 
-            async fn initialize(&self) -> Result<(), remotemedia_runtime_core::Error> {
+            async fn initialize(&self) -> Result<(), remotemedia_core::Error> {
                 let (sample_rate, channels) = self.device.open();
                 let caps = MediaCapabilities::with_input(MediaConstraints::Audio(
                     AudioConstraints {
@@ -3591,11 +3591,11 @@ mod node_lifecycle_tests {
                 Ok(())
             }
 
-            async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+            async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, remotemedia_core::Error> {
                 Ok(data)
             }
 
-            async fn process_multi_async(&self, inputs: std::collections::HashMap<String, RuntimeData>) -> Result<RuntimeData, remotemedia_runtime_core::Error> {
+            async fn process_multi_async(&self, inputs: std::collections::HashMap<String, RuntimeData>) -> Result<RuntimeData, remotemedia_core::Error> {
                 Ok(inputs.into_values().next().unwrap_or(RuntimeData::Text(String::new())))
             }
 
@@ -3623,7 +3623,7 @@ mod node_lifecycle_tests {
         }
 
         impl StreamingNodeFactory for TrueRuntimeDiscoveredSinkFactory {
-            fn create(&self, node_id: String, _params: &Value, _session_id: Option<String>) -> Result<Box<dyn StreamingNode>, remotemedia_runtime_core::Error> {
+            fn create(&self, node_id: String, _params: &Value, _session_id: Option<String>) -> Result<Box<dyn StreamingNode>, remotemedia_core::Error> {
                 Ok(Box::new(TrueRuntimeDiscoveredSinkNode::new(node_id, self.device.clone())))
             }
             fn node_type(&self) -> &str { "TrueRuntimeDiscoveredSinkNode" }
@@ -3708,11 +3708,11 @@ mod node_lifecycle_tests {
 
 mod auto_resample_tests {
     use super::*;
-    use remotemedia_runtime_core::capabilities::{
+    use remotemedia_core::capabilities::{
         CapabilityBehavior, ConstraintValue, MediaConstraints,
     };
-    use remotemedia_runtime_core::executor::PipelineGraph;
-    use remotemedia_runtime_core::manifest::{Connection, Manifest, ManifestMetadata, NodeManifest};
+    use remotemedia_core::executor::PipelineGraph;
+    use remotemedia_core::manifest::{Connection, Manifest, ManifestMetadata, NodeManifest};
 
     /// Helper to create a Manifest programmatically for auto-resample tests
     fn create_manifest(
@@ -3750,8 +3750,8 @@ mod auto_resample_tests {
     /// Helper to resolve capabilities from a manifest using the graph
     fn resolve_from_manifest(
         manifest: &Manifest,
-        registry: &remotemedia_runtime_core::nodes::streaming_node::StreamingNodeRegistry,
-    ) -> remotemedia_runtime_core::capabilities::ResolutionContext {
+        registry: &remotemedia_core::nodes::streaming_node::StreamingNodeRegistry,
+    ) -> remotemedia_core::capabilities::ResolutionContext {
         let graph = PipelineGraph::from_manifest(manifest).expect("Failed to build graph");
         let resolver = CapabilityResolver::new(registry);
 

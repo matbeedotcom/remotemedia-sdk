@@ -22,21 +22,21 @@ base64 = "0.22"
 remotemedia-cli = { path = "../remotemedia-cli" }
 
 # SDK core
-remotemedia-runtime-core = { workspace = true }
+remotemedia-core = { workspace = true }
 
 # Shared health analyzer types
 remotemedia-health-analyzer = { workspace = true }
 
 # Shared pipeline execution library  
-remotemedia-pipeline-runner = { path = "../../../libs/pipeline-runner" }
+remotemedia-pipeline-runner = { path = "../../../crates/libs/pipeline-runner" }
 
 # Ingestion adapter (optional for RTMP support)
-remotemedia-ingest-rtmp = { path = "../../../adapters/ingest-rtmp", optional = true }
+remotemedia-ingest-rtmp = { path = "../../../crates/adapters/ingest-rtmp", optional = true }
 
 # SRT listener support (optional)
 srt-tokio = { version = "0.4", optional = true }
 futures = { version = "0.3", optional = true }
-remotemedia-ingest-srt = { path = "../../../services/ingest-srt", optional = true }
+remotemedia-ingest-srt = { path = "../../../crates/services/ingest-srt", optional = true }
 
 # CLI framework
 clap = { workspace = true }

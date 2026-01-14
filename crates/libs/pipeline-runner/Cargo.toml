@@ -1,0 +1,33 @@
+[package]
+name = "remotemedia-pipeline-runner"
+description = "Shared pipeline execution and template management for RemoteMedia SDK"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Core
+remotemedia-core = { path = "../../core" }
+remotemedia-health-analyzer = { path = "../stream-health-analyzer" }
+
+# Async
+tokio = { workspace = true, features = ["sync"] }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }

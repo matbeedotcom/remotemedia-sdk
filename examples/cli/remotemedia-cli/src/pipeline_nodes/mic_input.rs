@@ -20,12 +20,12 @@
 //! Produces `RuntimeData::Audio` chunks continuously until stopped.
 
 use async_trait::async_trait;
-use remotemedia_runtime_core::capabilities::{
+use remotemedia_core::capabilities::{
     AudioConstraints, AudioSampleFormat, ConstraintValue, MediaCapabilities, MediaConstraints,
 };
-use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::executor::node_executor::{NodeContext, NodeExecutor};
-use remotemedia_runtime_core::Result;
+use remotemedia_core::data::RuntimeData;
+use remotemedia_core::executor::node_executor::{NodeContext, NodeExecutor};
+use remotemedia_core::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::mpsc;
@@ -114,19 +114,19 @@ fn start_capture_thread(config: &MicInputConfig) -> Result<(CaptureHandle, Strin
 
     // Get host and device on main thread to capture device name
     let host = crate::audio::get_host(capture_config.host.as_deref()).map_err(|e| {
-        remotemedia_runtime_core::Error::Execution(format!("Failed to get audio host: {}", e))
+        remotemedia_core::Error::Execution(format!("Failed to get audio host: {}", e))
     })?;
 
     let device = match &capture_config.device {
         Some(selector) => crate::audio::find_input_device(selector, capture_config.host.as_deref())
             .map_err(|e| {
-                remotemedia_runtime_core::Error::Execution(format!(
+                remotemedia_core::Error::Execution(format!(
                     "Failed to find input device: {}",
                     e
                 ))
             })?,
         None => host.default_input_device().ok_or_else(|| {
-            remotemedia_runtime_core::Error::Execution(
+            remotemedia_core::Error::Execution(
                 "No default input device available".to_string(),
             )
         })?,
@@ -317,7 +317,7 @@ impl NodeExecutor for MicInputNode {
     async fn process(&mut self, _input: Value) -> Result<Vec<Value>> {
         // As a source node, we ignore input and generate audio output
         let handle = self.capture_handle.as_ref().ok_or_else(|| {
-            remotemedia_runtime_core::Error::Execution(
+            remotemedia_core::Error::Execution(
                 "Audio capture not initialized".to_string(),
             )
         })?;

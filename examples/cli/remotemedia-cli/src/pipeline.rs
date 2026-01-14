@@ -4,9 +4,9 @@
 //! executing pipelines from the CLI.
 
 use anyhow::{Context, Result};
-use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::manifest::Manifest;
-use remotemedia_runtime_core::transport::{PipelineExecutor, TransportData};
+use remotemedia_core::data::RuntimeData;
+use remotemedia_core::manifest::Manifest;
+use remotemedia_core::transport::{PipelineExecutor, TransportData};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -62,7 +62,7 @@ pub fn parse_manifest(content: &str) -> Result<Manifest> {
     let json_str = serde_json::to_string(&yaml_value).context("Failed to convert YAML to JSON")?;
 
     // Parse into Manifest struct
-    remotemedia_runtime_core::manifest::parse(&json_str)
+    remotemedia_core::manifest::parse(&json_str)
         .map_err(|e| anyhow::anyhow!("Failed to parse manifest: {}", e))
 }
 
@@ -131,7 +131,7 @@ pub async fn execute_with_inputs(
 ///
 /// Provides a convenient interface for streaming pipeline execution.
 pub struct StreamingSession {
-    handle: remotemedia_runtime_core::transport::SessionHandle,
+    handle: remotemedia_core::transport::SessionHandle,
 }
 
 impl StreamingSession {

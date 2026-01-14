@@ -4,17 +4,17 @@
 //! registered with the streaming node registry.
 
 use crate::audio::{AudioCapture, AudioPlayback, CaptureConfig, DeviceSelector, PlaybackConfig};
-use remotemedia_runtime_core::capabilities::{
+use remotemedia_core::capabilities::{
     AudioConstraints, AudioSampleFormat, CapabilityBehavior, ConstraintValue, MediaCapabilities,
     MediaConstraints,
 };
-use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::nodes::streaming_node::{
+use remotemedia_core::data::RuntimeData;
+use remotemedia_core::nodes::streaming_node::{
     AsyncStreamingNode,
     StreamingNode, StreamingNodeFactory, StreamingNodeRegistry,
 };
-use remotemedia_runtime_core::nodes::streaming_registry::create_default_streaming_registry;
-use remotemedia_runtime_core::Error;
+use remotemedia_core::nodes::streaming_registry::create_default_streaming_registry;
+use remotemedia_core::Error;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -510,7 +510,7 @@ impl StreamingNodeFactory for SpeakerOutputNodeFactory {
 // SrtOutput Streaming Node
 // ============================================================================
 
-use remotemedia_runtime_core::nodes::streaming_node::{SyncStreamingNode, SyncNodeWrapper};
+use remotemedia_core::nodes::streaming_node::{SyncStreamingNode, SyncNodeWrapper};
 
 /// Streaming node for SRT subtitle output
 struct SrtOutputStreamingNode {

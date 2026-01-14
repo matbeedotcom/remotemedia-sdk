@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Read(//c/Users/mail/dev/personal/remotemedia-sdk/examples/grpc_examples/typescript/**)"
-    ],
-    "deny": [],
-    "ask": []
-  }
-}

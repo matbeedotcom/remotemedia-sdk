@@ -26,7 +26,7 @@ use remotemedia_cli::{
     io::{detect_input_source, detect_output_sink, InputReader, InputSource, OutputWriter},
     pipeline,
 };
-use remotemedia_runtime_core::data::RuntimeData;
+use remotemedia_core::data::RuntimeData;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
