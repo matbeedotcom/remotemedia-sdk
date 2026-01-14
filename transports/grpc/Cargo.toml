@@ -61,6 +61,7 @@ tokio-test = "0.4"
 tonic-build = { workspace = true }
 prost-build = { workspace = true }
 tonic-prost-build = { workspace = true }
+protobuf-src = { workspace = true }
 
 [features]
 # Default features: basic gRPC pipeline execution and streaming

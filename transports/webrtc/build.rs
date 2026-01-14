@@ -2,6 +2,9 @@
 
 #[cfg(feature = "grpc-signaling")]
 fn main() {
+    // Use vendored protoc from protobuf-src
+    std::env::set_var("PROTOC", protobuf_src::protoc());
+
     compile_protos();
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=protos/");

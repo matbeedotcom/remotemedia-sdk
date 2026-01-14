@@ -2,6 +2,9 @@
 // Handles protobuf code generation for gRPC services
 
 fn main() {
+    // Use vendored protoc from protobuf-src
+    std::env::set_var("PROTOC", protobuf_src::protoc());
+
     compile_protos();
 
     // Rebuild when protobuf files change

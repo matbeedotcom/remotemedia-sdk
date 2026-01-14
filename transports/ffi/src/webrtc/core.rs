@@ -174,10 +174,10 @@ impl WebRtcServerCore {
             .map_err(|e| WebRtcError::config(format!("Invalid manifest: {}", e)))?;
         let manifest = Arc::new(manifest);
 
-        // Create PipelineRunner
+        // Create PipelineExecutor
         let runner = Arc::new(
-            PipelineRunner::new()
-                .map_err(|e| WebRtcError::Internal(format!("Failed to create PipelineRunner: {}", e)))?,
+            PipelineExecutor::new()
+                .map_err(|e| WebRtcError::Internal(format!("Failed to create PipelineExecutor: {}", e)))?,
         );
 
         // Build WebRTC transport configuration using the conversion helper

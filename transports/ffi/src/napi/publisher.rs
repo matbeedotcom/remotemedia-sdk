@@ -41,9 +41,7 @@ fn convert_to_ipc_runtime_data(data: &RuntimeData) -> napi::Result<IpcRuntimeDat
     match data {
         RuntimeData::Audio {
             samples,
-            sample_rate: _,
-            channels: _,
-            stream_id: _,
+            ..
         } => {
             // Convert f32 samples to bytes
             let payload = unsafe {

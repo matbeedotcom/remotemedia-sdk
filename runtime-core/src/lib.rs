@@ -7,7 +7,7 @@
 //!
 //! Runtime-core is a pure library that:
 //! - Defines transport abstractions (`PipelineTransport`, `StreamSession` traits)
-//! - Provides execution engine (`PipelineRunner`)
+//! - Provides execution engine (`PipelineExecutor`)
 //! - Manages pipeline graphs, node execution, and session routing
 //! - Has ZERO dependencies on transport crates (no tonic, prost, pyo3, etc.)
 //!
@@ -19,17 +19,17 @@
 //! # Example
 //!
 //! ```
-//! use remotemedia_runtime_core::transport::PipelineRunner;
+//! use remotemedia_runtime_core::transport::PipelineExecutor;
 //! use remotemedia_runtime_core::transport::TransportData;
 //! use remotemedia_runtime_core::data::RuntimeData;
 //!
-//! // Create the pipeline runner
-//! let runner = PipelineRunner::new().unwrap();
+//! // Create the pipeline executor
+//! let executor = PipelineExecutor::new().unwrap();
 //!
 //! // Create transport data
 //! let input = TransportData::new(RuntimeData::Text("hello".into()));
 //!
-//! // Use runner.execute_unary(manifest, input).await for execution
+//! // Use executor.execute_unary(manifest, input).await for execution
 //! ```
 
 #![warn(clippy::all)]
@@ -588,7 +588,7 @@ pub fn init() -> Result<()> {
 // // BUT GrpcServer now in: use remotemedia_grpc::GrpcServer;
 //
 // // New (v0.4.x+):
-// use remotemedia_runtime_core::transport::PipelineRunner;
+// use remotemedia_runtime_core::transport::PipelineExecutor;
 // use remotemedia_grpc::GrpcServer;
 // ```
 //

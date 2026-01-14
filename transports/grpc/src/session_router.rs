@@ -555,7 +555,7 @@ impl SessionRouter {
                                 sub_sequence += 1;
 
                                 // Convert IPC data to RuntimeData
-                                match crate::python::multiprocess::MultiprocessExecutor::from_ipc_runtime_data(ipc_output) {
+                                match MultiprocessExecutor::from_ipc_runtime_data(ipc_output) {
                                     Ok(output_data) => {
                                         let output_packet = DataPacket {
                                             data: output_data,

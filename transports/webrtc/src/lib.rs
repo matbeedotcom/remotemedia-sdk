@@ -25,7 +25,7 @@
 //! │  ├─ SessionManager (pipeline sessions)                 │
 //! │  └─ SessionRouter (routes data: peers ↔ pipeline)     │
 //! │     ↓                                                   │
-//! │  remotemedia-runtime-core::PipelineRunner              │
+//! │  remotemedia-runtime-core::PipelineExecutor            │
 //! └────────────────────────────────────────────────────────┘
 //! ```
 //!

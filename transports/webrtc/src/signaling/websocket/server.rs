@@ -9,7 +9,7 @@
 use super::events::WebRtcEventBridge;
 use super::handler::{handle_connection, SharedState};
 use crate::config::WebRtcTransportConfig;
-use remotemedia_runtime_core::{manifest::Manifest, transport::PipelineRunner};
+use remotemedia_runtime_core::{manifest::Manifest, transport::PipelineExecutor};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::thread;
@@ -31,7 +31,7 @@ impl WebSocketSignalingServer {
     pub fn new(
         port: u16,
         config: Arc<WebRtcTransportConfig>,
-        runner: Arc<PipelineRunner>,
+        runner: Arc<PipelineExecutor>,
         manifest: Arc<Manifest>,
     ) -> Self {
         Self::new_with_events(port, config, runner, manifest, None)
@@ -44,7 +44,7 @@ impl WebSocketSignalingServer {
     pub fn new_with_events(
         port: u16,
         config: Arc<WebRtcTransportConfig>,
-        runner: Arc<PipelineRunner>,
+        runner: Arc<PipelineExecutor>,
         manifest: Arc<Manifest>,
         event_tx: Option<mpsc::Sender<WebRtcEventBridge>>,
     ) -> Self {

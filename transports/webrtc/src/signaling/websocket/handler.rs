@@ -11,7 +11,7 @@ use crate::signaling::protocol::{
     PeerStateChangeParams,
 };
 use futures_util::{SinkExt, StreamExt};
-use remotemedia_runtime_core::{manifest::Manifest, transport::PipelineRunner};
+use remotemedia_runtime_core::{manifest::Manifest, transport::PipelineExecutor};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -38,7 +38,7 @@ pub struct SharedState {
     pub peers: Arc<RwLock<HashMap<String, WsPeerConnection>>>,
     pub server_peers: Arc<RwLock<HashMap<String, Arc<ServerPeer>>>>,
     pub config: Arc<WebRtcTransportConfig>,
-    pub runner: Arc<PipelineRunner>,
+    pub runner: Arc<PipelineExecutor>,
     pub manifest: Arc<Manifest>,
     /// Optional event sender for FFI integration
     /// When set, peer connect/disconnect and pipeline events are forwarded
@@ -49,7 +49,7 @@ impl SharedState {
     /// Create new shared state without event forwarding
     pub fn new(
         config: Arc<WebRtcTransportConfig>,
-        runner: Arc<PipelineRunner>,
+        runner: Arc<PipelineExecutor>,
         manifest: Arc<Manifest>,
     ) -> Self {
         Self::new_with_events(config, runner, manifest, None)
@@ -58,7 +58,7 @@ impl SharedState {
     /// Create new shared state with optional event forwarding
     pub fn new_with_events(
         config: Arc<WebRtcTransportConfig>,
-        runner: Arc<PipelineRunner>,
+        runner: Arc<PipelineExecutor>,
         manifest: Arc<Manifest>,
         event_tx: Option<mpsc::Sender<WebRtcEventBridge>>,
     ) -> Self {

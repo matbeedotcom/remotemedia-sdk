@@ -54,8 +54,6 @@ pyannote-rs = { git = "https://github.com/thewh1teagle/pyannote-rs", optional = 
 
 # Video codec support (spec 012)
 ac-ffmpeg = { version = "0.19", optional = true }
-rav1e = { version = "0.8", optional = true }
-dav1d = { version = "0.10", optional = true }
 
 # IPC for multiprocess
 iceoryx2 = { workspace = true, optional = true }
@@ -86,6 +84,10 @@ sha2.workspace = true
 hdrhistogram.workspace = true
 hyper = { workspace = true, features = ["full"] }
 http-body-util = { version = "0.1", optional = true }
+
+# Force vendored OpenSSL to avoid system version mismatch (OPENSSL_API_COMPAT error)
+openssl = { version = "0.10", features = ["vendored"] }
+openssl-sys = { version = "0.9", features = ["vendored"] }
 
 # Platform-specific
 [target.'cfg(unix)'.dependencies]
@@ -151,7 +153,6 @@ grpc-client = ["tonic", "prost", "prost-types"]
 docker = ["dep:bollard", "dep:tar", "dep:chrono", "dep:bytes", "dep:hyper", "dep:http-body-util", "dep:glob", "dep:rusqlite"]
 # Video codec support (spec 012)
 video = ["dep:ac-ffmpeg"]
-video-pure-rust = ["video", "dep:rav1e", "dep:dav1d"]
 # CUDA acceleration for whisper (requires CUDA 12.x toolkit installed)
 cuda = ["rwhisper/cuda"]
 

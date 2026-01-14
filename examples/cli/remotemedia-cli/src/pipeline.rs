@@ -1,6 +1,6 @@
 //! Pipeline execution module
 //!
-//! Provides integration with runtime-core's PipelineRunner for
+//! Provides integration with runtime-core's PipelineExecutor for
 //! executing pipelines from the CLI.
 
 use anyhow::{Context, Result};
