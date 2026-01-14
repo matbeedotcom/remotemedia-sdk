@@ -114,6 +114,14 @@ impl PipelineSession {
         &self.manifest
     }
 
+    /// Get a reference to the underlying executor
+    ///
+    /// This can be used to access executor-level functionality like
+    /// registering additional nodes or getting metrics.
+    pub fn executor(&self) -> &PipelineExecutor {
+        &self.executor
+    }
+
     /// Send data to the pipeline for processing
     pub async fn send(&mut self, data: RuntimeData) -> Result<(), PipelineSessionError> {
         let handle = self

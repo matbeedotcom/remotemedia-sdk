@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use super::{validate_stream_id, STREAM_ID_MAX_LENGTH};
+use super::validate_stream_id;
 
 /// Maximum number of audio tracks per peer (FR-018)
 pub const MAX_AUDIO_TRACKS_PER_PEER: usize = 10;

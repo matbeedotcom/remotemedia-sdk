@@ -245,9 +245,15 @@ impl TimingDriftNode {
                 inter_arrival_us: inter_arrival,
             });
 
-            // Keep only recent samples
-            while state.jitter_samples.len() > 100 {
-                state.jitter_samples.pop_front();
+            // Keep only samples within a 5 second window for accurate jitter calculation
+            let window_us = 5_000_000; // 5 seconds
+            let cutoff = arrival_ts_us.saturating_sub(window_us);
+            while let Some(front) = state.jitter_samples.front() {
+                if front.timestamp_us < cutoff {
+                    state.jitter_samples.pop_front();
+                } else {
+                    break;
+                }
             }
         }
         state.last_arrival_us = Some(arrival_ts_us);

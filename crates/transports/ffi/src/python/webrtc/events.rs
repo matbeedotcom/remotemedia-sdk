@@ -23,7 +23,7 @@ pub struct PeerConnectedEvent {
 impl PeerConnectedEvent {
     /// Get metadata as Python dict
     #[getter]
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (k, v) in &self.metadata_map {
             dict.set_item(k, v)?;

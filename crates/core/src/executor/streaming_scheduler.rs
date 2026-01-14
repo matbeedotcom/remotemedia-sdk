@@ -343,15 +343,6 @@ impl NodeExecutionState {
     fn get_error_count(&self) -> u64 {
         self.error_count.load(Ordering::Relaxed)
     }
-
-    /// Get fast path average latency (lock-free)
-    fn get_avg_latency_us(&self) -> u64 {
-        let count = self.latency_count.load(Ordering::Relaxed);
-        if count == 0 {
-            return 0;
-        }
-        self.latency_sum_us.load(Ordering::Relaxed) / count
-    }
 }
 
 /// Production-grade streaming node scheduler

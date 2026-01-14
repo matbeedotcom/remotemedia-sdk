@@ -487,18 +487,22 @@ async fn handle_offer(
                     };
                     info!("Connection state change for peer {}: {}", peer_id, state_str);
 
-                    // Send state change notification
+                    // Send state change notification using typed params
+                    let params = PeerStateChangeParams {
+                        peer_id: peer_id.clone(),
+                        connection_state: state_str.to_string(),
+                        ice_connection_state: None,
+                        ice_gathering_state: None,
+                        previous_state: None,
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64,
+                    };
                     let notification = json!({
                         "jsonrpc": "2.0",
                         "method": "peer.state_change",
-                        "params": {
-                            "peer_id": peer_id,
-                            "connection_state": state_str,
-                            "timestamp": std::time::SystemTime::now()
-                                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis() as u64
-                        }
+                        "params": params
                     });
                     if let Err(e) = tx.send(serde_json::to_string(&notification).unwrap_or_default()).await {
                         warn!("Failed to send state change to client: {}", e);

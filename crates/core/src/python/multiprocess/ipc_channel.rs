@@ -260,7 +260,7 @@ impl ChannelRegistry {
 
     /// Create a publisher for a channel
     #[cfg(feature = "multiprocess")]
-    pub async fn create_publisher(&self, channel_name: &str) -> Result<Publisher> {
+    pub async fn create_publisher(&self, channel_name: &str) -> Result<Publisher<'_>> {
         let services = self.services.read().await;
         let service = services
             .get(channel_name)

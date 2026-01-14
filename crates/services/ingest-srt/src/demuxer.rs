@@ -874,18 +874,38 @@ mod tests {
         // Write some data
         buffer.write(&[1, 2, 3, 4, 5]);
 
-        // Read it back using the reader
-        let reader = RingBufferReader {
-            buffer: Arc::new(RingBuffer::new()),
-        };
-
-        // Just test the buffer internals
+        // Verify data was written
         let inner = buffer.data.lock().unwrap();
         assert_eq!(inner.buffer.len(), 5);
-    }
-}
+        assert!(!inner.eof);
+        drop(inner);
 
-/// Wrapper to make RingBuffer implement Read for testing
-struct RingBufferReader {
-    buffer: Arc<RingBuffer>,
+        // Read the data back
+        let mut read_buf = [0u8; 5];
+        let bytes_read = buffer.read(&mut read_buf);
+        assert_eq!(bytes_read, 5);
+        assert_eq!(read_buf, [1, 2, 3, 4, 5]);
+
+        // Verify buffer is now empty
+        let inner = buffer.data.lock().unwrap();
+        assert_eq!(inner.buffer.len(), 0);
+        assert_eq!(inner.read_position, 5);
+    }
+
+    #[test]
+    fn test_ring_buffer_eof() {
+        let buffer = Arc::new(RingBuffer::new());
+        let buffer_writer = Arc::clone(&buffer);
+
+        // Spawn a thread to set EOF after a short delay
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            buffer_writer.set_eof();
+        });
+
+        // Read should block until EOF
+        let mut read_buf = [0u8; 5];
+        let bytes_read = buffer.read(&mut read_buf);
+        assert_eq!(bytes_read, 0); // EOF returns 0
+    }
 }

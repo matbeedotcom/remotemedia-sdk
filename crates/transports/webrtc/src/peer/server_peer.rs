@@ -15,7 +15,7 @@
 #![allow(dead_code)]
 use crate::{config::WebRtcTransportConfig, peer::PeerConnection, Error, Result};
 use crate::media::{
-    TrackRegistry, FrameRouter, DEFAULT_STREAM_ID,
+    TrackRegistry, DEFAULT_STREAM_ID,
     tracks::{AudioTrack, VideoTrack},
     extract_stream_id,
 };
@@ -25,7 +25,7 @@ use prost::Message;
 use remotemedia_core::{
     data::RuntimeData,
     manifest::Manifest,
-    transport::{PipelineExecutor, SessionHandle, StreamSession, TransportData},
+    transport::{PipelineExecutor, SessionHandle, TransportData},
 };
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};

@@ -650,12 +650,6 @@ pub struct RemotePipelineNode {
 
     /// Resolved manifest to execute remotely
     pub manifest: Option<Manifest>,
-
-    /// gRPC client (created lazily on first use)
-    #[cfg(feature = "grpc-client")]
-    client: std::sync::Arc<
-        tokio::sync::Mutex<Option<Box<dyn crate::transport::client::PipelineClient>>>,
-    >,
 }
 
 impl RemotePipelineNode {
@@ -715,8 +709,6 @@ impl RemotePipelineNode {
             node_id,
             config,
             manifest: None,
-            #[cfg(feature = "grpc-client")]
-            client: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
 

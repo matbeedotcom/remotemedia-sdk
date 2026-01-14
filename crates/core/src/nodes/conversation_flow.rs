@@ -205,11 +205,8 @@ impl ConversationFlowNode {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(current_us);
 
-            // Calculate duration since last state
-            let duration_us = if let (Some(last_state), Some(last_ts)) =
-                (state.last_state, state.last_state_us)
-            {
-                // Only add event if state changed
+            // Calculate duration since last state and add event if state changed
+            if let (Some(last_state), Some(last_ts)) = (state.last_state, state.last_state_us) {
                 if last_state != ps {
                     let duration = event_ts.saturating_sub(last_ts);
                     // Add the previous state's duration
@@ -218,13 +215,8 @@ impl ConversationFlowNode {
                         duration_us: duration,
                         state: last_state,
                     });
-                    duration
-                } else {
-                    0
                 }
-            } else {
-                0
-            };
+            }
 
             // Update last state
             state.last_state = Some(ps);

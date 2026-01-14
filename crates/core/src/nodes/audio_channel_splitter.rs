@@ -274,6 +274,16 @@ impl AsyncStreamingNode for AudioChannelSplitterNode {
                 timestamp_us,
                 arrival_ts_us,
             } => {
+                // Validate sample rate matches expected (diarization models expect specific rate)
+                if *sample_rate != self.sample_rate {
+                    tracing::warn!(
+                        "Audio sample rate ({}) differs from expected rate ({}). \
+                         Diarization timing may be inaccurate.",
+                        sample_rate,
+                        self.sample_rate
+                    );
+                }
+
                 // If no segments yet, just pass through
                 if state.segments.is_empty() {
                     tracing::debug!("No diarization segments yet, passing through audio");

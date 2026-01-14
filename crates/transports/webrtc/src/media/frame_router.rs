@@ -6,8 +6,7 @@
 use crate::{Error, Result};
 use remotemedia_core::data::RuntimeData;
 use std::sync::Arc;
-use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::track_registry::{TrackRegistry, DEFAULT_STREAM_ID};
 use super::tracks::{AudioTrack, VideoTrack};

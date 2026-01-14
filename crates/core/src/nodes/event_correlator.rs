@@ -414,9 +414,15 @@ impl EventCorrelatorNode {
 
         // Move completed incidents and emit if they meet threshold
         for i in completed_indices.into_iter().rev() {
-            let incident = state.active_incidents.remove(i);
+            let mut incident = state.active_incidents.remove(i);
             if incident.events.len() >= self.config.min_events_for_incident as usize {
                 outputs.push(self.build_incident_event(&incident, current_us));
+                incident.emitted = true;
+            }
+            // Keep completed incidents for history (limited to last 100)
+            state.completed_incidents.push_back(incident);
+            while state.completed_incidents.len() > 100 {
+                state.completed_incidents.pop_front();
             }
         }
 

@@ -335,18 +335,24 @@ impl SessionHealthNode {
     }
 
     /// Calculate aggregate health score
-    fn calculate_health_score(&self, state: &SessionHealthState) -> f64 {
+    fn calculate_health_score(&self, state: &SessionHealthState, current_us: u64) -> f64 {
         // Start with base score if available
         let mut score = state.base_health_score.unwrap_or(1.0);
 
         // Apply penalties for each active issue
+        // Longer-standing issues have a greater penalty (up to 2x for issues > 10s old)
         for issue in state.active_issues.values() {
-            let penalty = match issue.contributor.severity() {
+            let base_penalty = match issue.contributor.severity() {
                 IssueSeverity::Severe => 0.25,
                 IssueSeverity::Moderate => 0.15,
                 IssueSeverity::Minor => 0.05,
             };
-            score -= penalty;
+            // Calculate duration multiplier: issues get worse over time
+            // Ramps from 1.0 to 2.0 over 10 seconds
+            let duration_us = current_us.saturating_sub(issue.first_seen_us);
+            let duration_s = duration_us as f64 / 1_000_000.0;
+            let duration_multiplier = (1.0 + (duration_s / 10.0)).min(2.0);
+            score -= base_penalty * duration_multiplier;
         }
 
         score.max(0.0)
@@ -423,7 +429,7 @@ impl SessionHealthNode {
         let should_emit = elapsed_ms >= self.config.emit_interval_ms as u64;
 
         if should_emit {
-            let score = self.calculate_health_score(&state);
+            let score = self.calculate_health_score(&state, current_us);
             let health_state = self.determine_state(score, &state);
 
             state.last_state = Some(health_state);
@@ -484,7 +490,7 @@ impl StreamingNode for SessionHealthNode {
         let should_emit = elapsed_ms >= self.config.emit_interval_ms as u64;
 
         if should_emit {
-            let score = self.calculate_health_score(&state);
+            let score = self.calculate_health_score(&state, current_us);
             let health_state = self.determine_state(score, &state);
 
             state.last_state = Some(health_state);
@@ -615,9 +621,10 @@ mod tests {
     fn test_health_score_calculation() {
         let node = create_test_node();
         let mut state = SessionHealthState::default();
+        let current_us = 0u64;
 
         // No issues = perfect score
-        assert_eq!(node.calculate_health_score(&state), 1.0);
+        assert_eq!(node.calculate_health_score(&state, current_us), 1.0);
 
         // Add minor issue
         state.active_issues.insert(
@@ -628,7 +635,7 @@ mod tests {
                 last_seen_us: 0,
             },
         );
-        let score = node.calculate_health_score(&state);
+        let score = node.calculate_health_score(&state, current_us);
         assert!((score - 0.95).abs() < 0.01);
 
         // Add severe issue
@@ -640,7 +647,35 @@ mod tests {
                 last_seen_us: 0,
             },
         );
-        let score = node.calculate_health_score(&state);
+        let score = node.calculate_health_score(&state, current_us);
         assert!((score - 0.70).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_health_score_increases_with_issue_duration() {
+        let node = create_test_node();
+        let mut state = SessionHealthState::default();
+
+        // Add a minor issue that started at time 0
+        state.active_issues.insert(
+            HealthContributor::LowVolume,
+            TrackedIssue {
+                contributor: HealthContributor::LowVolume,
+                first_seen_us: 0,
+                last_seen_us: 0,
+            },
+        );
+
+        // At time 0, penalty is base (0.05)
+        let score_at_0 = node.calculate_health_score(&state, 0);
+        assert!((score_at_0 - 0.95).abs() < 0.01);
+
+        // At time 10s, penalty should be doubled (0.10)
+        let score_at_10s = node.calculate_health_score(&state, 10_000_000);
+        assert!((score_at_10s - 0.90).abs() < 0.01);
+
+        // Penalty caps at 2x (at 10s+)
+        let score_at_20s = node.calculate_health_score(&state, 20_000_000);
+        assert!((score_at_20s - 0.90).abs() < 0.01);
     }
 }

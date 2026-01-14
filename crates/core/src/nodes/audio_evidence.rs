@@ -228,9 +228,13 @@ impl AudioEvidenceNode {
     }
 
     /// Extract pre-alert audio from buffer
-    fn extract_pre_alert(&self, state: &AudioEvidenceState) -> Vec<f32> {
+    /// Returns (samples, start_timestamp_us, sample_rate, channels)
+    fn extract_pre_alert(&self, state: &AudioEvidenceState) -> (Vec<f32>, u64, u32, u32) {
         let pre_samples = self.pre_alert_samples(state.sample_rate);
         let mut collected = Vec::new();
+        let mut earliest_timestamp = Self::current_timestamp_us();
+        let mut earliest_sample_rate = state.sample_rate;
+        let mut earliest_channels = state.channels;
 
         // Collect from buffer in reverse order (most recent first)
         for chunk in state.buffer.iter().rev() {
@@ -240,6 +244,10 @@ impl AudioEvidenceNode {
             let needed = pre_samples - collected.len();
             let start = chunk.samples.len().saturating_sub(needed);
             collected.extend_from_slice(&chunk.samples[start..]);
+            // Track metadata from the earliest chunk we're using
+            earliest_timestamp = chunk.timestamp_us;
+            earliest_sample_rate = chunk.sample_rate;
+            earliest_channels = chunk.channels;
         }
 
         // Reverse to get chronological order
@@ -250,7 +258,7 @@ impl AudioEvidenceNode {
             collected = collected[collected.len() - pre_samples..].to_vec();
         }
 
-        collected
+        (collected, earliest_timestamp, earliest_sample_rate, earliest_channels)
     }
 
     /// Build clip reference event
@@ -337,17 +345,16 @@ impl AudioEvidenceNode {
         }
 
         let clip_id = format!("clip_{}", Uuid::new_v4().to_string().split('-').next().unwrap_or("unknown"));
-        let pre_audio = self.extract_pre_alert(state);
-        let start_us = Self::current_timestamp_us() - (self.config.pre_alert_s as u64 * 1_000_000);
+        let (pre_audio, start_us, sample_rate, channels) = self.extract_pre_alert(state);
 
         let pending = PendingClip {
             id: clip_id,
             trigger_event,
             samples: pre_audio,
-            sample_rate: state.sample_rate,
-            channels: state.channels,
+            sample_rate,
+            channels,
             start_us,
-            post_samples_remaining: self.post_alert_samples(state.sample_rate),
+            post_samples_remaining: self.post_alert_samples(sample_rate),
         };
 
         state.pending_clips.push(pending);

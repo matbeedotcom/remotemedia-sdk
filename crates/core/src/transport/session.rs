@@ -101,10 +101,33 @@ pub struct StreamSessionHandle {
 }
 
 impl StreamSessionHandle {
-    /// Create new session handle (internal use only)
+    /// Create a new streaming session handle
     ///
-    /// This is called by PipelineExecutor, not by transport implementations.
-    pub(crate) fn new(
+    /// Creates a session handle that wraps the provided channels for
+    /// bidirectional communication with a pipeline session router.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - Unique identifier for this session
+    /// * `input_tx` - Channel for sending data into the session
+    /// * `output_rx` - Channel for receiving processed data from the session
+    /// * `shutdown_tx` - Channel for signaling session shutdown
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let (input_tx, input_rx) = mpsc::unbounded_channel();
+    /// let (output_tx, output_rx) = mpsc::unbounded_channel();
+    /// let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+    ///
+    /// let session = StreamSessionHandle::new(
+    ///     "session-123".to_string(),
+    ///     input_tx,
+    ///     output_rx,
+    ///     shutdown_tx,
+    /// );
+    /// ```
+    pub fn new(
         session_id: String,
         input_tx: mpsc::UnboundedSender<crate::data::RuntimeData>,
         output_rx: mpsc::UnboundedReceiver<crate::data::RuntimeData>,
@@ -253,5 +276,66 @@ impl StreamSession for StreamSessionHandle {
         let active = self.inner.active.load(Ordering::Acquire);
         tracing::trace!("Session {} is_active check: {}", self.session_id, active);
         active
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn test_stream_session_handle_lifecycle() {
+        let (input_tx, mut input_rx) = mpsc::unbounded_channel::<crate::data::RuntimeData>();
+        let (output_tx, output_rx) = mpsc::unbounded_channel::<crate::data::RuntimeData>();
+        let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
+
+        // Create session handle using the constructor
+        let mut session = StreamSessionHandle::new(
+            "test_session_001".to_string(),
+            input_tx,
+            output_rx,
+            shutdown_tx,
+        );
+
+        // Verify session ID
+        assert_eq!(session.session_id(), "test_session_001");
+
+        // Verify session is active
+        assert!(session.is_active());
+
+        // Send input data
+        let test_data = TransportData::new(crate::data::RuntimeData::Text("test input".to_string()));
+        session.send_input(test_data).await.unwrap();
+
+        // Verify input was received
+        let received = input_rx.recv().await.unwrap();
+        if let crate::data::RuntimeData::Text(text) = received {
+            assert_eq!(text, "test input");
+        } else {
+            panic!("Expected Text data");
+        }
+
+        // Send output data through the output channel
+        output_tx
+            .send(crate::data::RuntimeData::Text("test output".to_string()))
+            .unwrap();
+
+        // Receive output
+        let output = session.recv_output().await.unwrap().unwrap();
+        if let crate::data::RuntimeData::Text(text) = output.data {
+            assert_eq!(text, "test output");
+        } else {
+            panic!("Expected Text data");
+        }
+
+        // Close session
+        session.close().await.unwrap();
+
+        // Verify session is no longer active
+        assert!(!session.is_active());
+
+        // Verify shutdown signal was sent
+        assert!(shutdown_rx.try_recv().is_ok());
     }
 }

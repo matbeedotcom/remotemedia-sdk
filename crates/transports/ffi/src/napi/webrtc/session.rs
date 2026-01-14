@@ -6,10 +6,9 @@
 use super::config::SessionInfo;
 use crate::webrtc::core::WebRtcServerCore;
 use napi::bindgen_prelude::*;
-use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
+use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -34,12 +33,6 @@ pub struct WebRtcSession {
 
     /// Peer left callbacks
     on_peer_left: Arc<Mutex<Vec<PeerLeftCallback>>>,
-
-    /// Event listener running flag
-    event_listener_running: Arc<AtomicBool>,
-
-    /// Event listener task handle
-    event_listener_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl WebRtcSession {
@@ -50,8 +43,22 @@ impl WebRtcSession {
             session_id,
             on_peer_joined: Arc::new(Mutex::new(Vec::new())),
             on_peer_left: Arc::new(Mutex::new(Vec::new())),
-            event_listener_running: Arc::new(AtomicBool::new(false)),
-            event_listener_handle: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Emit peer joined event to all registered callbacks
+    async fn emit_peer_joined(&self, peer_id: &str) {
+        let callbacks = self.on_peer_joined.lock().await;
+        for callback in callbacks.iter() {
+            callback.call(peer_id.to_string(), ThreadsafeFunctionCallMode::NonBlocking);
+        }
+    }
+
+    /// Emit peer left event to all registered callbacks
+    async fn emit_peer_left(&self, peer_id: &str) {
+        let callbacks = self.on_peer_left.lock().await;
+        for callback in callbacks.iter() {
+            callback.call(peer_id.to_string(), ThreadsafeFunctionCallMode::NonBlocking);
         }
     }
 }
@@ -186,7 +193,11 @@ impl WebRtcSession {
         self.core
             .add_peer_to_session(&self.session_id, &peer_id)
             .await
-            .map_err(|e| Error::from_reason(e.to_string()))
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+
+        // Emit peer_joined event to all registered callbacks
+        self.emit_peer_joined(&peer_id).await;
+        Ok(())
     }
 
     /// Remove a peer from this session
@@ -197,7 +208,11 @@ impl WebRtcSession {
         self.core
             .remove_peer_from_session(&self.session_id, &peer_id)
             .await
-            .map_err(|e| Error::from_reason(e.to_string()))
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+
+        // Emit peer_left event to all registered callbacks
+        self.emit_peer_left(&peer_id).await;
+        Ok(())
     }
 
     /// Get session info

@@ -214,4 +214,29 @@ mod tests {
         assert!(event1.is_health());
         assert!(event2.is_health());
     }
+
+    #[tokio::test]
+    async fn test_multi_sink() {
+        // Create two channel sinks
+        let (channel_sink1, mut receiver1) = ChannelSink::with_default_capacity();
+        let (channel_sink2, mut receiver2) = ChannelSink::with_default_capacity();
+
+        // Create multi-sink and add both channel sinks
+        let mut multi_sink = MultiSink::new();
+        multi_sink.add_sink(Box::new(channel_sink1));
+        multi_sink.add_sink(Box::new(channel_sink2));
+
+        // Emit event through multi-sink
+        multi_sink.emit(HealthEvent::health(0.95, vec![])).unwrap();
+
+        // Both receivers should get the event
+        let event1 = receiver1.recv().await.unwrap();
+        let event2 = receiver2.recv().await.unwrap();
+
+        assert!(event1.is_health());
+        assert!(event2.is_health());
+
+        // Close should work
+        multi_sink.close().unwrap();
+    }
 }

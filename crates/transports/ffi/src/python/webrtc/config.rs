@@ -4,7 +4,6 @@
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use pyo3::IntoPyObjectExt;
 use serde_json;
 use std::collections::HashMap;
 
@@ -122,7 +121,7 @@ impl WebRtcServerConfig {
 
     /// Get manifest as Python dict
     #[getter]
-    fn manifest(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn manifest(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let value: serde_json::Value = serde_json::from_str(&self.manifest_json)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         json_to_python(py, &value)
@@ -255,7 +254,7 @@ pub struct PeerInfo {
 impl PeerInfo {
     /// Get metadata as Python dict
     #[getter]
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (k, v) in &self.metadata_map {
             dict.set_item(k, v)?;
@@ -308,7 +307,7 @@ pub struct SessionInfo {
 impl SessionInfo {
     /// Get metadata as Python dict
     #[getter]
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (k, v) in &self.metadata_map {
             dict.set_item(k, v)?;
