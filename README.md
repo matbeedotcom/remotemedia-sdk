@@ -44,15 +44,26 @@ See [CLI Reference](examples/cli/remotemedia-cli/README.md) for full documentati
 ### Option B: Rust Library
 
 ```rust
-use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_runtime_core::{
+    manifest::Manifest,
+    transport::{PipelineExecutor, StreamSession, TransportData},
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let runner = PipelineRunner::new()?;
+    let executor = PipelineExecutor::new()?;
     let manifest = Manifest::from_file("pipeline.yaml")?;
 
-    let output = runner.execute_unary(manifest.into(), input).await?;
-    println!("{:?}", output.data);
+    // Create a streaming session
+    let mut session = executor.create_session(manifest.into()).await?;
+
+    // Send input and receive output
+    session.send_input(TransportData::new(input)).await?;
+    if let Some(output) = session.recv_output().await? {
+        println!("{:?}", output.data);
+    }
+
+    session.close().await?;
     Ok(())
 }
 ```
