@@ -25,7 +25,7 @@
 //! │  ├─ SessionManager (pipeline sessions)                 │
 //! │  └─ SessionRouter (routes data: peers ↔ pipeline)     │
 //! │     ↓                                                   │
-//! │  remotemedia-runtime-core::PipelineRunner              │
+//! │  remotemedia-runtime-core::PipelineExecutor            │
 //! └────────────────────────────────────────────────────────┘
 //! ```
 //!
@@ -33,7 +33,7 @@
 //!
 //! ```
 //! use remotemedia_webrtc::{WebRtcTransport, WebRtcTransportConfig};
-//! use remotemedia_runtime_core::PipelineRunner;
+//! use remotemedia_runtime_core::transport::PipelineExecutor;
 //!
 //! // Configure transport
 //! let config = WebRtcTransportConfig {
@@ -44,8 +44,8 @@
 //! };
 //!
 //! // Create transport
-//! let runner = PipelineRunner::new()?;
-//! let transport = WebRtcTransport::new(config, runner).await?;
+//! let executor = PipelineExecutor::new()?;
+//! let transport = WebRtcTransport::new(config, executor).await?;
 //!
 //! // Connect to peer
 //! let peer_id = transport.connect_peer("peer-abc123").await?;

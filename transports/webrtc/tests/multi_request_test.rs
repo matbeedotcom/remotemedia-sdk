@@ -6,7 +6,7 @@
 use remotemedia_runtime_core::{
     data::RuntimeData,
     manifest::Manifest,
-    transport::{PipelineRunner, StreamSession, TransportData},
+    transport::{PipelineExecutor, StreamSession, TransportData},
 };
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
@@ -42,12 +42,12 @@ async fn test_multi_request_streaming_session() {
     let manifest: Manifest = serde_json::from_str(manifest_json).expect("Failed to parse manifest");
     let manifest = Arc::new(manifest);
 
-    // Create pipeline runner
-    let runner = PipelineRunner::new().expect("Failed to create pipeline runner");
+    // Create pipeline executor
+    let runner = PipelineExecutor::new().expect("Failed to create pipeline executor");
 
     // Create streaming session
     let mut session = runner
-        .create_stream_session(Arc::clone(&manifest))
+        .create_session(Arc::clone(&manifest))
         .await
         .expect("Failed to create streaming session");
 

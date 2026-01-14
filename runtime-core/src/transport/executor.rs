@@ -1,21 +1,14 @@
 //! PipelineExecutor - Unified facade for transport layers
 //!
-//! This module provides a clean facade replacing PipelineRunner with:
+//! This module provides:
 //! - SessionHandle for streaming sessions
 //! - PipelineExecutor as unified entry point
 //! - Unary and streaming execution modes
 //! - Factory registration support
 //!
-//! # Migration
-//!
-//! PipelineRunner is deprecated. Use PipelineExecutor instead:
+//! # Usage
 //!
 //! ```ignore
-//! // Old way (deprecated)
-//! let runner = PipelineRunner::new()?;
-//! let result = runner.execute_unary(manifest, input).await?;
-//!
-//! // New way
 //! let executor = PipelineExecutor::new()?;
 //! let result = executor.execute_unary(manifest, input).await?;
 //! ```
@@ -187,8 +180,7 @@ impl crate::transport::StreamSession for SessionHandle {
 
 /// Unified facade for transport pipeline execution
 ///
-/// PipelineExecutor replaces PipelineRunner with a cleaner API and
-/// production-grade execution features.
+/// PipelineExecutor provides a clean API with production-grade execution features.
 ///
 /// # Features
 ///

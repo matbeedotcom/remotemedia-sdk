@@ -7,7 +7,7 @@
 
 use remotemedia_grpc::{metrics::ServiceMetrics, ServiceConfig, StreamingServiceImpl};
 use remotemedia_runtime_core::data::PixelFormat;
-use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_runtime_core::transport::PipelineExecutor;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 use tonic::transport::Server;
@@ -19,8 +19,8 @@ async fn start_test_server() -> (String, tokio::task::JoinHandle<()>) {
     let local_addr = listener.local_addr().unwrap();
     let server_url = format!("http://{}", local_addr);
 
-    // Create PipelineRunner
-    let runner = Arc::new(PipelineRunner::new().unwrap());
+    // Create PipelineExecutor
+    let runner = Arc::new(PipelineExecutor::new().unwrap());
 
     // Create service
     let config = ServiceConfig::default();
@@ -67,20 +67,16 @@ async fn test_grpc_server_starts_successfully() {
     );
     println!("  ✓ Successfully connected to server");
 
-    // Step 3: Verify PipelineRunner integration
-    println!("\n✅ Step 3: Verifying PipelineRunner integration...");
-    let runner = PipelineRunner::new().unwrap();
-    println!("  ✓ PipelineRunner created successfully");
+    // Step 3: Verify PipelineExecutor integration
+    println!("\n✅ Step 3: Verifying PipelineExecutor integration...");
+    let executor = PipelineExecutor::new().unwrap();
+    println!("  ✓ PipelineExecutor created successfully");
 
-    let _executor = runner.executor();
-    println!("  ✓ Executor accessible from runner");
-
-    let registry = runner.create_streaming_registry();
-    println!("  ✓ StreamingNodeRegistry created");
-    println!("  ✓ VideoFlip node should be registered");
+    // Access the registry to verify node types
+    let node_types = executor.list_node_types().await;
+    println!("  ✓ Node registry accessible from executor");
 
     // Verify VideoFlip is in registry
-    let node_types = registry.list_types();
     assert!(
         node_types.contains(&"VideoFlip".to_string()),
         "VideoFlip not found in registry. Available types: {:?}",
@@ -92,10 +88,9 @@ async fn test_grpc_server_starts_successfully() {
     println!("\n✅ Validated:");
     println!("   1. Server startup ✓");
     println!("   2. Client connection ✓");
-    println!("   3. PipelineRunner integration ✓");
-    println!("   4. Executor accessibility ✓");
-    println!("   5. StreamingNodeRegistry creation ✓");
-    println!("   6. VideoFlip node registration ✓");
+    println!("   3. PipelineExecutor integration ✓");
+    println!("   4. Registry accessibility ✓");
+    println!("   5. VideoFlip node registration ✓");
 }
 
 #[tokio::test]
@@ -132,7 +127,7 @@ async fn test_multiple_concurrent_clients() {
 
 #[tokio::test]
 async fn test_pipeline_runner_end_to_end() {
-    println!("\n🧪 Testing PipelineRunner End-to-End\n");
+    println!("\n🧪 Testing PipelineExecutor End-to-End\n");
 
     use remotemedia_runtime_core::{
         data::RuntimeData,
@@ -140,9 +135,9 @@ async fn test_pipeline_runner_end_to_end() {
         transport::{StreamSession, TransportData},
     };
 
-    // Create runner
-    let runner = Arc::new(PipelineRunner::new().unwrap());
-    println!("✓ PipelineRunner created");
+    // Create executor
+    let executor = Arc::new(PipelineExecutor::new().unwrap());
+    println!("✓ PipelineExecutor created");
 
     // Create manifest with VideoFlip
     let manifest_json = r#"{
@@ -167,11 +162,11 @@ async fn test_pipeline_runner_end_to_end() {
     println!("✓ Manifest parsed");
 
     // Create streaming session
-    let mut session = runner
-        .create_stream_session(Arc::new(manifest))
+    let mut session = executor
+        .create_session(Arc::new(manifest))
         .await
         .unwrap();
-    println!("✓ Session created: {}", session.session_id());
+    println!("✓ Session created: {}", session.session_id);
 
     // Send test frame
     let test_frame = RuntimeData::Video {
@@ -189,6 +184,7 @@ async fn test_pipeline_runner_end_to_end() {
         format: PixelFormat::Rgb24,
         frame_number: 0,
         timestamp_us: 0,
+        arrival_ts_us: None,
     };
 
     session
@@ -222,5 +218,5 @@ async fn test_pipeline_runner_end_to_end() {
     session.close().await.unwrap();
     println!("✓ Session closed");
 
-    println!("\n🎉 PipelineRunner end-to-end test passed!");
+    println!("\n🎉 PipelineExecutor end-to-end test passed!");
 }

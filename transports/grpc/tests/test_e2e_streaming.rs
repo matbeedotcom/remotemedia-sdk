@@ -1,19 +1,19 @@
 //! End-to-end integration test for gRPC streaming pipeline with real data
 //!
 //! This test validates the complete transport decoupling implementation:
-//! - Client → gRPC Transport → PipelineRunner → Executor → Nodes → Results
+//! - Client → gRPC Transport → PipelineExecutor → Executor → Nodes → Results
 //! - Real audio data processing through the pipeline
 //! - Streaming bidirectional communication
 
 use remotemedia_grpc::{GrpcServer, ServiceConfig};
-use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_runtime_core::transport::PipelineExecutor;
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 
 /// Integration test: Stream real audio data through a pipeline
 ///
 /// This test validates:
-/// 1. Server starts with PipelineRunner
+/// 1. Server starts with PipelineExecutor
 /// 2. Client can connect via gRPC
 /// 3. Audio data flows through the pipeline
 /// 4. Results stream back to client
@@ -27,11 +27,11 @@ async fn test_e2e_audio_streaming_pipeline() -> Result<(), Box<dyn std::error::E
 
     tracing::info!("Starting end-to-end streaming integration test");
 
-    // Phase 1: Create PipelineRunner (transport-agnostic core)
+    // Phase 1: Create PipelineExecutor (transport-agnostic core)
     let runner = Arc::new(
-        PipelineRunner::new().map_err(|e| format!("Failed to create PipelineRunner: {}", e))?,
+        PipelineExecutor::new().map_err(|e| format!("Failed to create PipelineExecutor: {}", e))?,
     );
-    tracing::info!("✅ PipelineRunner created successfully");
+    tracing::info!("✅ PipelineExecutor created successfully");
 
     // Phase 2: Configure gRPC server
     let config = ServiceConfig {
@@ -39,7 +39,7 @@ async fn test_e2e_audio_streaming_pipeline() -> Result<(), Box<dyn std::error::E
         ..Default::default()
     };
 
-    // Phase 3: Create gRPC server with PipelineRunner
+    // Phase 3: Create gRPC server with PipelineExecutor
     let server = GrpcServer::new(config.clone(), runner.clone())
         .map_err(|e| format!("Failed to create GrpcServer: {}", e))?;
     tracing::info!("✅ GrpcServer created successfully");
@@ -62,13 +62,13 @@ async fn test_e2e_audio_streaming_pipeline() -> Result<(), Box<dyn std::error::E
     // Phase 6: Validate transport independence
     // This test validates that:
     // - gRPC transport (26/26 tests passing)
-    // - PipelineRunner abstraction works
+    // - PipelineExecutor abstraction works
     // - Zero transport dependencies in runtime-core
     tracing::info!("✅ Transport independence validated");
 
     // Phase 7: Summary
     println!("\n=== End-to-End Test Summary ===");
-    println!("✅ PipelineRunner creation: SUCCESS");
+    println!("✅ PipelineExecutor creation: SUCCESS");
     println!("✅ GrpcServer creation: SUCCESS");
     println!("✅ Server startup: SUCCESS");
     println!("✅ Transport independence: VERIFIED");
@@ -78,16 +78,16 @@ async fn test_e2e_audio_streaming_pipeline() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-/// Test: Validate PipelineRunner API surface
+/// Test: Validate PipelineExecutor API surface
 #[tokio::test]
 async fn test_pipeline_runner_api() -> Result<(), Box<dyn std::error::Error>> {
-    let runner = PipelineRunner::new()?;
+    let runner = PipelineExecutor::new()?;
 
     // Validate runner can be created and wrapped in Arc
     let runner_arc = Arc::new(runner);
     assert!(Arc::strong_count(&runner_arc) == 1);
 
-    tracing::info!("✅ PipelineRunner API validated");
+    tracing::info!("✅ PipelineExecutor API validated");
     Ok(())
 }
 
@@ -121,7 +121,7 @@ fn test_transport_decoupling_architecture() {
     println!("│  - RuntimeData ↔ Protobuf adapters    │");
     println!("│         ↓                              │");
     println!("│  remotemedia-runtime-core (v0.4.0)    │");
-    println!("│  - PipelineRunner (abstraction)       │");
+    println!("│  - PipelineExecutor (abstraction)       │");
     println!("│  - Executor (pipeline execution)       │");
     println!("│  - Node Registry (all nodes)          │");
     println!("│  - ZERO transport dependencies ✅     │");

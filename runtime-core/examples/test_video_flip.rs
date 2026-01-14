@@ -34,6 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         timestamp_us: 0,
         is_keyframe: true,
         stream_id: None,
+        arrival_ts_us: None,
     };
 
     let output = node.process(input_data).await?;
@@ -75,6 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         timestamp_us: 0,
         is_keyframe: true,
         stream_id: None,
+        arrival_ts_us: None,
     };
 
     let output = node.process(input_data).await?;
@@ -122,6 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         stream_id: None,
         frame_number: 0,
         timestamp_us: 0,
+        arrival_ts_us: None,
     };
 
     let output = node.process(input_data).await?;

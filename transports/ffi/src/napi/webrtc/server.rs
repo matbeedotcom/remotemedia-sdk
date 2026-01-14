@@ -13,7 +13,7 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use remotemedia_runtime_core::manifest::Manifest;
-use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_runtime_core::transport::PipelineExecutor;
 use remotemedia_webrtc::signaling::WebSocketSignalingServer;
 use remotemedia_webrtc::signaling::websocket::WebSocketServerHandle;
 use std::collections::HashMap;
@@ -277,10 +277,10 @@ impl WebRtcServer {
             .map_err(|e| Error::from_reason(format!("Invalid manifest: {}", e)))?;
         let manifest = Arc::new(manifest);
 
-        // Create PipelineRunner
+        // Create PipelineExecutor
         let runner = Arc::new(
-            PipelineRunner::new()
-                .map_err(|e| Error::from_reason(format!("Failed to create PipelineRunner: {}", e)))?,
+            PipelineExecutor::new()
+                .map_err(|e| Error::from_reason(format!("Failed to create PipelineExecutor: {}", e)))?,
         );
 
         // Build WebRTC transport configuration

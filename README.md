@@ -44,15 +44,26 @@ See [CLI Reference](examples/cli/remotemedia-cli/README.md) for full documentati
 ### Option B: Rust Library
 
 ```rust
-use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_runtime_core::{
+    manifest::Manifest,
+    transport::{PipelineExecutor, StreamSession, TransportData},
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let runner = PipelineRunner::new()?;
+    let executor = PipelineExecutor::new()?;
     let manifest = Manifest::from_file("pipeline.yaml")?;
 
-    let output = runner.execute_unary(manifest.into(), input).await?;
-    println!("{:?}", output.data);
+    // Create a streaming session
+    let mut session = executor.create_session(manifest.into()).await?;
+
+    // Send input and receive output
+    session.send_input(TransportData::new(input)).await?;
+    if let Some(output) = session.recv_output().await? {
+        println!("{:?}", output.data);
+    }
+
+    session.close().await?;
     Ok(())
 }
 ```
@@ -81,46 +92,46 @@ cargo run --bin grpc-server --release -p remotemedia-grpc
 
 ## Built-in Nodes
 
-### Audio Processing (Rust - Native Performance)
+41+ built-in nodes for audio, video, and text processing.
+
+### Audio & Transcription (Rust)
 
 | Node | Description |
 |------|-------------|
-| `WhisperNode` | Speech-to-text transcription (Whisper) |
-| `SileroVADNode` | Voice activity detection |
-| `ResampleStreamingNode` | High-quality audio resampling |
+| `RustWhisperNode` | Speech-to-text (Whisper, auto-downloads models) |
+| `SileroVADNode` | Voice activity detection (ONNX) |
+| `FastResampleNode` | High-quality audio resampling |
 | `AudioChunkerNode` | Split audio into fixed-size chunks |
 | `AudioLevelNode` | RMS/peak level metering |
-| `SpeakerDiarizationNode` | Identify who spoke when |
 | `ClippingDetectorNode` | Detect audio clipping |
 | `SilenceDetectorNode` | Detect silence periods |
+| `ChannelBalanceNode` | Detect stereo imbalance |
 
-### Audio Processing (Python)
-
-| Node | Description |
-|------|-------------|
-| `KokoroTTSNode` | Text-to-speech synthesis |
-| `WhisperXTranscriber` | WhisperX transcription with alignment |
-| `AudioResampler` | Python-based resampling |
-| `VoiceActivityDetector` | Python VAD wrapper |
-
-### I/O Nodes
+### Text-to-Speech (Python)
 
 | Node | Description |
 |------|-------------|
-| `MicInputNode` | Microphone input capture |
-| `SpeakerOutputNode` | Speaker/headphone output |
+| `KokoroTTSNode` | TTS with 9 languages, streaming output |
+| `VibeVoiceTTSNode` | TTS with voice cloning support |
+
+### Transcription (Python)
+
+| Node | Description |
+|------|-------------|
+| `WhisperXNode` | WhisperX with word-level timestamps |
+| `HFWhisperNode` | HuggingFace Whisper models |
+
+### I/O & Utility
+
+| Node | Description |
+|------|-------------|
 | `MediaReaderNode` | Read audio/video files |
 | `MediaWriterNode` | Write audio/video files |
-
-### Utility Nodes
-
-| Node | Description |
-|------|-------------|
 | `PassThrough` | Forward data unchanged |
 | `RemotePipelineNode` | Execute on remote server |
-| `TextCollectorNode` | Accumulate text segments |
+| `TextCollectorNode` | Accumulate text into sentences |
 
-See [docs/NODE_CAPABILITIES.md](docs/NODE_CAPABILITIES.md) for full node reference.
+**[View Full Node Reference](docs/NODES.md)** - Complete documentation with all parameters.
 
 ## Project Structure
 
@@ -150,6 +161,7 @@ remotemedia-sdk/
 
 | Guide | Description |
 |-------|-------------|
+| [Node Reference](docs/NODES.md) | Complete node documentation with parameters |
 | [Runtime Core](runtime-core/README.md) | Core library API and usage |
 | [Transports](transports/README.md) | Transport implementations and error formats |
 | [CLI Reference](examples/cli/remotemedia-cli/README.md) | Command-line tool usage |

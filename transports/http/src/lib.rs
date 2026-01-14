@@ -37,10 +37,10 @@
 //!
 //! ```
 //! use remotemedia_http::HttpServer;
-//! use remotemedia_runtime_core::transport::PipelineRunner;
+//! use remotemedia_runtime_core::transport::PipelineExecutor;
 //!
-//! let runner = Arc::new(PipelineRunner::new(registry));
-//! let server = HttpServer::new("127.0.0.1:8080".to_string(), runner).await?;
+//! let executor = Arc::new(PipelineExecutor::new()?);
+//! let server = HttpServer::new("127.0.0.1:8080".to_string(), executor).await?;
 //! server.serve().await?;
 //! ```
 //!

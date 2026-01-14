@@ -11,7 +11,7 @@ use crate::generated::webrtc::{
     *,
 };
 use crate::peer::ServerPeer;
-use remotemedia_runtime_core::{manifest::Manifest, transport::PipelineRunner};
+use remotemedia_runtime_core::{manifest::Manifest, transport::PipelineExecutor};
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -48,7 +48,7 @@ pub struct WebRtcSignalingService {
     config: Arc<WebRtcTransportConfig>,
 
     /// Pipeline runner
-    runner: Arc<PipelineRunner>,
+    executor: Arc<PipelineExecutor>,
 
     /// Pipeline manifest
     manifest: Arc<Manifest>,
@@ -68,7 +68,7 @@ impl WebRtcSignalingService {
     /// Create a new signaling service
     pub fn new(
         config: Arc<WebRtcTransportConfig>,
-        runner: Arc<PipelineRunner>,
+        executor: Arc<PipelineExecutor>,
         manifest: Arc<Manifest>,
     ) -> Self {
         info!("Creating WebRTC signaling service");
@@ -80,7 +80,7 @@ impl WebRtcSignalingService {
             pending_offers: Arc::new(RwLock::new(HashMap::new())),
             server_peers: Arc::new(RwLock::new(HashMap::new())),
             config,
-            runner,
+            executor,
             manifest,
             start_time: SystemTime::now(),
         }
@@ -196,7 +196,7 @@ impl WebRtcSignaling for WebRtcSignalingService {
         let service_peers = Arc::clone(&self.peers);
         let server_peers = Arc::clone(&self.server_peers);
         let config = Arc::clone(&self.config);
-        let runner = Arc::clone(&self.runner);
+        let executor = Arc::clone(&self.executor);
         let manifest = Arc::clone(&self.manifest);
 
         // Spawn task to handle incoming messages
@@ -212,7 +212,7 @@ impl WebRtcSignaling for WebRtcSignalingService {
                             &pending_offers,
                             &server_peers,
                             &config,
-                            &runner,
+                            &executor,
                             &manifest,
                             &tx,
                             &mut peer_id,
@@ -329,7 +329,7 @@ impl WebRtcSignalingService {
         pending_offers: &Arc<RwLock<HashMap<String, PendingOffer>>>,
         server_peers: &Arc<RwLock<HashMap<String, Arc<ServerPeer>>>>,
         config: &Arc<WebRtcTransportConfig>,
-        runner: &Arc<PipelineRunner>,
+        executor: &Arc<PipelineExecutor>,
         manifest: &Arc<Manifest>,
         tx: &mpsc::Sender<Result<SignalingResponse, Status>>,
         peer_id: &mut Option<String>,
@@ -347,7 +347,7 @@ impl WebRtcSignalingService {
                     pending_offers,
                     server_peers,
                     config,
-                    runner,
+                    executor,
                     manifest,
                     tx,
                     peer_id,
@@ -466,7 +466,7 @@ impl WebRtcSignalingService {
         pending_offers: &Arc<RwLock<HashMap<String, PendingOffer>>>,
         server_peers: &Arc<RwLock<HashMap<String, Arc<ServerPeer>>>>,
         config: &Arc<WebRtcTransportConfig>,
-        runner: &Arc<PipelineRunner>,
+        executor: &Arc<PipelineExecutor>,
         manifest: &Arc<Manifest>,
         tx: &mpsc::Sender<Result<SignalingResponse, Status>>,
         from_peer_id: &Option<String>,
@@ -522,7 +522,7 @@ impl WebRtcSignalingService {
             let server_peer = match ServerPeer::new(
                 from_peer_id.clone(),
                 &**config,
-                Arc::clone(runner),
+                Arc::clone(executor),
                 Arc::clone(manifest),
             )
             .await

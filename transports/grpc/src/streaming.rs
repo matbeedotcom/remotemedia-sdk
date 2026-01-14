@@ -40,6 +40,8 @@ use remotemedia_runtime_core::{
     nodes::{python_streaming::PythonStreamingNode, StreamingNode, StreamingNodeRegistry},
     transport::PipelineExecutor,
 };
+#[cfg(feature = "multiprocess")]
+use remotemedia_runtime_core::python::multiprocess::MultiprocessExecutor;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -93,6 +95,10 @@ pub struct StreamingServiceImpl {
     /// Global node cache (shared across all sessions)
     /// Key: "{node_type}:{json_params_hash}", Value: cached node with timestamp
     global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>>,
+
+    /// Multiprocess executor for Python nodes (when multiprocess feature enabled)
+    #[cfg(feature = "multiprocess")]
+    multiprocess_executor: Option<Arc<MultiprocessExecutor>>,
 }
 
 impl StreamingServiceImpl {
@@ -146,7 +152,16 @@ impl StreamingServiceImpl {
             metrics,
             executor,
             global_node_cache,
+            #[cfg(feature = "multiprocess")]
+            multiprocess_executor: None,
         }
+    }
+
+    /// Set the multiprocess executor for Python node support
+    #[cfg(feature = "multiprocess")]
+    pub fn with_multiprocess_executor(mut self, executor: Arc<MultiprocessExecutor>) -> Self {
+        self.multiprocess_executor = Some(executor);
+        self
     }
 
     /// Get number of active sessions
@@ -512,9 +527,7 @@ async fn handle_stream(
     metrics: Arc<ServiceMetrics>,
     streaming_registry: Arc<StreamingNodeRegistry>,
     global_node_cache: Arc<RwLock<HashMap<String, CachedNode>>>,
-    #[cfg(feature = "multiprocess")] multiprocess_executor: Option<
-        Arc<crate::python::multiprocess::MultiprocessExecutor>,
-    >,
+    #[cfg(feature = "multiprocess")] multiprocess_executor: Option<Arc<MultiprocessExecutor>>,
 ) -> Result<(), ServiceError> {
     let mut session: Option<Arc<Mutex<StreamSession>>> = None;
     let mut session_id = String::new();

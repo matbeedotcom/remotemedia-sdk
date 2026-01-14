@@ -109,10 +109,10 @@ struct BenchmarkResult {
     control_outputs: usize,
 }
 
-/// Run speculative VAD coordinator through PipelineRunner
+/// Run speculative VAD coordinator through PipelineExecutor
 #[cfg(feature = "silero-vad")]
 async fn run_speculative_coordinator(audio: RuntimeData) -> BenchmarkResult {
-    let runner = PipelineRunner::new().expect("Failed to create PipelineRunner");
+    let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
     let manifest = Arc::new(create_speculative_manifest());
     
     let start = Instant::now();
@@ -226,10 +226,10 @@ async fn run_traditional_vad(audio: RuntimeData) -> BenchmarkResult {
     }
 }
 
-/// Run traditional VAD through PipelineRunner for fair comparison
+/// Run traditional VAD through PipelineExecutor for fair comparison
 #[cfg(feature = "silero-vad")]
 async fn run_traditional_via_runner(audio: RuntimeData) -> BenchmarkResult {
-    let runner = PipelineRunner::new().expect("Failed to create PipelineRunner");
+    let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
     let manifest = Arc::new(create_traditional_manifest());
     
     let start = Instant::now();
@@ -409,7 +409,7 @@ fn bench_multi_chunk_throughput(c: &mut Criterion) {
             chunk_count,
             |b, &count| {
                 b.to_async(&runtime).iter(|| async move {
-                    let runner = PipelineRunner::new().expect("Failed to create PipelineRunner");
+                    let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
                     let manifest = Arc::new(create_speculative_manifest());
                     let mut session = runner
                         .create_stream_session(manifest)

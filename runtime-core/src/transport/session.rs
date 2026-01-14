@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, Mutex};
 ///
 /// # Lifecycle
 ///
-/// 1. Created by `PipelineTransport::stream()` or `PipelineRunner::create_stream_session()`
+/// 1. Created by `PipelineTransport::stream()` or `PipelineExecutor::create_stream_session()`
 /// 2. Active: `send_input()` and `recv_output()` called repeatedly
 /// 3. Closed: `close()` called or error occurs
 /// 4. Terminal: session cannot be reused after close
@@ -90,7 +90,7 @@ pub trait StreamSession: Send + Sync {
 /// Concrete implementation of StreamSession provided by runtime-core
 ///
 /// This struct is the actual handle returned from
-/// `PipelineRunner::create_stream_session()`. It wraps internal channels
+/// `PipelineExecutor::create_stream_session()`. It wraps internal channels
 /// and state to communicate with the SessionRouter.
 pub struct StreamSessionHandle {
     /// Unique session identifier (UUID)
@@ -103,7 +103,7 @@ pub struct StreamSessionHandle {
 impl StreamSessionHandle {
     /// Create new session handle (internal use only)
     ///
-    /// This is called by PipelineRunner, not by transport implementations.
+    /// This is called by PipelineExecutor, not by transport implementations.
     pub(crate) fn new(
         session_id: String,
         input_tx: mpsc::UnboundedSender<crate::data::RuntimeData>,

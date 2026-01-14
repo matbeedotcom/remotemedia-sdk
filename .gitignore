@@ -210,3 +210,5 @@ nul
 .specify/
 
 **/vendor/*
+# Vendored native libraries
+vendor/

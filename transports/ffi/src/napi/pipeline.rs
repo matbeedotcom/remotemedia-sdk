@@ -282,6 +282,8 @@ impl NapiRuntimeData {
                 sample_rate,
                 channels,
                 stream_id: None,
+                timestamp_us: None,
+                arrival_ts_us: None,
             },
         })
     }
@@ -326,6 +328,7 @@ impl NapiRuntimeData {
                 timestamp_us: 0,
                 is_keyframe,
                 stream_id: None,
+                arrival_ts_us: None,
             },
         })
     }

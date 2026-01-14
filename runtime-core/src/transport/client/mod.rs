@@ -11,7 +11,7 @@
 //! │ RemoteNode  │  PipelineClient  │ gRPC/WebRTC  │
 //! │             │ ───────────────> │ Server       │
 //! │             │                  │              │
-//! │             │ <─────────────── │ PipelineRunner│
+//! │             │ <─────────────── │ PipelineExecutor│
 //! └─────────────┘                  └──────────────┘
 //! ```
 //!

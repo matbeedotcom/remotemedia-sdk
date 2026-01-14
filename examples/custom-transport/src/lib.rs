@@ -5,13 +5,13 @@
 //!
 //! This example shows a simple console-based transport that:
 //! - Reads input from stdin or function arguments
-//! - Executes pipeline via PipelineRunner
+//! - Executes pipeline via PipelineExecutor
 //! - Prints output to stdout
 //!
 //! Total implementation: ~80 lines (well under 100-line target)
 
 use remotemedia_runtime_core::transport::{
-    PipelineTransport, PipelineRunner, StreamSession, TransportData,
+    PipelineTransport, PipelineExecutor, StreamSession, TransportData,
 };
 use remotemedia_runtime_core::data::RuntimeData;
 use remotemedia_runtime_core::manifest::Manifest;
@@ -21,16 +21,16 @@ use std::sync::Arc;
 
 /// Simple console-based transport
 ///
-/// Uses PipelineRunner to execute pipelines and logs results to console.
+/// Uses PipelineExecutor to execute pipelines and logs results to console.
 pub struct ConsoleTransport {
-    runner: PipelineRunner,
+    runner: PipelineExecutor,
 }
 
 impl ConsoleTransport {
     /// Create new console transport
     pub fn new() -> Result<Self> {
         Ok(Self {
-            runner: PipelineRunner::new()?,
+            runner: PipelineExecutor::new()?,
         })
     }
 }

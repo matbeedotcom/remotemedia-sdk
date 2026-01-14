@@ -11,7 +11,7 @@ use super::events::{
     PipelineOutputEvent, SessionEvent, WebRtcEvent,
 };
 use remotemedia_runtime_core::manifest::Manifest;
-use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_runtime_core::transport::PipelineExecutor;
 use remotemedia_webrtc::signaling::{WebRtcEventBridge, WebSocketServerHandle, WebSocketSignalingServer};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -174,10 +174,10 @@ impl WebRtcServerCore {
             .map_err(|e| WebRtcError::config(format!("Invalid manifest: {}", e)))?;
         let manifest = Arc::new(manifest);
 
-        // Create PipelineRunner
+        // Create PipelineExecutor
         let runner = Arc::new(
-            PipelineRunner::new()
-                .map_err(|e| WebRtcError::Internal(format!("Failed to create PipelineRunner: {}", e)))?,
+            PipelineExecutor::new()
+                .map_err(|e| WebRtcError::Internal(format!("Failed to create PipelineExecutor: {}", e)))?,
         );
 
         // Build WebRTC transport configuration using the conversion helper

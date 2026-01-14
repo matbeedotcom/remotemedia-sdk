@@ -5,7 +5,7 @@
 use remotemedia_runtime_core::{
     data::{PixelFormat, RuntimeData},
     manifest::Manifest,
-    transport::{PipelineRunner, StreamSession, TransportData},
+    transport::{PipelineExecutor, StreamSession, TransportData},
 };
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
@@ -14,9 +14,9 @@ use tokio::time::{timeout, Duration};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🧪 End-to-End Streaming Pipeline Test\n");
 
-    // Create pipeline runner
-    let runner = Arc::new(PipelineRunner::new()?);
-    println!("✓ Created PipelineRunner");
+    // Create pipeline executor
+    let executor = Arc::new(PipelineExecutor::new()?);
+    println!("✓ Created PipelineExecutor");
 
     // Create a simple manifest with VideoFlip node
     let manifest_json = r#"{
@@ -42,8 +42,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✓ Created manifest with VideoFlip node");
 
     // Create streaming session
-    let mut session = runner.create_stream_session(manifest_arc.clone()).await?;
-    println!("✓ Created streaming session: {}", session.session_id());
+    let mut session = executor.create_session(manifest_arc.clone()).await?;
+    println!("✓ Created streaming session: {}", session.session_id);
 
     // Test 1: Send single frame through stream
     println!("\n📹 Test 1: Single frame streaming");
@@ -66,6 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             timestamp_us: 0,
             is_keyframe: true,
             stream_id: None,
+            arrival_ts_us: None,
         };
 
         // Send input (wrap in TransportData)
@@ -128,6 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 timestamp_us: i as u64 * 33333, // ~30 FPS
                 is_keyframe: true,
                 stream_id: None,
+                arrival_ts_us: None,
             };
 
             session.send_input(TransportData::new(input_data)).await?;

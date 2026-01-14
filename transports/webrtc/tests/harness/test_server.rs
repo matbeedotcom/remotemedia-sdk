@@ -4,7 +4,7 @@
 
 use super::{HarnessError, HarnessResult};
 use remotemedia_runtime_core::manifest::Manifest;
-use remotemedia_runtime_core::transport::PipelineRunner;
+use remotemedia_runtime_core::transport::PipelineExecutor;
 use remotemedia_webrtc::signaling::WebRtcSignalingService;
 use remotemedia_webrtc::WebRtcTransportConfig;
 use std::net::SocketAddr;
@@ -59,8 +59,8 @@ impl TestServer {
         let running_clone = Arc::clone(&running);
 
         // Create pipeline runner
-        let runner = Arc::new(PipelineRunner::new().map_err(|e| {
-            HarnessError::ServerError(format!("Failed to create PipelineRunner: {}", e))
+        let runner = Arc::new(PipelineExecutor::new().map_err(|e| {
+            HarnessError::ServerError(format!("Failed to create PipelineExecutor: {}", e))
         })?);
 
         // Create WebRTC config
