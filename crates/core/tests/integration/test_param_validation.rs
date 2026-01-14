@@ -39,7 +39,7 @@ async fn test_no_node_instantiation_on_validation_failure() {
     // We'll use a node type that we know has a schema
     let manifest = create_test_manifest(vec![create_node(
         "test_node",
-        "SileroVAD",
+        "SileroVADNode",  // Use the correct registered name
         json!({
             "threshold": "invalid_string"  // Should be a number between 0-1
         }),
@@ -59,7 +59,7 @@ async fn test_no_node_instantiation_on_validation_failure() {
         Ok(()) => {
             // If validation passes, it means the node type doesn't have a schema
             // This is acceptable - we're testing that when schemas exist, validation works
-            println!("Note: SileroVAD schema not registered, skipping test");
+            println!("Note: SileroVADNode schema not registered, skipping test");
         }
         Err(other) => {
             panic!("Expected validation error or Ok, got: {:?}", other);
@@ -76,14 +76,14 @@ async fn test_multi_node_manifest_validation() {
     let manifest = create_test_manifest(vec![
         create_node(
             "valid_node",
-            "SileroVAD",
+            "SileroVADNode",  // Use the correct registered name
             json!({
                 "threshold": 0.5  // Valid parameter
             }),
         ),
         create_node(
             "invalid_node",
-            "SileroVAD",
+            "SileroVADNode",  // Use the correct registered name
             json!({
                 "threshold": -1.0  // Invalid: below minimum
             }),
@@ -122,7 +122,7 @@ async fn test_streaming_session_rejected_on_invalid_params() {
     // Create a manifest with invalid parameters
     let manifest = Arc::new(create_test_manifest(vec![create_node(
         "invalid_streaming_node",
-        "SileroVAD",
+        "SileroVADNode",  // Use the correct registered name
         json!({
             "threshold": "should_be_number"
         }),
@@ -157,10 +157,10 @@ async fn test_streaming_session_rejected_on_invalid_params() {
 async fn test_valid_manifest_passes_validation() {
     let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
 
-    // Create a valid manifest
+    // Create a valid manifest with a registered node type
     let manifest = create_test_manifest(vec![create_node(
         "valid_node",
-        "SileroVAD",
+        "SileroVADNode",  // Use the correct registered name
         json!({
             "threshold": 0.5
         }),
@@ -171,9 +171,9 @@ async fn test_valid_manifest_passes_validation() {
     assert!(result.is_ok(), "Valid manifest should pass validation");
 }
 
-/// Test that unknown node types pass validation (backward compatibility)
+/// Test that unknown node types are rejected during validation
 #[tokio::test]
-async fn test_unknown_node_type_passes_validation() {
+async fn test_unknown_node_type_rejected() {
     let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
 
     // Create a manifest with unknown node type
@@ -186,12 +186,23 @@ async fn test_unknown_node_type_passes_validation() {
         }),
     )]);
 
-    // Unknown node types should pass validation (no schema = no validation)
+    // Unknown node types should be rejected with an Execution error
     let result = runner.validate_manifest(&manifest).await;
-    assert!(
-        result.is_ok(),
-        "Unknown node type should pass validation for backward compatibility"
-    );
+    match result {
+        Err(Error::Execution(msg)) => {
+            assert!(
+                msg.contains("Unknown node type"),
+                "Error should mention unknown node type: {}",
+                msg
+            );
+        }
+        Ok(()) => {
+            panic!("Unknown node type should be rejected");
+        }
+        Err(other) => {
+            panic!("Expected Execution error for unknown node type, got: {:?}", other);
+        }
+    }
 }
 
 /// Test that empty manifest passes validation

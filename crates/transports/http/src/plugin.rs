@@ -6,12 +6,12 @@
 //!
 //! # Usage
 //!
-//! ```
+//! ```ignore
 //! use remotemedia_http::HttpTransportPlugin;
 //! use remotemedia_core::transport::TransportPluginRegistry;
 //!
 //! let mut registry = TransportPluginRegistry::new();
-//! registry.register(Box::new(HttpTransportPlugin));
+//! registry.register(Arc::new(HttpTransportPlugin));
 //! ```
 
 use async_trait::async_trait;

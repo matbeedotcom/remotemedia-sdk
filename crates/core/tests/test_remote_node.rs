@@ -129,7 +129,7 @@ async fn test_single_remote_node() {
 /// This test verifies that timeouts are enforced correctly.
 /// Currently disabled until mock server is implemented.
 #[tokio::test]
-
+#[ignore = "requires mock server implementation"]
 async fn test_remote_timeout() {
     let params = json!({
         "transport": "grpc",
@@ -163,7 +163,7 @@ async fn test_remote_timeout() {
 /// This test verifies that retries work correctly.
 /// Currently disabled until mock server is implemented.
 #[tokio::test]
-
+#[ignore = "requires mock server implementation"]
 async fn test_remote_retry() {
     let params = json!({
         "transport": "grpc",

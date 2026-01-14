@@ -57,9 +57,7 @@ ac-ffmpeg = { version = "0.19", optional = true }
 
 # IPC for multiprocess
 iceoryx2 = { workspace = true, optional = true }
-iceoryx2-bb-log = { workspace = true, optional = true }
-iceoryx2-bb-container = { workspace = true, optional = true }
-iceoryx2-bb-elementary = { workspace = true, optional = true }
+iceoryx2-log = { workspace = true, optional = true }
 
 # Logging and tracing
 tracing = { workspace = true }
@@ -146,7 +144,7 @@ tonic = { workspace = true }
 
 [features]
 default = ["multiprocess", "silero-vad", "docker", "video"]
-multiprocess = ["iceoryx2", "iceoryx2-bb-log", "iceoryx2-bb-container", "iceoryx2-bb-elementary"]
+multiprocess = ["iceoryx2", "iceoryx2-log"]
 silero-vad = ["ort"]
 speaker-diarization = ["ort", "dep:pyannote-rs"]
 grpc-client = ["tonic", "prost", "prost-types"]

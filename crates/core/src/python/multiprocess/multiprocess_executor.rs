@@ -144,6 +144,10 @@ pub struct MultiprocessConfig {
     /// Docker fallback policy when Docker is unavailable
     #[serde(default = "default_docker_fallback_policy")]
     pub docker_fallback_policy: DockerFallbackPolicy,
+
+    /// Additional Python path entries for module discovery
+    #[serde(default)]
+    pub python_path: Vec<std::path::PathBuf>,
 }
 
 /// Policy for handling Docker unavailability
@@ -191,6 +195,7 @@ impl Default for MultiprocessConfig {
             python_executable: std::path::PathBuf::from("python"),
             enable_backpressure: true,
             docker_fallback_policy: DockerFallbackPolicy::AllowWithWarning,
+            python_path: Vec::new(),
         }
     }
 }
@@ -1496,15 +1501,7 @@ impl MultiprocessExecutor {
         let channel_name = control_channel_name.clone();
         let node_id_clone = node_id.to_string();
 
-        // First, create the control channel (Python will open_or_create)
-        self.channel_registry
-            .create_channel(
-                &control_channel_name,
-                10,    // Small capacity for control messages
-                false, // No backpressure for control
-            )
-            .await?;
-
+        // Control channel was already created in initialize() before spawning Python
         // Now poll for the READY signal - need direct iceoryx2 subscriber (not RuntimeData wrapper)
         let ready = tokio::task::spawn_blocking(move || -> Result<bool> {
             let handle = tokio::runtime::Handle::current();
@@ -2043,6 +2040,7 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
         let (input_channel_name, output_channel_name, input_channel, output_channel) = {
             let input_channel_name = format!("{}_{}_input", session_id, ctx.node_id);
             let output_channel_name = format!("{}_{}_output", session_id, ctx.node_id);
+            let control_channel_name = format!("control/{}_{}", session_id, ctx.node_id);
 
             let input_channel = self
                 .channel_registry
@@ -2062,11 +2060,22 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
                 )
                 .await?;
 
+            // Create control channel BEFORE spawning process to avoid race condition
+            // Python will open this channel to send READY signal
+            self.channel_registry
+                .create_channel(
+                    &control_channel_name,
+                    10,    // Small capacity for control messages
+                    false, // No backpressure for control
+                )
+                .await?;
+
             tracing::debug!(
-                "Pre-created IPC channels for node {}: {}, {}",
+                "Pre-created IPC channels for node {}: {}, {}, {}",
                 ctx.node_id,
                 input_channel_name,
-                output_channel_name
+                output_channel_name,
+                control_channel_name
             );
 
             (
@@ -2353,6 +2362,24 @@ mod tests {
         // Use a shorter timeout for tests (30 seconds instead of 5 minutes)
         let mut config = MultiprocessConfig::default();
         config.init_timeout_secs = 30;
+
+        // Check for PYTHON_EXECUTABLE env var (e.g., for conda environments)
+        if let Ok(python_path) = std::env::var("PYTHON_EXECUTABLE") {
+            config.python_executable = std::path::PathBuf::from(python_path);
+        }
+
+        // Set python_path to the clients/python directory for package discovery
+        // This is needed because the spawned subprocess doesn't inherit the dev environment
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let python_client_path = manifest_dir
+            .parent() // crates
+            .and_then(|p| p.parent()) // remotemedia-sdk
+            .map(|p| p.join("clients/python"));
+        if let Some(path) = python_client_path {
+            if path.exists() {
+                config.python_path.push(path);
+            }
+        }
 
         let mut executor = MultiprocessExecutor::new(config);
 

@@ -325,11 +325,13 @@ impl PipelineExecutor {
         // Send input
         session.send_input(input).await?;
 
-        // Close input side to signal completion
+        // Wait for output BEFORE closing (close() shuts down the router)
+        let output = session.recv_output().await?;
+
+        // Close session after receiving output
         session.close().await?;
 
-        // Wait for output
-        match session.recv_output().await? {
+        match output {
             Some(output) => Ok(output),
             None => Err(crate::Error::Execution(
                 "No output from pipeline".to_string(),

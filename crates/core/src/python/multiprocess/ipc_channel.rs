@@ -9,7 +9,7 @@ use iceoryx2::prelude::*;
 #[cfg(feature = "multiprocess")]
 use iceoryx2::service::port_factory::publish_subscribe::PortFactory;
 #[cfg(feature = "multiprocess")]
-use iceoryx2_bb_log::set_log_level;
+use iceoryx2_log::set_log_level;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;

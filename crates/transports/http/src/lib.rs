@@ -15,7 +15,7 @@
 //!
 //! ## Client
 //!
-//! ```
+//! ```ignore
 //! use remotemedia_http::HttpPipelineClient;
 //! use remotemedia_core::transport::PipelineClient;
 //!
@@ -35,7 +35,7 @@
 //!
 //! ## Server
 //!
-//! ```
+//! ```ignore
 //! use remotemedia_http::HttpServer;
 //! use remotemedia_core::transport::PipelineExecutor;
 //!
@@ -46,12 +46,12 @@
 //!
 //! ## Plugin Registration
 //!
-//! ```
+//! ```ignore
 //! use remotemedia_http::HttpTransportPlugin;
 //! use remotemedia_core::transport::TransportPluginRegistry;
 //!
 //! let mut registry = TransportPluginRegistry::new();
-//! registry.register(Box::new(HttpTransportPlugin));
+//! registry.register(Arc::new(HttpTransportPlugin));
 //!
 //! // Create client via registry
 //! let client = registry.create_client("http", &config).await?;

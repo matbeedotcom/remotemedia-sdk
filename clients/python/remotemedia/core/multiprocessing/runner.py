@@ -174,14 +174,32 @@ class NodeRunner:
             # Create iceoryx2 node
             node = iox2.NodeBuilder.new().create(iox2.ServiceType.Ipc)
             
-            # Create control channel service for READY signal using dynamic slice
+            # Open control channel service for READY signal - Rust creates it first
             # Include session_id to avoid conflicts between sessions
             control_service_name = iox2.ServiceName.new(f"control/{self.config.session_id}_{self.config.node_id}")
-            control_service = (
-                node.service_builder(control_service_name)
-                .publish_subscribe(iox2.Slice[ctypes.c_uint8])
-                .open_or_create()
-            )
+
+            # Retry opening the control channel - Rust creates it first
+            max_control_retries = 50
+            control_retry_delay = 0.1  # 100ms
+            control_service = None
+
+            for attempt in range(max_control_retries):
+                try:
+                    control_service = (
+                        node.service_builder(control_service_name)
+                        .publish_subscribe(iox2.Slice[ctypes.c_uint8])
+                        .open()
+                    )
+                    logger.info(f"Opened control channel on attempt {attempt + 1}")
+                    break
+                except Exception as e:
+                    if attempt < max_control_retries - 1:
+                        await asyncio.sleep(control_retry_delay)
+                    else:
+                        raise RuntimeError(f"Failed to open control channel after {max_control_retries} attempts: {e}")
+
+            if control_service is None:
+                raise RuntimeError("Control service not opened")
             
             # Create publisher for control channel with dynamic allocation
             control_publisher = (

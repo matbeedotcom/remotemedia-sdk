@@ -223,6 +223,7 @@ impl ProcessManager {
     pub fn new(config: MultiprocessConfig) -> Self {
         let spawn_config = SpawnConfig {
             python_executable: config.python_executable.clone(),
+            python_path: config.python_path.clone(),
             ..Default::default()
         };
 

@@ -402,7 +402,7 @@ pub const VAD_MANIFEST: &str = r#"
     "nodes": [
         {
             "id": "vad",
-            "node_type": "SileroVad",
+            "node_type": "SileroVADNode",
             "params": {
                 "threshold": 0.5,
                 "sample_rate": 16000

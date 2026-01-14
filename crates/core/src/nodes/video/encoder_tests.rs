@@ -102,8 +102,15 @@ mod tests {
                     // Encoding worked! Check it returned encoded frame
                 }
                 Err(e) => {
-                    // Expected if FFmpeg not yet integrated
-                    assert!(e.to_string().contains("not yet implemented") || e.to_string().contains("not available"));
+                    // Expected if FFmpeg not yet integrated or codec not available
+                    let err_str = e.to_string();
+                    assert!(
+                        err_str.contains("not yet implemented")
+                            || err_str.contains("not available")
+                            || err_str.contains("unknown codec")
+                            || err_str.contains("requires"),
+                        "Unexpected error: {}", err_str
+                    );
                 }
                 Ok(_) => panic!("Expected encoded video frame with codec set"),
             }

@@ -13,7 +13,7 @@
 //!
 //! # Usage
 //!
-//! ```
+//! ```ignore
 //! use remotemedia_http::HttpPipelineClient;
 //!
 //! let client = HttpPipelineClient::new("http://localhost:8080", None).await?;
@@ -58,7 +58,7 @@ impl HttpPipelineClient {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```ignore
     /// let client = HttpPipelineClient::new("http://localhost:8080", None).await?;
     /// ```
     pub async fn new(base_url: impl Into<String>, auth_token: Option<String>) -> Result<Self> {
