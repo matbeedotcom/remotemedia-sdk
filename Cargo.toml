@@ -1,15 +1,19 @@
 [workspace]
 members = [
-    "runtime-core",  # Core abstractions
-    "runtime-core-derive",  # Proc-macros for NodeConfig
-    "transports/grpc",  # gRPC transport
-    "transports/ffi",   # Python FFI transport
-    "transports/webrtc", # WebRTC transport
-    "transports/http",  # HTTP/REST transport with SSE
-    "adapters/ingest-rtmp",  # RTMP ingestion adapter
-    "libs/stream-health-analyzer",  # Shared stream health analysis
-    "libs/pipeline-runner",  # Shared pipeline execution
-    "services/ingest-srt",  # SRT ingest gateway
+    "crates/core",  # Core abstractions
+    "crates/core-derive",  # Proc-macros for NodeConfig
+    "crates/candle-nodes",  # Candle ML inference nodes
+    "crates/transports/grpc",  # gRPC transport
+    "crates/transports/ffi",   # Python FFI transport
+    "crates/transports/webrtc", # WebRTC transport
+    "crates/transports/http",  # HTTP/REST transport with SSE
+    "crates/adapters/ingest-rtmp",  # RTMP ingestion adapter
+    "crates/libs/stream-health-analyzer",  # Shared stream health analysis
+    "crates/libs/pipeline-runner",  # Shared pipeline execution
+    "crates/services/ingest-srt",  # SRT ingest gateway
+    "crates/services/grpc-server",  # gRPC server binary
+    "crates/services/http-server",  # HTTP server binary
+    "crates/services/webrtc-server",  # WebRTC server binary
 ]
 exclude = [
     "examples/*",  # Examples are independent projects demonstrating usage
@@ -75,10 +79,8 @@ pyo3-async-runtimes = { version = "0.26", features = ["tokio-runtime"] }
 numpy = "0.26"
 
 # IPC for multiprocess
-iceoryx2 = "0.7.0"
-iceoryx2-bb-log = "0.7.0"
-iceoryx2-bb-container = "0.7.0"
-iceoryx2-bb-elementary = "0.7.0"
+iceoryx2 = "0.8.0"
+iceoryx2-log = "0.8.0"
 
 # Logging and tracing
 tracing = "0.1"

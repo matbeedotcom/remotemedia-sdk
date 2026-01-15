@@ -4,9 +4,9 @@
 //! through a custom transport.
 
 use custom_transport_example::ConsoleTransport;
-use remotemedia_runtime_core::transport::{PipelineTransport, StreamSession, TransportData};
-use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::manifest::Manifest;
+use remotemedia_core::transport::{PipelineTransport, StreamSession, TransportData};
+use remotemedia_core::data::RuntimeData;
+use remotemedia_core::manifest::Manifest;
 use std::sync::Arc;
 
 #[tokio::main]

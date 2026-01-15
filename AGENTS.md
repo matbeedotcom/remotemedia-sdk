@@ -20,6 +20,8 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 ## Active Technologies
 - Rust 1.75+ (workspace rust-version) + tokio (async runtime), hdrhistogram (P50/P95/P99), bitflags 2.4+ (alerts), serde (serialization) (026-streaming-scheduler-migration)
 - In-memory only (metrics, drift buffers); no persistence (026-streaming-scheduler-migration)
+- Candle ML framework (candle-core, candle-nn, candle-transformers) + hf-hub for HuggingFace model downloads (034-candle-ml-integration)
 
 ## Recent Changes
 - 026-streaming-scheduler-migration: Added Rust 1.75+ (workspace rust-version) + tokio (async runtime), hdrhistogram (P50/P95/P99), bitflags 2.4+ (alerts), serde (serialization)
+- 034-candle-ml-integration: Added native Rust ML inference nodes (Whisper, YOLO, Phi, LLaMA) via Candle framework in `crates/candle-nodes`

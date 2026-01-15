@@ -81,13 +81,19 @@ pipeline = Pipeline(
 pipeline.run()
 ```
 
-### Option D: gRPC Server
+### Option D: Server Binaries
 
 ```bash
-# Start the server
-cargo run --bin grpc-server --release -p remotemedia-grpc
+# gRPC server (high-performance pipeline execution)
+cargo run -p remotemedia-grpc-server --release
 
-# Connect from any gRPC client (Python, Node.js, Go, etc.)
+# HTTP server (REST API with SSE streaming)
+cargo run -p remotemedia-http-server --release
+
+# WebRTC server (real-time media streaming)
+cargo run -p remotemedia-webrtc-server --release -- --mode grpc
+
+# Connect from any client (Python, Node.js, Go, browser, etc.)
 ```
 
 ## Built-in Nodes
@@ -139,14 +145,17 @@ cargo run --bin grpc-server --release -p remotemedia-grpc
 remotemedia-sdk/
 ├── runtime-core/          # Core execution engine (transport-agnostic)
 ├── transports/
-│   ├── grpc/              # gRPC transport + server binary
-│   ├── http/              # HTTP/REST with SSE streaming
+│   ├── grpc/              # gRPC transport library
+│   ├── http/              # HTTP/REST transport library
 │   ├── ffi/               # Python FFI (PyO3)
-│   └── webrtc/            # WebRTC real-time streaming
+│   └── webrtc/            # WebRTC transport library
 ├── libs/
 │   ├── pipeline-runner/   # Shared pipeline execution
 │   └── stream-health-analyzer/  # Health monitoring utilities
 ├── services/
+│   ├── grpc-server/       # gRPC server binary
+│   ├── http-server/       # HTTP server binary
+│   ├── webrtc-server/     # WebRTC server binary
 │   └── ingest-srt/        # SRT ingest gateway
 ├── python-client/         # Python SDK
 ├── examples/              # Example applications

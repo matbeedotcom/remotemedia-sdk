@@ -33,7 +33,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use commands::{nodes as nodes_cmd, remote, run, serve, servers, stream, validate};
+use commands::{models, nodes as nodes_cmd, remote, run, serve, servers, stream, validate};
 
 /// RemoteMedia SDK command-line interface
 #[derive(Parser)]
@@ -92,6 +92,9 @@ enum Commands {
         #[command(subcommand)]
         command: servers::ServersCommand,
     },
+
+    /// Manage Candle ML model cache
+    Models(models::ModelsArgs),
 }
 
 #[tokio::main]
@@ -127,6 +130,7 @@ async fn main() -> Result<()> {
         Commands::Servers { command } => {
             servers::execute(command, &config, cli.output_format).await
         }
+        Commands::Models(args) => models::run(args).await,
     };
 
     // Handle exit codes

@@ -49,9 +49,9 @@ use remotemedia_cli::{
     io::{detect_input_source, InputReader, InputSource},
     pipeline,
 };
-use remotemedia_runtime_core::data::RuntimeData;
-use remotemedia_runtime_core::manifest::{Manifest, NodeManifest};
-use remotemedia_runtime_core::ingestion::{
+use remotemedia_core::data::RuntimeData;
+use remotemedia_core::manifest::{Manifest, NodeManifest};
+use remotemedia_core::ingestion::{
     global_ingest_registry, IngestConfig, IngestStatus, AudioConfig,
 };
 use std::sync::Arc;
@@ -636,7 +636,7 @@ fn create_health_manifest(args: &Args) -> Manifest {
             // Fallback to creating a minimal manifest
             Manifest {
                 version: "v1".to_string(),
-                metadata: remotemedia_runtime_core::manifest::ManifestMetadata {
+                metadata: remotemedia_core::manifest::ManifestMetadata {
                     name: "stream-health".to_string(),
                     description: Some("Stream health monitoring".to_string()),
                     created_at: None,
@@ -817,7 +817,7 @@ async fn run_health_analysis(
 
 /// Run health analysis in unary mode (complete audio in memory)
 async fn run_unary_analysis(
-    runner: &remotemedia_runtime_core::transport::PipelineExecutor,
+    runner: &remotemedia_core::transport::PipelineExecutor,
     manifest: Arc<Manifest>,
     samples: Vec<f32>,
     sample_rate: u32,
@@ -899,7 +899,7 @@ async fn run_unary_analysis(
 
 /// Run health analysis in streaming mode (continuous input)
 async fn run_streaming_analysis(
-    runner: &remotemedia_runtime_core::transport::PipelineExecutor,
+    runner: &remotemedia_core::transport::PipelineExecutor,
     manifest: Arc<Manifest>,
     reader: &mut InputReader,
     sample_rate: u32,

@@ -16,7 +16,7 @@ path = "src/main.rs"
 remotemedia-cli = { path = "../remotemedia-cli" }
 
 # SDK core
-remotemedia-runtime-core = { workspace = true }
+remotemedia-core = { workspace = true }
 
 # CLI framework
 clap = { workspace = true }

@@ -1,0 +1,30 @@
+[package]
+name = "remotemedia-http-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "HTTP/REST server binary for RemoteMedia pipeline execution with SSE streaming"
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "http-server"
+path = "src/main.rs"
+
+[dependencies]
+# Transport library
+remotemedia-http = { path = "../../transports/http", default-features = true }
+
+# Core runtime
+remotemedia-core = { path = "../../core", default-features = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Server utilities
+num_cpus = { workspace = true }

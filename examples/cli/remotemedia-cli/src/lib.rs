@@ -41,7 +41,7 @@
 //!
 //! ```no_run
 //! use remotemedia_cli::{audio, io, pipeline, ffmpeg};
-//! use remotemedia_runtime_core::data::RuntimeData;
+//! use remotemedia_core::data::RuntimeData;
 //!
 //! # async fn example() -> anyhow::Result<()> {
 //! // Parse embedded pipeline YAML

@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args;
-use remotemedia_runtime_core::data::RuntimeData;
+use remotemedia_core::data::RuntimeData;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

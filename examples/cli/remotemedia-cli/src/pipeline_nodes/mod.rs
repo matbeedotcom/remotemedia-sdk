@@ -58,6 +58,6 @@ pub use registry::{
 ///
 /// This is a convenience function that returns a streaming registry
 /// with all CLI nodes pre-registered.
-pub fn register_cli_nodes() -> remotemedia_runtime_core::nodes::streaming_node::StreamingNodeRegistry {
+pub fn register_cli_nodes() -> remotemedia_core::nodes::streaming_node::StreamingNodeRegistry {
     create_cli_streaming_registry()
 }

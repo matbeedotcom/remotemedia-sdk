@@ -22,6 +22,7 @@ anyhow.workspace = true
 candle-core = { git = "https://github.com/huggingface/candle", optional = true }
 candle-nn = { git = "https://github.com/huggingface/candle", optional = true }
 candle-transformers = { git = "https://github.com/huggingface/candle", optional = true }
+candle-onnx = { git = "https://github.com/huggingface/candle", optional = true }
 
 # HuggingFace Hub for model downloads
 hf-hub = { version = "0.4", default-features = false, features = ["tokio", "ureq", "rustls-tls"], optional = true }
@@ -54,13 +55,14 @@ default = []
 whisper = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:hf-hub", "dep:tokenizers"]
 yolo = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:hf-hub"]
 llm = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:hf-hub", "dep:tokenizers"]
+vad = ["dep:candle-core", "dep:candle-onnx", "dep:hf-hub"]
 
 # Hardware acceleration features
 cuda = ["candle-core?/cuda", "candle-nn?/cuda", "candle-transformers?/cuda"]
 metal = ["candle-core?/metal", "candle-nn?/metal", "candle-transformers?/metal"]
 
 # Convenience feature for all models
-all-models = ["whisper", "yolo", "llm"]
+all-models = ["whisper", "yolo", "llm", "vad"]
 
 [[bench]]
 name = "inference_bench"
@@ -69,3 +71,7 @@ harness = false
 [[example]]
 name = "whisper_test"
 required-features = ["whisper"]
+
+[[example]]
+name = "vad_test"
+required-features = ["vad"]
