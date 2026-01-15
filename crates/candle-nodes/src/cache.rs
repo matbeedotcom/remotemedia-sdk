@@ -89,7 +89,7 @@ impl ModelCache {
     }
 
     /// Download a model file from HuggingFace Hub
-    #[cfg(any(feature = "whisper", feature = "yolo", feature = "llm"))]
+    #[cfg(any(feature = "whisper", feature = "yolo", feature = "llm", feature = "vad"))]
     pub async fn download_model(
         &self,
         model_id: &str,

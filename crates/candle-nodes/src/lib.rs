@@ -33,6 +33,9 @@ pub mod yolo;
 #[cfg(feature = "llm")]
 pub mod llm;
 
+#[cfg(feature = "vad")]
+pub mod vad;
+
 mod device;
 mod cache;
 mod convert;
@@ -56,3 +59,6 @@ pub use yolo::{YoloNode, YoloConfig, YoloNodeFactory, DetectionResult, Detection
 
 #[cfg(feature = "llm")]
 pub use llm::{PhiNode, LlamaNode, LlmConfig, GenerationConfig};
+
+#[cfg(feature = "vad")]
+pub use vad::{SileroVadNode, VadConfig, VadSampleRate, SileroVadNodeFactory, VadOutput, SpeechSegment};

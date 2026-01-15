@@ -168,7 +168,7 @@ impl DeviceSelector {
 }
 
 /// Convert InferenceDevice to candle_core::Device
-#[cfg(any(feature = "whisper", feature = "yolo", feature = "llm"))]
+#[cfg(any(feature = "whisper", feature = "yolo", feature = "llm", feature = "vad"))]
 impl TryFrom<&InferenceDevice> for candle_core::Device {
     type Error = CandleNodeError;
 
