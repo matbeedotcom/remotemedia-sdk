@@ -56,6 +56,13 @@ impl WhisperModel {
             Self::LargeV3 => 1_500_000_000,
         }
     }
+
+    /// Check if model supports multiple languages
+    pub fn is_multilingual(&self) -> bool {
+        // All standard whisper models are multilingual
+        // English-only models would be "tiny.en", "base.en", etc.
+        true
+    }
 }
 
 impl Default for WhisperModel {

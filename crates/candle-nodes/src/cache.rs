@@ -102,7 +102,7 @@ impl ModelCache {
         
         let api = Api::new().map_err(|e| CandleNodeError::ModelDownload {
             model: model_id.to_string(),
-            source: "huggingface.co".to_string(),
+            download_source: "huggingface.co".to_string(),
             message: e.to_string(),
         })?;
 
@@ -118,8 +118,8 @@ impl ModelCache {
 
         let path = repo.get(filename).await.map_err(|e| CandleNodeError::ModelDownload {
             model: model_id.to_string(),
-            source: "huggingface.co".to_string(),
-            message: e.to_string(),
+            download_source: "huggingface.co".to_string(),
+            message: format!("Download failed: {}. Try setting HF_ENDPOINT=https://huggingface.co", e),
         })?;
 
         info!("Downloaded model to: {:?}", path);
@@ -140,7 +140,7 @@ impl ModelCache {
         
         let api = Api::new().map_err(|e| CandleNodeError::ModelDownload {
             model: model_id.to_string(),
-            source: "huggingface.co".to_string(),
+            download_source: "huggingface.co".to_string(),
             message: e.to_string(),
         })?;
 
@@ -156,7 +156,7 @@ impl ModelCache {
 
         let path = repo.get(filename).map_err(|e| CandleNodeError::ModelDownload {
             model: model_id.to_string(),
-            source: "huggingface.co".to_string(),
+            download_source: "huggingface.co".to_string(),
             message: e.to_string(),
         })?;
 

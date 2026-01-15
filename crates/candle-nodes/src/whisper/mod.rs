@@ -24,7 +24,16 @@ use remotemedia_core::Error;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
+
+#[cfg(feature = "whisper")]
+use candle_core::{Device, IndexOp, Tensor};
+#[cfg(feature = "whisper")]
+use candle_nn::VarBuilder;
+#[cfg(feature = "whisper")]
+use candle_transformers::models::whisper::{self as m, audio, Config};
+#[cfg(feature = "whisper")]
+use tokenizers::Tokenizer;
 
 /// Whisper speech-to-text node
 pub struct WhisperNode {
@@ -41,14 +50,23 @@ pub struct WhisperNode {
 }
 
 /// Internal model state after loading
+#[cfg(feature = "whisper")]
 struct WhisperModelState {
     /// Candle device
-    #[cfg(feature = "whisper")]
-    candle_device: candle_core::Device,
-    /// Model weights loaded flag
-    weights_loaded: bool,
-    /// Model ID for reference
-    model_id: String,
+    candle_device: Device,
+    /// Whisper model
+    model: m::model::Whisper,
+    /// Tokenizer
+    tokenizer: Tokenizer,
+    /// Model config
+    config: Config,
+    /// Mel filters for audio processing
+    mel_filters: Vec<f32>,
+}
+
+#[cfg(not(feature = "whisper"))]
+struct WhisperModelState {
+    _placeholder: (),
 }
 
 impl WhisperNode {
@@ -95,28 +113,81 @@ impl WhisperNode {
         // Download model files if not cached
         let model_id = self.config.model.model_id();
         
-        let _config_path = self
+        let config_path = self
             .cache
-            .download_model(model_id, self.config.model.config_file(), None)
+            .download_model(model_id, "config.json", None)
             .await?;
         
-        let _weights_path = self
+        let tokenizer_path = self
             .cache
-            .download_model(model_id, self.config.model.weights_file(), None)
+            .download_model(model_id, "tokenizer.json", None)
+            .await?;
+        
+        let weights_path = self
+            .cache
+            .download_model(model_id, "model.safetensors", None)
             .await?;
 
         // Initialize candle device
-        let candle_device: candle_core::Device = (&self.device).try_into()?;
+        let candle_device: Device = (&self.device).try_into()?;
+
+        // Load config
+        let config_str = std::fs::read_to_string(&config_path)
+            .map_err(|e| CandleNodeError::model_load(config_path.display().to_string(), e.to_string()))?;
+        let config: Config = serde_json::from_str(&config_str)
+            .map_err(|e| CandleNodeError::model_load("config.json", e.to_string()))?;
+
+        // Load tokenizer
+        let tokenizer = Tokenizer::from_file(&tokenizer_path)
+            .map_err(|e| CandleNodeError::model_load(tokenizer_path.display().to_string(), e.to_string()))?;
+
+        // Load mel filters (80 bins for most models)
+        let mel_filters = Self::get_mel_filters(config.num_mel_bins)?;
+
+        // Load model weights
+        info!("Loading model weights from {:?}", weights_path);
+        let vb = unsafe {
+            VarBuilder::from_mmaped_safetensors(&[weights_path], m::DTYPE, &candle_device)
+                .map_err(|e| CandleNodeError::model_load("weights", e.to_string()))?
+        };
+        
+        let model = m::model::Whisper::load(&vb, config.clone())
+            .map_err(|e| CandleNodeError::model_load("whisper", e.to_string()))?;
 
         info!("Whisper model loaded successfully");
 
         *state = Some(WhisperModelState {
             candle_device,
-            weights_loaded: true,
-            model_id: model_id.to_string(),
+            model,
+            tokenizer,
+            config,
+            mel_filters,
         });
 
         Ok(())
+    }
+
+    /// Get mel filter bank coefficients
+    #[cfg(feature = "whisper")]
+    fn get_mel_filters(num_mel_bins: usize) -> Result<Vec<f32>> {
+        // These are precomputed mel filter coefficients for Whisper
+        // For 80 mel bins (most models)
+        let mel_bytes: &[u8] = match num_mel_bins {
+            80 => include_bytes!("mel_filters_80.bin"),
+            128 => include_bytes!("mel_filters_128.bin"),
+            _ => return Err(CandleNodeError::configuration(
+                "whisper",
+                format!("Unsupported num_mel_bins: {}", num_mel_bins),
+            )),
+        };
+        
+        let mut mel_filters = vec![0f32; mel_bytes.len() / 4];
+        for (i, chunk) in mel_bytes.chunks(4).enumerate() {
+            if chunk.len() == 4 {
+                mel_filters[i] = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            }
+        }
+        Ok(mel_filters)
     }
 
     /// Transcribe audio data
@@ -134,24 +205,98 @@ impl WhisperNode {
             prepared.sample_rate
         );
 
-        // TODO: Full Whisper inference implementation
-        // For now, return placeholder to establish the pattern
-        // The actual implementation would use candle_transformers::models::whisper
-        
-        let state = self.model_state.read().await;
-        if state.is_none() {
-            return Err(CandleNodeError::inference(&self.node_id, "Model not loaded"));
+        // Use write lock since model inference requires mutable state
+        let mut state = self.model_state.write().await;
+        let state = state.as_mut()
+            .ok_or_else(|| CandleNodeError::inference(&self.node_id, "Model not loaded"))?;
+
+        // Convert audio to mel spectrogram
+        let mel = audio::pcm_to_mel(&state.config, &prepared.samples, &state.mel_filters);
+        let mel_len = mel.len();
+        let mel = Tensor::from_vec(
+            mel,
+            (1, state.config.num_mel_bins, mel_len / state.config.num_mel_bins),
+            &state.candle_device,
+        ).map_err(|e| CandleNodeError::inference(&self.node_id, e.to_string()))?;
+
+        debug!("Mel spectrogram shape: {:?}", mel.dims());
+
+        // Run encoder
+        let audio_features = state.model.encoder.forward(&mel, true)
+            .map_err(|e| CandleNodeError::inference(&self.node_id, e.to_string()))?;
+
+        // Get special tokens
+        let sot_token = self.token_id(&state.tokenizer, m::SOT_TOKEN)?;
+        let transcribe_token = self.token_id(&state.tokenizer, m::TRANSCRIBE_TOKEN)?;
+        let eot_token = self.token_id(&state.tokenizer, m::EOT_TOKEN)?;
+        let no_timestamps_token = self.token_id(&state.tokenizer, m::NO_TIMESTAMPS_TOKEN)?;
+
+        // Get language token if multilingual
+        let language_token = if self.config.model.is_multilingual() {
+            let lang_str = format!("<|{}|>", self.config.language);
+            self.token_id(&state.tokenizer, &lang_str).ok()
+        } else {
+            None
+        };
+
+        // Build initial tokens
+        let mut tokens = vec![sot_token];
+        if let Some(lang_token) = language_token {
+            tokens.push(lang_token);
+        }
+        tokens.push(transcribe_token);
+        tokens.push(no_timestamps_token);
+
+        // Decode loop
+        let sample_len = state.config.max_target_positions / 2;
+        for i in 0..sample_len {
+            let tokens_t = Tensor::new(tokens.as_slice(), &state.candle_device)
+                .map_err(|e| CandleNodeError::inference(&self.node_id, e.to_string()))?
+                .unsqueeze(0)
+                .map_err(|e| CandleNodeError::inference(&self.node_id, e.to_string()))?;
+
+            let ys = state.model.decoder.forward(&tokens_t, &audio_features, i == 0)
+                .map_err(|e| CandleNodeError::inference(&self.node_id, e.to_string()))?;
+
+            let (_, seq_len, _) = ys.dims3()
+                .map_err(|e| CandleNodeError::inference(&self.node_id, e.to_string()))?;
+            
+            let logits = state.model.decoder.final_linear(&ys.i((..1, seq_len - 1..))
+                .map_err(|e| CandleNodeError::inference(&self.node_id, e.to_string()))?)
+                .map_err(|e| CandleNodeError::inference(&self.node_id, e.to_string()))?
+                .i(0)
+                .map_err(|e| CandleNodeError::inference(&self.node_id, e.to_string()))?
+                .i(0)
+                .map_err(|e| CandleNodeError::inference(&self.node_id, e.to_string()))?;
+
+            // Greedy decoding - take argmax
+            let logits_v: Vec<f32> = logits.to_vec1()
+                .map_err(|e| CandleNodeError::inference(&self.node_id, e.to_string()))?;
+            let next_token = logits_v
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                .map(|(i, _)| i as u32)
+                .unwrap_or(eot_token);
+
+            if next_token == eot_token || tokens.len() > state.config.max_target_positions {
+                break;
+            }
+            tokens.push(next_token);
         }
 
-        // Placeholder transcription result
-        // Real implementation would:
-        // 1. Convert audio to mel spectrogram
-        // 2. Run encoder
-        // 3. Run decoder with language tokens
-        // 4. Decode token IDs to text
-        
-        warn!("Whisper inference not fully implemented - returning placeholder");
-        Ok("[Whisper transcription placeholder]".to_string())
+        // Decode tokens to text
+        let text = state.tokenizer.decode(&tokens, true)
+            .map_err(|e| CandleNodeError::inference(&self.node_id, e.to_string()))?;
+
+        Ok(text)
+    }
+
+    /// Get token ID from tokenizer
+    #[cfg(feature = "whisper")]
+    fn token_id(&self, tokenizer: &Tokenizer, token: &str) -> Result<u32> {
+        tokenizer.token_to_id(token)
+            .ok_or_else(|| CandleNodeError::inference(&self.node_id, format!("Token not found: {}", token)))
     }
 
     #[cfg(not(feature = "whisper"))]

@@ -24,7 +24,7 @@ candle-nn = { version = "0.8", optional = true }
 candle-transformers = { version = "0.8", optional = true }
 
 # HuggingFace Hub for model downloads
-hf-hub = { version = "0.3", features = ["tokio"], optional = true }
+hf-hub = { version = "0.4", default-features = false, features = ["tokio", "ureq", "rustls-tls"], optional = true }
 
 # Tokenizers for LLM text processing
 tokenizers = { version = "0.20", optional = true }
@@ -44,12 +44,13 @@ tokio-test.workspace = true
 criterion.workspace = true
 tempfile.workspace = true
 hound.workspace = true
+tracing-subscriber.workspace = true
 
 [features]
 default = []
 
 # Model family features
-whisper = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:hf-hub"]
+whisper = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:hf-hub", "dep:tokenizers"]
 yolo = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:hf-hub"]
 llm = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:hf-hub", "dep:tokenizers"]
 
@@ -63,3 +64,7 @@ all-models = ["whisper", "yolo", "llm"]
 [[bench]]
 name = "inference_bench"
 harness = false
+
+[[example]]
+name = "whisper_test"
+required-features = ["whisper"]
