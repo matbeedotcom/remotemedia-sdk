@@ -37,6 +37,7 @@ remotemedia-core = { path = "../core" }
 
 # Utilities
 dirs.workspace = true
+rand.workspace = true
 
 [dev-dependencies]
 tokio-test.workspace = true

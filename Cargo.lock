@@ -5651,6 +5651,7 @@ dependencies = [
  "dirs",
  "hf-hub",
  "hound",
+ "rand 0.8.5",
  "remotemedia-core",
  "rubato",
  "serde",

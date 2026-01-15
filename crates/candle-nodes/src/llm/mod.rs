@@ -4,12 +4,16 @@
 //! via the Candle ML framework.
 
 mod config;
+pub mod quantized;
 pub mod sampling;
+pub mod tokenizer;
 
 pub use config::{
     GenerationConfig, LlmConfig, LlamaConfig, LlamaModel, PhiConfig, PhiModel, Quantization,
 };
+pub use quantized::{GgufLoader, GgufMetadata, GgufQuantType};
 pub use sampling::Sampler;
+pub use tokenizer::LlmTokenizer;
 
 use crate::cache::ModelCache;
 use crate::convert::RuntimeDataConverter;
@@ -261,6 +265,44 @@ impl AsyncStreamingNode for PhiNode {
 
         Ok(RuntimeData::Text(response))
     }
+
+    async fn process_streaming<F>(
+        &self,
+        data: RuntimeData,
+        _session_id: Option<String>,
+        mut callback: F,
+    ) -> std::result::Result<usize, Error>
+    where
+        F: FnMut(RuntimeData) -> std::result::Result<(), Error> + Send,
+    {
+        let prompt = RuntimeDataConverter::extract_text(&data, &self.node_id)
+            .map_err(|e| Error::Execution(e.to_string()))?;
+
+        // For now, generate full response and emit as single chunk
+        // TODO: Implement true token-by-token streaming with model inference
+        let response = self
+            .generate(prompt)
+            .await
+            .map_err(|e| Error::Execution(e.to_string()))?;
+
+        callback(RuntimeData::Text(response))?;
+        Ok(1)
+    }
+
+    async fn process_control_message(
+        &self,
+        message: RuntimeData,
+        _session_id: Option<String>,
+    ) -> std::result::Result<bool, Error> {
+        // Handle cancel messages
+        if let RuntimeData::ControlMessage { message_type, .. } = message {
+            if message_type == remotemedia_core::data_compat::ControlMessageType::Cancel {
+                debug!("Received cancel message for Phi generation");
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
 }
 
 #[async_trait]
@@ -285,6 +327,41 @@ impl AsyncStreamingNode for LlamaNode {
             .map_err(|e| Error::Execution(e.to_string()))?;
 
         Ok(RuntimeData::Text(response))
+    }
+
+    async fn process_streaming<F>(
+        &self,
+        data: RuntimeData,
+        _session_id: Option<String>,
+        mut callback: F,
+    ) -> std::result::Result<usize, Error>
+    where
+        F: FnMut(RuntimeData) -> std::result::Result<(), Error> + Send,
+    {
+        let prompt = RuntimeDataConverter::extract_text(&data, &self.node_id)
+            .map_err(|e| Error::Execution(e.to_string()))?;
+
+        let response = self
+            .generate(prompt)
+            .await
+            .map_err(|e| Error::Execution(e.to_string()))?;
+
+        callback(RuntimeData::Text(response))?;
+        Ok(1)
+    }
+
+    async fn process_control_message(
+        &self,
+        message: RuntimeData,
+        _session_id: Option<String>,
+    ) -> std::result::Result<bool, Error> {
+        if let RuntimeData::ControlMessage { message_type, .. } = message {
+            if message_type == remotemedia_core::data_compat::ControlMessageType::Cancel {
+                debug!("Received cancel message for LLaMA generation");
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 

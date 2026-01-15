@@ -1,5 +1,6 @@
 //! CLI command implementations
 
+pub mod models;
 pub mod nodes;
 pub mod remote;
 pub mod run;
