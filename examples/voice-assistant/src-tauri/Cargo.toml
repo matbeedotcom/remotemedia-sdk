@@ -20,7 +20,10 @@ tauri = { version = "2.0", features = ["devtools"] }
 tauri-plugin-shell = "2.0"
 
 # RemoteMedia SDK
-remotemedia-core = { path = "../../../crates/core" }
+# Features needed for local voice assistant:
+# - silero-vad: Voice activity detection (ONNX)
+# - multiprocess: Python node support (for future TTS/LLM)
+remotemedia-core = { path = "../../../crates/core", default-features = false, features = ["silero-vad", "multiprocess", "cuda"] }
 
 # Audio
 cpal = "0.15"

@@ -3,6 +3,7 @@
 use crate::AppState;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Sample;
+use remotemedia_core::data::RuntimeData;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
@@ -13,9 +14,12 @@ pub async fn start_listening(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    // Check if pipeline is initialized
-    if state.pipeline.read().is_none() {
-        return Err("Pipeline not initialized".to_string());
+    // Check if pipeline session exists
+    {
+        let session_guard = state.session.lock().await;
+        if session_guard.is_none() {
+            return Err("Pipeline not initialized".to_string());
+        }
     }
 
     // Check if already listening
@@ -28,23 +32,32 @@ pub async fn start_listening(
     // Set active flag before spawning thread
     state.audio_active.store(true, Ordering::SeqCst);
 
+    // Get the audio sender channel
+    let audio_tx = {
+        let audio_tx_guard = state.audio_tx.lock().await;
+        audio_tx_guard.clone().ok_or_else(|| "Audio channel not initialized".to_string())?
+    };
+
     // Clone what we need for the audio thread
     let app_handle = app.clone();
     let audio_active = state.audio_active.clone();
 
     // Spawn audio capture in a dedicated thread (cpal::Stream is not Send)
     std::thread::spawn(move || {
-        if let Err(e) = run_audio_capture(app_handle, audio_active.clone()) {
+        if let Err(e) = run_audio_capture(app_handle, audio_active.clone(), audio_tx) {
             tracing::error!("Audio capture error: {}", e);
             audio_active.store(false, Ordering::SeqCst);
         }
     });
 
     // Emit VAD state change
-    app.emit("vad_state", serde_json::json!({
-        "active": true,
-        "speaking": false
-    }))
+    app.emit(
+        "vad_state",
+        serde_json::json!({
+            "active": true,
+            "speaking": false
+        }),
+    )
     .map_err(|e| e.to_string())?;
 
     Ok(())
@@ -53,6 +66,7 @@ pub async fn start_listening(
 fn run_audio_capture(
     app: AppHandle,
     audio_active: Arc<std::sync::atomic::AtomicBool>,
+    audio_tx: tokio::sync::mpsc::UnboundedSender<RuntimeData>,
 ) -> Result<(), String> {
     // Get the default input device
     let host = cpal::default_host();
@@ -85,6 +99,7 @@ fn run_audio_capture(
             app.clone(),
             sample_rate,
             channels,
+            audio_tx,
         ),
         cpal::SampleFormat::I16 => build_input_stream::<i16>(
             &device,
@@ -92,6 +107,7 @@ fn run_audio_capture(
             app.clone(),
             sample_rate,
             channels,
+            audio_tx,
         ),
         cpal::SampleFormat::U16 => build_input_stream::<u16>(
             &device,
@@ -99,6 +115,7 @@ fn run_audio_capture(
             app.clone(),
             sample_rate,
             channels,
+            audio_tx,
         ),
         _ => return Err("Unsupported sample format".to_string()),
     }
@@ -127,6 +144,7 @@ fn build_input_stream<T>(
     app: AppHandle,
     sample_rate: u32,
     channels: u16,
+    audio_tx: tokio::sync::mpsc::UnboundedSender<RuntimeData>,
 ) -> Result<cpal::Stream, cpal::BuildStreamError>
 where
     T: cpal::Sample + cpal::SizedSample + Send + 'static,
@@ -143,16 +161,34 @@ where
             // Calculate RMS for logging (every ~1 second)
             sample_count += samples.len() as u64;
             if sample_count % (sample_rate as u64) < samples.len() as u64 {
-                let rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+                let rms: f32 =
+                    (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
                 tracing::debug!("Audio RMS: {:.4}, samples: {}", rms, samples.len());
             }
 
-            // Emit audio data to frontend for processing
-            let _ = app.emit("audio_data", serde_json::json!({
-                "samples": samples,
-                "sample_rate": sample_rate,
-                "channels": channels,
-            }));
+            // Create RuntimeData for the audio
+            let audio_data = RuntimeData::Audio {
+                samples: samples.clone(),
+                sample_rate,
+                channels: channels as u32,
+                stream_id: None,
+                timestamp_us: None,
+                arrival_ts_us: None,
+            };
+
+            // Send to pipeline via channel
+            if let Err(e) = audio_tx.send(audio_data) {
+                tracing::warn!("Failed to send audio to pipeline: {}", e);
+            }
+
+            // Also emit to frontend for visualization (optional)
+            let _ = app.emit(
+                "audio_level",
+                serde_json::json!({
+                    "rms": (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt(),
+                    "sample_count": samples.len(),
+                }),
+            );
         },
         move |err| {
             tracing::error!("Audio stream error: {}", err);

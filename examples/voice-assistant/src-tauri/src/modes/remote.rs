@@ -4,9 +4,10 @@
 pub fn get_pipeline_manifest(server_url: &str) -> String {
     format!(
         r#"
-name: voice-assistant-remote
-version: "1.0"
-description: Voice assistant with all processing on remote server
+version: "v1"
+metadata:
+  name: voice-assistant-remote
+  description: Voice assistant with all processing on remote server
 
 nodes:
   - id: mic_input

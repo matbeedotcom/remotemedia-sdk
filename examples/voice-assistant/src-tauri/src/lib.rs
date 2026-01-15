@@ -5,37 +5,51 @@ pub mod events;
 pub mod modes;
 
 use parking_lot::RwLock;
+use remotemedia_core::data::RuntimeData;
+use remotemedia_core::transport::executor::SessionHandle;
+use remotemedia_core::transport::PipelineExecutor;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tauri::Manager;
+use tokio::sync::Mutex as TokioMutex;
 
 /// Application state shared across commands
 pub struct AppState {
     /// Current execution mode
     pub mode: RwLock<modes::ExecutionMode>,
-    /// Pipeline state
-    pub pipeline: RwLock<Option<PipelineState>>,
+    /// Pipeline executor (shared across sessions)
+    pub executor: Arc<PipelineExecutor>,
+    /// Active pipeline session (if any)
+    pub session: TokioMutex<Option<SessionHandle>>,
     /// Settings
     pub settings: RwLock<Settings>,
     /// Audio capture active flag (atomic for thread-safe access)
     pub audio_active: Arc<AtomicBool>,
+    /// Channel for sending audio data to the pipeline processing task
+    pub audio_tx: TokioMutex<Option<tokio::sync::mpsc::UnboundedSender<RuntimeData>>>,
+}
+
+impl AppState {
+    /// Create a new AppState with initialized executor
+    pub fn new() -> Result<Self, String> {
+        let executor = PipelineExecutor::new()
+            .map_err(|e| format!("Failed to create pipeline executor: {}", e))?;
+
+        Ok(Self {
+            mode: RwLock::new(modes::ExecutionMode::Local),
+            executor: Arc::new(executor),
+            session: TokioMutex::new(None),
+            settings: RwLock::new(Settings::default()),
+            audio_active: Arc::new(AtomicBool::new(false)),
+            audio_tx: TokioMutex::new(None),
+        })
+    }
 }
 
 impl Default for AppState {
     fn default() -> Self {
-        Self {
-            mode: RwLock::new(modes::ExecutionMode::Local),
-            pipeline: RwLock::new(None),
-            settings: RwLock::new(Settings::default()),
-            audio_active: Arc::new(AtomicBool::new(false)),
-        }
+        Self::new().expect("Failed to create default AppState")
     }
-}
-
-/// Pipeline runtime state
-pub struct PipelineState {
-    pub session_id: String,
-    pub manifest: String,
 }
 
 /// Application settings
@@ -78,6 +92,37 @@ pub fn run() {
         .setup(|app| {
             // Initialize application state
             app.manage(Arc::new(AppState::default()));
+
+            // Initialize progress event system and forward to Tauri events
+            let mut progress_rx = remotemedia_core::nodes::progress::init_progress_events();
+            let app_handle = app.handle().clone();
+            
+            // Use tauri's async runtime (not tokio::spawn) since we're in setup callback
+            tauri::async_runtime::spawn(async move {
+                use tauri::Emitter;
+                
+                loop {
+                    match progress_rx.recv().await {
+                        Ok(event) => {
+                            // Forward progress event to frontend
+                            let _ = app_handle.emit("model_progress", serde_json::json!({
+                                "node_type": event.node_type,
+                                "node_id": event.node_id,
+                                "event_type": event.event_type,
+                                "message": event.message,
+                                "progress_pct": event.progress_pct,
+                                "details": event.details,
+                            }));
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!("Progress event receiver lagged by {} messages", n);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            break;
+                        }
+                    }
+                }
+            });
 
             #[cfg(debug_assertions)]
             {

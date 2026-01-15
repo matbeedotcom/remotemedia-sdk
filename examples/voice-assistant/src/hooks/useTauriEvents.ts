@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { useConversationStore } from '../store/conversation';
+import { useProgressStore, ProgressEvent } from '../store/progress';
 
 interface TranscriptionPayload {
   text: string;
@@ -40,6 +41,7 @@ interface ErrorPayload {
 
 export function useTauriEvents() {
   const { addMessage, updateMessage } = useConversationStore();
+  const { updateProgress } = useProgressStore();
 
   useEffect(() => {
     const unlisteners: UnlistenFn[] = [];
@@ -48,6 +50,13 @@ export function useTauriEvents() {
 
     // Set up listeners
     const setupListeners = async () => {
+      // Model progress events
+      unlisteners.push(
+        await listen<ProgressEvent>('model_progress', (event) => {
+          console.log('Model progress:', event.payload);
+          updateProgress(event.payload);
+        })
+      );
       // Transcription events
       unlisteners.push(
         await listen<TranscriptionPayload>('transcription', (event) => {

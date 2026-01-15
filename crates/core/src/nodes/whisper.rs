@@ -561,6 +561,16 @@ impl NodeExecutor for RustWhisperNode {
         })?;
 
             tracing::info!("Loading Whisper model from source: {}", source_str);
+            
+            // Emit download started event
+            crate::nodes::progress::emit_progress(crate::nodes::progress::ProgressEvent {
+                node_type: "RustWhisperNode".to_string(),
+                node_id: None,
+                event_type: crate::nodes::progress::ProgressEventType::DownloadStarted,
+                message: format!("Loading Whisper model: {}", source_str),
+                progress_pct: Some(0.0),
+                details: Some(serde_json::json!({ "model": source_str })),
+            });
 
             // Prefer quantized models as they support word-level timestamps via DTW
             let source = match source_str.as_str() {
@@ -597,14 +607,18 @@ impl NodeExecutor for RustWhisperNode {
             let ctx = builder
         .build_with_loading_handler(|progress| {
             use rwhisper::ModelLoadingProgress;
+            use crate::nodes::progress::{emit_download_progress, emit_loading_progress, emit_progress, ProgressEvent, ProgressEventType};
+            
             match progress {
                 ModelLoadingProgress::Downloading { source, progress } => {
                     let pct = (progress.progress as f64 / progress.size as f64) * 100.0;
                     tracing::info!("Downloading model from {}: {:.1}%", source, pct);
+                    emit_download_progress("RustWhisperNode", &source.to_string(), pct);
                 }
                 ModelLoadingProgress::Loading { progress } => {
-                    let pct = progress * 100.0;
+                    let pct = (progress * 100.0) as f64;
                     tracing::info!("Loading model: {:.1}%", pct);
+                    emit_loading_progress("RustWhisperNode", pct);
                 }
             }
         })
@@ -613,6 +627,9 @@ impl NodeExecutor for RustWhisperNode {
 
         self.context = Some(Arc::new(Mutex::new(ctx)));
         tracing::info!("Whisper model loaded successfully");
+        
+        // Emit init complete event
+        crate::nodes::progress::emit_init_complete("RustWhisperNode", None);
 
         Ok(())
     }

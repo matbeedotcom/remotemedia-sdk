@@ -43,6 +43,7 @@ rustfft = { workspace = true }
 bytemuck = { workspace = true }
 ort = { workspace = true, optional = true }
 ndarray = { workspace = true }
+voice_activity_detector = { version = "0.2", optional = true }
 
 # Whisper transcription support (CPU by default, use 'cuda' feature for GPU)
 rwhisper = { version = "0.4" }
@@ -84,8 +85,9 @@ hyper = { workspace = true, features = ["full"] }
 http-body-util = { version = "0.1", optional = true }
 
 # Force vendored OpenSSL to avoid system version mismatch (OPENSSL_API_COMPAT error)
-openssl = { version = "0.10", features = ["vendored"] }
-openssl-sys = { version = "0.9", features = ["vendored"] }
+# Made optional for Windows builds without Perl
+openssl = { version = "0.10", features = ["vendored"], optional = true }
+openssl-sys = { version = "0.9", features = ["vendored"], optional = true }
 
 # Platform-specific
 [target.'cfg(unix)'.dependencies]
@@ -145,7 +147,7 @@ tonic = { workspace = true }
 [features]
 default = ["multiprocess", "silero-vad", "docker", "video"]
 multiprocess = ["iceoryx2", "iceoryx2-log"]
-silero-vad = ["ort"]
+silero-vad = ["voice_activity_detector"]
 speaker-diarization = ["ort", "dep:pyannote-rs"]
 grpc-client = ["tonic", "prost", "prost-types"]
 # Docker support integrated into multiprocess system

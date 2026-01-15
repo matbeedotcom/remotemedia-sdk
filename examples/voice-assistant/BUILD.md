@@ -21,12 +21,18 @@ xcode-select --install
 
 - Visual Studio Build Tools 2019+
 - WebView2 (usually pre-installed on Windows 10/11)
+- Strawberry Perl (required for OpenSSL build)
+- 7-Zip (required to extract FFmpeg)
 
 ```powershell
 # Using winget
 winget install Microsoft.VisualStudio.2022.BuildTools
 winget install Microsoft.EdgeWebView2Runtime
+winget install StrawberryPerl.StrawberryPerl
+winget install 7zip.7zip
 ```
+
+**Note:** FFmpeg is automatically downloaded by the build scripts. Restart your terminal after installing Perl.
 
 #### Linux
 
@@ -75,6 +81,20 @@ npm install
 # Run in development mode with hot reload
 npm run tauri dev
 ```
+
+### Windows: Building Rust Only
+
+If you need to build just the Rust backend (e.g., for debugging):
+
+```powershell
+# Use the dev script which sets up FFmpeg automatically
+.\dev.ps1
+
+# Or with release mode
+.\dev.ps1 --release
+```
+
+**Important:** Don't run `cargo build` directly on Windows. Use `.\dev.ps1` or `.\build.ps1` which set up FFmpeg environment variables.
 
 ## Production Build
 

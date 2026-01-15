@@ -17,6 +17,7 @@ use std::sync::Arc;
 pub mod audio;
 pub mod calculator;
 pub mod passthrough;
+pub mod progress;
 pub mod python_nodes;
 pub mod python_streaming;
 pub mod registration_macros;

@@ -9,7 +9,8 @@ import { ConnectionStatus } from './components/ConnectionStatus';
 import { useTauriEvents } from './hooks/useTauriEvents';
 import { useConversationStore } from './store/conversation';
 import { useSettingsStore } from './store/settings';
-import { Settings } from 'lucide-react';
+import { useProgressStore } from './store/progress';
+import { Settings, Loader2 } from 'lucide-react';
 
 function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -19,6 +20,7 @@ function App() {
 
   const { messages } = useConversationStore();
   const { settings, mode, setMode } = useSettingsStore();
+  const { isLoading, statusMessage } = useProgressStore();
 
   // Set up Tauri event listeners
   useTauriEvents();
@@ -80,6 +82,21 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen bg-gray-900 text-white">
+      {/* Model loading overlay */}
+      {isLoading && (
+        <div className="absolute inset-0 bg-gray-900/90 flex items-center justify-center z-50">
+          <div className="flex flex-col items-center gap-4 p-8 bg-gray-800 rounded-xl shadow-xl max-w-md">
+            <Loader2 className="w-12 h-12 animate-spin text-blue-500" />
+            <div className="text-lg font-medium text-center">
+              {statusMessage || 'Initializing...'}
+            </div>
+            <div className="text-sm text-gray-400 text-center">
+              This may take a few minutes on first run while models are downloaded.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
         <h1 className="text-xl font-semibold">Voice Assistant</h1>

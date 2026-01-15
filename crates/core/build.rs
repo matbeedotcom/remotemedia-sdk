@@ -274,13 +274,13 @@ fn download_ffmpeg_windows(ffmpeg_dir: &PathBuf) -> (PathBuf, PathBuf) {
     println!("cargo:warning=Auto-downloading FFmpeg for Windows...");
 
     // Download pre-built FFmpeg from gyan.dev (popular source for Windows FFmpeg builds)
-    // Using shared builds (smaller and easier to work with)
-    let download_url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip".to_string();
+    // Using full shared build (includes all codecs)
+    let download_url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full-shared.7z".to_string();
 
-    let zip_path = ffmpeg_dir.join("ffmpeg.zip");
+    let archive_path = ffmpeg_dir.join("ffmpeg.7z");
     let extract_dir = ffmpeg_dir.join("extracted");
 
-    // Download FFmpeg zip
+    // Download FFmpeg archive
     println!("cargo:warning=Downloading FFmpeg from {}", download_url);
     let status = std::process::Command::new("powershell")
         .args(&[
@@ -288,7 +288,7 @@ fn download_ffmpeg_windows(ffmpeg_dir: &PathBuf) -> (PathBuf, PathBuf) {
             &format!(
                 "Invoke-WebRequest -Uri '{}' -OutFile '{}'",
                 download_url,
-                zip_path.display()
+                archive_path.display()
             ),
         ])
         .status();
@@ -296,7 +296,7 @@ fn download_ffmpeg_windows(ffmpeg_dir: &PathBuf) -> (PathBuf, PathBuf) {
     if status.is_err() || !status.unwrap().success() {
         // Try with curl as fallback
         let curl_status = std::process::Command::new("curl")
-            .args(&["-L", "-o", zip_path.to_str().unwrap(), &download_url])
+            .args(&["-L", "-o", archive_path.to_str().unwrap(), &download_url])
             .status();
 
         if curl_status.is_err() || !curl_status.unwrap().success() {
@@ -304,21 +304,30 @@ fn download_ffmpeg_windows(ffmpeg_dir: &PathBuf) -> (PathBuf, PathBuf) {
         }
     }
 
-    // Extract zip
+    // Extract 7z archive using 7-Zip
     println!("cargo:warning=Extracting FFmpeg...");
-    let extract_status = std::process::Command::new("powershell")
-        .args(&[
-            "-Command",
-            &format!(
-                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                zip_path.display(),
-                extract_dir.display()
-            ),
-        ])
-        .status();
-
-    if extract_status.is_err() || !extract_status.unwrap().success() {
-        panic!("Failed to extract FFmpeg zip. Please extract manually.");
+    
+    // Try common 7-Zip installation paths
+    let seven_zip_paths = [
+        "C:\\Program Files\\7-Zip\\7z.exe",
+        "C:\\Program Files (x86)\\7-Zip\\7z.exe",
+        "7z", // In PATH
+    ];
+    
+    let mut extracted = false;
+    for seven_zip in &seven_zip_paths {
+        let extract_status = std::process::Command::new(seven_zip)
+            .args(&["x", archive_path.to_str().unwrap(), &format!("-o{}", extract_dir.display()), "-y"])
+            .status();
+        
+        if extract_status.is_ok() && extract_status.unwrap().success() {
+            extracted = true;
+            break;
+        }
+    }
+    
+    if !extracted {
+        panic!("Failed to extract FFmpeg. Please install 7-Zip (winget install 7zip.7zip) or extract manually.");
     }
 
     // Find the extracted directory (usually ffmpeg-VERSION-essentials_build)
@@ -345,8 +354,8 @@ fn download_ffmpeg_windows(ffmpeg_dir: &PathBuf) -> (PathBuf, PathBuf) {
 
     println!("cargo:warning=FFmpeg extracted to {}", ffmpeg_dir.display());
 
-    // Clean up zip file
-    let _ = fs::remove_file(&zip_path);
+    // Clean up archive file
+    let _ = fs::remove_file(&archive_path);
 
     (include_dir, lib_dir)
 }

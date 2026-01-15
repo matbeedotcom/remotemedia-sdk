@@ -1,5 +1,8 @@
-# Build script for Voice Assistant (Windows)
-# Run from PowerShell: .\build.ps1
+# Development build script for Voice Assistant (Windows)
+# Run from PowerShell: .\dev.ps1
+# 
+# This script sets up FFmpeg and runs `cargo build` for the Tauri backend.
+# For full dev mode with hot-reload, use: npm run tauri dev
 
 $ErrorActionPreference = "Stop"
 
@@ -7,7 +10,7 @@ $ErrorActionPreference = "Stop"
 Push-Location $PSScriptRoot
 
 try {
-    Write-Host "Building Voice Assistant..." -ForegroundColor Cyan
+    Write-Host "Setting up development environment..." -ForegroundColor Cyan
     
     # Check for Perl (required for OpenSSL vendored build)
     $perlPath = Get-Command perl -ErrorAction SilentlyContinue
@@ -115,19 +118,22 @@ try {
     Write-Host "CFLAGS = /MD (dynamic CRT)" -ForegroundColor Gray
     Write-Host "CXXFLAGS = /MD (dynamic CRT)" -ForegroundColor Gray
     
-    # Run tauri build
-    npm run tauri build @args
-
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "`nBuild successful!" -ForegroundColor Green
-        Write-Host "Output: src-tauri\target\release\bundle\" -ForegroundColor Yellow
+    # Change to src-tauri directory for cargo build
+    Push-Location "src-tauri"
+    
+    try {
+        Write-Host "`nBuilding Rust backend..." -ForegroundColor Cyan
+        cargo build @args
         
-        # Remind about DLLs
-        Write-Host "`nNote: FFmpeg DLLs are in: $ffmpegBin" -ForegroundColor Cyan
-        Write-Host "Copy them alongside the .exe for distribution." -ForegroundColor Cyan
-    } else {
-        Write-Host "`nBuild failed with exit code $LASTEXITCODE" -ForegroundColor Red
-        exit $LASTEXITCODE
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "`nBuild successful!" -ForegroundColor Green
+        } else {
+            Write-Host "`nBuild failed with exit code $LASTEXITCODE" -ForegroundColor Red
+            exit $LASTEXITCODE
+        }
+    }
+    finally {
+        Pop-Location
     }
 }
 finally {

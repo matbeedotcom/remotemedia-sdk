@@ -1,13 +1,15 @@
-# Build script for Voice Assistant (Windows)
-# Run from PowerShell: .\build.ps1
+# Setup script for RemoteMedia SDK examples (Windows)
+# Run from PowerShell: .\setup-windows.ps1
+#
+# This script downloads FFmpeg and sets up environment variables
+# required for building examples that depend on remotemedia-core with video support.
 
 $ErrorActionPreference = "Stop"
 
-# Change to script directory
 Push-Location $PSScriptRoot
 
 try {
-    Write-Host "Building Voice Assistant..." -ForegroundColor Cyan
+    Write-Host "Setting up build environment for RemoteMedia examples..." -ForegroundColor Cyan
     
     # Check for Perl (required for OpenSSL vendored build)
     $perlPath = Get-Command perl -ErrorAction SilentlyContinue
@@ -22,27 +24,24 @@ try {
     }
     if (-not $perlPath) {
         Write-Host "`nPerl is required to build OpenSSL from source." -ForegroundColor Red
-        Write-Host "Install Strawberry Perl from: https://strawberryperl.com/" -ForegroundColor Yellow
-        Write-Host "Or run: winget install StrawberryPerl.StrawberryPerl" -ForegroundColor Yellow
+        Write-Host "Install Strawberry Perl:" -ForegroundColor Yellow
+        Write-Host "  winget install StrawberryPerl.StrawberryPerl" -ForegroundColor White
         Write-Host "`nAfter installing, restart your terminal and run this script again.`n" -ForegroundColor Gray
         exit 1
     }
     Write-Host "Perl found: $($perlPath.Source)" -ForegroundColor Gray
     
-    # Setup FFmpeg for ac-ffmpeg crate
-    $ffmpegDir = Join-Path $PSScriptRoot "src-tauri\.ffmpeg"
+    # Setup FFmpeg
+    $ffmpegDir = Join-Path $PSScriptRoot ".ffmpeg"
     $ffmpegInclude = Join-Path $ffmpegDir "include"
     $ffmpegLib = Join-Path $ffmpegDir "lib"
     $ffmpegBin = Join-Path $ffmpegDir "bin"
     
-    # Check if FFmpeg is already downloaded
     if (-not (Test-Path $ffmpegInclude) -or -not (Test-Path $ffmpegLib)) {
         Write-Host "Downloading FFmpeg..." -ForegroundColor Yellow
         
-        # Create directory
         New-Item -ItemType Directory -Force -Path $ffmpegDir | Out-Null
         
-        # Download FFmpeg full shared build from gyan.dev (includes all codecs)
         $downloadUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full-shared.7z"
         $archivePath = Join-Path $ffmpegDir "ffmpeg.7z"
         $extractDir = Join-Path $ffmpegDir "extracted"
@@ -75,7 +74,6 @@ try {
         }
         & $7zPath x $archivePath -o"$extractDir" -y | Out-Null
         
-        # Find the extracted directory (ffmpeg-VERSION-essentials_build)
         $ffmpegBuildDir = Get-ChildItem -Path $extractDir -Directory | Where-Object { $_.Name -match "^ffmpeg-" } | Select-Object -First 1
         
         if (-not $ffmpegBuildDir) {
@@ -84,12 +82,10 @@ try {
         
         Write-Host "  Found: $($ffmpegBuildDir.Name)" -ForegroundColor Gray
         
-        # Copy include, lib, and bin directories
         Copy-Item -Path (Join-Path $ffmpegBuildDir.FullName "include") -Destination $ffmpegDir -Recurse -Force
         Copy-Item -Path (Join-Path $ffmpegBuildDir.FullName "lib") -Destination $ffmpegDir -Recurse -Force
         Copy-Item -Path (Join-Path $ffmpegBuildDir.FullName "bin") -Destination $ffmpegDir -Recurse -Force
         
-        # Clean up
         Remove-Item -Path $archivePath -Force -ErrorAction SilentlyContinue
         Remove-Item -Path $extractDir -Recurse -Force -ErrorAction SilentlyContinue
         
@@ -98,36 +94,25 @@ try {
         Write-Host "Using cached FFmpeg from $ffmpegDir" -ForegroundColor Gray
     }
     
-    # Set environment variables for ac-ffmpeg
+    # Set environment variables
     $env:FFMPEG_INCLUDE_DIR = $ffmpegInclude
     $env:FFMPEG_LIB_DIR = $ffmpegLib
-    Write-Host "FFMPEG_INCLUDE_DIR = $ffmpegInclude" -ForegroundColor Gray
-    Write-Host "FFMPEG_LIB_DIR = $ffmpegLib" -ForegroundColor Gray
-    
-    # Add FFmpeg bin to PATH for runtime DLLs
     $env:PATH = "$ffmpegBin;$env:PATH"
     
-    # Set C/C++ compiler flags to use dynamic CRT (/MD)
-    # This ensures esaxx-rs (used by rwhisper) is compiled with the same CRT
-    # as ONNX Runtime (ort), avoiding LNK2038 mismatch errors
-    $env:CFLAGS = "/MD"
-    $env:CXXFLAGS = "/MD"
-    Write-Host "CFLAGS = /MD (dynamic CRT)" -ForegroundColor Gray
-    Write-Host "CXXFLAGS = /MD (dynamic CRT)" -ForegroundColor Gray
+    Write-Host "`nEnvironment configured:" -ForegroundColor Green
+    Write-Host "  FFMPEG_INCLUDE_DIR = $ffmpegInclude" -ForegroundColor Gray
+    Write-Host "  FFMPEG_LIB_DIR = $ffmpegLib" -ForegroundColor Gray
     
-    # Run tauri build
-    npm run tauri build @args
-
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "`nBuild successful!" -ForegroundColor Green
-        Write-Host "Output: src-tauri\target\release\bundle\" -ForegroundColor Yellow
-        
-        # Remind about DLLs
-        Write-Host "`nNote: FFmpeg DLLs are in: $ffmpegBin" -ForegroundColor Cyan
-        Write-Host "Copy them alongside the .exe for distribution." -ForegroundColor Cyan
-    } else {
-        Write-Host "`nBuild failed with exit code $LASTEXITCODE" -ForegroundColor Red
+    # Now run cargo build with any provided arguments
+    if ($args.Count -gt 0) {
+        Write-Host "`nRunning: cargo $args" -ForegroundColor Cyan
+        cargo @args
         exit $LASTEXITCODE
+    } else {
+        Write-Host "`nSetup complete! You can now run cargo commands in this terminal." -ForegroundColor Green
+        Write-Host "Example: cargo build --release" -ForegroundColor Yellow
+        Write-Host "`nOr run this script with cargo arguments:" -ForegroundColor Gray
+        Write-Host "  .\setup-windows.ps1 build --release" -ForegroundColor White
     }
 }
 finally {

@@ -11,32 +11,39 @@ pub async fn send_text_input(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    // Check if pipeline is initialized
-    let pipeline = state.pipeline.read();
-    if pipeline.is_none() {
-        return Err("Pipeline not initialized".to_string());
+    // Check if pipeline session is initialized
+    {
+        let session_guard = state.session.lock().await;
+        if session_guard.is_none() {
+            return Err("Pipeline not initialized".to_string());
+        }
     }
 
     tracing::info!("Sending text input: {}", text);
 
     // Emit transcription event (as if user said it)
-    app.emit("transcription", serde_json::json!({
-        "text": text,
-        "is_final": true,
-        "source": "text_input"
-    }))
+    app.emit(
+        "transcription",
+        serde_json::json!({
+            "text": text,
+            "is_final": true,
+            "source": "text_input"
+        }),
+    )
     .map_err(|e| e.to_string())?;
 
-    // TODO: Actually send to pipeline for processing
-    // For now, simulate with placeholder response
+    // Note: Text input bypasses the audio pipeline
+    // The current pipeline is audio-focused (VAD -> STT)
+    // For text input, we would need a separate text pipeline or direct LLM connection
+    // For now, just acknowledge the input
 
-    // Simulate LLM response
-    let response = format!("I received your message: \"{}\"", text);
-
-    app.emit("response", serde_json::json!({
-        "text": response,
-        "model": "placeholder"
-    }))
+    app.emit(
+        "response",
+        serde_json::json!({
+            "text": format!("Text input received: \"{}\"", text),
+            "model": "passthrough"
+        }),
+    )
     .map_err(|e| e.to_string())?;
 
     Ok(())

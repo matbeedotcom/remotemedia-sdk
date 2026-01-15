@@ -1,0 +1,24 @@
+# Cargo configuration for voice-assistant
+# Sets FFmpeg paths for ac-ffmpeg crate
+
+[env]
+# FFmpeg paths will be set by build.ps1/build.sh before cargo runs
+# These are placeholder values - the build scripts will download FFmpeg
+# and set the actual paths via environment variables
+
+[build]
+# Use all available CPU cores
+jobs = -1
+rustflags = ["-A", "missing_docs"]
+
+[doc]
+rustdocflags = ["-A", "missing_docs"]
+
+# Windows: Use dynamic CRT to match ONNX Runtime (ort-sys)
+# CFLAGS/CXXFLAGS ensure C/C++ dependencies (esaxx-rs) also use dynamic CRT
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-A", "missing_docs", "-C", "target-feature=-crt-static"]
+
+[target.x86_64-pc-windows-msvc.env]
+CFLAGS = "/MD"
+CXXFLAGS = "/MD"

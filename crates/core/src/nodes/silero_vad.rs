@@ -14,7 +14,7 @@ use crate::nodes::AsyncStreamingNode;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::{Mutex, OnceCell};
+use tokio::sync::Mutex;
 
 /// Silero VAD Node configuration
 ///
@@ -61,14 +61,10 @@ impl Default for SileroVADConfig {
 }
 
 #[cfg(feature = "silero-vad")]
-use ort::{
-    execution_providers::CPUExecutionProvider,
-    session::{Session, SessionOutputs},
-    value::Tensor,
-};
+use voice_activity_detector::VoiceActivityDetector;
 
 /// VAD state for speech detection
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct VADState {
     /// Is speech currently active
     triggered: bool,
@@ -76,19 +72,30 @@ struct VADState {
     temp_end_samples: usize,
     /// Total samples processed
     current_sample: usize,
-    /// ONNX model state (combined, size: 2 * 128 = 256)
-    state: Vec<f32>,
+    /// Audio buffer for windowing (VAD needs fixed-size chunks)
+    #[cfg(feature = "silero-vad")]
+    audio_buffer: Vec<f32>,
+    /// The voice activity detector instance
+    #[cfg(feature = "silero-vad")]
+    detector: VoiceActivityDetector,
 }
 
-impl Default for VADState {
-    fn default() -> Self {
-        Self {
+#[cfg(feature = "silero-vad")]
+impl VADState {
+    fn new(sample_rate: u32) -> Result<Self> {
+        let detector = VoiceActivityDetector::builder()
+            .sample_rate(sample_rate)
+            .chunk_size(512usize) // 512 samples for 16kHz
+            .build()
+            .map_err(|e| Error::Execution(format!("Failed to create VAD detector: {}", e)))?;
+        
+        Ok(Self {
             triggered: false,
             temp_end_samples: 0,
             current_sample: 0,
-            // Silero VAD uses combined state of size [2, 128]
-            state: vec![0.0; 2 * 128],
-        }
+            audio_buffer: Vec::new(),
+            detector,
+        })
     }
 }
 
@@ -107,10 +114,6 @@ pub struct SileroVADNode {
     #[allow(dead_code)]  // Reserved for audio padding implementation
     speech_pad_ms: u32,
 
-    #[cfg(feature = "silero-vad")]
-    /// ONNX Runtime session (lazy-initialized with auto-download)
-    session: OnceCell<Arc<Mutex<Session>>>,
-
     /// VAD state (one per session_id)
     states: Arc<Mutex<std::collections::HashMap<String, VADState>>>,
 }
@@ -124,8 +127,6 @@ impl SileroVADNode {
             min_speech_duration_ms: config.min_speech_duration_ms,
             min_silence_duration_ms: config.min_silence_duration_ms,
             speech_pad_ms: config.speech_pad_ms,
-            #[cfg(feature = "silero-vad")]
-            session: OnceCell::new(),
             states: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
@@ -145,101 +146,6 @@ impl SileroVADNode {
             min_silence_duration_ms: min_silence_duration_ms.unwrap_or(100),
             speech_pad_ms: speech_pad_ms.unwrap_or(30),
         })
-    }
-
-    #[cfg(feature = "silero-vad")]
-    async fn get_or_init_session(&self) -> Result<&Arc<Mutex<Session>>> {
-        self.session.get_or_try_init(|| async {
-            tracing::info!("Initializing Silero VAD ONNX model");
-
-            // Model path - use current directory for simplicity
-            let model_path = std::path::Path::new("silero_vad.onnx");
-
-            // Download model if it doesn't exist
-            if !model_path.exists() {
-                tracing::info!("Downloading Silero VAD model...");
-
-                // Download from HuggingFace (direct download link)
-                let model_url = "https://huggingface.co/onnx-community/silero-vad/resolve/main/onnx/model.onnx";
-
-                let client = reqwest::Client::builder()
-                    .user_agent("remotemedia-runtime/0.2.0")
-                    .build()
-                    .map_err(|e| Error::Execution(format!("Failed to create HTTP client: {}", e)))?;
-
-                let response = client.get(model_url).send().await
-                    .map_err(|e| Error::Execution(format!("Failed to download model: {}", e)))?;
-
-                if !response.status().is_success() {
-                    return Err(Error::Execution(format!("Failed to download model: HTTP {}", response.status())));
-                }
-
-                let bytes = response.bytes().await
-                    .map_err(|e| Error::Execution(format!("Failed to read model bytes: {}", e)))?;
-
-                tokio::fs::write(&model_path, &bytes).await
-                    .map_err(|e| Error::Execution(format!("Failed to save model: {}", e)))?;
-
-                tracing::info!("Silero VAD model downloaded successfully ({} bytes)", bytes.len());
-            }
-
-            // Create ONNX Runtime session
-            let session = Session::builder()?
-                .with_execution_providers([CPUExecutionProvider::default().build()])?
-                .commit_from_file(&model_path)?;
-
-            tracing::info!("Silero VAD model loaded successfully");
-
-            Ok(Arc::new(Mutex::new(session)))
-        }).await
-    }
-
-    #[cfg(feature = "silero-vad")]
-    async fn run_vad(&self, audio: &[f32], state: &mut VADState) -> Result<f32> {
-        // Lazy-initialize the session on first use
-        let session_arc = self.get_or_init_session().await?;
-
-        let mut session = session_arc.lock().await;
-
-        // Prepare inputs for Silero VAD
-        // Model expects: input [batch, samples], state [2, batch, 128], sr (scalar)
-
-        let chunk_size = audio.len();
-        tracing::debug!("VAD processing {} audio samples", chunk_size);
-        tracing::trace!(
-            "Audio data first 10 samples: {:?}",
-            &audio[..audio.len().min(10)]
-        );
-
-        // Input tensor: [1, chunk_size]
-        let input_tensor = Tensor::from_array(([1, chunk_size], audio.to_vec()))?;
-        tracing::trace!("Created input tensor with shape [1, {}]", chunk_size);
-
-        // State tensor: [2, 1, 128] - combined state
-        tracing::trace!("State vector length: {}", state.state.len());
-        let state_tensor = Tensor::from_array(([2, 1, 128], state.state.clone()))?;
-        tracing::trace!("Created state tensor with shape [2, 1, 128]");
-
-        // Sample rate tensor: scalar (shape [])
-        // Create as a tuple of (shape, data) - use empty array for scalar
-        let sr_tensor = Tensor::from_array(([0usize; 0], vec![self.sampling_rate as i64]))?;
-
-        // Run inference
-        let outputs: SessionOutputs = session.run(ort::inputs![
-            "input" => input_tensor,
-            "state" => state_tensor,
-            "sr" => sr_tensor,
-        ])?;
-
-        // Extract outputs: output (speech probability), stateN (new state)
-        let (_, output_data) = outputs["output"].try_extract_tensor::<f32>()?;
-        let speech_prob = output_data[0];
-
-        // Update state for next inference
-        let (_, state_data) = outputs["stateN"].try_extract_tensor::<f32>()?;
-        state.state.copy_from_slice(state_data);
-
-        Ok(speech_prob)
     }
 
     fn resample_audio(&self, audio: &[f32], from_sr: u32, to_sr: u32) -> Vec<f32> {
@@ -302,6 +208,7 @@ impl AsyncStreamingNode for SileroVADNode {
     {
         #[cfg(not(feature = "silero-vad"))]
         {
+            let _ = (data, session_id, callback);
             return Err(Error::Execution(
                 "SileroVADNode requires 'silero-vad' feature to be enabled".into(),
             ));
@@ -349,61 +256,110 @@ impl AsyncStreamingNode for SileroVADNode {
                 resampled
             };
 
+            // Handle empty audio (e.g., from resampler buffering)
+            if mono.is_empty() {
+                tracing::debug!("VAD received empty audio, skipping");
+                return Ok(0);
+            }
+
             // Get or create state for this session
             let session_key = session_id.clone().unwrap_or_else(|| "default".to_string());
             let mut states = self.states.lock().await;
-            let state = states
-                .entry(session_key.clone())
-                .or_insert_with(VADState::default);
+            let state = if !states.contains_key(&session_key) {
+                tracing::info!("Creating new VAD state for session: {}", session_key);
+                
+                // Emit progress events for initialization
+                crate::nodes::progress::emit_progress(crate::nodes::progress::ProgressEvent {
+                    node_type: "SileroVADNode".to_string(),
+                    node_id: None,
+                    event_type: crate::nodes::progress::ProgressEventType::LoadingStarted,
+                    message: "Initializing Silero VAD".to_string(),
+                    progress_pct: Some(0.0),
+                    details: None,
+                });
+                
+                let new_state = VADState::new(self.sampling_rate)?;
+                states.insert(session_key.clone(), new_state);
+                
+                crate::nodes::progress::emit_init_complete("SileroVADNode", None);
+                
+                states.get_mut(&session_key).unwrap()
+            } else {
+                states.get_mut(&session_key).unwrap()
+            };
 
-            // Run VAD
-            let speech_prob = self.run_vad(&mono, state).await?;
+            // Add incoming audio to buffer
+            state.audio_buffer.extend_from_slice(&mono);
+            
+            // Determine chunk size based on sample rate
+            // voice_activity_detector uses 512 samples for 16kHz, 256 for 8kHz
+            let chunk_size = if self.sampling_rate >= 16000 { 512 } else { 256 };
+            
+            let mut output_count = 0;
+            let mut last_speech_prob = 0.0f32;
+            let mut any_is_speech_start = false;
+            let mut any_is_speech_end = false;
 
-            // Determine speech state transitions
-            let mut is_speech_start = false;
-            let mut is_speech_end = false;
+            // Process complete chunks
+            while state.audio_buffer.len() >= chunk_size {
+                let chunk: Vec<f32> = state.audio_buffer.drain(..chunk_size).collect();
+                
+                // Run VAD on this chunk
+                let speech_prob = state.detector.predict(chunk.iter().copied());
+                last_speech_prob = speech_prob;
+                
+                tracing::trace!("VAD chunk processed: prob={:.3}", speech_prob);
 
-            if speech_prob >= self.threshold {
-                if !state.triggered {
-                    is_speech_start = true;
-                    state.triggered = true;
-                    tracing::info!("Speech started (prob={:.3})", speech_prob);
-                }
-                state.temp_end_samples = 0;
-            } else if state.triggered {
-                state.temp_end_samples += mono.len();
-                let silence_duration_ms =
-                    (state.temp_end_samples as f32 / self.sampling_rate as f32 * 1000.0) as u32;
-
-                if silence_duration_ms >= self.min_silence_duration_ms {
-                    is_speech_end = true;
-                    state.triggered = false;
+                // Determine speech state transitions
+                if speech_prob >= self.threshold {
+                    if !state.triggered {
+                        any_is_speech_start = true;
+                        state.triggered = true;
+                        tracing::info!("Speech started (prob={:.3})", speech_prob);
+                    }
                     state.temp_end_samples = 0;
-                    tracing::info!("Speech ended (silence={}ms)", silence_duration_ms);
+                } else if state.triggered {
+                    state.temp_end_samples += chunk_size;
+                    let silence_duration_ms =
+                        (state.temp_end_samples as f32 / self.sampling_rate as f32 * 1000.0) as u32;
+
+                    if silence_duration_ms >= self.min_silence_duration_ms {
+                        any_is_speech_end = true;
+                        state.triggered = false;
+                        state.temp_end_samples = 0;
+                        tracing::info!("Speech ended (silence={}ms)", silence_duration_ms);
+                    }
                 }
+
+                state.current_sample += chunk_size;
             }
 
-            state.current_sample += mono.len();
+            // If we processed any chunks, output the result
+            if state.current_sample > 0 || !mono.is_empty() {
+                // Create VAD result JSON with aggregate results
+                let vad_result = serde_json::json!({
+                    "has_speech": last_speech_prob >= self.threshold,
+                    "speech_probability": last_speech_prob,
+                    "is_speech_start": any_is_speech_start,
+                    "is_speech_end": any_is_speech_end,
+                    "timestamp_ms": (state.current_sample as f32 / self.sampling_rate as f32 * 1000.0) as u64,
+                });
 
-            // Create VAD result JSON
-            let vad_result = serde_json::json!({
-                "has_speech": speech_prob >= self.threshold,
-                "speech_probability": speech_prob,
-                "is_speech_start": is_speech_start,
-                "is_speech_end": is_speech_end,
-                "timestamp_ms": (state.current_sample as f32 / self.sampling_rate as f32 * 1000.0) as u64,
-            });
+                drop(states); // Release lock before callbacks
 
-            drop(states); // Release lock
+                // Output 1: VAD JSON event
+                let json_output = RuntimeData::Json(vad_result);
+                callback(json_output)?;
+                output_count += 1;
 
-            // Output 1: VAD JSON event
-            let json_output = RuntimeData::Json(vad_result);
-            callback(json_output)?;
+                // Output 2: Pass through original audio (for audio_buffer to accumulate)
+                callback(data)?;
+                output_count += 1;
+            } else {
+                drop(states);
+            }
 
-            // Output 2: Pass through original audio (for audio_buffer to accumulate)
-            callback(data)?;
-
-            Ok(2)
+            Ok(output_count)
         }
     }
 

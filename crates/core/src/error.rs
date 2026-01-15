@@ -193,7 +193,9 @@ impl From<anyhow::Error> for Error {
     }
 }
 
-#[cfg(feature = "silero-vad")]
+// Note: ort::Error conversion only needed when using ort directly (e.g., speaker-diarization)
+// The silero-vad feature now uses voice_activity_detector which handles ort internally
+#[cfg(feature = "speaker-diarization")]
 impl From<ort::Error> for Error {
     fn from(err: ort::Error) -> Self {
         Error::Execution(format!("ONNX Runtime error: {}", err))

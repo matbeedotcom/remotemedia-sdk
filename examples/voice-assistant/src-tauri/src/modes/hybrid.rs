@@ -4,9 +4,10 @@
 pub fn get_pipeline_manifest(remote_url: &str) -> String {
     format!(
         r#"
-name: voice-assistant-hybrid
-version: "1.0"
-description: Voice assistant with local VAD and remote inference (fallback to local)
+version: "v1"
+metadata:
+  name: voice-assistant-hybrid
+  description: Voice assistant with local VAD and remote inference (fallback to local)
 
 nodes:
   - id: mic_input

@@ -1,83 +1,55 @@
 //! Local mode pipeline configuration
 
 /// Get the pipeline manifest for local mode
+/// 
+/// This pipeline uses node types that are registered in remotemedia-core:
+/// - SileroVADNode: Voice activity detection (feature: silero-vad)
+/// - AudioBufferAccumulatorNode: Accumulates audio during speech for transcription
+/// - RustWhisperNode: Speech-to-text transcription
+/// 
+/// Note: Mic input and speaker output are handled by the Tauri app directly (cpal)
+/// since they require native audio device access.
 pub fn get_pipeline_manifest() -> String {
     r#"
-name: voice-assistant-local
-version: "1.0"
-description: Voice assistant running entirely locally
+version: "v1"
+metadata:
+  name: voice-assistant-local
+  description: Voice assistant running entirely locally
 
 nodes:
-  - id: mic_input
-    node_type: AudioInput
-    config:
-      sample_rate: 16000
-      channels: 1
-      format: f32
-      source: microphone
+  - id: resample_to_16k
+    node_type: FastResampleNode
+    params:
+      target_rate: 16000
+      quality: Medium
 
   - id: vad
-    node_type: SileroVAD
-    config:
+    node_type: SileroVADNode
+    params:
       threshold: 0.5
       min_speech_duration_ms: 250
       min_silence_duration_ms: 500
       pre_speech_pad_ms: 300
 
+  - id: accumulator
+    node_type: AudioBufferAccumulatorNode
+    params:
+      min_utterance_duration_ms: 500
+      max_utterance_duration_ms: 30000
+
   - id: whisper
-    node_type: WhisperSTT
-    executor: multiprocess
-    config:
-      model: base.en
+    node_type: RustWhisperNode
+    params:
+      model_source: tiny.en
       language: en
-      task: transcribe
-
-  - id: llm
-    node_type: OllamaLLM
-    executor: multiprocess
-    config:
-      model: llama3.2:1b
-      system_prompt: |
-        You are a helpful voice assistant. Keep responses concise
-        and conversational since they will be spoken aloud.
-      max_tokens: 150
-      temperature: 0.7
-
-  - id: tts
-    node_type: KokoroTTS
-    executor: multiprocess
-    config:
-      voice: af_bella
-      speed: 1.0
-      sample_rate: 24000
-
-  - id: resample
-    node_type: AudioResample
-    config:
-      target_sample_rate: 48000
-      quality: high
-
-  - id: speaker_output
-    node_type: AudioOutput
-    config:
-      sample_rate: 48000
-      channels: 1
-      format: f32
-      destination: speaker
 
 connections:
-  - from: mic_input
+  - from: resample_to_16k
     to: vad
   - from: vad
+    to: accumulator
+  - from: accumulator
     to: whisper
-  - from: whisper
-    to: llm
-  - from: llm
-    to: tts
-  - from: tts
-    to: resample
-  - from: resample
-    to: speaker_output
 "#
     .to_string()
 }

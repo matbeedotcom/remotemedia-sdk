@@ -1,0 +1,5 @@
+# Rust build artifacts
+/target/
+
+# Auto-downloaded FFmpeg (created by setup-windows.ps1)
+/.ffmpeg/

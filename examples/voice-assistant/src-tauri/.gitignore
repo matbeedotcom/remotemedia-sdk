@@ -1,0 +1,8 @@
+# Rust build artifacts
+/target/
+
+# Auto-downloaded FFmpeg (created by build.ps1/dev.ps1)
+/.ffmpeg/
+
+# Cargo lock is checked in for reproducible builds
+# Cargo.lock
