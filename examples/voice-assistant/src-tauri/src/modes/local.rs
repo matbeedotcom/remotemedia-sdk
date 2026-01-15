@@ -2,10 +2,10 @@
 
 /// Get the pipeline manifest for local mode
 /// 
-/// This pipeline uses node types that are registered in remotemedia-core:
-/// - SileroVADNode: Voice activity detection (feature: silero-vad)
-/// - AudioBufferAccumulatorNode: Accumulates audio during speech for transcription
-/// - RustWhisperNode: Speech-to-text transcription
+/// This pipeline uses node types:
+/// - SileroVADNode: Voice activity detection (from remotemedia-core)
+/// - AudioBufferAccumulatorNode: Accumulates audio during speech
+/// - candle-whisper: Speech-to-text via Candle ML (from remotemedia-candle-nodes)
 /// 
 /// Note: Mic input and speaker output are handled by the Tauri app directly (cpal)
 /// since they require native audio device access.
@@ -38,10 +38,11 @@ nodes:
       max_utterance_duration_ms: 30000
 
   - id: whisper
-    node_type: RustWhisperNode
+    node_type: candle-whisper
     params:
-      model_source: tiny.en
+      model: tiny
       language: en
+      device: auto
 
 connections:
   - from: resample_to_16k

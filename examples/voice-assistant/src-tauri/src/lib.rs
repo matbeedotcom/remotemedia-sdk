@@ -13,6 +13,9 @@ use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::Mutex as TokioMutex;
 
+// Import candle-nodes for Whisper
+use remotemedia_candle_nodes::whisper::WhisperNodeFactory;
+
 /// Application state shared across commands
 pub struct AppState {
     /// Current execution mode
@@ -43,6 +46,14 @@ impl AppState {
             audio_active: Arc::new(AtomicBool::new(false)),
             audio_tx: TokioMutex::new(None),
         })
+    }
+
+    /// Register additional node factories (must be called from async context)
+    pub async fn register_candle_nodes(&self) {
+        self.executor
+            .register_factory(Arc::new(WhisperNodeFactory::new()))
+            .await;
+        tracing::info!("Registered candle-whisper node factory");
     }
 }
 
@@ -91,7 +102,15 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             // Initialize application state
-            app.manage(Arc::new(AppState::default()));
+            let state = Arc::new(AppState::default());
+            
+            // Register candle-nodes (async registration)
+            let state_clone = state.clone();
+            tauri::async_runtime::block_on(async move {
+                state_clone.register_candle_nodes().await;
+            });
+            
+            app.manage(state);
 
             // Initialize progress event system and forward to Tauri events
             let mut progress_rx = remotemedia_core::nodes::progress::init_progress_events();

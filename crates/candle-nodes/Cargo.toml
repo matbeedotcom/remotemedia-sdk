@@ -33,7 +33,8 @@ tokenizers = { version = "0.20", optional = true }
 rubato.workspace = true
 
 # RemoteMedia core for StreamingNode trait
-remotemedia-core = { path = "../core" }
+# Use default-features = false to avoid pulling in video/FFmpeg dependencies
+remotemedia-core = { path = "../core", default-features = false }
 
 # Utilities
 dirs.workspace = true

@@ -23,7 +23,12 @@ tauri-plugin-shell = "2.0"
 # Features needed for local voice assistant:
 # - silero-vad: Voice activity detection (ONNX)
 # - multiprocess: Python node support (for future TTS/LLM)
-remotemedia-core = { path = "../../../crates/core", default-features = false, features = ["silero-vad", "multiprocess", "cuda"] }
+remotemedia-core = { path = "../../../crates/core", default-features = false, features = ["silero-vad", "multiprocess"] }
+
+# Candle ML nodes (Whisper)
+# Note: Add "cuda" feature for NVIDIA GPU acceleration (requires CUDA 12.x)
+# Note: Add "metal" feature for Apple GPU acceleration
+remotemedia-candle-nodes = { path = "../../../crates/candle-nodes", features = ["whisper"] }
 
 # Audio
 cpal = "0.15"
@@ -52,6 +57,10 @@ parking_lot = "0.12"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+# GPU acceleration options for Candle ML nodes
+cuda = ["remotemedia-candle-nodes/cuda"]  # NVIDIA GPU (requires CUDA 12.x)
+metal = ["remotemedia-candle-nodes/metal"]  # Apple GPU
 
 [dev-dependencies]
 tempfile = "3.8"
