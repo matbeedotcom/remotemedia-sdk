@@ -1,0 +1,70 @@
+[package]
+name = "remotemedia-candle-nodes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Candle ML inference nodes for RemoteMedia pipelines"
+
+[dependencies]
+# Core workspace dependencies
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Candle ML framework
+candle-core = { version = "0.8", optional = true }
+candle-nn = { version = "0.8", optional = true }
+candle-transformers = { version = "0.8", optional = true }
+
+# HuggingFace Hub for model downloads
+hf-hub = { version = "0.4", default-features = false, features = ["tokio", "ureq", "rustls-tls"], optional = true }
+
+# Tokenizers for LLM text processing
+tokenizers = { version = "0.20", optional = true }
+
+# Audio processing for Whisper
+rubato.workspace = true
+
+# RemoteMedia core for StreamingNode trait
+remotemedia-core = { path = "../core" }
+
+# Utilities
+dirs.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+tokio-test.workspace = true
+criterion.workspace = true
+tempfile.workspace = true
+hound.workspace = true
+tracing-subscriber.workspace = true
+
+[features]
+default = []
+
+# Model family features
+whisper = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:hf-hub", "dep:tokenizers"]
+yolo = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:hf-hub"]
+llm = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:hf-hub", "dep:tokenizers"]
+
+# Hardware acceleration features
+cuda = ["candle-core?/cuda", "candle-nn?/cuda", "candle-transformers?/cuda"]
+metal = ["candle-core?/metal", "candle-nn?/metal", "candle-transformers?/metal"]
+
+# Convenience feature for all models
+all-models = ["whisper", "yolo", "llm"]
+
+[[bench]]
+name = "inference_bench"
+harness = false
+
+[[example]]
+name = "whisper_test"
+required-features = ["whisper"]

@@ -18,6 +18,7 @@ path = "src/main.rs"
 [dependencies]
 # SDK dependencies
 remotemedia-core = { workspace = true, features = ["video"] }
+remotemedia-candle-nodes = { path = "../../../crates/candle-nodes", optional = true }
 
 # FFmpeg for decoding any media format
 ac-ffmpeg = "0.19"
@@ -58,6 +59,10 @@ tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 directories = { workspace = true }
 url = { workspace = true }
+
+[features]
+default = []
+candle = ["dep:remotemedia-candle-nodes"]
 
 [dev-dependencies]
 tempfile = "3.8"

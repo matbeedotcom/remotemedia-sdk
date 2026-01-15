@@ -4236,6 +4236,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
+name = "remotemedia-candle-nodes"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dirs",
+ "rand 0.8.5",
+ "remotemedia-core",
+ "rubato",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "remotemedia-cli"
 version = "0.1.0"
 dependencies = [
@@ -4251,6 +4268,7 @@ dependencies = [
  "futures",
  "indicatif",
  "predicates",
+ "remotemedia-candle-nodes",
  "remotemedia-core",
  "serde",
  "serde_json",

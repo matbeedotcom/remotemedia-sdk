@@ -2,6 +2,7 @@
 members = [
     "crates/core",  # Core abstractions
     "crates/core-derive",  # Proc-macros for NodeConfig
+    "crates/candle-nodes",  # Candle ML inference nodes
     "crates/transports/grpc",  # gRPC transport
     "crates/transports/ffi",   # Python FFI transport
     "crates/transports/webrtc", # WebRTC transport
