@@ -5,7 +5,7 @@
   "identifier": "com.remotemedia.voice-assistant",
   "build": {
     "beforeBuildCommand": "npm run build",
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../dist"
   },
