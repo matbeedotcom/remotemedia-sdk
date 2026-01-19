@@ -96,6 +96,47 @@ cargo run -p remotemedia-webrtc-server --release -- --mode grpc
 # Connect from any client (Python, Node.js, Go, browser, etc.)
 ```
 
+### Option E: Packaged Pipelines (Self-Contained Wheels)
+
+Create **self-contained Python wheels** from pipeline manifests. The wheel bundles:
+- Pre-compiled Python node bytecode
+- Bundled `remotemedia` runtime
+- Native Rust acceleration
+
+```bash
+# Pack a pipeline into a Python wheel
+cargo run -p remotemedia-pack -- python examples/shared-pipelines/tts.yaml \
+    --output /tmp/packed
+
+# Build the wheel with maturin
+cd /tmp/packed/tts && maturin build --release
+
+# Install anywhere (no remotemedia install needed!)
+pip install target/wheels/tts-0.1.0-*.whl
+
+# Use in Python
+python -c "
+import tts
+import asyncio
+
+async def main():
+    session = tts.TtsSession()
+    result = await session.send({'type': 'text', 'data': 'Hello world!'})
+    print(result)
+    session.close()
+
+asyncio.run(main())
+"
+```
+
+**Key Features:**
+- **Self-contained** - No external `remotemedia` package required
+- **Pre-compiled bytecode** - Python nodes compiled at pack time, not runtime
+- **Native acceleration** - Rust nodes compiled into the wheel
+- **Dependency bundled** - All Python dependencies included
+
+See [Pack Pipeline Reference](tools/pack-pipeline/README.md) for full documentation.
+
 ## Built-in Nodes
 
 41+ built-in nodes for audio, video, and text processing.
@@ -143,21 +184,18 @@ cargo run -p remotemedia-webrtc-server --release -- --mode grpc
 
 ```
 remotemedia-sdk/
-├── runtime-core/          # Core execution engine (transport-agnostic)
-├── transports/
-│   ├── grpc/              # gRPC transport library
-│   ├── http/              # HTTP/REST transport library
-│   ├── ffi/               # Python FFI (PyO3)
-│   └── webrtc/            # WebRTC transport library
-├── libs/
-│   ├── pipeline-runner/   # Shared pipeline execution
-│   └── stream-health-analyzer/  # Health monitoring utilities
-├── services/
-│   ├── grpc-server/       # gRPC server binary
-│   ├── http-server/       # HTTP server binary
-│   ├── webrtc-server/     # WebRTC server binary
-│   └── ingest-srt/        # SRT ingest gateway
-├── python-client/         # Python SDK
+├── crates/
+│   ├── core/              # Core execution engine (transport-agnostic)
+│   └── transports/
+│       ├── grpc/          # gRPC transport library
+│       ├── http/          # HTTP/REST transport library
+│       ├── ffi/           # Python FFI (PyO3)
+│       └── webrtc/        # WebRTC transport library
+├── tools/
+│   └── pack-pipeline/     # Create self-contained Python wheels
+├── clients/
+│   ├── python/            # Python SDK
+│   └── nodejs/            # Node.js SDK
 ├── examples/              # Example applications
 │   ├── cli/               # Command-line tool
 │   ├── voice-assistant/   # Tauri desktop app
@@ -174,6 +212,7 @@ remotemedia-sdk/
 | [Runtime Core](runtime-core/README.md) | Core library API and usage |
 | [Transports](transports/README.md) | Transport implementations and error formats |
 | [CLI Reference](examples/cli/remotemedia-cli/README.md) | Command-line tool usage |
+| [Pack Pipeline](tools/pack-pipeline/README.md) | Create self-contained Python wheels |
 | [Examples](examples/README.md) | Example applications overview |
 | [Custom Transport Guide](docs/CUSTOM_TRANSPORT_GUIDE.md) | Build your own transport |
 | [Custom Nodes](docs/CUSTOM_NODE_REGISTRATION.md) | Register custom processing nodes |

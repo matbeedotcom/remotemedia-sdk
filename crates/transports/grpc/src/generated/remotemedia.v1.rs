@@ -1655,6 +1655,7 @@ pub mod stream_request {
         /// Server converts to DataChunk internally
         /// Will be removed in future version (6+ months)
         /// Migration: Use DataChunk with audio variant instead
+        #[deprecated]
         #[prost(message, tag = "3")]
         AudioChunk(super::AudioChunk),
         /// Control commands (close, cancel)

@@ -2,6 +2,7 @@
 
 pub mod models;
 pub mod nodes;
+pub mod pack;
 pub mod remote;
 pub mod run;
 pub mod serve;

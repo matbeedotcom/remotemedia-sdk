@@ -29,12 +29,10 @@ use crate::nodes::{
     AsyncNodeWrapper, StreamingNode, StreamingNodeFactory, StreamingNodeRegistry, SyncNodeWrapper,
 };
 use crate::data::RuntimeData;
-use crate::nodes::{NodeContext, NodeExecutor};
+// Note: NodeContext and NodeExecutor are available via crate::nodes if needed
 use crate::Error;
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 // Factory implementations for built-in streaming nodes
 

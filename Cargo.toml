@@ -14,6 +14,7 @@ members = [
     "crates/services/grpc-server",  # gRPC server binary
     "crates/services/http-server",  # HTTP server binary
     "crates/services/webrtc-server",  # WebRTC server binary
+    "tools/pack-pipeline",  # Pipeline packaging CLI
 ]
 exclude = [
     "examples/*",  # Examples are independent projects demonstrating usage

@@ -1,0 +1,38 @@
+[package]
+name = "remotemedia-pack"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Package RemoteMedia pipelines as distributable Python/Node.js libraries"
+license.workspace = true
+
+[[bin]]
+name = "remotemedia-pack"
+path = "src/main.rs"
+
+[dependencies]
+# CLI framework
+clap = { version = "4.4", features = ["derive"] }
+
+# RemoteMedia core - for pipeline analysis and node registry
+remotemedia-core = { path = "../../crates/core" }
+
+# Serialization
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Filesystem utilities
+glob = { workspace = true }
+
+# Text utilities  
+heck = "0.5"
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

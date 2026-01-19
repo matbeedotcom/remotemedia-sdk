@@ -358,6 +358,35 @@ cli-embed: setup-ffmpeg ## Build pipeline-embed (set PIPELINE_YAML env var)
 endif
 
 # =============================================================================
+# PYTHON PACKAGING (Pipeline to Python Wheel)
+# =============================================================================
+
+.PHONY: pack-tool pack-python pack-python-build
+
+pack-tool: ## Build the remotemedia-pack CLI tool
+	cargo build -p remotemedia-pack $(CARGO_FLAGS)
+
+ifeq ($(OS),Windows_NT)
+pack-python: pack-tool ## Generate Python package from pipeline YAML
+ifndef PIPELINE_YAML
+	@echo Usage: make pack-python PIPELINE_YAML=/path/to/pipeline.yaml [OUTPUT_DIR=./dist]
+	@exit 1
+endif
+	./target/debug/remotemedia-pack python $(PIPELINE_YAML) --output $(if $(OUTPUT_DIR),$(OUTPUT_DIR),./dist)
+else
+pack-python: pack-tool ## Generate Python package from pipeline YAML
+	@if [ -z "$(PIPELINE_YAML)" ]; then \
+		echo "Usage: make pack-python PIPELINE_YAML=/path/to/pipeline.yaml [OUTPUT_DIR=./dist]"; \
+		exit 1; \
+	fi
+	./target/debug/remotemedia-pack python $(PIPELINE_YAML) --output $(if $(OUTPUT_DIR),$(OUTPUT_DIR),./dist)
+endif
+
+pack-python-build: pack-python ## Generate and build Python wheel
+	cd $(if $(OUTPUT_DIR),$(OUTPUT_DIR),./dist)/$$(ls $(if $(OUTPUT_DIR),$(OUTPUT_DIR),./dist) | head -1) && maturin build --release
+
+
+# =============================================================================
 # TEST TARGETS
 # =============================================================================
 
