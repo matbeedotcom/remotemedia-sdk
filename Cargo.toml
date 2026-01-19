@@ -124,9 +124,7 @@ http-body-util = "0.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Whisper
-rwhisper = "0.4"
 whisper-rs = "0.15"
-rodio = "0.20"
 
 # WASM-specific
 wlr-libpy = { git = "https://github.com/vmware-labs/webassembly-language-runtimes.git", default-features = false, features = ["py_main", "py312"] }

@@ -1,9 +1,22 @@
+# Cargo configuration for voice-assistant
+
 [env]
+# CUDA 13 path (candle 0.9+ with cudarc 0.18+ supports CUDA 13)
+CUDA_PATH = "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0"
+
+# FFmpeg paths - use vendor directory from workspace root
+# These prevent vcpkg from being used (which adds unwanted dependencies)
 FFMPEG_INCLUDE_DIR = "C:/Users/mail/dev/personal/remotemedia-sdk/vendor/ffmpeg/include"
 FFMPEG_LIB_DIR = "C:/Users/mail/dev/personal/remotemedia-sdk/vendor/ffmpeg/lib"
-# Use static linking for FFmpeg (single binary, no DLL dependencies)
-FFMPEG_LIBS_MODE = "static"
+# Static linking mode for FFmpeg
+FFMPEG_STATIC = "1"
+# Disable vcpkg auto-detection
+VCPKGRS_DYNAMIC = "0"
+VCPKGRS_NO_FFMPEG = "1"
+
 [build]
+# Use all available CPU cores
+jobs = -1
 rustflags = ["-A", "missing_docs"]
 
 [doc]

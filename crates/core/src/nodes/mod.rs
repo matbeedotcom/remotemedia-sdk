@@ -34,9 +34,6 @@ pub mod video;
 // pub mod sync_av;
 // pub mod video_processor;
 
-pub mod whisper;
-pub use whisper::RustWhisperNode;
-
 #[cfg(feature = "silero-vad")]
 pub mod silero_vad;
 #[cfg(feature = "silero-vad")]

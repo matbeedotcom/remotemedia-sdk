@@ -212,3 +212,4 @@ nul
 **/vendor/*
 # Vendored native libraries
 vendor/
+.ffmpeg/

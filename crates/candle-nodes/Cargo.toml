@@ -18,11 +18,11 @@ tracing.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 
-# Candle ML framework
-candle-core = { version = "0.8", optional = true }
-candle-nn = { version = "0.8", optional = true }
-candle-transformers = { version = "0.8", optional = true }
-candle-onnx = { version = "0.8", optional = true }
+# Candle ML framework (git main for CUDA 13 support via latest cudarc)
+candle-core = { git = "https://github.com/huggingface/candle", optional = true }
+candle-nn = { git = "https://github.com/huggingface/candle", optional = true }
+candle-transformers = { git = "https://github.com/huggingface/candle", optional = true }
+candle-onnx = { git = "https://github.com/huggingface/candle", optional = true }
 
 # HuggingFace Hub for model downloads
 hf-hub = { version = "0.4", default-features = false, features = ["tokio", "ureq", "rustls-tls"], optional = true }
@@ -34,7 +34,8 @@ tokenizers = { version = "0.20", optional = true }
 rubato.workspace = true
 
 # RemoteMedia core for StreamingNode trait
-remotemedia-core = { path = "../core" }
+# Use default-features = false to avoid pulling in video/FFmpeg dependencies
+remotemedia-core = { path = "../core", default-features = false }
 
 # Utilities
 dirs.workspace = true

@@ -20,7 +20,11 @@ tauri = { version = "2.0", features = ["devtools"] }
 tauri-plugin-shell = "2.0"
 
 # RemoteMedia SDK
-remotemedia-core = { path = "../../../crates/core" }
+# Note: silero-vad conflicts with CUDA (CRT mismatch), so it's only enabled for CPU builds
+remotemedia-core = { path = "../../../crates/core", default-features = false, features = ["multiprocess"] }
+
+# Candle ML nodes (Whisper)
+remotemedia-candle-nodes = { path = "../../../crates/candle-nodes", features = ["whisper"] }
 
 # Audio
 cpal = "0.15"
@@ -47,11 +51,21 @@ uuid = { version = "1.6", features = ["v4"] }
 parking_lot = "0.12"
 
 [features]
-default = ["custom-protocol"]
+default = ["custom-protocol", "silero-vad"]
 custom-protocol = ["tauri/custom-protocol"]
+
+# VAD using ONNX Runtime - disabled when using CUDA due to CRT mismatch
+silero-vad = ["remotemedia-core/silero-vad"]
+
+# GPU acceleration options for Candle ML nodes
+# Note: CUDA conflicts with silero-vad (ONNX Runtime CRT mismatch)
+# Use: cargo build --features cuda --no-default-features --features custom-protocol
+cuda = ["remotemedia-candle-nodes/cuda"]  # NVIDIA GPU (requires CUDA 12+)
+metal = ["remotemedia-candle-nodes/metal"]  # Apple GPU
 
 [dev-dependencies]
 tempfile = "3.8"
 
 # Keep this project standalone from parent workspace
 [workspace]
+
