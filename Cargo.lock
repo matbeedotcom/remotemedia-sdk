@@ -5557,6 +5557,7 @@ dependencies = [
  "clap",
  "glob",
  "heck",
+ "remotemedia-candle-nodes",
  "remotemedia-core",
  "serde",
  "serde_json",

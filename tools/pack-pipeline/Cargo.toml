@@ -18,6 +18,9 @@ clap = { version = "4.4", features = ["derive"] }
 # RemoteMedia core - for pipeline analysis and node registry
 remotemedia-core = { path = "../../crates/core" }
 
+# Candle ML nodes - for whisper, yolo, llm support
+remotemedia-candle-nodes = { path = "../../crates/candle-nodes", features = ["whisper"] }
+
 # Serialization
 serde = { workspace = true }
 serde_yaml = { workspace = true }

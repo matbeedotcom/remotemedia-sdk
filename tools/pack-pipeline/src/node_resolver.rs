@@ -24,7 +24,10 @@ pub fn analyze_pipeline_yaml(yaml_content: &str) -> Result<PipelineAnalysis> {
         .context("Failed to parse pipeline YAML")?;
     
     // Get the default streaming registry with all built-in nodes
-    let registry = create_default_streaming_registry();
+    let mut registry = create_default_streaming_registry();
+    
+    // Register Candle ML nodes (whisper, yolo, llm)
+    remotemedia_candle_nodes::register_candle_nodes(&mut registry);
     
     // Analyze the pipeline against the registry
     Ok(analyze_pipeline(&manifest, &registry))

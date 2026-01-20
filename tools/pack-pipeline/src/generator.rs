@@ -92,10 +92,11 @@ pub fn generate_python_package(config: PythonPackageConfig) -> Result<()> {
         );
     }
 
-    let class_name = package_name.to_upper_camel_case();
+    // Use simple "Session" class name - avoids redundant "tts.TtsSession"
+    let class_name = "Session".to_string();
     
     tracing::info!("Generating Python package: {}", package_name);
-    tracing::info!("  Class name: {}Session", class_name);
+    tracing::info!("  Class name: {}", class_name);
     tracing::info!("  Streaming mode: {}", metadata.is_streaming);
     
     // Analyze the pipeline against the actual node registry
@@ -162,9 +163,14 @@ pub fn generate_python_package(config: PythonPackageConfig) -> Result<()> {
     let remotemedia_dst = pkg_dir.join("python").join("remotemedia");
     bundle_python_package(&remotemedia_src, &remotemedia_dst)?;
     
-    // Generate Cargo.toml with path dependencies
+    // Generate Cargo.toml with path dependencies (include candle-nodes if needed)
     let workspace_root_str = config.workspace_root.to_string_lossy();
-    let cargo_toml = templates::generate_cargo_toml(&package_name, &config.version, &workspace_root_str);
+    let cargo_toml = templates::generate_cargo_toml(
+        &package_name, 
+        &config.version, 
+        &workspace_root_str,
+        &analysis.rust_node_types,
+    );
     fs::write(pkg_dir.join("Cargo.toml"), cargo_toml)
         .context("Failed to write Cargo.toml")?;
     
@@ -201,6 +207,7 @@ pub fn generate_python_package(config: PythonPackageConfig) -> Result<()> {
         &metadata.description,
         metadata.is_streaming,
         &embedded_files,
+        &analysis.rust_node_types,
     );
     fs::write(src_dir.join("lib.rs"), lib_rs)
         .context("Failed to write lib.rs")?;
@@ -605,7 +612,7 @@ fn test_wheel(wheel_path: &PathBuf, package_name: &str) -> Result<()> {
     
     // Run import and execution test
     let python = venv_dir.join("bin").join("python");
-    let class_name = heck::ToUpperCamelCase::to_upper_camel_case(package_name);
+    let class_name = "Session"; // Simple name, not redundant like "TtsSession"
     let test_code = format!(
         r#"
 import sys
@@ -613,15 +620,15 @@ import asyncio
 
 async def test():
     try:
-        from {pkg} import get_version, get_pipeline_yaml, {cls}Session, process
+        from {pkg} import get_version, get_pipeline_yaml, {cls}, process
         print(f"✓ Package version: {{get_version()}}")
         print(f"✓ Pipeline YAML loaded: {{len(get_pipeline_yaml())}} bytes")
-        print(f"✓ Session class: {{{cls}Session}}")
+        print(f"✓ Session class: {{{cls}}}")
         print("✓ All imports successful!")
         
         # Test session creation
         print("\\n🔄 Testing session creation...")
-        session = {cls}Session()
+        session = {cls}()
         print(f"✓ Session created: {{session}}")
         
         # Test pipeline execution with sample data

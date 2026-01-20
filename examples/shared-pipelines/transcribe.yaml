@@ -1,21 +1,19 @@
 # Transcription Pipeline
 # Audio/Video → Whisper STT → Text output
-# Runs locally with configurable model size
+# Runs locally with configurable model size (using Candle ML)
 
 version: "v1"
 metadata:
   name: "transcribe"
-  description: "Audio transcription using Whisper"
+  description: "Audio transcription using Whisper (Candle)"
   category: "asr"
 
 nodes:
   - id: stt
-    node_type: RustWhisperNode
+    node_type: candle-whisper
     params:
-      model: "base"
-      language: "auto"
+      model: "tiny"
+      language: "en"
       task: "transcribe"
-      word_timestamps: true
-      initial_prompt: ""
 
 connections: []

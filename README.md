@@ -120,7 +120,7 @@ import tts
 import asyncio
 
 async def main():
-    session = tts.TtsSession()
+    session = tts.Session()
     result = await session.send({'type': 'text', 'data': 'Hello world!'})
     print(result)
     session.close()

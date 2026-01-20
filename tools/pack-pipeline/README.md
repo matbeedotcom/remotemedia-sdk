@@ -68,7 +68,7 @@ import asyncio
 
 async def main():
     # Create a session
-    session = tts.TtsSession()
+    session = tts.Session()
     
     # Get pipeline info
     print(f"Version: {tts.get_version()}")
@@ -90,7 +90,7 @@ asyncio.run(main())
 |----------|-------------|
 | `get_version()` | Returns the package version |
 | `get_pipeline_yaml()` | Returns the embedded pipeline YAML |
-| `{Name}Session()` | Creates a new pipeline session |
+| `Session()` | Creates a new pipeline session |
 | `process(data)` | One-shot pipeline execution |
 
 ### Session Methods

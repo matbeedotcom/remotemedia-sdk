@@ -8,9 +8,35 @@
 /// The generated package depends on local crates:
 /// - `remotemedia-ffi` for marshaling and Python FFI utilities
 /// - `remotemedia-core` for pipeline execution
+/// - `remotemedia-candle-nodes` for ML inference (when using candle nodes)
 /// 
 /// Dependencies use path references to compile everything into the wheel.
-pub fn generate_cargo_toml(package_name: &str, version: &str, workspace_root: &str) -> String {
+pub fn generate_cargo_toml(package_name: &str, version: &str, workspace_root: &str, rust_nodes: &[String]) -> String {
+    // Determine which additional dependencies are needed based on Rust node types
+    let needs_candle = rust_nodes.iter().any(|n| n.starts_with("candle-"));
+    let candle_features: Vec<&str> = rust_nodes.iter()
+        .filter_map(|n| match n.as_str() {
+            "candle-whisper" => Some("whisper"),
+            "candle-yolo" => Some("yolo"),
+            "candle-phi" | "candle-llama" => Some("llm"),
+            "candle-vad" => Some("vad"),
+            _ => None,
+        })
+        .collect();
+    
+    let candle_dep = if needs_candle {
+        let features = candle_features.join("\", \"");
+        format!(
+            r#"
+# Candle ML nodes for native inference
+remotemedia-candle-nodes = {{ path = "{}/crates/candle-nodes", features = ["{}"] }}
+"#,
+            workspace_root, features
+        )
+    } else {
+        String::new()
+    };
+    
     format!(
         r#"[package]
 name = "{package_name}"
@@ -28,7 +54,7 @@ remotemedia-ffi = {{ path = "{workspace_root}/crates/transports/ffi", features =
 
 # RemoteMedia core - provides PipelineExecutor and RuntimeData types
 remotemedia-core = {{ path = "{workspace_root}/crates/core" }}
-
+{candle_dep}
 # Re-export required crates for our bindings
 pyo3 = {{ version = "0.26", features = ["abi3-py310", "extension-module"] }}
 pyo3-async-runtimes = {{ version = "0.26", features = ["tokio-runtime"] }}
@@ -49,6 +75,7 @@ tracing = "0.1"
         package_name = package_name,
         version = version,
         workspace_root = workspace_root,
+        candle_dep = candle_dep,
     )
 }
 
@@ -123,7 +150,7 @@ pub fn generate_lib_rs(
     is_streaming: bool,
 ) -> String {
     // Delegate to the version with no embedded nodes
-    generate_lib_rs_with_nodes(package_name, class_name, description, is_streaming, &[])
+    generate_lib_rs_with_nodes(package_name, class_name, description, is_streaming, &[], &[])
 }
 
 /// Generate lib.rs with embedded Python nodes
@@ -136,11 +163,12 @@ pub fn generate_lib_rs_with_nodes(
     description: &str,
     is_streaming: bool,
     embedded_python_files: &[String],
+    rust_nodes: &[String],
 ) -> String {
     let streaming_impl = if is_streaming {
-        generate_streaming_session(class_name)
+        generate_streaming_session(class_name, rust_nodes)
     } else {
-        generate_batch_api(class_name)
+        generate_batch_api(class_name, rust_nodes)
     };
 
     // Generate the embedded Python nodes constant
@@ -159,10 +187,10 @@ pub fn generate_lib_rs_with_nodes(
 //!
 //! ```python
 //! import asyncio
-//! from {package_name} import {class_name}Session
+//! from {package_name} import {class_name}
 //!
 //! async def main():
-//!     session = {class_name}Session()
+//!     session = {class_name}()
 //!     await session.send(audio_data)
 //!     result = await session.recv()
 //!     print(result)
@@ -207,7 +235,7 @@ fn {package_name}(m: &Bound<'_, PyModule>) -> PyResult<()> {{
     // Initialize embedded Python nodes on first import
     init_embedded_nodes(m.py())?;
     
-    m.add_class::<{class_name}Session>()?;
+    m.add_class::<{class_name}>()?;
     m.add_function(wrap_pyfunction!(get_pipeline_yaml, m)?)?;
     m.add_function(wrap_pyfunction!(get_version, m)?)?;
     m.add_function(wrap_pyfunction!(process, m)?)?;
@@ -348,7 +376,34 @@ fn init_embedded_nodes(py: Python<'_>) -> PyResult<()> {
 }
 
 /// Generate the streaming session class implementation using remotemedia-ffi
-fn generate_streaming_session(class_name: &str) -> String {
+fn generate_streaming_session(class_name: &str, rust_nodes: &[String]) -> String {
+    // Generate candle imports and registration if needed
+    let needs_candle = rust_nodes.iter().any(|n| n.starts_with("candle-"));
+    
+    let candle_use = if needs_candle {
+        "\n// Candle ML nodes for native inference\nuse remotemedia_candle_nodes::register_candle_nodes;"
+    } else {
+        ""
+    };
+    
+    let candle_register = if needs_candle {
+        r#"
+        // Register Candle ML nodes with the executor's registry
+        // Use tokio's block_in_place to avoid deadlock
+        {
+            let registry = executor.registry();
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let mut registry_guard = registry.write().await;
+                register_candle_nodes(&mut registry_guard);
+                tracing::info!("Registered Candle ML nodes");
+            });
+        }
+"#
+    } else {
+        ""
+    };
+    
     format!(
         r##"
 use remotemedia_core::{{
@@ -356,20 +411,21 @@ use remotemedia_core::{{
     manifest::Manifest,
     transport::{{PipelineExecutor, TransportData}},
 }};
+{candle_use}
 
 /// {class_name} processing session
 ///
 /// Provides a streaming interface for processing data through the embedded pipeline.
 /// Use `send()` to feed data and `recv()` to get results.
 #[pyclass]
-pub struct {class_name}Session {{
+pub struct {class_name} {{
     executor: Arc<Mutex<Option<PipelineExecutor>>>,
     manifest: Arc<Manifest>,
     pending_outputs: Arc<Mutex<Vec<RuntimeData>>>,
 }}
 
 #[pymethods]
-impl {class_name}Session {{
+impl {class_name} {{
     /// Create a new processing session
     #[new]
     fn new() -> PyResult<Self> {{
@@ -384,7 +440,7 @@ impl {class_name}Session {{
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
                 format!("Failed to create executor: {{}}", e)
             ))?;
-        
+        {candle_register}
         Ok(Self {{
             executor: Arc::new(Mutex::new(Some(executor))),
             manifest: Arc::new(manifest),
@@ -541,18 +597,20 @@ fn process<'py>(
 }}
 "##,
         class_name = class_name,
+        candle_use = candle_use,
+        candle_register = candle_register,
     )
 }
 
 /// Generate batch (non-streaming) API 
-fn generate_batch_api(class_name: &str) -> String {
+fn generate_batch_api(class_name: &str, rust_nodes: &[String]) -> String {
     // For non-streaming pipelines, we still provide the session API but also
     // emphasize the simple process() function
-    generate_streaming_session(class_name)
+    generate_streaming_session(class_name, rust_nodes)
 }
 
 /// Generate Python __init__.py with re-exports
-pub fn generate_init_py(package_name: &str, class_name: &str, is_streaming: bool) -> String {
+pub fn generate_init_py(package_name: &str, class_name: &str, _is_streaming: bool) -> String {
     format!(
         r#""""{package_name} - RemoteMedia Pipeline Package
 
@@ -560,7 +618,7 @@ Auto-generated pipeline bindings using remotemedia-ffi.
 """
 
 from .{package_name} import (
-    {class_name}Session,
+    {class_name},
     process,
     get_pipeline_yaml,
     get_version,
@@ -569,7 +627,7 @@ from .{package_name} import (
 )
 
 __all__ = [
-    "{class_name}Session",
+    "{class_name}",
     "process",
     "get_pipeline_yaml",
     "get_version",
@@ -587,7 +645,7 @@ pub fn generate_readme(
     package_name: &str,
     class_name: &str,
     description: &str,
-    is_streaming: bool,
+    _is_streaming: bool,
 ) -> String {
     format!(
         r#"# {package_name}
@@ -613,10 +671,10 @@ pip install target/wheels/*.whl
 
 ```python
 import asyncio
-from {package_name} import {class_name}Session
+from {package_name} import {class_name}
 
 async def main():
-    session = {class_name}Session()
+    session = {class_name}()
     
     # Send data for processing
     result = await session.send(audio_data)
@@ -648,7 +706,7 @@ asyncio.run(main())
 
 ## API Reference
 
-### {class_name}Session
+### {class_name}
 
 Session class for streaming processing.
 
@@ -686,7 +744,7 @@ mod tests {
 
     #[test]
     fn test_generate_cargo_toml() {
-        let toml = generate_cargo_toml("test_pipeline", "0.1.0", "/path/to/workspace");
+        let toml = generate_cargo_toml("test_pipeline", "0.1.0", "/path/to/workspace", &[]);
         assert!(toml.contains("name = \"test_pipeline\""));
         assert!(toml.contains("remotemedia-ffi"));
     }
@@ -712,7 +770,7 @@ mod tests {
             "Test pipeline",
             true,
         );
-        assert!(lib_rs.contains("TestPipelineSession"));
+        assert!(lib_rs.contains("Session"));
         assert!(lib_rs.contains("remotemedia_ffi"));
         assert!(lib_rs.contains("PipelineExecutor"));
     }
