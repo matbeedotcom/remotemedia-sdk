@@ -114,14 +114,8 @@ test.describe('RemoteMedia UI E2E', () => {
       // Click Execute
       await page.getByRole('button', { name: 'Execute' }).click();
 
-      // Wait for the API response and debug
+      // Wait for the API response
       const response = await responsePromise;
-      if (response.status() !== 200) {
-        const reqBody = response.request().postData();
-        const resBody = await response.text();
-        console.log('REQUEST:', reqBody);
-        console.log('RESPONSE:', response.status(), resBody);
-      }
       expect(response.status()).toBe(200);
 
       // Wait for result to appear (result-text for Text output, result-json for others)
