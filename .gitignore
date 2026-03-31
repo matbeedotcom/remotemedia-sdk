@@ -213,3 +213,4 @@ nul
 # Vendored native libraries
 vendor/
 .ffmpeg/
+.playwright-artifacts**/

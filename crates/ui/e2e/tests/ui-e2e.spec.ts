@@ -139,8 +139,8 @@ test.describe('RemoteMedia UI E2E', () => {
       // Switch to JSON input type
       await page.locator('select').selectOption('json');
 
-      // Type JSON into the textarea
-      await page.locator('textarea').fill('{"key": "value", "num": 42}');
+      // JSON input must be a valid RuntimeData variant (e.g. {"Text": "..."})
+      await page.locator('textarea').fill('{"Text": "json mode test"}');
 
       // Click Execute
       await page.getByRole('button', { name: 'Execute' }).click();
@@ -149,8 +149,7 @@ test.describe('RemoteMedia UI E2E', () => {
       await expect(page.locator('.result-text, .result-json')).toBeVisible({ timeout: 10000 });
 
       const resultText = await page.locator('.result-text, .result-json').textContent();
-      expect(resultText).toContain('key');
-      expect(resultText).toContain('value');
+      expect(resultText).toContain('json mode test');
     });
 
     test('shows error on invalid JSON input', async ({ page }) => {
