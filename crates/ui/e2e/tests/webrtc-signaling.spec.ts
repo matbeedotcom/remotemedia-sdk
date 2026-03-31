@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
-const WS_PORT = process.env.WS_PORT || '18091';
-const WS_URL = `ws://127.0.0.1:${WS_PORT}/ws`;
+const SIGNAL_PORT = process.env.SIGNAL_PORT || '18091';
+const WS_URL = `ws://127.0.0.1:${SIGNAL_PORT}/ws`;
 
 // Helper: send a JSON-RPC 2.0 request over WebSocket from the browser context
 function jsonRpc(method: string, params: Record<string, unknown>, id: string) {
@@ -636,6 +636,67 @@ test.describe('WebRTC Signaling E2E', () => {
 
       expect(result.method).toBe('peer.left');
       expect(result.params.peer_id).toBe('e2e-target');
+    });
+  });
+
+  test.describe('WebRTC Panel Interaction', () => {
+    test('Connect button establishes connection', async ({ page }) => {
+      await page.goto('/');
+      await expect(page.locator('.status-dot.connected')).toBeVisible({ timeout: 10000 });
+
+      // Switch to WebRTC tab
+      await page.getByRole('button', { name: 'WebRTC' }).click();
+
+      // Click Connect
+      await page.getByRole('button', { name: 'Connect' }).click();
+
+      // Should show connected state
+      await expect(page.locator('.webrtc-state')).toContainText('connected', { timeout: 15000 });
+
+      // Data channel input should be visible
+      await expect(page.locator('.webrtc-input-row input')).toBeVisible();
+
+      // Disconnect
+      await page.getByRole('button', { name: 'Disconnect' }).click();
+      await expect(page.locator('.webrtc-state')).toContainText('disconnected', { timeout: 5000 });
+    });
+
+    test('data channel sends text message', async ({ page }) => {
+      await page.goto('/');
+      await expect(page.locator('.status-dot.connected')).toBeVisible({ timeout: 10000 });
+
+      await page.getByRole('button', { name: 'WebRTC' }).click();
+      await page.getByRole('button', { name: 'Connect' }).click();
+      await expect(page.locator('.webrtc-state')).toContainText('connected', { timeout: 15000 });
+
+      // Type and send text
+      await page.locator('.webrtc-input-row input').fill('hello webrtc');
+      await page.getByRole('button', { name: 'Send' }).click();
+
+      // Sent message should appear in the log
+      await expect(page.locator('.webrtc-msg-sent')).toContainText('hello webrtc');
+
+      // Input should be cleared after send
+      await expect(page.locator('.webrtc-input-row input')).toHaveValue('');
+
+      // Cleanup
+      await page.getByRole('button', { name: 'Disconnect' }).click();
+    });
+
+    test('Disconnect cleans up UI', async ({ page }) => {
+      await page.goto('/');
+      await expect(page.locator('.status-dot.connected')).toBeVisible({ timeout: 10000 });
+
+      await page.getByRole('button', { name: 'WebRTC' }).click();
+      await page.getByRole('button', { name: 'Connect' }).click();
+      await expect(page.locator('.webrtc-state')).toContainText('connected', { timeout: 15000 });
+
+      await page.getByRole('button', { name: 'Disconnect' }).click();
+
+      // Audio section and data channel should disappear
+      await expect(page.locator('.webrtc-messages')).not.toBeVisible();
+      // Connect button should reappear
+      await expect(page.getByRole('button', { name: 'Connect' })).toBeVisible();
     });
   });
 });

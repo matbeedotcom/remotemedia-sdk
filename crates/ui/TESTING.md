@@ -85,7 +85,7 @@ Playwright auto-starts the CLI via its `webServer` config:
 
 ```
 cargo run --features ui,webrtc -- serve fixtures/passthrough.json \
-  --transport webrtc --port 18080 --ws-port 18091 --ui --ui-port 3001
+  --transport webrtc --port 18080 --signal-port 18091 --ui --ui-port 3001
 ```
 
 This starts three servers:
@@ -99,7 +99,7 @@ Subsequent runs reuse the binary. Set `reuseExistingServer: false` in CI.
 ### Port overrides
 
 ```bash
-UI_PORT=4000 WS_PORT=19000 npm test
+UI_PORT=4000 SIGNAL_PORT=19000 npm test
 ```
 
 ### Test coverage
@@ -116,11 +116,11 @@ UI_PORT=4000 WS_PORT=19000 npm test
 | Streaming I/O | 2 | SSE single message, SSE multi-message ordering |
 | SPA Routing | 1 | Deep path serves index.html |
 
-#### `webrtc-signaling.spec.ts` — 14 tests
+#### `webrtc-signaling.spec.ts` — 17 tests
 
 | Group | Tests | Description |
 |-------|-------|-------------|
-| WebRTC UI Tab | 2 | Tab visible when `transport_type=webrtc`, panel renders |
+| WebRTC UI Tab | 2 | Tab visible when `transport_type=webrtc`, panel shows signaling address |
 | Signaling Connection | 1 | Browser WebSocket connects to `ws://host:port/ws` |
 | Peer Announce | 2 | Successful registration, duplicate peer rejection |
 | Peer List | 1 | `peer.list` returns registered peers |
@@ -128,6 +128,7 @@ UI_PORT=4000 WS_PORT=19000 npm test
 | SDP Offer/Answer | 2 | Valid offer to `remotemedia-server`, invalid SDP error (-32002) |
 | Error Handling | 3 | Unknown method (-32601), invalid JSON (-32700), pre-announce operations |
 | Disconnect | 1 | `peer.left` notification on WebSocket close |
+| Panel Interaction | 3 | Connect/disconnect lifecycle, data channel text send, UI cleanup |
 
 ### WebRTC signaling protocol (JSON-RPC 2.0)
 

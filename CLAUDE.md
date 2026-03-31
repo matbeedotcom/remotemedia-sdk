@@ -112,9 +112,14 @@ npx playwright test tests/webrtc-signaling.spec.ts
 UI_PORT=4000 WS_PORT=19000 npm test
 ```
 
-The Playwright config auto-starts the CLI with `--transport webrtc --ws-port --ui`,
+The Playwright config auto-starts the CLI with `--transport webrtc --signal-port --ui`,
 building with `--features ui,webrtc`. First run triggers a cargo build (~2-3 min);
 subsequent runs reuse the server if already running.
+
+CLI flags for WebRTC transport:
+- `--signal-port <PORT>` — Start a browser-accessible signaling server (WebSocket by default)
+- `--signal-type <TYPE>` — Signaling protocol: `websocket` (default) or `grpc`
+- When `--signal-port` is set, the UI's `transport.address` points to the signal port
 
 ### Benchmarking
 

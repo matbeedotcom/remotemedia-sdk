@@ -273,6 +273,22 @@ label {
   margin-top: 0.75rem;
 }
 
+/* Warning */
+.warning {
+  background: rgba(255, 152, 0, 0.1);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  color: var(--warning);
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
+.warning a {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
 /* Loading */
 .loading {
   color: var(--text-muted);
@@ -314,6 +330,15 @@ label {
   font-family: var(--font-mono);
   font-size: 0.75rem;
   color: var(--text-secondary);
+  margin-top: 0.5rem;
+}
+
+/* Audio visualizer canvas */
+.audio-visualizer-canvas {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: block;
   margin-top: 0.5rem;
 }
 

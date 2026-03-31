@@ -225,6 +225,9 @@ async fn handle_message(
         "peer.list" | "list_peers" => {
             handle_list_peers(request, state, tx).await?;
         }
+        "server.info" => {
+            handle_server_info(request, tx).await?;
+        }
         _ => {
             let error = JsonRpcError::new(
                 error_codes::METHOD_NOT_FOUND,
@@ -800,6 +803,44 @@ async fn handle_list_peers(
         json!({
             "peers": peer_list,
             "count": peer_list.len()
+        }),
+        request_id,
+    );
+    tx.send(response.to_json()?).await?;
+
+    Ok(())
+}
+
+/// Handle server.info — return server network interfaces for client-side IP discovery
+async fn handle_server_info(
+    request: JsonRpcRequest,
+    tx: &mpsc::Sender<String>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let request_id = request.id.clone().unwrap_or(json!(null));
+
+    let mut addresses: Vec<Value> = Vec::new();
+
+    // Gather all non-loopback IPv4 addresses from network interfaces
+    if let Ok(interfaces) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        // Connect to a public address to determine the default route interface
+        if interfaces.connect("8.8.8.8:80").is_ok() {
+            if let Ok(local_addr) = interfaces.local_addr() {
+                addresses.push(json!({
+                    "ip": local_addr.ip().to_string(),
+                    "is_default": true,
+                }));
+            }
+        }
+    }
+
+    // Also enumerate all interfaces via getifaddrs equivalent
+    // Use a simpler approach: read from /proc/net on Linux, or just use the UDP trick above
+    // The UDP socket approach gives us the default route IP which is what the client needs
+
+    let response = JsonRpcResponse::new(
+        json!({
+            "addresses": addresses,
+            "hostname": std::env::var("HOSTNAME").unwrap_or_default(),
         }),
         request_id,
     );

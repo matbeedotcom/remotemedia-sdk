@@ -52,12 +52,17 @@ pub struct ServeArgs {
     #[arg(long, default_value = "3001")]
     pub ui_port: u16,
 
-    /// WebSocket signaling port (when --transport webrtc)
+    /// Signaling port for browser-accessible WebRTC connections
     ///
-    /// Starts a WebSocket signaling server alongside the gRPC one,
-    /// enabling browser-based WebRTC connections via ws://host:ws-port/ws
+    /// Starts a signaling server (WebSocket or gRPC-Web) alongside the
+    /// main transport, enabling browser-based WebRTC connections.
+    /// The UI's transport.address will point to this port.
     #[arg(long)]
-    pub ws_port: Option<u16>,
+    pub signal_port: Option<u16>,
+
+    /// Signaling protocol type (websocket or grpc)
+    #[arg(long, default_value = "websocket")]
+    pub signal_type: String,
 }
 
 pub async fn execute(args: ServeArgs, _config: &Config) -> Result<()> {
@@ -84,7 +89,11 @@ pub async fn execute(args: ServeArgs, _config: &Config) -> Result<()> {
     if args.ui {
         let ui_bind = format!("{}:{}", args.host, args.ui_port);
         let transport_type = format!("{:?}", args.transport).to_lowercase();
-        let address = format!("{}:{}", args.host, args.port);
+        let address = if let Some(sp) = args.signal_port {
+            format!("{}:{}", args.host, sp)
+        } else {
+            format!("{}:{}", args.host, args.port)
+        };
 
         // Parse manifest for the UI
         let manifest: remotemedia_core::manifest::Manifest =
@@ -169,8 +178,8 @@ pub async fn execute(args: ServeArgs, _config: &Config) -> Result<()> {
         Transport::Webrtc => {
             #[cfg(feature = "webrtc")]
             {
-                // Start WebSocket signaling server if --ws-port is specified
-                let _ws_handle = if let Some(ws_port) = args.ws_port {
+                // Start signaling server if --signal-port is specified
+                let _ws_handle = if let Some(signal_port) = args.signal_port {
                     let manifest: remotemedia_core::manifest::Manifest =
                         match args.manifest.extension().and_then(|e| e.to_str()) {
                             Some("yaml" | "yml") => serde_json::from_value(
@@ -181,14 +190,14 @@ pub async fn execute(args: ServeArgs, _config: &Config) -> Result<()> {
 
                     let ws_config = Arc::new(remotemedia_webrtc::WebRtcTransportConfig::default());
                     let ws_server = remotemedia_webrtc::signaling::WebSocketSignalingServer::new(
-                        ws_port,
+                        signal_port,
                         ws_config,
                         executor.clone(),
                         Arc::new(manifest),
                     );
                     let handle = ws_server.start().await
-                        .map_err(|e| anyhow::anyhow!("Failed to start WebSocket signaling server: {}", e))?;
-                    tracing::info!("WebSocket signaling server listening on ws://{}:{}/ws", args.host, ws_port);
+                        .map_err(|e| anyhow::anyhow!("Failed to start signaling server: {}", e))?;
+                    tracing::info!("Signaling server ({}) listening on {}://{}:{}/ws", args.signal_type, args.signal_type, args.host, signal_port);
                     Some(handle)
                 } else {
                     None
