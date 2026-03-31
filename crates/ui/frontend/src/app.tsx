@@ -5,7 +5,7 @@ import { ManifestView } from './components/ManifestView';
 
 interface StatusInfo {
   version: string;
-  transport: { transport_type: string; transport_url: string } | null;
+  transport: { transport_type: string; address: string } | null;
   active_sessions: number;
 }
 

@@ -26,7 +26,7 @@ test.describe('WebRTC Signaling E2E', () => {
       await expect(page.getByRole('button', { name: 'WebRTC' })).toBeVisible();
     });
 
-    test('WebRTC tab renders panel', async ({ page }) => {
+    test('WebRTC tab renders panel with signaling address', async ({ page }) => {
       await page.goto('/');
       await expect(page.locator('.status-dot.connected')).toBeVisible({ timeout: 10000 });
 
@@ -34,6 +34,8 @@ test.describe('WebRTC Signaling E2E', () => {
 
       await expect(page.locator('h2')).toContainText('WebRTC Real-Time');
       await expect(page.getByText('Signaling:')).toBeVisible();
+      // Must show the actual server address, not "unknown"
+      await expect(page.locator('.transport-url')).not.toContainText('unknown');
     });
   });
 
