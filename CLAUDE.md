@@ -73,6 +73,49 @@ cargo test --features multiprocess
 cargo test --no-default-features --features grpc-transport
 ```
 
+### UI Integration Tests (Rust)
+
+```bash
+# Run all UI integration tests (HTTP API, streaming I/O, session lifecycle)
+cargo test -p remotemedia-ui --test webrtc_ui_integration
+
+# Run with output
+cargo test -p remotemedia-ui --test webrtc_ui_integration -- --nocapture
+```
+
+### UI End-to-End Tests (Playwright)
+
+Browser-based tests covering the embedded web UI, pipeline execution, SSE streaming,
+and WebRTC WebSocket signaling (JSON-RPC 2.0).
+
+```bash
+cd crates/ui/e2e
+
+# Install dependencies (first time only)
+npm install
+npx playwright install chromium
+
+# Run all e2e tests (auto-starts CLI server via cargo run)
+npm test
+
+# Run with visible browser
+npm run test:headed
+
+# Run with Playwright UI (interactive)
+npm run test:ui
+
+# Run a specific test file
+npx playwright test tests/ui-e2e.spec.ts
+npx playwright test tests/webrtc-signaling.spec.ts
+
+# Override ports (default: UI=3001, WS=18091)
+UI_PORT=4000 WS_PORT=19000 npm test
+```
+
+The Playwright config auto-starts the CLI with `--transport webrtc --ws-port --ui`,
+building with `--features ui,webrtc`. First run triggers a cargo build (~2-3 min);
+subsequent runs reuse the server if already running.
+
 ### Benchmarking
 
 ```bash

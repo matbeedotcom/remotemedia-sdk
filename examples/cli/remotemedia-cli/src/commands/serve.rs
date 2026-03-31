@@ -51,6 +51,13 @@ pub struct ServeArgs {
     /// Web UI port (when --ui is enabled)
     #[arg(long, default_value = "3001")]
     pub ui_port: u16,
+
+    /// WebSocket signaling port (when --transport webrtc)
+    ///
+    /// Starts a WebSocket signaling server alongside the gRPC one,
+    /// enabling browser-based WebRTC connections via ws://host:ws-port/ws
+    #[arg(long)]
+    pub ws_port: Option<u16>,
 }
 
 pub async fn execute(args: ServeArgs, _config: &Config) -> Result<()> {
@@ -162,6 +169,31 @@ pub async fn execute(args: ServeArgs, _config: &Config) -> Result<()> {
         Transport::Webrtc => {
             #[cfg(feature = "webrtc")]
             {
+                // Start WebSocket signaling server if --ws-port is specified
+                let _ws_handle = if let Some(ws_port) = args.ws_port {
+                    let manifest: remotemedia_core::manifest::Manifest =
+                        match args.manifest.extension().and_then(|e| e.to_str()) {
+                            Some("yaml" | "yml") => serde_json::from_value(
+                                serde_yaml::from_str::<serde_json::Value>(&manifest_content)?,
+                            )?,
+                            _ => serde_json::from_str(&manifest_content)?,
+                        };
+
+                    let ws_config = Arc::new(remotemedia_webrtc::WebRtcTransportConfig::default());
+                    let ws_server = remotemedia_webrtc::signaling::WebSocketSignalingServer::new(
+                        ws_port,
+                        ws_config,
+                        executor.clone(),
+                        Arc::new(manifest),
+                    );
+                    let handle = ws_server.start().await
+                        .map_err(|e| anyhow::anyhow!("Failed to start WebSocket signaling server: {}", e))?;
+                    tracing::info!("WebSocket signaling server listening on ws://{}:{}/ws", args.host, ws_port);
+                    Some(handle)
+                } else {
+                    None
+                };
+
                 remotemedia_webrtc::WebRtcSignalingServerBuilder::new()
                     .bind(&bind_addr)
                     .manifest_from_file(&args.manifest)
