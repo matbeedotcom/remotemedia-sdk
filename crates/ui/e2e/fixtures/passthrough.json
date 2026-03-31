@@ -1,0 +1,15 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "name": "passthrough",
+    "description": "Simple passthrough pipeline for e2e testing"
+  },
+  "nodes": [
+    {
+      "id": "passthrough",
+      "node_type": "PassThrough",
+      "params": {}
+    }
+  ],
+  "connections": []
+}
