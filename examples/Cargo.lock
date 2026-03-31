@@ -3347,6 +3347,7 @@ dependencies = [
  "directories",
  "futures",
  "indicatif",
+ "openssl",
  "predicates",
  "remotemedia-candle-nodes",
  "remotemedia-core",

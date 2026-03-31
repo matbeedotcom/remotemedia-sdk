@@ -60,6 +60,9 @@ uuid = { workspace = true }
 directories = { workspace = true }
 url = { workspace = true }
 
+# Use vendored OpenSSL to avoid system header version mismatch
+openssl = { version = "0.10", features = ["vendored"] }
+
 [features]
 default = []
 candle = ["dep:remotemedia-candle-nodes"]
