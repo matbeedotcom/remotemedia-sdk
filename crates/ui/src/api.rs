@@ -28,14 +28,20 @@ use crate::TransportInfo;
 // ---------------------------------------------------------------------------
 
 /// Handle to a streaming session
-#[allow(dead_code)]
+///
+/// Input is forwarded to the executor via `input_tx`. A background drain task
+/// continuously receives outputs from the executor and broadcasts them to SSE
+/// subscribers via `output_tx`. This avoids blocking the HTTP handler on
+/// `recv_output().await`.
 pub(crate) struct SessionHandle {
     /// Session ID
     pub session_id: String,
-    /// Stream session from executor
-    pub session: SessionHandleWrapper,
+    /// Channel for sending input to the background session task
+    pub input_tx: tokio::sync::mpsc::UnboundedSender<TransportData>,
     /// Broadcast channel for sending outputs to multiple SSE subscribers
     pub output_tx: broadcast::Sender<TransportData>,
+    /// Handle to the background drain task
+    drain_handle: tokio::task::JoinHandle<()>,
 }
 
 /// Wrapper to adapt PipelineExecutor's SessionHandle to StreamSession trait
@@ -278,11 +284,40 @@ pub(crate) async fn create_stream_handler(
     let session_id = session.session_id.clone();
 
     let (output_tx, _output_rx) = broadcast::channel(100);
+    let (input_tx, mut input_rx) = tokio::sync::mpsc::unbounded_channel::<TransportData>();
+
+    // Spawn background task that owns the session and bridges input/output
+    let output_tx_clone = output_tx.clone();
+    let sid = session_id.clone();
+    let drain_handle = tokio::spawn(async move {
+        let mut session = SessionHandleWrapper(session);
+        loop {
+            tokio::select! {
+                Some(input) = input_rx.recv() => {
+                    if let Err(e) = session.send_input(input).await {
+                        tracing::error!("Session {} send_input error: {}", sid, e);
+                        break;
+                    }
+                }
+                output = session.recv_output() => {
+                    match output {
+                        Ok(Some(data)) => { let _ = output_tx_clone.send(data); }
+                        Ok(None) => break,
+                        Err(e) => {
+                            tracing::error!("Session {} recv_output error: {}", sid, e);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
 
     let handle = SessionHandle {
         session_id: session_id.clone(),
-        session: SessionHandleWrapper(session),
+        input_tx,
         output_tx,
+        drain_handle,
     };
 
     state
@@ -302,26 +337,21 @@ pub(crate) async fn stream_input_handler(
     Path(session_id): Path<String>,
     Json(request): Json<StreamInputRequest>,
 ) -> std::result::Result<StatusCode, (StatusCode, String)> {
-    let mut sessions = state.sessions.write().await;
+    let sessions = state.sessions.read().await;
 
-    let handle = sessions.get_mut(&session_id).ok_or_else(|| {
+    let handle = sessions.get(&session_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             format!("Session not found: {}", session_id),
         )
     })?;
 
-    handle.session.send_input(request.data).await.map_err(|e| {
+    handle.input_tx.send(request.data).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to send input: {}", e),
         )
     })?;
-
-    // Poll for outputs and broadcast to SSE subscribers
-    while let Ok(Some(output)) = handle.session.recv_output().await {
-        let _ = handle.output_tx.send(output);
-    }
 
     Ok(StatusCode::OK)
 }
@@ -373,19 +403,15 @@ pub(crate) async fn close_stream_handler(
 ) -> std::result::Result<StatusCode, (StatusCode, String)> {
     let mut sessions = state.sessions.write().await;
 
-    let mut handle = sessions.remove(&session_id).ok_or_else(|| {
+    let handle = sessions.remove(&session_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             format!("Session not found: {}", session_id),
         )
     })?;
 
-    handle.session.close().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to close session: {}", e),
-        )
-    })?;
+    // Abort the background drain task (which owns the session)
+    handle.drain_handle.abort();
 
     tracing::info!("Closed streaming session: {}", session_id);
 

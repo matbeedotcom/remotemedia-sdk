@@ -263,7 +263,208 @@ async fn test_ui_spa_fallback() {
 }
 
 // ============================================================================
-// Streaming Session Tests
+// Streaming Input → Output Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_ui_stream_text_passthrough() {
+    let manifest: Manifest = serde_json::from_str(PASSTHROUGH_MANIFEST).unwrap();
+    let port = start_ui_server(
+        Some(TransportInfo {
+            transport_type: "webrtc".to_string(),
+            address: format!("127.0.0.1:{}", port_placeholder()),
+        }),
+        Some(Arc::new(manifest)),
+    )
+    .await;
+
+    let client = reqwest::Client::new();
+    let base = format!("http://127.0.0.1:{}", port);
+
+    // 1. Create streaming session
+    let resp = client
+        .post(format!("{}/api/stream", base))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let session_id = body["session_id"].as_str().unwrap().to_string();
+
+    // 2. Start SSE listener in background (must subscribe BEFORE sending input)
+    let sse_url = format!("{}/api/stream/{}/output", base, session_id);
+    let (sse_tx, mut sse_rx) = tokio::sync::mpsc::channel::<String>(10);
+    let sse_handle = tokio::spawn(async move {
+        let resp = reqwest::get(&sse_url).await.unwrap();
+        let mut stream = resp.bytes_stream();
+        use futures::StreamExt;
+        let mut buffer = String::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.unwrap();
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            // SSE events are separated by double newlines
+            while let Some(pos) = buffer.find("\n\n") {
+                let event = buffer[..pos].to_string();
+                buffer = buffer[pos + 2..].to_string();
+                // Extract data field from SSE event
+                for line in event.lines() {
+                    if let Some(data) = line.strip_prefix("data:") {
+                        let _ = sse_tx.send(data.trim().to_string()).await;
+                    }
+                }
+            }
+        }
+    });
+
+    // Give SSE connection time to establish
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // 3. Send input data
+    let resp = client
+        .post(format!("{}/api/stream/{}/input", base, session_id))
+        .json(&serde_json::json!({
+            "data": {
+                "data": { "Text": "hello from webrtc" },
+                "metadata": {}
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // 4. Receive output from SSE stream
+    let output = tokio::time::timeout(Duration::from_secs(5), sse_rx.recv())
+        .await
+        .expect("Timed out waiting for SSE output")
+        .expect("SSE channel closed");
+
+    let output_json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(output_json["data"]["Text"], "hello from webrtc");
+
+    // 5. Cleanup
+    client
+        .delete(format!("{}/api/stream/{}", base, session_id))
+        .send()
+        .await
+        .unwrap();
+    sse_handle.abort();
+}
+
+/// Helper: dummy port for TransportInfo (not actually used in test)
+fn port_placeholder() -> u16 {
+    9999
+}
+
+#[tokio::test]
+async fn test_ui_stream_multiple_inputs() {
+    let manifest: Manifest = serde_json::from_str(PASSTHROUGH_MANIFEST).unwrap();
+    let port = start_ui_server(None, Some(Arc::new(manifest))).await;
+
+    let client = reqwest::Client::new();
+    let base = format!("http://127.0.0.1:{}", port);
+
+    // Create session
+    let resp = client
+        .post(format!("{}/api/stream", base))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let session_id = body["session_id"].as_str().unwrap().to_string();
+
+    // Start SSE listener
+    let sse_url = format!("{}/api/stream/{}/output", base, session_id);
+    let (sse_tx, mut sse_rx) = tokio::sync::mpsc::channel::<String>(10);
+    let sse_handle = tokio::spawn(async move {
+        let resp = reqwest::get(&sse_url).await.unwrap();
+        let mut stream = resp.bytes_stream();
+        use futures::StreamExt;
+        let mut buffer = String::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.unwrap();
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(pos) = buffer.find("\n\n") {
+                let event = buffer[..pos].to_string();
+                buffer = buffer[pos + 2..].to_string();
+                for line in event.lines() {
+                    if let Some(data) = line.strip_prefix("data:") {
+                        let _ = sse_tx.send(data.trim().to_string()).await;
+                    }
+                }
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Send 3 sequential inputs
+    let messages = ["first", "second", "third"];
+    for msg in &messages {
+        let resp = client
+            .post(format!("{}/api/stream/{}/input", base, session_id))
+            .json(&serde_json::json!({
+                "data": {
+                    "data": { "Text": msg },
+                    "metadata": {}
+                }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    // Receive all 3 outputs
+    let mut received = Vec::new();
+    for _ in 0..3 {
+        let output = tokio::time::timeout(Duration::from_secs(5), sse_rx.recv())
+            .await
+            .expect("Timed out waiting for SSE output")
+            .expect("SSE channel closed");
+        let output_json: serde_json::Value = serde_json::from_str(&output).unwrap();
+        received.push(output_json["data"]["Text"].as_str().unwrap().to_string());
+    }
+
+    assert_eq!(received, vec!["first", "second", "third"]);
+
+    // Cleanup
+    client
+        .delete(format!("{}/api/stream/{}", base, session_id))
+        .send()
+        .await
+        .unwrap();
+    sse_handle.abort();
+}
+
+#[tokio::test]
+async fn test_ui_stream_input_invalid_session() {
+    let port = start_ui_server(None, None).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!(
+            "http://127.0.0.1:{}/api/stream/nonexistent/input",
+            port
+        ))
+        .json(&serde_json::json!({
+            "data": {
+                "data": { "Text": "hello" },
+                "metadata": {}
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 404);
+}
+
+// ============================================================================
+// Streaming Session Lifecycle Tests
 // ============================================================================
 
 #[tokio::test]
