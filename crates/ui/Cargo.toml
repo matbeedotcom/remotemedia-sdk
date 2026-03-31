@@ -1,0 +1,33 @@
+[package]
+name = "remotemedia-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Embedded web UI for RemoteMedia pipeline interaction"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "remotemedia_ui"
+
+[dependencies]
+remotemedia-core = { path = "../core", default-features = true }
+axum = { version = "0.7", features = ["tokio", "json", "http2"] }
+tower = { workspace = true }
+tower-http = { workspace = true, features = ["cors", "trace"] }
+tokio = { workspace = true }
+tokio-stream = { workspace = true, features = ["sync"] }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+tokio-test = "0.4"
+
+[features]
+default = []

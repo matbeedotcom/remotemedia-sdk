@@ -9,3 +9,6 @@ pub mod serve;
 pub mod servers;
 pub mod stream;
 pub mod validate;
+
+#[cfg(feature = "ui")]
+pub mod ui;

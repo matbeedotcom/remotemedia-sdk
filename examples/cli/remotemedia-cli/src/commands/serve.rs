@@ -43,11 +43,19 @@ pub struct ServeArgs {
     /// Maximum concurrent sessions
     #[arg(long, default_value = "100")]
     pub max_sessions: u32,
+
+    /// Enable embedded web UI
+    #[arg(long)]
+    pub ui: bool,
+
+    /// Web UI port (when --ui is enabled)
+    #[arg(long, default_value = "3001")]
+    pub ui_port: u16,
 }
 
 pub async fn execute(args: ServeArgs, _config: &Config) -> Result<()> {
     // Load and validate manifest
-    let _manifest_content = std::fs::read_to_string(&args.manifest)
+    let manifest_content = std::fs::read_to_string(&args.manifest)
         .with_context(|| format!("Failed to read manifest: {:?}", args.manifest))?;
 
     let bind_addr = format!("{}:{}", args.host, args.port);
@@ -63,6 +71,47 @@ pub async fn execute(args: ServeArgs, _config: &Config) -> Result<()> {
         remotemedia_core::transport::PipelineExecutor::new()
             .map_err(|e| anyhow::anyhow!("Failed to create executor: {}", e))?,
     );
+
+    // Start embedded web UI if requested
+    #[cfg(feature = "ui")]
+    if args.ui {
+        let ui_bind = format!("{}:{}", args.host, args.ui_port);
+        let transport_type = format!("{:?}", args.transport).to_lowercase();
+        let address = format!("{}:{}", args.host, args.port);
+
+        // Parse manifest for the UI
+        let manifest: remotemedia_core::manifest::Manifest =
+            match args.manifest.extension().and_then(|e| e.to_str()) {
+                Some("yaml" | "yml") => serde_json::from_value(
+                    serde_yaml::from_str::<serde_json::Value>(&manifest_content)?,
+                )?,
+                _ => serde_json::from_str(&manifest_content)?,
+            };
+
+        let ui_executor = executor.clone();
+        tokio::spawn(async move {
+            if let Err(e) = remotemedia_ui::UiServerBuilder::new()
+                .bind(&ui_bind)
+                .executor(ui_executor)
+                .manifest(Arc::new(manifest))
+                .transport_info(remotemedia_ui::TransportInfo {
+                    transport_type,
+                    address,
+                })
+                .build()
+                .expect("Failed to build UI server")
+                .run()
+                .await
+            {
+                tracing::error!("UI server error: {}", e);
+            }
+        });
+        tracing::info!("Web UI available at http://{}:{}", args.host, args.ui_port);
+    }
+    #[cfg(not(feature = "ui"))]
+    if args.ui {
+        anyhow::bail!("Web UI not available. Rebuild with: cargo build --features ui");
+    }
 
     match args.transport {
         Transport::Grpc => {

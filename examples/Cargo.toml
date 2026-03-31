@@ -25,6 +25,7 @@ remotemedia-grpc = { path = "../crates/transports/grpc" }
 remotemedia-http = { path = "../crates/transports/http" }
 remotemedia-webrtc = { path = "../crates/transports/webrtc" }
 remotemedia-health-analyzer = { path = "../crates/libs/stream-health-analyzer" }
+remotemedia-ui = { path = "../crates/ui" }
 
 # CLI framework
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }

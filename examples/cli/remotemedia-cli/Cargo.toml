@@ -24,6 +24,7 @@ remotemedia-candle-nodes = { path = "../../../crates/candle-nodes", optional = t
 remotemedia-grpc = { workspace = true, features = ["cli"], optional = true }
 remotemedia-http = { workspace = true, features = ["cli"], optional = true }
 remotemedia-webrtc = { workspace = true, features = ["cli", "grpc-signaling"], optional = true }
+remotemedia-ui = { workspace = true, optional = true }
 
 # FFmpeg for decoding any media format
 ac-ffmpeg = "0.19"
@@ -74,6 +75,7 @@ candle = ["dep:remotemedia-candle-nodes"]
 grpc = ["dep:remotemedia-grpc"]
 http = ["dep:remotemedia-http"]
 webrtc = ["dep:remotemedia-webrtc"]
+ui = ["dep:remotemedia-ui"]
 
 [dev-dependencies]
 tempfile = "3.8"

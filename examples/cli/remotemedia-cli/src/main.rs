@@ -35,6 +35,9 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use commands::{models, nodes as nodes_cmd, pack, remote, run, serve, servers, stream, validate};
 
+#[cfg(feature = "ui")]
+use commands::ui;
+
 /// RemoteMedia SDK command-line interface
 #[derive(Parser)]
 #[command(name = "remotemedia")]
@@ -98,6 +101,10 @@ enum Commands {
 
     /// Pack a pipeline into a self-contained Python wheel
     Pack(pack::PackArgs),
+
+    /// Launch the web UI for pipeline interaction
+    #[cfg(feature = "ui")]
+    Ui(ui::UiArgs),
 }
 
 #[tokio::main]
@@ -135,6 +142,8 @@ async fn main() -> Result<()> {
         }
         Commands::Models(args) => models::run(args).await,
         Commands::Pack(args) => pack::execute(args).await,
+        #[cfg(feature = "ui")]
+        Commands::Ui(args) => ui::execute(args, &config).await,
     };
 
     // Handle exit codes

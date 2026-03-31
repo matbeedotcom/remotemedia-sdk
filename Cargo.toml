@@ -16,6 +16,7 @@ members = [
     "crates/services/http-server",  # HTTP server binary
     "crates/services/webrtc-server",  # WebRTC server binary
     "tools/pack-pipeline",  # Pipeline packaging CLI
+    "crates/ui",  # Embedded web UI
 ]
 exclude = [
     "examples/*",  # Examples are independent projects demonstrating usage
