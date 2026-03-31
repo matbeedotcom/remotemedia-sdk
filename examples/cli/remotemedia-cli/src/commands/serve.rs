@@ -113,8 +113,11 @@ pub async fn execute(args: ServeArgs, _config: &Config) -> Result<()> {
         Transport::Webrtc => {
             #[cfg(feature = "webrtc")]
             {
-                remotemedia_webrtc::WebRtcServerBuilder::new()
-                    .signaling_url(&format!("ws://{}", bind_addr))
+                remotemedia_webrtc::WebRtcSignalingServerBuilder::new()
+                    .bind(&bind_addr)
+                    .manifest_from_file(&args.manifest)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?
+                    .executor(executor)
                     .build()
                     .map_err(|e| anyhow::anyhow!("{}", e))?
                     .run()

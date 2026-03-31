@@ -247,15 +247,22 @@ mod grpc_builder {
             self
         }
 
-        /// Load a manifest from a JSON file on disk.
+        /// Load a manifest from a file on disk (JSON or YAML).
         ///
+        /// Detects format by file extension (`.yaml`/`.yml` for YAML, otherwise JSON).
         /// Replaces any previously set manifest.
         pub fn manifest_from_file(
             mut self,
             path: impl AsRef<std::path::Path>,
         ) -> std::result::Result<Self, Box<dyn std::error::Error>> {
-            let contents = std::fs::read_to_string(path.as_ref())?;
-            let manifest: Manifest = serde_json::from_str(&contents)?;
+            let path = path.as_ref();
+            let contents = std::fs::read_to_string(path)?;
+            let manifest: Manifest = match path.extension().and_then(|e| e.to_str()) {
+                Some("yaml" | "yml") => serde_json::from_value(
+                    serde_yaml::from_str::<serde_json::Value>(&contents)?,
+                )?,
+                _ => serde_json::from_str(&contents)?,
+            };
             self.manifest = Some(Arc::new(manifest));
             Ok(self)
         }
@@ -369,7 +376,8 @@ mod grpc_builder {
                         .expect("failed to listen for ctrl-c");
                     tracing::info!("Shutdown signal received, stopping signaling server");
                 })
-                .await?;
+                .await
+                .map_err(|e| format!("Failed to start server on {}: {}", addr, e))?;
 
             Ok(())
         }
