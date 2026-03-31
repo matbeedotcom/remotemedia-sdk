@@ -47,7 +47,7 @@ pub use error::{CandleNodeError, Result};
 pub use device::{InferenceDevice, DeviceSelector};
 pub use cache::{ModelCache, CachedModel, CacheStats};
 pub use convert::{RuntimeDataConverter, TensorExt};
-pub use registry::{register_candle_nodes, CandleNodeFactory};
+pub use registry::{register_candle_nodes, CandleNodeFactory, CandleNodesProvider};
 pub use cli::{ModelCli, list_available_models};
 pub use schema::{NodeSchema, MediaType, all_schemas, export_schemas_json};
 

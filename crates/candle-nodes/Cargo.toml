@@ -34,12 +34,15 @@ tokenizers = { version = "0.20", optional = true }
 rubato.workspace = true
 
 # RemoteMedia core for StreamingNode trait
-# Use default-features = false to avoid pulling in video/FFmpeg dependencies
-remotemedia-core = { path = "../core", default-features = false }
+# Enable multiprocess for inventory-based auto-registration
+remotemedia-core = { path = "../core", default-features = false, features = ["multiprocess"] }
 
 # Utilities
 dirs.workspace = true
 rand.workspace = true
+
+# Auto-registration
+inventory.workspace = true
 
 [dev-dependencies]
 tokio-test.workspace = true

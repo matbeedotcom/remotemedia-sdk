@@ -120,6 +120,14 @@ from .core.exceptions import (
     WebRTCError,
 )
 
+# Node registration - simple API for adding custom Python nodes
+from .nodes.loader import (
+    register_python_node,
+    register_node_class,
+    get_loaded_nodes,
+    register_python_nodes_from_config,
+)
+
 # Convenience imports
 from .nodes import *  # noqa: F401, F403
 
@@ -142,6 +150,11 @@ __all__ = [
     "NodeError",
     "RemoteExecutionError",
     "WebRTCError",
+    # Node registration - simple API for custom Python nodes
+    "register_python_node",
+    "register_node_class",
+    "get_loaded_nodes",
+    "register_python_nodes_from_config",
     # Runtime detection (Phase 8)
     "is_rust_runtime_available",
     "get_rust_runtime",

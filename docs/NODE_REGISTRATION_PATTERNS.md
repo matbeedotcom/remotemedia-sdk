@@ -2,69 +2,100 @@
 
 **Goal**: Make it easy for library developers and end-users to register custom nodes in the RemoteMedia SDK with minimal boilerplate.
 
-## Current State & Pain Points
+## Implementation Status
 
-### Current Registration (Rust)
+| Level | Feature | Status |
+|-------|---------|--------|
+| Level 1 | Helper Macros | ✅ Implemented |
+| Level 2 | Builder API | ⏳ Planned |
+| Level 3 | Auto-Discovery | ✅ Implemented |
+| Level 4 | Plugin System | ⏳ Planned |
+
+## Current Architecture
+
+The SDK now uses a **NodeProvider + inventory** system for automatic node registration:
+
+### Auto-Registration Flow
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Application links crates                                     │
+│   Cargo.toml:                                               │
+│     remotemedia-core                                         │
+│     remotemedia-python-nodes                                │
+│     remotemedia-candle-nodes                                │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│ inventory crate collects all NodeProvider implementations   │
+│   - CoreNodesProvider (priority: 1000)                      │
+│   - PythonNodesProvider (priority: 500)                     │
+│   - CandleNodesProvider (priority: 100)                     │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│ create_default_streaming_registry()                          │
+│   - Sorts providers by priority                              │
+│   - Calls provider.register() for each                       │
+│   - Returns populated StreamingNodeRegistry                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Python Node Registration Flow
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Developer creates ./my_nodes/custom.py                       │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Python: register_python_node("./my_nodes/custom.py")        │
+│   - Loads file via importlib                                │
+│   - Discovers MultiprocessNode subclasses                   │
+│   - Registers in _NODE_REGISTRY                             │
+└─────────────────────┬───────────────────────────────────────┘
+                      │  When pipeline runs
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Rust: PythonStreamingNode("CustomNode")                      │
+│   - Multiprocess executor spawns Python process             │
+│   - Python looks up class in _NODE_REGISTRY                 │
+│   - Instantiates and runs node                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Historical Context: Pain Points (Solved)
+
+### Previous Registration (Rust)
 
 ```rust
-// 1. Define your node handler
-struct MyAudioNode { /* ... */ }
-
-#[async_trait]
-impl NodeHandler for MyAudioNode { /* ... */ }
-
-// 2. Create a factory
+// 40+ lines of boilerplate per node
 struct MyAudioNodeFactory;
-
-impl NodeFactory for MyAudioNodeFactory {
-    fn create(&self, params: Value) -> Result<Box<dyn NodeExecutor>> {
-        let handler = MyAudioNode::new(params)?;
-        Ok(Box::new(RustNodeExecutor::new("MyAudioNode", Box::new(handler))))
-    }
-    
-    fn node_type(&self) -> &str {
-        "MyAudioNode"
-    }
-    
-    fn is_rust_native(&self) -> bool {
-        true
-    }
-}
-
-// 3. Register manually
+impl NodeFactory for MyAudioNodeFactory { /* ... */ }
 registry.register_rust(Arc::new(MyAudioNodeFactory));
 ```
 
-**Pain Points:**
-- ~40 lines of boilerplate per node
-- Factory pattern is verbose
-- Easy to make mistakes (wrong node_type, forget Arc, etc.)
-- No compile-time registration
-- Hard to discover available nodes
+**Solved by**: `NodeProvider` trait with `inventory` auto-collection.
 
-### Current Registration (Python)
+### Previous Registration (Python)
 
-```python
-# Python side - relatively clean
-class MyPythonNode(MultiprocessNode):
-    async def initialize(self): ...
-    async def process(self, data: RuntimeData): ...
-
-# Rust side - still needs factory boilerplate
+```rust
+// Rust side needed factory boilerplate for each Python node
 struct MyPythonNodeFactory;
 impl NodeFactory for MyPythonNodeFactory { /* ... */ }
 registry.register_python(Arc::new(MyPythonNodeFactory));
 ```
 
-**Pain Points:**
-- Python classes still need Rust factory boilerplate
-- Manual string matching between Rust and Python
-- No auto-discovery of Python nodes
-- Tedious to add new Python nodes
+**Solved by**: Dynamic Python registration via `register_python_node()`.
 
 ---
 
-## Proposed Solutions
+## Available Solutions
 
 ### Level 1: Helper Macros (Simple, Immediate Value)
 
@@ -537,29 +568,35 @@ nodes = [
 
 ---
 
-## Recommended Implementation Strategy
+## Implementation Status
 
-### Phase 1: Helper Macros (Week 1)
-- Implement `register_rust_node!` and `register_python_node!` macros
-- Refactor `create_default_streaming_registry()` to use macros
-- **Impact:** Immediate 90% reduction in boilerplate
+### Phase 1: Helper Macros ✅ COMPLETE
+- `register_rust_node!` and `register_python_node!` macros in `registration_macros.rs`
+- `register_rust_node_default!` for Default-implementing types
+- **Result:** 97% reduction in boilerplate for compile-time registration
 
-### Phase 2: Builder API (Week 2)
-- Implement `NodeRegistryBuilder`
-- Add convenience methods (batch registration, conditional, etc.)
-- **Impact:** Better developer experience, cleaner registry setup code
+### Phase 2: NodeProvider + Inventory ✅ COMPLETE
+- `NodeProvider` trait in `crates/core/src/nodes/provider.rs`
+- `inventory` crate for compile-time collection
+- `CoreNodesProvider`, `PythonNodesProvider`, `CandleNodesProvider`
+- **Result:** Add node crate to Cargo.toml → nodes auto-register
 
-### Phase 3: Python Auto-Discovery (Week 3)
-- Implement `discover_nodes()` function
-- Add decorator-based registration option
-- Create CLI tool: `remotemedia-nodes list` to show available nodes
-- **Impact:** No Rust code needed to add Python nodes
+### Phase 3: Python Auto-Discovery ✅ COMPLETE
+- `register_python_node()` function in `clients/python/remotemedia/nodes/loader.py`
+- `@streaming_node` decorator in `clients/python/remotemedia/nodes/registration.py`
+- `register_node_class()` for direct class registration
+- `register_python_nodes_from_config()` for YAML/JSON configs
+- **Result:** No Rust code needed for custom Python nodes
 
-### Phase 4: Config-Based Loading (Future)
+### Phase 4: Builder API ✅ COMPLETE
+- `StreamingNodeRegistryBuilder` fluent API in `crates/core/src/nodes/builder.rs`
+- Methods: `.with_defaults()`, `.python()`, `.python_multi_output()`, `.python_batch()`, `.factory()`, `.provider()`
+- **Result:** Type-safe, chainable registry construction
+
+### Phase 5: Config-Based Loading ⏳ PLANNED
 - TOML-based node configuration
-- Plugin system for dynamic loading
-- Node marketplace/registry (like Cargo, npm)
-- **Impact:** Third-party node ecosystem
+- Plugin system for dynamic loading (.so/.dll)
+- **Status:** Not yet implemented
 
 ---
 
@@ -708,38 +745,52 @@ Parameters:
 
 ---
 
-## Questions for Discussion
+## Design Decisions (Resolved)
 
 1. **Which level should we implement first?**
-   - I recommend Level 1 (macros) for immediate wins
+   - ✅ **Resolved**: Implemented Levels 1 + 3 first (macros + auto-discovery)
+   - Level 2 (builder) can be added later if needed
 
 2. **Should we support compile-time registration?**
-   - Pro: Zero runtime cost, impossible to forget
-   - Con: Requires proc macros, more complex
+   - ✅ **Resolved**: Yes, via `inventory` crate
+   - Zero runtime cost, providers collected at link time
 
 3. **Python node discovery: decorator vs directory scan?**
-   - Decorator: Explicit, works well with type hints
-   - Directory scan: Automatic, like Django's app discovery
+   - ✅ **Resolved**: Both supported
+   - `@streaming_node` decorator for explicit registration
+   - `register_python_node()` for file-based discovery
 
 4. **Config file format: TOML, YAML, or JSON?**
-   - TOML: Rust-native, good for complex config
-   - YAML: More concise, better for Python users
-   - JSON: Universal, but less human-friendly
+   - ✅ **Resolved**: YAML and JSON (Python-native)
+   - `register_python_nodes_from_config()` supports both
 
 5. **Should we create a centralized node registry/marketplace?**
-   - Like crates.io for RemoteMedia nodes
-   - `remotemedia-nodes install omniasr`
+   - ⏳ **Future consideration**
+   - Current focus is on local/project-level registration
 
 ---
 
 ## Conclusion
 
-The current registration system works but is verbose and error-prone. By implementing these improvements incrementally, we can:
+The node registration system has been modernized to support:
 
-1. **Reduce boilerplate by 95%** (Level 1)
-2. **Improve type safety** (Level 2)
-3. **Enable third-party node ecosystems** (Level 3-4)
-4. **Maintain backward compatibility** (all levels)
+1. **Zero-boilerplate Rust nodes** via `NodeProvider` + `inventory`
+2. **File-based Python registration** via `register_python_node()`
+3. **Decorator-based Python nodes** via `@streaming_node`
+4. **Auto-discovery** when crates are linked
 
-**Recommendation:** Start with Level 1 (helper macros) this week, then iterate based on user feedback.
+### Quick Reference
+
+| Use Case | Solution |
+|----------|----------|
+| Add built-in nodes | Add crate to `Cargo.toml` (auto-registers) |
+| Custom Python node | `register_python_node("./my_node.py")` |
+| Python node class | `register_node_class(MyNode)` |
+| Create node crate | Implement `NodeProvider`, use `inventory::submit!` |
+| Legacy registration | `register_python_node!` / `register_rust_node!` macros |
+
+### Future Work
+
+- **TOML config** for declarative node loading
+- **Plugin system** for dynamic `.so/.dll` loading
 

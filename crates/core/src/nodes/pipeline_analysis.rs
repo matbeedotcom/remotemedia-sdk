@@ -178,6 +178,7 @@ pub struct NodeTypeInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::NodeManifest;
     use crate::nodes::streaming_registry::create_default_streaming_registry;
 
     #[test]

@@ -4,6 +4,26 @@ Built-in processing nodes for the RemoteMedia SDK.
 This module contains pre-defined nodes for common A/V processing tasks.
 """
 
+# Registration system for Python streaming nodes
+from .registration import (
+    streaming_node,
+    NodeRegistration,
+    get_registered_nodes,
+    get_node_registration,
+    export_to_json,
+    export_to_rust,
+    discover_and_register,
+)
+
+# File-based node loading
+from .loader import (
+    register_python_node,
+    register_node_class,
+    get_loaded_nodes,
+    get_node_class,
+    register_python_nodes_from_config,
+)
+
 from .base import *  # noqa: F401, F403
 from .audio import *  # noqa: F401, F403
 from .video import *  # noqa: F401, F403
@@ -57,6 +77,20 @@ from .test_nodes import (
 )
 
 __all__ = [
+    # Registration system (decorator-based)
+    "streaming_node",
+    "NodeRegistration",
+    "get_registered_nodes",
+    "get_node_registration",
+    "export_to_json",
+    "export_to_rust",
+    "discover_and_register",
+    # File-based node loading
+    "register_python_node",
+    "register_node_class",
+    "get_loaded_nodes",
+    "get_node_class",
+    "register_python_nodes_from_config",
     # Base
     "Node",
     # Audio

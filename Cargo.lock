@@ -5283,6 +5283,7 @@ dependencies = [
  "dirs 5.0.1",
  "hf-hub",
  "hound",
+ "inventory",
  "rand 0.8.5",
  "remotemedia-core",
  "rubato",
@@ -5579,6 +5580,20 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+ "tracing",
+]
+
+[[package]]
+name = "remotemedia-python-nodes"
+version = "0.4.0"
+dependencies = [
+ "async-trait",
+ "inventory",
+ "remotemedia-core",
+ "serde",
+ "serde_json",
  "tokio",
  "tokio-test",
  "tracing",

@@ -571,7 +571,9 @@ pub trait StreamingNodeFactory: Send + Sync {
 /// Registry for streaming nodes
 #[derive(Clone)]
 pub struct StreamingNodeRegistry {
-    factories: HashMap<String, Arc<dyn StreamingNodeFactory>>,
+    /// Internal factory storage. Use `register()` to add factories.
+    /// Public for builder access, but should not be modified directly.
+    pub(crate) factories: HashMap<String, Arc<dyn StreamingNodeFactory>>,
 }
 
 impl StreamingNodeRegistry {

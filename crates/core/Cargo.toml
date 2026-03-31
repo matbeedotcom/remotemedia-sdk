@@ -56,6 +56,10 @@ ac-ffmpeg = { version = "0.19", optional = true }
 iceoryx2 = { workspace = true, optional = true }
 iceoryx2-log = { workspace = true, optional = true }
 
+# Note: Python wrapper nodes are in a separate crate (remotemedia-nodes-python).
+# Users should add that crate as a dependency to get Python nodes.
+# The inventory system will automatically register them when the crate is linked.
+
 # Logging and tracing
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -149,6 +153,9 @@ grpc-client = ["tonic", "prost", "prost-types"]
 docker = ["dep:bollard", "dep:tar", "dep:chrono", "dep:bytes", "dep:hyper", "dep:http-body-util", "dep:glob", "dep:rusqlite"]
 # Video codec support (spec 012)
 video = ["dep:ac-ffmpeg"]
+
+# Note: To get Python nodes, add remotemedia-nodes-python as a dependency.
+# The inventory system will auto-register the provider.
 
 # NOTE: grpc-client is for RemotePipelineNode client functionality only
 # Full transport implementations belong in separate transport crates

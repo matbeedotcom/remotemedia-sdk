@@ -49,6 +49,17 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 
+from .registration import streaming_node
+
+
+@streaming_node(
+    node_type="KokoroTTSNode",
+    multi_output=True,
+    category="tts",
+    accepts=["text"],
+    produces=["audio"],
+    description="Text-to-speech synthesis using Kokoro TTS with streaming audio output"
+)
 class KokoroTTSNode(MultiprocessNode):
     """
     Text-to-speech synthesis using Kokoro TTS with RuntimeData API and multiprocess support.

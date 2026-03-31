@@ -3,14 +3,35 @@
 //! This module provides declarative macros that simplify node registration
 //! by automatically generating factory structs and handling Arc wrapping.
 //!
-//! # Macros
+//! # Macros (Compile-time, for known node names)
 //!
 //! - `register_python_node!` - Register a single Python node by class name
 //! - `register_python_nodes!` - Register multiple Python nodes in batch
 //! - `register_rust_node!` - Register a Rust node with custom initialization
 //! - `register_rust_node_default!` - Register a Rust node using Default trait
 //!
-//! # Example
+//! # Runtime Registration (for dynamic/file-based nodes)
+//!
+//! For registering Python nodes from file paths at runtime, use the Python API:
+//!
+//! ```python
+//! from remotemedia import register_python_node
+//!
+//! # Register node(s) from a file
+//! register_python_node("./my_nodes/custom_ml.py")
+//!
+//! # Register with options
+//! register_python_node(
+//!     "./my_nodes/my_tts.py",
+//!     node_type="MyTTS",
+//!     multi_output=True
+//! )
+//! ```
+//!
+//! The Python registration integrates with the multiprocess node registry,
+//! making nodes available to the Rust runtime automatically.
+//!
+//! # Example (Compile-time)
 //!
 //! ```
 //! use remotemedia_core::nodes::registry::NodeRegistry;

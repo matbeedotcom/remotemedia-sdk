@@ -103,67 +103,120 @@ impl PipelineTransport for MyTransport {
 
 See `examples/custom-transport/` for a complete working example (~80 lines).
 
-### Ergonomic Node Registration
+### Node Registration
 
-The SDK provides simplified macros that reduce node registration from 40 lines to 1 line:
+The SDK provides a **modular, auto-registration system** using the `NodeProvider` trait and `inventory` crate. Nodes are automatically discovered and registered when their crate is linked.
+
+#### Auto-Registration (Recommended)
+
+Simply add node crates to your `Cargo.toml` dependencies:
+
+```toml
+[dependencies]
+remotemedia-core = "0.4"
+remotemedia-python-nodes = "0.4"    # Adds Python node support
+remotemedia-candle-nodes = "0.4"    # Adds Candle ML nodes
+```
+
+Nodes are automatically registered when you call `create_default_streaming_registry()`:
 
 ```rust
-use remotemedia_runtime_core::nodes::registry::NodeRegistry;
-use remotemedia_runtime_core::{register_python_node, register_python_nodes};
+use remotemedia_core::nodes::streaming_registry::create_default_streaming_registry;
+
+// All nodes from linked crates are automatically available!
+let registry = create_default_streaming_registry();
+```
+
+#### Builder API (Fluent Registry Construction)
+
+For fine-grained control, use the builder API:
+
+```rust
+use remotemedia_core::nodes::StreamingNodeRegistry;
+
+let registry = StreamingNodeRegistry::builder()
+    // Start with all default nodes from registered providers
+    .with_defaults()
+    
+    // Add custom Python nodes
+    .python("MyCustomASR")
+    .python_multi_output("MyStreamingTTS")  // For nodes that yield multiple outputs
+    
+    // Batch registration
+    .python_batch(&["Node1", "Node2", "Node3"])
+    
+    // Add a custom factory
+    .factory(Arc::new(MyCustomFactory))
+    
+    .build();
+```
+
+#### Registering Custom Python Nodes (Runtime)
+
+For external Python nodes, use the Python API to register at runtime:
+
+```python
+from remotemedia import register_python_node
+
+# Register from file path (discovers MultiprocessNode subclasses)
+register_python_node("./my_nodes/custom_ml.py")
+
+# Register with options
+register_python_node(
+    "./my_nodes/my_tts.py",
+    node_type="MyTTS",
+    multi_output=True,
+    category="tts"
+)
+
+# Register a class directly
+from remotemedia import register_node_class
+register_node_class(MyCustomNode, multi_output=True)
+```
+
+#### Creating a Custom NodeProvider (Advanced)
+
+For library authors creating node crates:
+
+```rust
+use remotemedia_core::nodes::{NodeProvider, StreamingNodeRegistry, StreamingNodeFactory};
+use std::sync::Arc;
+
+pub struct MyNodesProvider;
+
+impl NodeProvider for MyNodesProvider {
+    fn register(&self, registry: &mut StreamingNodeRegistry) {
+        registry.register(Arc::new(MyNode1Factory));
+        registry.register(Arc::new(MyNode2Factory));
+    }
+
+    fn provider_name(&self) -> &'static str {
+        "my-nodes"
+    }
+
+    fn priority(&self) -> i32 {
+        100  // Lower = earlier registration
+    }
+}
+
+// Auto-register when crate is linked
+inventory::submit! { &MyNodesProvider as &'static dyn NodeProvider }
+```
+
+#### Compile-Time Macros (Legacy)
+
+For the older `NodeRegistry` API, macros are still available:
+
+```rust
+use remotemedia_core::nodes::registry::NodeRegistry;
+use remotemedia_core::{register_python_node, register_rust_node_default};
 
 let mut registry = NodeRegistry::new();
-
-// Register single Python node (1 line vs 40!)
 register_python_node!(registry, "OmniASRNode");
-
-// Register multiple Python nodes in batch
-register_python_nodes!(registry, [
-    "KokoroTTSNode",
-    "SimplePyTorchNode",
-    "AudioEnhancerNode",
-]);
-
-// Register Rust node with Default trait
-use remotemedia_runtime_core::register_rust_node_default;
 register_rust_node_default!(registry, PassThroughNode);
-
-// Register Rust node with custom initialization
-use remotemedia_runtime_core::register_rust_node;
-register_rust_node!(registry, AudioChunkerNode, |params: Value| {
-    let chunk_size = params.get("chunk_size")?.as_u64()? as usize;
-    Ok(AudioChunkerNode::new(chunk_size))
-});
 ```
 
-**Benefits**:
-- **97.5% less boilerplate** (40 lines → 1 line per node)
-- **Type-safe** registration using `stringify!` for Rust nodes
-- **Zero runtime overhead** (macros expand at compile time)
-- **100% backward compatible** with existing factory-based registration
-
-See `examples/node_registration_example.rs` for complete examples.
-
-#### Migration Guide
-
-**Old API** (still supported):
-```rust
-struct MyNodeFactory;
-impl NodeFactory for MyNodeFactory {
-    fn create(&self, params: Value) -> Result<Box<dyn NodeExecutor>> {
-        let handler = MyNode::new(params)?;
-        Ok(Box::new(RustNodeExecutor::new("MyNode", Box::new(handler))))
-    }
-    fn node_type(&self) -> &str { "MyNode" }
-}
-registry.register_rust(Arc::new(MyNodeFactory));
-```
-
-**New API** (recommended):
-```rust
-register_rust_node_default!(registry, MyNode);
-```
-
-Both APIs work together - you can mix old and new styles in the same registry.
+See `docs/CUSTOM_NODE_REGISTRATION.md` for complete examples.
 
 ## Architecture
 

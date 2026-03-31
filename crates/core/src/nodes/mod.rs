@@ -15,9 +15,12 @@ use std::sync::Arc;
 
 // Sub-modules
 pub mod audio;
+pub mod builder;
 pub mod calculator;
+pub mod core_provider;
 pub mod passthrough;
 pub mod pipeline_analysis;
+pub mod provider;
 pub mod python_nodes;
 pub mod python_streaming;
 pub mod registration_macros;
@@ -109,7 +112,9 @@ pub mod audio_channel_splitter;
 pub use audio_channel_splitter::{AudioChannelSplitterNode, AudioChannelSplitterConfig, AudioChannelSplitterNodeFactory, OutputMode};
 
 
+pub use builder::StreamingNodeRegistryBuilder;
 pub use pipeline_analysis::{analyze_pipeline, list_all_node_types, get_node_type_info, PipelineNodeInfo, NodeTypeInfo, PipelineAnalysis};
+pub use provider::{iter_providers, provider_count, NodeProvider};
 pub use registry::{CompositeRegistry, NodeFactory as NodeFactoryTrait, RuntimeHint};
 pub use streaming_node::{
     AsyncNodeWrapper, AsyncStreamingNode, StreamingNode, StreamingNodeFactory,

@@ -3321,6 +3321,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "dirs",
+ "inventory",
  "rand",
  "remotemedia-core",
  "rubato",

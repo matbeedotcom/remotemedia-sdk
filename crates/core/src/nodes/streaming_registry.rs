@@ -7,18 +7,6 @@ use crate::capabilities::{
 use crate::nodes::calculator::CalculatorNode;
 use crate::nodes::passthrough::PassThroughNode;
 use crate::nodes::python_streaming::PythonStreamingNode;
-use crate::nodes::health_emitter::HealthEmitterNodeFactory;
-use crate::nodes::remote_pipeline::RemotePipelineNodeFactory;
-use crate::nodes::audio_level::AudioLevelNodeFactory;
-use crate::nodes::clipping_detector::ClippingDetectorNodeFactory;
-use crate::nodes::channel_balance::ChannelBalanceNodeFactory;
-use crate::nodes::silence_detector::SilenceDetectorNodeFactory;
-use crate::nodes::speech_presence::SpeechPresenceNodeFactory;
-use crate::nodes::conversation_flow::ConversationFlowNodeFactory;
-use crate::nodes::session_health::SessionHealthNodeFactory;
-use crate::nodes::timing_drift::TimingDriftNodeFactory;
-use crate::nodes::event_correlator::EventCorrelatorNodeFactory;
-use crate::nodes::audio_evidence::AudioEvidenceNodeFactory;
 // Temporarily disabled - incomplete implementation
 // use crate::nodes::sync_av::SynchronizedAudioVideoNode;
 use crate::nodes::video_flip::VideoFlipNode;
@@ -35,8 +23,9 @@ use serde_json::Value;
 use std::sync::Arc;
 
 // Factory implementations for built-in streaming nodes
+// NOTE: Factories are pub(crate) to allow registration from core_provider.rs
 
-struct CalculatorNodeFactory;
+pub(crate) struct CalculatorNodeFactory;
 impl StreamingNodeFactory for CalculatorNodeFactory {
     fn create(
         &self,
@@ -75,7 +64,7 @@ impl StreamingNodeFactory for VideoProcessorNodeFactory {
 }
 */
 
-struct VideoFlipNodeFactory;
+pub(crate) struct VideoFlipNodeFactory;
 impl StreamingNodeFactory for VideoFlipNodeFactory {
     fn create(
         &self,
@@ -108,7 +97,7 @@ impl StreamingNodeFactory for VideoFlipNodeFactory {
 }
 
 #[cfg(feature = "video")]
-struct VideoEncoderNodeFactory;
+pub(crate) struct VideoEncoderNodeFactory;
 
 #[cfg(feature = "video")]
 impl StreamingNodeFactory for VideoEncoderNodeFactory {
@@ -142,7 +131,7 @@ impl StreamingNodeFactory for VideoEncoderNodeFactory {
 }
 
 #[cfg(feature = "video")]
-struct VideoDecoderNodeFactory;
+pub(crate) struct VideoDecoderNodeFactory;
 
 #[cfg(feature = "video")]
 impl StreamingNodeFactory for VideoDecoderNodeFactory {
@@ -176,7 +165,7 @@ impl StreamingNodeFactory for VideoDecoderNodeFactory {
 }
 
 #[cfg(feature = "video")]
-struct VideoScalerNodeFactory;
+pub(crate) struct VideoScalerNodeFactory;
 
 #[cfg(feature = "video")]
 impl StreamingNodeFactory for VideoScalerNodeFactory {
@@ -212,7 +201,7 @@ impl StreamingNodeFactory for VideoScalerNodeFactory {
 }
 
 #[cfg(feature = "video")]
-struct VideoFormatConverterNodeFactory;
+pub(crate) struct VideoFormatConverterNodeFactory;
 
 #[cfg(feature = "video")]
 impl StreamingNodeFactory for VideoFormatConverterNodeFactory {
@@ -268,7 +257,7 @@ impl StreamingNodeFactory for SynchronizedAudioVideoNodeFactory {
 }
 */
 
-struct PassThroughNodeFactory;
+pub(crate) struct PassThroughNodeFactory;
 impl StreamingNodeFactory for PassThroughNodeFactory {
     fn create(
         &self,
@@ -447,7 +436,7 @@ impl StreamingNodeFactory for SimplePyTorchNodeFactory {
     }
 }
 
-struct AudioBufferAccumulatorNodeFactory;
+pub(crate) struct AudioBufferAccumulatorNodeFactory;
 impl StreamingNodeFactory for AudioBufferAccumulatorNodeFactory {
     fn create(
         &self,
@@ -481,7 +470,7 @@ impl StreamingNodeFactory for AudioBufferAccumulatorNodeFactory {
     }
 }
 
-struct TextCollectorNodeFactory;
+pub(crate) struct TextCollectorNodeFactory;
 impl StreamingNodeFactory for TextCollectorNodeFactory {
     fn create(
         &self,
@@ -518,7 +507,7 @@ impl StreamingNodeFactory for TextCollectorNodeFactory {
 }
 
 #[cfg(feature = "silero-vad")]
-struct SileroVADNodeFactory;
+pub(crate) struct SileroVADNodeFactory;
 
 #[cfg(feature = "silero-vad")]
 impl StreamingNodeFactory for SileroVADNodeFactory {
@@ -563,7 +552,7 @@ impl StreamingNodeFactory for SileroVADNodeFactory {
 }
 
 // Spec 007: Speculative VAD Gate for low-latency streaming
-struct SpeculativeVADGateFactory;
+pub(crate) struct SpeculativeVADGateFactory;
 impl StreamingNodeFactory for SpeculativeVADGateFactory {
     fn create(
         &self,
@@ -611,7 +600,7 @@ impl StreamingNodeFactory for SpeculativeVADGateFactory {
 }
 
 // Speculative VAD Coordinator - integrates speculative forwarding with Silero VAD
-struct SpeculativeVADCoordinatorFactory;
+pub(crate) struct SpeculativeVADCoordinatorFactory;
 impl StreamingNodeFactory for SpeculativeVADCoordinatorFactory {
     fn create(
         &self,
@@ -685,7 +674,7 @@ impl StreamingNodeFactory for LFM2AudioNodeFactory {
     }
 }
 
-struct AudioChunkerNodeFactory;
+pub(crate) struct AudioChunkerNodeFactory;
 impl StreamingNodeFactory for AudioChunkerNodeFactory {
     fn create(
         &self,
@@ -721,7 +710,7 @@ impl StreamingNodeFactory for AudioChunkerNodeFactory {
     }
 }
 
-struct FastResampleNodeFactory;
+pub(crate) struct FastResampleNodeFactory;
 impl StreamingNodeFactory for FastResampleNodeFactory {
     fn create(
         &self,
@@ -1094,99 +1083,44 @@ impl StreamingNodeFactory for FilterNodeFactory {
 }
 
 /// Create a default streaming node registry with all built-in nodes registered
+///
+/// This function collects node factories from two sources:
+/// 1. **Node Providers** - External crates that implement `NodeProvider` and register via `inventory::submit!`
+/// 2. **Built-in nodes** - Legacy inline registrations (being migrated to providers)
+///
+/// Providers are loaded in priority order (highest first), allowing higher-priority
+/// providers to override nodes from lower-priority ones.
 pub fn create_default_streaming_registry() -> StreamingNodeRegistry {
     let mut registry = StreamingNodeRegistry::new();
 
-    // Register all built-in streaming nodes
-    registry.register(Arc::new(CalculatorNodeFactory));
-    // Temporarily disabled - incomplete implementations
-    // registry.register(Arc::new(VideoProcessorNodeFactory));
-    registry.register(Arc::new(VideoFlipNodeFactory));
-
-    // Register video codec nodes (Spec 012: Video Codec Support)
-    #[cfg(feature = "video")]
-    {
-        registry.register(Arc::new(VideoEncoderNodeFactory));
-        registry.register(Arc::new(VideoDecoderNodeFactory));
-        registry.register(Arc::new(VideoScalerNodeFactory));
-        registry.register(Arc::new(VideoFormatConverterNodeFactory));
+    // Phase 1: Collect from all registered NodeProviders (inventory-based)
+    // Providers are sorted by priority (highest first)
+    let mut providers_loaded = 0;
+    let mut nodes_from_providers = 0;
+    for provider in crate::nodes::provider::iter_providers() {
+        let before_count = registry.list_types().len();
+        provider.register(&mut registry);
+        let added = registry.list_types().len() - before_count;
+        nodes_from_providers += added;
+        providers_loaded += 1;
+        tracing::debug!(
+            provider = provider.provider_name(),
+            nodes_added = added,
+            "Loaded node provider"
+        );
+    }
+    if providers_loaded > 0 {
+        tracing::info!(
+            providers = providers_loaded,
+            nodes = nodes_from_providers,
+            "Loaded node providers via inventory"
+        );
     }
 
-    // registry.register(Arc::new(SynchronizedAudioVideoNodeFactory));
-    registry.register(Arc::new(PassThroughNodeFactory));
-
-    // Register audio processing nodes
-    registry.register(Arc::new(AudioChunkerNodeFactory));
-    registry.register(Arc::new(AudioBufferAccumulatorNodeFactory));
-    registry.register(Arc::new(FastResampleNodeFactory));
-
-    // Register text processing nodes
-    registry.register(Arc::new(TextCollectorNodeFactory));
-
-    // Register remote pipeline node
-    registry.register(Arc::new(RemotePipelineNodeFactory));
-
-    // Register Silero VAD node (Rust ONNX)
-    #[cfg(feature = "silero-vad")]
-    registry.register(Arc::new(SileroVADNodeFactory));
-
-    // Register Whisper transcription nodes (Python-based, rwhisper removed in favor of candle-nodes)
-    registry.register(Arc::new(WhisperXNodeFactory));     // Python WhisperX with alignment
-    registry.register(Arc::new(HFWhisperNodeFactory));    // Python HuggingFace with word timestamps
-
-    // Register health monitoring nodes (spec 027)
-    registry.register(Arc::new(HealthEmitterNodeFactory));
-    
-    // Register audio analysis nodes for fault detection (spec 027)
-    registry.register(Arc::new(AudioLevelNodeFactory));
-    registry.register(Arc::new(ClippingDetectorNodeFactory));
-    registry.register(Arc::new(ChannelBalanceNodeFactory));
-    registry.register(Arc::new(SilenceDetectorNodeFactory));
-
-    // Register stream health monitoring nodes (business layer)
-    registry.register(Arc::new(SpeechPresenceNodeFactory));
-    registry.register(Arc::new(ConversationFlowNodeFactory));
-    registry.register(Arc::new(SessionHealthNodeFactory));
-
-    // Register stream health monitoring nodes (technical layer)
-    registry.register(Arc::new(TimingDriftNodeFactory));
-    registry.register(Arc::new(EventCorrelatorNodeFactory));
-    registry.register(Arc::new(AudioEvidenceNodeFactory));
-
-    // Register Speculative VAD Gate (Spec 007 - low-latency streaming)
-    registry.register(Arc::new(SpeculativeVADGateFactory));
-
-    // Register Speculative VAD Coordinator (integrates forwarding + Silero VAD)
-    registry.register(Arc::new(SpeculativeVADCoordinatorFactory));
-
-    // Register speaker diarization node (identifies who spoke when)
-    #[cfg(feature = "speaker-diarization")]
-    registry.register(Arc::new(crate::nodes::speaker_diarization::SpeakerDiarizationNodeFactory));
-
-    // Register audio channel splitter node (routes audio by speaker)
-    registry.register(Arc::new(crate::nodes::audio_channel_splitter::AudioChannelSplitterNodeFactory));
-
-
-    // Register Python TTS nodes
-    registry.register(Arc::new(KokoroTTSNodeFactory));
-    registry.register(Arc::new(VibeVoiceTTSNodeFactory));
-
-    // Register Python speech-to-speech nodes
-    registry.register(Arc::new(LFM2AudioNodeFactory));
-
-    // Register Python test nodes
-    registry.register(Arc::new(SimplePyTorchNodeFactory));
-
-    // Register Python streaming test nodes for integration tests
-    registry.register(Arc::new(ExpanderNodeFactory));
-    registry.register(Arc::new(RangeGeneratorNodeFactory));
-    registry.register(Arc::new(TransformAndExpandNodeFactory));
-    registry.register(Arc::new(ChainedTransformNodeFactory));
-    registry.register(Arc::new(ConditionalExpanderNodeFactory));
-    registry.register(Arc::new(FilterNodeFactory));
-
-    // Register output formatters
-    registry.register(Arc::new(SrtOutputNodeFactory));
+    // Phase 2: No legacy registrations needed
+    // - Core Rust nodes are registered via CoreNodesProvider
+    // - Python nodes are registered via PythonNodesProvider (when python-nodes feature is enabled)
+    // - Candle ML nodes are registered via CandleNodesProvider (when candle-nodes feature is enabled)
 
     registry
 }
@@ -1333,7 +1267,7 @@ impl crate::nodes::AsyncStreamingNode for SrtOutputStreamingNode {
     }
 }
 
-struct SrtOutputNodeFactory;
+pub(crate) struct SrtOutputNodeFactory;
 
 impl StreamingNodeFactory for SrtOutputNodeFactory {
     fn create(
