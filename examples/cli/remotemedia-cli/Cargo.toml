@@ -20,6 +20,11 @@ path = "src/main.rs"
 remotemedia-core = { workspace = true, features = ["video"] }
 remotemedia-candle-nodes = { path = "../../../crates/candle-nodes", optional = true }
 
+# Transport crates (optional, feature-gated)
+remotemedia-grpc = { workspace = true, features = ["cli"], optional = true }
+remotemedia-http = { workspace = true, features = ["cli"], optional = true }
+remotemedia-webrtc = { workspace = true, features = ["cli"], optional = true }
+
 # FFmpeg for decoding any media format
 ac-ffmpeg = "0.19"
 
@@ -64,8 +69,11 @@ url = { workspace = true }
 openssl = { version = "0.10", features = ["vendored"] }
 
 [features]
-default = []
+default = ["grpc"]
 candle = ["dep:remotemedia-candle-nodes"]
+grpc = ["dep:remotemedia-grpc"]
+http = ["dep:remotemedia-http"]
+webrtc = ["dep:remotemedia-webrtc"]
 
 [dev-dependencies]
 tempfile = "3.8"

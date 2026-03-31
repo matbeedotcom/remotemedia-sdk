@@ -24,15 +24,131 @@ cargo run -p remotemedia-http-server
 cargo run -p remotemedia-webrtc-server
 ```
 
+## Using Transports as a Library
+
+Each transport crate provides a **builder API** so you can add transport support to your own application with minimal code. Add the crate as a dependency and use the builder:
+
+### gRPC
+
+```toml
+[dependencies]
+remotemedia-grpc = { path = "crates/transports/grpc" }
+```
+
+```rust
+use remotemedia_grpc::GrpcServerBuilder;
+use remotemedia_core::transport::PipelineExecutor;
+use std::sync::Arc;
+
+let executor = Arc::new(PipelineExecutor::new()?);
+GrpcServerBuilder::new()
+    .bind("0.0.0.0:50051")
+    .executor(executor)
+    .auth_tokens(vec!["my-token".into()])
+    .build()?
+    .run()
+    .await?;
+```
+
+Or configure entirely from environment variables:
+
+```rust
+GrpcServerBuilder::new()
+    .from_env()  // reads GRPC_BIND_ADDRESS, GRPC_AUTH_TOKENS, etc.
+    .build()?
+    .run()
+    .await?;
+```
+
+### HTTP
+
+```toml
+[dependencies]
+remotemedia-http = { path = "crates/transports/http" }
+```
+
+```rust
+use remotemedia_http::HttpServerBuilder;
+
+HttpServerBuilder::new()
+    .bind("0.0.0.0:8080")
+    .build().await?
+    .run().await?;
+```
+
+### WebRTC
+
+```toml
+[dependencies]
+remotemedia-webrtc = { path = "crates/transports/webrtc" }
+```
+
+**WebSocket client mode** (connects to an existing signaling server):
+
+```rust
+use remotemedia_webrtc::WebRtcServerBuilder;
+
+WebRtcServerBuilder::new()
+    .signaling_url("ws://localhost:8080")
+    .stun_servers(vec!["stun:stun.l.google.com:19302".into()])
+    .max_peers(10)
+    .build()?
+    .run()
+    .await?;
+```
+
+**gRPC signaling server mode** (requires `grpc-signaling` feature):
+
+```toml
+[dependencies]
+remotemedia-webrtc = { path = "crates/transports/webrtc", features = ["grpc-signaling"] }
+```
+
+```rust
+use remotemedia_webrtc::WebRtcSignalingServerBuilder;
+
+WebRtcSignalingServerBuilder::new()
+    .bind("0.0.0.0:50051")
+    .manifest_from_file("pipeline.json")?
+    .build()?
+    .run()
+    .await?;
+```
+
+### CLI Integration
+
+Each transport also provides optional **clap argument structs** behind a `cli` feature, so you can embed transport-specific CLI args in your own clap-based application:
+
+```toml
+[dependencies]
+remotemedia-grpc = { path = "crates/transports/grpc", features = ["cli"] }
+```
+
+```rust
+use clap::Parser;
+use remotemedia_grpc::GrpcServeArgs;
+
+#[derive(Parser)]
+struct MyCli {
+    #[command(flatten)]
+    grpc: GrpcServeArgs,
+}
+
+let cli = MyCli::parse();
+cli.grpc.run().await?;
+```
+
 ## Architecture
 
 Each transport is an independent **library** crate that:
 1. Depends on `remotemedia-core`
 2. Implements the `PipelineTransport` trait
-3. Handles its own serialization format
-4. Can be independently versioned and deployed
+3. Provides a builder API for easy integration
+4. Optionally provides clap CLI args (behind `cli` feature)
+5. Handles its own serialization format
+6. Can be independently versioned and deployed
 
-Server binaries in `crates/services/` depend on these transport libraries and provide CLI entry points.
+Server binaries in `crates/services/` depend on these transport libraries and use the builder API.
 
 See `docs/TRANSPORT_DECOUPLING_ARCHITECTURE.md` for details.
 

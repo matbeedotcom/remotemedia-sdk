@@ -42,6 +42,9 @@ async-trait = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 
+# CLI (optional)
+clap = { version = "4.5", features = ["derive", "env"], optional = true }
+
 [dev-dependencies]
 tokio-test = "0.4"
 tracing-subscriber = { workspace = true }
@@ -49,3 +52,4 @@ tracing-subscriber = { workspace = true }
 [features]
 # Default features: basic HTTP pipeline execution and streaming
 default = []
+cli = ["dep:clap"]

@@ -13,6 +13,30 @@ cargo build --release
 
 The binary will be at `target/release/remotemedia`.
 
+### Transport Features
+
+The CLI uses Cargo features to control which transport backends are compiled in. Only enable what you need to keep compile times fast.
+
+| Feature  | Transport | Default |
+|----------|-----------|---------|
+| `grpc`   | gRPC      | Yes     |
+| `http`   | HTTP/REST + SSE | No |
+| `webrtc` | WebRTC    | No      |
+
+```bash
+# Default build (gRPC only)
+cargo build --release
+
+# With all transports
+cargo build --release --features grpc,http,webrtc
+
+# HTTP only (no gRPC)
+cargo build --release --no-default-features --features http
+
+# With Candle ML nodes
+cargo build --release --features candle
+```
+
 ### Add to PATH
 
 ```bash
@@ -97,16 +121,31 @@ Checks:
 
 ### `serve` - Start Pipeline Server
 
-Start a local server for pipeline execution.
+Start a local server for pipeline execution. Requires the corresponding transport feature to be enabled at build time.
 
 ```bash
-remotemedia serve [options]
+remotemedia serve <manifest> [options]
 
 Options:
-  --port, -p     Server port (default: 8080)
+  --port         Server port (default: 8080)
   --host         Bind address (default: 0.0.0.0)
-  --manifest     Default pipeline manifest
+  --transport    Transport type: grpc, http, webrtc (default: grpc)
+  --auth-token   Require this token for authentication
+  --max-sessions Maximum concurrent sessions (default: 100)
 ```
+
+```bash
+# Start a gRPC server (default)
+remotemedia serve pipeline.yaml --port 50051
+
+# Start an HTTP server (requires --features http)
+remotemedia serve pipeline.yaml --transport http --port 8080
+
+# Start with authentication
+remotemedia serve pipeline.yaml --transport grpc --auth-token my-secret
+```
+
+If you select a transport that wasn't compiled in, the CLI will print a message telling you which feature flag to enable.
 
 ### `nodes` - Node Management
 

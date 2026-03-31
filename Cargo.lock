@@ -5411,6 +5411,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "clap",
  "futures",
  "hyper 1.8.1",
  "prometheus",
@@ -5442,9 +5443,7 @@ dependencies = [
 name = "remotemedia-grpc-server"
 version = "0.4.0"
 dependencies = [
- "ctrlc",
  "num_cpus",
- "remotemedia-core",
  "remotemedia-grpc",
  "tokio",
  "tracing",
@@ -5470,6 +5469,7 @@ dependencies = [
  "async-trait",
  "axum 0.7.9",
  "axum-extra",
+ "clap",
  "futures",
  "hyper 1.8.1",
  "remotemedia-core",
@@ -5492,7 +5492,6 @@ name = "remotemedia-http-server"
 version = "0.4.0"
 dependencies = [
  "num_cpus",
- "remotemedia-core",
  "remotemedia-http",
  "tokio",
  "tracing",
@@ -5608,6 +5607,7 @@ dependencies = [
  "base64 0.22.1",
  "bollard",
  "bytes",
+ "clap",
  "criterion",
  "futures",
  "futures-util",
@@ -5643,16 +5643,9 @@ name = "remotemedia-webrtc-server"
 version = "0.4.0"
 dependencies = [
  "clap",
- "ctrlc",
- "http 1.4.0",
  "num_cpus",
- "remotemedia-core",
  "remotemedia-webrtc",
- "serde_json",
  "tokio",
- "tonic",
- "tonic-web",
- "tower-http 0.6.8",
  "tracing",
  "tracing-subscriber",
 ]

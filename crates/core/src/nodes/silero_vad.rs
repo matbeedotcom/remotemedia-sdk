@@ -185,7 +185,8 @@ impl SileroVADNode {
 
             // Create ONNX Runtime session
             let session = Session::builder()?
-                .with_execution_providers([CPUExecutionProvider::default().build()])?
+                .with_execution_providers([CPUExecutionProvider::default().build()])
+                .map_err(|e| Error::Execution(format!("ONNX Runtime error: {}", e)))?
                 .commit_from_file(&model_path)?;
 
             tracing::info!("Silero VAD model loaded successfully");

@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use clap::{Args, ValueEnum};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::config::Config;
 
@@ -46,65 +47,88 @@ pub struct ServeArgs {
 
 pub async fn execute(args: ServeArgs, _config: &Config) -> Result<()> {
     // Load and validate manifest
-    let manifest_content = std::fs::read_to_string(&args.manifest)
+    let _manifest_content = std::fs::read_to_string(&args.manifest)
         .with_context(|| format!("Failed to read manifest: {:?}", args.manifest))?;
 
-    let _manifest: serde_yaml::Value = serde_yaml::from_str(&manifest_content)
-        .map_err(|e| anyhow::anyhow!("Invalid manifest: {}", e))?;
+    let bind_addr = format!("{}:{}", args.host, args.port);
 
     tracing::info!(
-        "Starting {:?} server on {}:{} with pipeline {:?}",
+        "Starting {:?} server on {} with pipeline {:?}",
         args.transport,
-        args.host,
-        args.port,
+        bind_addr,
         args.manifest
     );
 
-    // Attempt to bind to the port
-    let addr = format!("{}:{}", args.host, args.port);
-    let listener = match std::net::TcpListener::bind(&addr) {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("Failed to bind to {}: {}", addr, e);
-            std::process::exit(2); // Exit code 2 = port in use
-        }
-    };
-    drop(listener); // Release for the actual server
+    let executor = Arc::new(
+        remotemedia_core::transport::PipelineExecutor::new()
+            .map_err(|e| anyhow::anyhow!("Failed to create executor: {}", e))?,
+    );
 
-    tracing::info!("Max sessions: {}", args.max_sessions);
-
-    if args.auth_token.is_some() {
-        tracing::info!("Authentication enabled");
-    }
-
-    // Set up shutdown handler
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
-        tracing::info!("Received shutdown signal");
-        let _ = shutdown_tx.send(());
-    });
-
-    // Start the appropriate server
     match args.transport {
         Transport::Grpc => {
-            tracing::info!("Starting gRPC server...");
-            // TODO: Use remotemedia-grpc transport
+            #[cfg(feature = "grpc")]
+            {
+                let mut builder = remotemedia_grpc::GrpcServerBuilder::new()
+                    .bind(&bind_addr)
+                    .executor(executor);
+
+                if let Some(token) = args.auth_token {
+                    builder = builder.auth_tokens(vec![token]).require_auth(true);
+                }
+
+                builder
+                    .build()
+                    .map_err(|e| anyhow::anyhow!("{}", e))?
+                    .run()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+            }
+            #[cfg(not(feature = "grpc"))]
+            {
+                anyhow::bail!(
+                    "gRPC transport not available. Rebuild with: cargo build --features grpc"
+                );
+            }
         }
         Transport::Http => {
-            tracing::info!("Starting HTTP server...");
-            // TODO: Use remotemedia-http transport
+            #[cfg(feature = "http")]
+            {
+                remotemedia_http::HttpServerBuilder::new()
+                    .bind(&bind_addr)
+                    .executor(executor)
+                    .build()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{}", e))?
+                    .run()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                anyhow::bail!(
+                    "HTTP transport not available. Rebuild with: cargo build --features http"
+                );
+            }
         }
         Transport::Webrtc => {
-            tracing::info!("Starting WebRTC server...");
-            // TODO: Use remotemedia-webrtc transport
+            #[cfg(feature = "webrtc")]
+            {
+                remotemedia_webrtc::WebRtcServerBuilder::new()
+                    .signaling_url(&format!("ws://{}", bind_addr))
+                    .build()
+                    .map_err(|e| anyhow::anyhow!("{}", e))?
+                    .run()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+            }
+            #[cfg(not(feature = "webrtc"))]
+            {
+                anyhow::bail!(
+                    "WebRTC transport not available. Rebuild with: cargo build --features webrtc"
+                );
+            }
         }
     }
-
-    // Wait for shutdown
-    shutdown_rx.await.ok();
-    tracing::info!("Server shutting down gracefully");
 
     Ok(())
 }

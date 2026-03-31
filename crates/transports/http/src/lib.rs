@@ -57,12 +57,18 @@
 //! let client = registry.create_client("http", &config).await?;
 //! ```
 
+pub mod builder;
+#[cfg(feature = "cli")]
+pub mod cli;
 pub mod client;
 pub mod error;
 pub mod plugin;
 pub mod server;
 
 // Re-export main types
+pub use builder::{HttpServerBuilder, HttpTransportServer};
+#[cfg(feature = "cli")]
+pub use cli::HttpServeArgs;
 pub use client::{HttpPipelineClient, HttpStreamSession};
 pub use error::{Error, Result};
 pub use plugin::HttpTransportPlugin;

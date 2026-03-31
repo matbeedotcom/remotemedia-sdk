@@ -68,6 +68,9 @@
 #![warn(clippy::all)]
 
 // Public modules
+pub mod builder;
+#[cfg(feature = "cli")]
+pub mod cli;
 pub mod client;
 pub mod config;
 pub mod custom_nodes;
@@ -114,6 +117,15 @@ pub use peer::{ConnectionState, PeerInfo};
 pub use plugin::WebRtcTransportPlugin;
 pub use session::{Session, SessionId, SessionManager, SessionState};
 pub use transport::WebRtcTransport;
+
+pub use builder::WebRtcServerBuilder;
+#[cfg(feature = "grpc-signaling")]
+pub use builder::WebRtcSignalingServerBuilder;
+
+#[cfg(feature = "cli")]
+pub use cli::WebRtcServeArgs;
+#[cfg(all(feature = "cli", feature = "grpc-signaling"))]
+pub use cli::WebRtcSignalingServeArgs;
 
 /// Get the version of this crate
 pub fn version() -> &'static str {

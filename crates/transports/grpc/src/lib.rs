@@ -34,6 +34,10 @@ pub mod plugin;
 pub mod server;
 pub mod streaming;
 pub mod version;
+pub mod builder;
+
+#[cfg(feature = "cli")]
+pub mod cli;
 
 // Session and routing modules
 pub mod async_pipeline;
@@ -77,6 +81,10 @@ pub use streaming::StreamingServiceImpl;
 // Re-export client and plugin types
 pub use client::{GrpcPipelineClient, GrpcStreamSession};
 pub use plugin::GrpcTransportPlugin;
+pub use builder::{GrpcServerBuilder, GrpcTransportServer};
+
+#[cfg(feature = "cli")]
+pub use cli::GrpcServeArgs;
 
 /// Error type for gRPC service operations
 #[derive(Debug, thiserror::Error)]
