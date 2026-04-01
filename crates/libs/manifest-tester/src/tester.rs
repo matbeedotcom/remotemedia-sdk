@@ -7,6 +7,7 @@ use crate::report::{
     CategorizedError, ErrorCategory, ManifestTestReport, ProbeResult, TestStatus,
 };
 use crate::synthetic_data::SyntheticDataFactory;
+use remotemedia_core::data::RuntimeData;
 use remotemedia_core::manifest::Manifest;
 use remotemedia_manifest_analyzer::{self as analyzer, AnalyzerError};
 use std::path::PathBuf;
@@ -21,6 +22,7 @@ pub struct ManifestTester {
     timeout: Duration,
     skip_ml: bool,
     dry_run: bool,
+    custom_test_data: Option<Vec<RuntimeData>>,
 }
 
 impl ManifestTester {
@@ -32,6 +34,7 @@ impl ManifestTester {
             timeout: Duration::from_secs(30),
             skip_ml: false,
             dry_run: false,
+            custom_test_data: None,
         }
     }
 
@@ -50,6 +53,12 @@ impl ManifestTester {
     /// Skip ML nodes (replace with passthrough stubs)
     pub fn skip_ml(mut self, skip: bool) -> Self {
         self.skip_ml = skip;
+        self
+    }
+
+    /// Provide custom test data (overrides synthetic generation)
+    pub fn with_test_data(mut self, data: Vec<RuntimeData>) -> Self {
+        self.custom_test_data = Some(data);
         self
     }
 
@@ -111,12 +120,17 @@ impl ManifestTester {
             }
         }
 
-        // Step 3: Generate synthetic data
-        let test_data: Vec<_> = analysis
-            .source_input_types
-            .iter()
-            .flat_map(|t| SyntheticDataFactory::generate(t))
-            .collect();
+        // Step 3: Use custom test data or generate synthetic data
+        let test_data: Vec<_> = if let Some(custom) = self.custom_test_data {
+            info!("Using {} custom test data items", custom.len());
+            custom
+        } else {
+            analysis
+                .source_input_types
+                .iter()
+                .flat_map(|t| SyntheticDataFactory::generate(t))
+                .collect()
+        };
 
         info!("Generated {} synthetic test data items", test_data.len());
 

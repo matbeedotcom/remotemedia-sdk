@@ -43,6 +43,14 @@ struct Cli {
     #[arg(long)]
     skip_ml: bool,
 
+    /// Path to input audio WAV file (overrides synthetic data generation)
+    #[arg(short, long)]
+    input: Option<PathBuf>,
+
+    /// Chunk size for streaming audio input (samples per chunk)
+    #[arg(long, default_value = "1024")]
+    chunk_size: usize,
+
     /// Increase verbosity
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
@@ -102,15 +110,29 @@ async fn main() -> Result<()> {
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| log_level.into()))
         .init();
 
+    // Load custom test data if provided
+    let custom_data = if let Some(input_path) = &cli.input {
+        use remotemedia_manifest_tester::synthetic_data::SyntheticDataFactory;
+        let chunks = SyntheticDataFactory::load_wav_chunked(input_path, cli.chunk_size)
+            .map_err(|e| anyhow::anyhow!("Failed to load input audio: {e}"))?;
+        Some(chunks)
+    } else {
+        None
+    };
+
     // Build and run tester
     let specs = transport_args_to_specs(&cli.transport);
-    let report = ManifestTester::test(&cli.manifest)
+    let mut tester = ManifestTester::test(&cli.manifest)
         .with_probes(&specs)
         .with_timeout(Duration::from_secs(cli.timeout))
         .skip_ml(cli.skip_ml)
-        .dry_run(cli.dry_run)
-        .run()
-        .await;
+        .dry_run(cli.dry_run);
+
+    if let Some(data) = custom_data {
+        tester = tester.with_test_data(data);
+    }
+
+    let report = tester.run().await;
 
     // Output results
     match cli.output_format {
