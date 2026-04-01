@@ -19,7 +19,7 @@ clap = { version = "4.4", features = ["derive"] }
 remotemedia-core = { path = "../../crates/core" }
 remotemedia-manifest-analyzer = { path = "../../crates/libs/manifest-analyzer" }
 remotemedia-manifest-tester = { path = "../../crates/libs/manifest-tester" }
-remotemedia-candle-nodes = { path = "../../crates/candle-nodes", features = ["whisper"] }
+remotemedia-candle-nodes = { path = "../../crates/candle-nodes", features = ["whisper", "vad"] }
 
 # Async
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

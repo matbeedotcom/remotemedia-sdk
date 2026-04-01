@@ -120,6 +120,38 @@ pub static NODE_TYPE_TABLE: &[(&str, NodeTypeInfo)] = &[
         },
     ),
     (
+        "silero-vad",
+        NodeTypeInfo {
+            input_type: Some(RuntimeDataType::Audio),
+            output_type: Some(RuntimeDataType::Audio),
+            category: "audio",
+        },
+    ),
+    (
+        "candle-yolo",
+        NodeTypeInfo {
+            input_type: Some(RuntimeDataType::Video),
+            output_type: Some(RuntimeDataType::Json),
+            category: "video",
+        },
+    ),
+    (
+        "candle-phi",
+        NodeTypeInfo {
+            input_type: Some(RuntimeDataType::Text),
+            output_type: Some(RuntimeDataType::Text),
+            category: "llm",
+        },
+    ),
+    (
+        "candle-llama",
+        NodeTypeInfo {
+            input_type: Some(RuntimeDataType::Text),
+            output_type: Some(RuntimeDataType::Text),
+            category: "llm",
+        },
+    ),
+    (
         "WhisperNode",
         NodeTypeInfo {
             input_type: Some(RuntimeDataType::Audio),

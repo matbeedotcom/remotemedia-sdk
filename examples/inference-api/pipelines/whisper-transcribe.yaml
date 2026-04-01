@@ -1,11 +1,13 @@
 # Whisper Transcription Pipeline
 # Input: Audio (WAV, MP3, etc.)
 # Output: Text (transcription)
+#
+# Flow: AudioChunker → Resample(16kHz) → VAD → Buffer → Whisper
 
 version: v1
 metadata:
   name: whisper-transcribe
-  description: Audio transcription using Whisper
+  description: Audio transcription using Whisper with VAD-based buffering
 
 nodes:
   - id: input
@@ -20,6 +22,19 @@ nodes:
     params:
       targetSampleRate: 16000
 
+  - id: vad
+    nodeType: SileroVADNode
+    isStreaming: true
+    params:
+      threshold: 0.5
+
+  - id: buffer
+    nodeType: AudioBufferAccumulatorNode
+    isStreaming: true
+    params:
+      minUtteranceDurationMs: 500
+      maxUtteranceDurationMs: 30000
+
   - id: whisper
     nodeType: candle-whisper
     isStreaming: true
@@ -33,4 +48,8 @@ connections:
   - from: input
     to: resampler
   - from: resampler
+    to: vad
+  - from: vad
+    to: buffer
+  - from: buffer
     to: whisper
