@@ -50,6 +50,7 @@ if not logger.handlers:
 
 
 from .registration import streaming_node
+from remotemedia.core.multiprocessing import python_requires
 
 
 @streaming_node(
@@ -60,6 +61,7 @@ from .registration import streaming_node
     produces=["audio"],
     description="Text-to-speech synthesis using Kokoro TTS with streaming audio output"
 )
+@python_requires(["kokoro>=0.9.4", "soundfile"])
 class KokoroTTSNode(MultiprocessNode):
     """
     Text-to-speech synthesis using Kokoro TTS with RuntimeData API and multiprocess support.

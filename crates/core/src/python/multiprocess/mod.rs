@@ -16,6 +16,9 @@ pub use multiprocess_executor::{
     InitStatus, MultiprocessConfig, MultiprocessExecutor, SessionState,
 };
 
+// Re-export env manager types for convenience
+pub use super::env_manager::{EnvScope, PythonEnvConfig, PythonEnvMode};
+
 #[cfg(feature = "docker")]
 pub use docker_support::ResourceUsageStats;
 

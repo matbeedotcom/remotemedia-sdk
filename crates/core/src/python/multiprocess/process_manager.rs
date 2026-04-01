@@ -235,6 +235,11 @@ impl ProcessManager {
         }
     }
 
+    /// Get access to the spawn configuration (for updating python_executable etc.)
+    pub fn spawn_config(&self) -> &Arc<RwLock<SpawnConfig>> {
+        &self.spawn_config
+    }
+
     /// Register a Python module for node registration
     ///
     /// This module will be imported before looking up node types,

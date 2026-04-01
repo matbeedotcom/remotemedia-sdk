@@ -25,6 +25,12 @@ pub struct PythonPackageConfig {
     pub test_wheel: bool,
     pub python_requires: String,
     pub extra_dependencies: Vec<String>,
+    /// Bundle a self-contained Python environment with pre-installed deps
+    pub bundle_python: bool,
+    /// Python version to bundle (e.g. "3.11")
+    pub python_version: String,
+    /// Target platform for cross-platform bundling
+    pub bundle_target: Option<String>,
 }
 
 /// Parsed pipeline metadata
@@ -230,6 +236,16 @@ pub fn generate_python_package(config: PythonPackageConfig) -> Result<()> {
     );
     fs::write(pkg_dir.join("README.md"), readme)
         .context("Failed to write README.md")?;
+
+    // Bundle self-contained Python environment if requested
+    if config.bundle_python {
+        bundle_python_environment(
+            &pkg_dir,
+            &config.python_version,
+            &all_deps,
+            config.bundle_target.as_deref(),
+        )?;
+    }
 
     tracing::info!("Generated package at: {:?}", pkg_dir);
 
@@ -692,6 +708,214 @@ fn is_valid_python_package_name(name: &str) -> bool {
     }
     
     name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// Bundle a self-contained Python environment into the package.
+///
+/// Creates a `bundled_env/` directory containing:
+/// - A standalone Python installation (via `uv python install`)
+/// - A pre-populated venv with all dependencies pre-installed
+/// - A `runtime-env.json` that the SDK reads at startup to skip env resolution
+fn bundle_python_environment(
+    pkg_dir: &PathBuf,
+    python_version: &str,
+    deps: &[String],
+    _target: Option<&str>, // TODO: cross-platform bundling via --target
+) -> Result<()> {
+    tracing::info!(
+        "Bundling Python {} environment with {} dependencies...",
+        python_version,
+        deps.len()
+    );
+
+    let bundled_dir = pkg_dir.join("bundled_env");
+    let python_dir = bundled_dir.join("python");
+    let venv_dir = bundled_dir.join("venv");
+
+    fs::create_dir_all(&bundled_dir)?;
+
+    // Step 1: Find uv (required for --bundle-python)
+    let uv = find_uv_binary()
+        .context("uv is required for --bundle-python. Install it: curl -LsSf https://astral.sh/uv/install.sh | sh")?;
+
+    tracing::info!("Using uv at: {:?}", uv);
+
+    // Step 2: Download standalone Python
+    tracing::info!("Installing Python {} via uv...", python_version);
+    let status = Command::new(&uv)
+        .args(["python", "install", python_version])
+        .env("UV_PYTHON_INSTALL_DIR", &python_dir)
+        .status()
+        .context("Failed to run uv python install")?;
+
+    if !status.success() {
+        anyhow::bail!(
+            "Failed to install Python {}. Is the version valid?",
+            python_version
+        );
+    }
+
+    // Find the installed Python executable
+    let python_exe = find_installed_python(&python_dir, python_version)?;
+    tracing::info!("Python installed at: {:?}", python_exe);
+
+    // Step 3: Create venv
+    tracing::info!("Creating virtual environment...");
+    let status = Command::new(&uv)
+        .args(["venv", "--python"])
+        .arg(&python_exe)
+        .arg(&venv_dir)
+        .status()
+        .context("Failed to create venv")?;
+
+    if !status.success() {
+        anyhow::bail!("Failed to create virtual environment");
+    }
+
+    // Step 4: Install dependencies
+    if !deps.is_empty() {
+        tracing::info!("Installing {} dependencies...", deps.len());
+
+        // Write requirements to a temp file
+        let req_file = bundled_dir.join("requirements.txt");
+        fs::write(&req_file, deps.join("\n"))
+            .context("Failed to write requirements.txt")?;
+
+        let venv_python = if cfg!(windows) {
+            venv_dir.join("Scripts").join("python.exe")
+        } else {
+            venv_dir.join("bin").join("python")
+        };
+
+        let status = Command::new(&uv)
+            .args(["pip", "install", "-r"])
+            .arg(&req_file)
+            .arg("--python")
+            .arg(&venv_python)
+            .status()
+            .context("Failed to install dependencies")?;
+
+        if !status.success() {
+            anyhow::bail!("Failed to install dependencies into bundled environment");
+        }
+
+        // Clean up temp requirements file
+        let _ = fs::remove_file(&req_file);
+    }
+
+    // Step 5: Write runtime-env.json
+    let venv_python_rel = if cfg!(windows) {
+        "bundled_env/venv/Scripts/python.exe"
+    } else {
+        "bundled_env/venv/bin/python"
+    };
+
+    let runtime_env = serde_json::json!({
+        "python_env_mode": "bundled",
+        "python_executable": venv_python_rel,
+        "python_version": python_version,
+        "deps": deps,
+        "bundled_at": format!("{}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()),
+    });
+
+    fs::write(
+        bundled_dir.join("runtime-env.json"),
+        serde_json::to_string_pretty(&runtime_env)?,
+    )
+    .context("Failed to write runtime-env.json")?;
+
+    tracing::info!(
+        "Bundled Python environment created at: {:?}",
+        bundled_dir
+    );
+
+    Ok(())
+}
+
+/// Find the uv binary on the system.
+fn find_uv_binary() -> Option<PathBuf> {
+    // Check UV_BINARY_PATH env var
+    if let Ok(path) = std::env::var("UV_BINARY_PATH") {
+        let p = PathBuf::from(&path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // Check PATH
+    if let Ok(output) = Command::new("uv").arg("--version").output() {
+        if output.status.success() {
+            return Some(PathBuf::from("uv"));
+        }
+    }
+
+    // Check default install location
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_default();
+    let default_path = PathBuf::from(&home)
+        .join(".config")
+        .join("remotemedia")
+        .join("bin")
+        .join("uv");
+    if default_path.exists() {
+        return Some(default_path);
+    }
+
+    None
+}
+
+/// Find the Python executable installed by uv in the given directory.
+fn find_installed_python(python_dir: &PathBuf, version: &str) -> Result<PathBuf> {
+    // uv installs Python to a versioned subdirectory
+    // Try common patterns
+    if let Ok(entries) = fs::read_dir(python_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                if name.contains(version) || name.contains("cpython") {
+                    // Look for bin/python or python.exe inside
+                    let bin_python = path.join("bin").join("python3");
+                    if bin_python.exists() {
+                        return Ok(bin_python);
+                    }
+                    let bin_python = path.join("bin").join("python");
+                    if bin_python.exists() {
+                        return Ok(bin_python);
+                    }
+                    #[cfg(windows)]
+                    {
+                        let exe = path.join("python.exe");
+                        if exe.exists() {
+                            return Ok(exe);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: use uv python find
+    let output = Command::new("uv")
+        .args(["python", "find", version])
+        .output()
+        .context("Failed to run uv python find")?;
+
+    if output.status.success() {
+        let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Ok(PathBuf::from(path_str));
+    }
+
+    anyhow::bail!(
+        "Could not find Python {} in {:?}. Try running: uv python install {}",
+        version,
+        python_dir,
+        version
+    )
 }
 
 #[cfg(test)]

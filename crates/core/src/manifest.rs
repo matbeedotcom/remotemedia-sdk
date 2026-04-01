@@ -23,6 +23,27 @@ pub struct Manifest {
 
     /// Connections between nodes
     pub connections: Vec<Connection>,
+
+    /// Python environment configuration for managed venvs.
+    /// Parsed regardless of feature flags; ignored at runtime when `bundled-uv` is not enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_env: Option<ManifestPythonEnv>,
+}
+
+/// Python environment settings declared at the manifest level.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ManifestPythonEnv {
+    /// Desired Python version (e.g. "3.11").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_version: Option<String>,
+
+    /// Environment scope override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<crate::python::env_manager::EnvScope>,
+
+    /// Extra dependencies added to all nodes in this pipeline.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_deps: Vec<String>,
 }
 
 /// Pipeline metadata
@@ -128,6 +149,11 @@ pub struct NodeManifest {
     /// - Nodes requiring detailed latency percentiles (P50/P95/P99)
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fast_path: bool,
+
+    /// Python package dependencies for this node (override/extend node-declared deps).
+    /// Used by the managed Python environment system to provision venvs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_deps: Option<Vec<String>>,
 }
 
 /// Runtime hint for Python node execution (Phase 1.10.5)
@@ -312,6 +338,7 @@ mod tests {
             },
             nodes: vec![],
             connections: vec![],
+            python_env: None,
         };
 
         assert!(validate(&manifest).is_err());

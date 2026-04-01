@@ -264,10 +264,32 @@ impl SessionRouter {
         );
 
         for node_spec in &self.manifest.nodes {
+            // Inject manifest-level python dependency info into params
+            // so the multiprocess executor can provision the right venv
+            let mut params = node_spec.params.clone();
+            if let Some(ref py_deps) = node_spec.python_deps {
+                if let Some(obj) = params.as_object_mut() {
+                    obj.insert(
+                        "__python_deps__".to_string(),
+                        serde_json::json!(py_deps),
+                    );
+                }
+            }
+            if let Some(ref py_env) = self.manifest.python_env {
+                if !py_env.extra_deps.is_empty() {
+                    if let Some(obj) = params.as_object_mut() {
+                        obj.insert(
+                            "__python_extra_deps__".to_string(),
+                            serde_json::json!(py_env.extra_deps),
+                        );
+                    }
+                }
+            }
+
             let node = self.registry.create_node(
                 &node_spec.node_type,
                 node_spec.id.clone(),
-                &node_spec.params,
+                &params,
                 Some(self.session_id.clone()),
             )?;
 
@@ -886,6 +908,7 @@ mod tests {
                     to: to.to_string(),
                 })
                 .collect(),
+            python_env: None,
         }
     }
 

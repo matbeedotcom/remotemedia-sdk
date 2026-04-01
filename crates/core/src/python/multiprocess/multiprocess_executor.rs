@@ -133,7 +133,8 @@ pub struct MultiprocessConfig {
     #[serde(default = "default_init_timeout")]
     pub init_timeout_secs: u64,
 
-    /// Python executable path
+    /// Python executable path.
+    /// When set explicitly, this overrides any managed environment resolution.
     #[serde(default = "default_python_executable")]
     pub python_executable: std::path::PathBuf,
 
@@ -148,6 +149,11 @@ pub struct MultiprocessConfig {
     /// Additional Python path entries for module discovery
     #[serde(default)]
     pub python_path: Vec<std::path::PathBuf>,
+
+    /// Python environment management configuration.
+    /// Controls whether the SDK auto-provisions venvs via uv.
+    #[serde(default)]
+    pub python_env: crate::python::env_manager::PythonEnvConfig,
 }
 
 /// Policy for handling Docker unavailability
@@ -175,6 +181,10 @@ fn default_init_timeout() -> u64 {
 }
 
 fn default_python_executable() -> std::path::PathBuf {
+    // Check PYTHON_EXECUTABLE env var (e.g., for conda environments)
+    if let Ok(python_path) = std::env::var("PYTHON_EXECUTABLE") {
+        return std::path::PathBuf::from(python_path);
+    }
     std::path::PathBuf::from("python")
 }
 
@@ -192,10 +202,11 @@ impl Default for MultiprocessConfig {
             max_processes_per_session: Some(10),
             channel_capacity: 100,
             init_timeout_secs: 300, // 5 minutes for model loading
-            python_executable: std::path::PathBuf::from("python"),
+            python_executable: default_python_executable(),
             enable_backpressure: true,
             docker_fallback_policy: DockerFallbackPolicy::AllowWithWarning,
             python_path: Vec::new(),
+            python_env: Default::default(),
         }
     }
 }
@@ -268,11 +279,32 @@ impl MultiprocessConfig {
     pub fn from_default_file() -> Result<Self> {
         let path = std::path::Path::new("runtime.toml");
 
-        if path.exists() {
-            Self::from_file(path)
+        let mut config = if path.exists() {
+            Self::from_file(path)?
         } else {
-            Ok(Self::default())
+            Self::default()
+        };
+
+        // Apply environment variable overrides
+        if let Ok(python_path) = std::env::var("PYTHON_EXECUTABLE") {
+            config.python_executable = std::path::PathBuf::from(python_path);
         }
+
+        if let Ok(mode) = std::env::var("PYTHON_ENV_MODE") {
+            config.python_env.mode = match mode.to_lowercase().as_str() {
+                "managed" => crate::python::env_manager::PythonEnvMode::Managed,
+                "managed_with_python" => {
+                    crate::python::env_manager::PythonEnvMode::ManagedWithPython
+                }
+                _ => crate::python::env_manager::PythonEnvMode::System,
+            };
+        }
+
+        if let Ok(version) = std::env::var("PYTHON_VERSION") {
+            config.python_env.python_version = version;
+        }
+
+        Ok(config)
     }
 }
 
@@ -379,6 +411,10 @@ pub struct MultiprocessExecutor {
     /// Docker support
     #[cfg(feature = "docker")]
     docker_support: Option<Arc<DockerSupport>>,
+
+    /// Python environment manager for auto-provisioning venvs.
+    /// None when PythonEnvMode::System (default / backward-compatible).
+    env_manager: Option<Arc<crate::python::env_manager::PythonEnvManager>>,
 }
 
 impl MultiprocessExecutor {
@@ -1052,6 +1088,30 @@ impl MultiprocessExecutor {
         #[cfg(feature = "docker")]
         let docker_support = None;
 
+        // Initialize Python environment manager if mode is not System
+        let env_manager = if config.python_env.mode
+            != crate::python::env_manager::PythonEnvMode::System
+        {
+            match crate::python::env_manager::PythonEnvManager::new(config.python_env.clone()) {
+                Ok(mgr) => {
+                    tracing::info!(
+                        mode = ?config.python_env.mode,
+                        "Python environment manager initialized"
+                    );
+                    Some(Arc::new(mgr))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to initialize Python environment manager, falling back to system Python"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let executor = Self {
             process_manager: Arc::new(ProcessManager::new(config.clone())),
             channel_registry,
@@ -1062,6 +1122,7 @@ impl MultiprocessExecutor {
             current_context: None,
             #[cfg(feature = "docker")]
             docker_support,
+            env_manager,
         };
 
         // Setup pipeline termination on node failure
@@ -2085,6 +2146,76 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
                 output_channel,
             )
         };
+
+        // Resolve Python environment if managed mode is active.
+        // This updates the process manager's spawn config with the venv python
+        // before any spawn calls below.
+        if let Some(ref env_mgr) = self.env_manager {
+            // Collect deps from:
+            // 1. Node params __python_deps__ (injected from manifest's python_deps)
+            // 2. Manifest-level extra_deps (via __python_extra_deps__)
+            let manifest_deps: Vec<String> = ctx
+                .params
+                .get("__python_deps__")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let extra_deps: Vec<String> = ctx
+                .params
+                .get("__python_extra_deps__")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let merged = crate::python::env_manager::merge_deps(
+                &[], // node base deps (discovered post-spawn via DEPS control channel)
+                &manifest_deps,
+                &extra_deps,
+            );
+
+            match env_mgr.ensure_env(&merged).await {
+                Ok(venv_info) => {
+                    tracing::info!(
+                        node_id = %ctx.node_id,
+                        python = %venv_info.python_executable.display(),
+                        cache_key = %venv_info.cache_key,
+                        "Using managed Python environment"
+                    );
+                    // Update spawn config with the resolved venv python
+                    let mut spawn_cfg = self.process_manager.spawn_config().write().await;
+                    spawn_cfg.python_executable = venv_info.python_executable;
+
+                    // Ensure the remotemedia Python client is importable in the venv.
+                    // Add the existing python_path entries (which typically include the
+                    // clients/python directory) so the runner module can be found.
+                    if spawn_cfg.python_path.is_empty() {
+                        // Add default paths: the system PYTHONPATH entries that point
+                        // to the remotemedia client package
+                        for path in &self.config.python_path {
+                            if !spawn_cfg.python_path.contains(path) {
+                                spawn_cfg.python_path.push(path.clone());
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        node_id = %ctx.node_id,
+                        "Failed to provision managed Python environment, using system Python"
+                    );
+                }
+            }
+        }
 
         // NOW spawn process or container (channels already exist)
         #[cfg(feature = "multiprocess")]

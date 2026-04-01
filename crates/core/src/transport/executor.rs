@@ -443,6 +443,7 @@ mod tests {
                 ..Default::default()
             }],
             connections: vec![],
+            python_env: None,
         }
     }
 
@@ -530,6 +531,7 @@ mod tests {
                     to: "A".to_string(),
                 },
             ],
+            python_env: None,
         };
 
         let result = executor.validate_manifest(&manifest).await;

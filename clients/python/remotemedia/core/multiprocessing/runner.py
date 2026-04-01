@@ -313,6 +313,19 @@ class NodeRunner:
             # Yield control to allow the polling task to start
             await asyncio.sleep(0)
 
+            # Send DEPS signal if node declares Python requirements
+            node_deps = getattr(self.node.__class__, '__python_requires__', [])
+            if node_deps:
+                import json as _json
+                deps_msg = b"DEPS:" + _json.dumps(node_deps).encode("utf-8")
+                control_publisher = self._control_publisher_for_ready
+                deps_sample = control_publisher.loan_slice_uninit(len(deps_msg))
+                for i, byte_val in enumerate(deps_msg):
+                    deps_sample.payload()[i] = byte_val
+                deps_sample = deps_sample.assume_init()
+                deps_sample.send()
+                logger.info(f"Sent DEPS signal with {len(node_deps)} requirements")
+
             # NOW send READY signal - Python is actively polling and ready to receive
             logger.info(f"Sending READY signal to Rust (polling task is now active)...")
             control_publisher = self._control_publisher_for_ready

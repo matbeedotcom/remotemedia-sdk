@@ -202,10 +202,11 @@ mod tests {
                 },
             ],
             connections: vec![],
+            python_env: None,
         };
 
         let analysis = analyze_pipeline(&manifest, &registry);
-        
+
         assert!(analysis.is_valid);
         assert_eq!(analysis.nodes.len(), 1);
         assert!(analysis.nodes[0].is_registered);
@@ -231,10 +232,11 @@ mod tests {
                 },
             ],
             connections: vec![],
+            python_env: None,
         };
 
         let analysis = analyze_pipeline(&manifest, &registry);
-        
+
         assert!(!analysis.is_valid);
         assert_eq!(analysis.missing_types.len(), 1);
         assert_eq!(analysis.missing_types[0], "NonExistentNode");

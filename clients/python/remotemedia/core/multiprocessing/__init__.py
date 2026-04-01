@@ -14,6 +14,8 @@ __all__ = [
     "register_node",
     "get_node_class",
     "list_registered_nodes",
+    "python_requires",
+    "get_node_requirements",
 ]
 
 # Registry for node types
@@ -37,6 +39,39 @@ def register_node(node_type: str):
         cls._node_type = node_type
         return cls
     return decorator
+
+
+def python_requires(deps: list):
+    """
+    Decorator to declare Python package requirements for a node.
+
+    These requirements are reported to the Rust runtime via the control
+    channel, allowing automatic venv provisioning.
+
+    Can be combined with @register_node:
+        @register_node("whisper")
+        @python_requires(["torch>=2.0", "openai-whisper"])
+        class WhisperNode(MultiprocessNode):
+            ...
+
+    Args:
+        deps: List of PEP 508 dependency strings (e.g. ["torch>=2.0", "numpy"])
+    """
+    def decorator(cls):
+        cls.__python_requires__ = list(deps)
+        return cls
+    return decorator
+
+
+def get_node_requirements(node_type: str) -> list:
+    """
+    Get Python package requirements for a registered node type.
+
+    Returns:
+        List of PEP 508 dependency strings, or empty list if none declared.
+    """
+    cls = get_node_class(node_type)
+    return getattr(cls, '__python_requires__', [])
 
 
 def get_node_class(node_type: str):

@@ -80,6 +80,21 @@ enum Command {
         /// Path to remotemedia-sdk workspace root (auto-detected if not specified)
         #[arg(long)]
         workspace_root: Option<PathBuf>,
+
+        /// Bundle a self-contained Python environment with pre-installed dependencies.
+        /// Downloads standalone Python via uv and pre-installs all node deps into a venv.
+        /// The resulting package needs no system Python at runtime.
+        #[arg(long)]
+        bundle_python: bool,
+
+        /// Python version to bundle (used with --bundle-python, default: 3.11)
+        #[arg(long, default_value = "3.11")]
+        python_version: String,
+
+        /// Target platform for bundling (e.g. linux-x86_64, darwin-arm64).
+        /// Defaults to the current platform.
+        #[arg(long)]
+        target: Option<String>,
     },
 }
 
@@ -110,6 +125,9 @@ fn main() -> Result<()> {
             python_requires,
             dependency,
             workspace_root,
+            bundle_python,
+            python_version,
+            target,
         } => {
             // Auto-detect workspace root if not specified
             // The pack tool is at {workspace}/target/debug/remotemedia-pack
@@ -138,6 +156,9 @@ fn main() -> Result<()> {
                 test_wheel: test,
                 python_requires,
                 extra_dependencies: dependency,
+                bundle_python,
+                python_version,
+                bundle_target: target,
             };
 
             generator::generate_python_package(config)

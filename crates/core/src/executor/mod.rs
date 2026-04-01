@@ -1769,6 +1769,7 @@ mod tests {
                     to: "C".to_string(),
                 },
             ],
+            python_env: None,
         };
 
         let graph = PipelineGraph::from_manifest(&manifest).unwrap();
@@ -1877,6 +1878,7 @@ mod tests {
                     to: "D".to_string(),
                 },
             ],
+            python_env: None,
         };
 
         let graph = PipelineGraph::from_manifest(&manifest).unwrap();
@@ -1959,6 +1961,7 @@ mod tests {
                     to: "A".to_string(),
                 }, // Cycle!
             ],
+            python_env: None,
         };
 
         let result = PipelineGraph::from_manifest(&manifest);
@@ -2003,6 +2006,7 @@ mod tests {
                 from: "input_0".to_string(),
                 to: "process_1".to_string(),
             }],
+            python_env: None,
         };
 
         // Create executor with built-in nodes registered
@@ -2063,6 +2067,7 @@ mod tests {
                 from: "pass_0".to_string(),
                 to: "echo_1".to_string(),
             }],
+            python_env: None,
         };
 
         // Create executor with built-in nodes registered

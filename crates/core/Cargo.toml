@@ -153,6 +153,10 @@ grpc-client = ["tonic", "prost", "prost-types"]
 docker = ["dep:bollard", "dep:tar", "dep:chrono", "dep:bytes", "dep:hyper", "dep:http-body-util", "dep:glob", "dep:rusqlite"]
 # Video codec support (spec 012)
 video = ["dep:ac-ffmpeg"]
+# Managed Python environments via uv
+bundled-uv = []
+bundled-uv-embedded = ["bundled-uv"]
+embedded-python = ["bundled-uv"]
 
 # Note: To get Python nodes, add remotemedia-nodes-python as a dependency.
 # The inventory system will auto-register the provider.

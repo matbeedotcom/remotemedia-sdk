@@ -1,34 +1,24 @@
 # Kokoro TTS Pipeline
 # Input: Text
 # Output: Audio (WAV)
+#
+# Flow: Text → KokoroTTS → Audio
 
-name: tts-kokoro
-version: "1.0"
-description: Text-to-speech synthesis using Kokoro
+version: v1
+metadata:
+  name: tts-kokoro
+  description: Text-to-speech synthesis using Kokoro
 
 nodes:
-  - id: input
-    node_type: TextInput
-    config:
-      encoding: utf-8
-
   - id: kokoro
-    node_type: KokoroTTS
-    executor: multiprocess
-    config:
+    nodeType: KokoroTTSNode
+    isStreaming: true
+    params:
       voice: af_bella
       speed: 1.0
       sample_rate: 24000
+    python_deps:
+      - "kokoro>=0.9.4"
+      - soundfile
 
-  - id: output
-    node_type: AudioOutput
-    config:
-      sample_rate: 24000
-      channels: 1
-      format: f32
-
-connections:
-  - from: input
-    to: kokoro
-  - from: kokoro
-    to: output
+connections: []

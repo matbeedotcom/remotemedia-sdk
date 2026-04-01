@@ -16,7 +16,37 @@ fn main() {
     #[cfg(feature = "speaker-diarization")]
     setup_speaker_diarization_models();
 
+    // Emit uv metadata when bundled-uv feature is enabled
+    #[cfg(feature = "bundled-uv")]
+    emit_uv_metadata();
+
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Emit compile-time metadata for the bundled uv binary.
+///
+/// Sets UV_VERSION and UV_CHECKSUM env vars so the runtime can verify
+/// downloaded binaries. Also supports UV_BINARY_PATH for air-gapped envs.
+#[cfg(feature = "bundled-uv")]
+fn emit_uv_metadata() {
+    let uv_version = "0.6.14";
+    println!("cargo:rustc-env=UV_VERSION={}", uv_version);
+
+    // Per-platform SHA256 checksums (from uv GitHub releases)
+    // TODO: update these checksums when pinning to a specific release
+    let target = env::var("TARGET").unwrap_or_default();
+    let checksum = match target.as_str() {
+        t if t.contains("x86_64") && t.contains("linux") => "placeholder-linux-x86_64",
+        t if t.contains("aarch64") && t.contains("linux") => "placeholder-linux-aarch64",
+        t if t.contains("x86_64") && t.contains("darwin") => "placeholder-darwin-x86_64",
+        t if t.contains("aarch64") && t.contains("darwin") => "placeholder-darwin-aarch64",
+        t if t.contains("x86_64") && t.contains("windows") => "placeholder-windows-x86_64",
+        _ => "unsupported-platform",
+    };
+    println!("cargo:rustc-env=UV_CHECKSUM={}", checksum);
+
+    // Allow skipping download for air-gapped environments
+    println!("cargo:rerun-if-env-changed=UV_BINARY_PATH");
 }
 
 #[cfg(feature = "speaker-diarization")]

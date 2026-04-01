@@ -1297,6 +1297,7 @@ const MAX_RECURSION_DEPTH: usize = 10;
 ///     metadata: ManifestMetadata { name: "test".into(), ..Default::default() },
 ///     nodes: vec![],
 ///     connections: vec![],
+///     python_env: None,
 /// };
 /// let mut visited = HashSet::new();
 /// let mut path = Vec::new();
