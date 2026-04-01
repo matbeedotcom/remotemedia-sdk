@@ -112,6 +112,14 @@ pub static NODE_TYPE_TABLE: &[(&str, NodeTypeInfo)] = &[
         },
     ),
     (
+        "candle-whisper",
+        NodeTypeInfo {
+            input_type: Some(RuntimeDataType::Audio),
+            output_type: Some(RuntimeDataType::Text),
+            category: "stt",
+        },
+    ),
+    (
         "WhisperNode",
         NodeTypeInfo {
             input_type: Some(RuntimeDataType::Audio),

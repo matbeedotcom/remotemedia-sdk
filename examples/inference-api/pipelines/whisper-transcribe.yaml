@@ -21,13 +21,13 @@ nodes:
       targetSampleRate: 16000
 
   - id: whisper
-    nodeType: WhisperXNode
+    nodeType: candle-whisper
     isStreaming: true
     params:
-      model: base.en
+      model: tiny
       language: en
       task: transcribe
-      beamSize: 5
+      device: cpu
 
 connections:
   - from: input

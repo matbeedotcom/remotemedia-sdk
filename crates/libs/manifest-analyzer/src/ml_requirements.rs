@@ -58,6 +58,12 @@ static ML_NODE_SPECS: &[MlNodeSpec] = &[
         requires_python: false, // Candle-based
     },
     MlNodeSpec {
+        node_type: "candle-whisper",
+        model_name: Some("whisper"),
+        requires_gpu: false, // Can run on CPU
+        requires_python: false, // Native Rust via Candle
+    },
+    MlNodeSpec {
         node_type: "KokoroTTSNode",
         model_name: Some("kokoro-tts"),
         requires_gpu: false,

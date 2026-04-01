@@ -5,6 +5,9 @@
 //!   remotemedia-test-manifest pipeline.yaml --dry-run
 //!   remotemedia-test-manifest pipeline.json --skip-ml --output-format json
 
+// Link candle-nodes so inventory auto-registration activates
+use remotemedia_candle_nodes as _;
+
 use anyhow::Result;
 use clap::Parser;
 use remotemedia_manifest_tester::tester::ManifestTester;
