@@ -214,3 +214,4 @@ nul
 vendor/
 .ffmpeg/
 .playwright-artifacts**/
+.worktrees/
