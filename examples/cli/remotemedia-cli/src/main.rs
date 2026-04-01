@@ -20,6 +20,10 @@
 //! cat audio.wav | remotemedia run pipeline.yaml --input - --output -
 //! ```
 
+// Force-link candle-nodes so inventory auto-registers node providers
+#[cfg(feature = "candle")]
+use remotemedia_candle_nodes as _;
+
 mod audio;
 mod commands;
 mod config;
