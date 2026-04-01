@@ -100,6 +100,7 @@ fn resample_to_16khz(input_chunk: &RuntimeData) -> RuntimeData {
             stream_id: None,
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         },
         other => other.clone(),
     }
@@ -291,6 +292,7 @@ fn create_browser_audio_chunk(chunk_idx: usize) -> RuntimeData {
         stream_id: None,
         timestamp_us: None,
         arrival_ts_us: None,
+        metadata: None,
     }
 }
 

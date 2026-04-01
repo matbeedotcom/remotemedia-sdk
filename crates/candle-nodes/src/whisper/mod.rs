@@ -329,7 +329,13 @@ impl AsyncStreamingNode for WhisperNode {
     }
 
     async fn process(&self, data: RuntimeData) -> std::result::Result<RuntimeData, Error> {
-        // Extract audio from input
+        // Extract metadata from input (extract_audio borrows &data, so we can read both)
+        let input_metadata = match &data {
+            RuntimeData::Audio { metadata, .. } => metadata.clone(),
+            _ => None,
+        };
+
+        // Extract audio from input (borrows &data)
         let audio = RuntimeDataConverter::extract_audio(&data, &self.node_id)
             .map_err(|e| Error::Execution(e.to_string()))?;
 
@@ -339,7 +345,16 @@ impl AsyncStreamingNode for WhisperNode {
             .await
             .map_err(|e| Error::Execution(e.to_string()))?;
 
-        Ok(RuntimeData::Text(transcription))
+        // Forward metadata if it contains diarization info
+        match input_metadata {
+            Some(ref meta) if meta.get("diarization").is_some() => {
+                Ok(RuntimeData::Json(serde_json::json!({
+                    "text": transcription,
+                    "diarization": meta["diarization"],
+                })))
+            }
+            _ => Ok(RuntimeData::Text(transcription)),
+        }
     }
 }
 

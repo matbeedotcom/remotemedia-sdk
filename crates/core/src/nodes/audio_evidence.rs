@@ -601,6 +601,7 @@ mod tests {
                 stream_id: None,
                 timestamp_us: Some(i * 1_000_000),
                 arrival_ts_us: None,
+                metadata: None,
             };
             node.process_async(input).await.unwrap();
         }
@@ -623,6 +624,7 @@ mod tests {
                 stream_id: None,
                 timestamp_us: Some(i * 1_000_000),
                 arrival_ts_us: None,
+                metadata: None,
             };
             node.process_async(input).await.unwrap();
         }
@@ -642,6 +644,7 @@ mod tests {
                 stream_id: None,
                 timestamp_us: Some(i * 1_000_000),
                 arrival_ts_us: None,
+                metadata: None,
             };
             let result = node.process_async(input).await.unwrap();
 

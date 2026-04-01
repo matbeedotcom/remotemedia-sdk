@@ -49,6 +49,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             samples,
             sample_rate: 16000,
             channels: 1,
+            stream_id: None,
+            timestamp_us: None,
+            arrival_ts_us: None,
+            metadata: None,
         })
         .with_sequence(i)
         .with_metadata("chunk_id".into(), format!("chunk_{}", i));

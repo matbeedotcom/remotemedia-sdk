@@ -1,0 +1,35 @@
+# Diarization + STT Live Caption Pipeline
+# Usage: remotemedia run diarize-caption.yaml -i audio.pcm --input-format raw-pcm -O -
+# Requires: --features candle,speaker-diarization
+
+version: v1
+metadata:
+  name: diarize-caption
+  description: Real-time speaker-attributed live captions for game audio
+
+nodes:
+  - id: resample
+    node_type: FastResampleNode
+    params:
+      target_rate: 16000
+      quality: Medium
+
+  - id: diarize
+    node_type: SpeakerDiarizationNode
+    params:
+      search_threshold: 0.5
+      sample_rate: 16000
+      passthrough_audio: true
+      max_speakers: 10
+
+  - id: transcribe
+    node_type: candle-whisper
+    params:
+      model_source: base.en
+      language: en
+
+connections:
+  - from: resample
+    to: diarize
+  - from: diarize
+    to: transcribe

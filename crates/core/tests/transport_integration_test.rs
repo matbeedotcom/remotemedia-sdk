@@ -74,6 +74,7 @@ async fn test_streaming_send_and_receive() {
         stream_id: None,
         timestamp_us: None,
         arrival_ts_us: None,
+        metadata: None,
     })
     .with_sequence(1);
 

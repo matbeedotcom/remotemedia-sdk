@@ -76,6 +76,9 @@ pub fn audio_buffer_to_runtime_data(
         stream_id: None,
         timestamp_us: None,
         arrival_ts_us: arrival_ts_us.or_else(|| Some(now_micros())),
+        metadata: audio.metadata_json.as_ref().and_then(|bytes| {
+            serde_json::from_slice(bytes).ok()
+        }),
     })
 }
 
@@ -86,6 +89,7 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             samples,
             sample_rate,
             channels,
+            metadata,
             ..
         } => DataType::Audio(AudioBuffer {
             samples: samples.iter().flat_map(|f| f.to_le_bytes()).collect(),
@@ -93,6 +97,9 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             channels: *channels,
             format: AudioFormat::F32 as i32,
             num_samples: samples.len() as u64,
+            metadata_json: metadata.as_ref().map(|m| {
+                serde_json::to_vec(m).unwrap_or_default()
+            }),
         }),
         RuntimeData::Video {
             pixel_data,
@@ -248,8 +255,11 @@ pub fn data_buffer_to_runtime_data_with_arrival(buffer: &DataBuffer, arrival_ts_
                 sample_rate: audio.sample_rate,
                 channels: audio.channels,
                 stream_id: None,
-                timestamp_us: None,     // Could extract from proto metadata if available
+                timestamp_us: None,
                 arrival_ts_us: arrival_ts,
+                metadata: audio.metadata_json.as_ref().and_then(|bytes| {
+                    serde_json::from_slice(bytes).ok()
+                }),
             })
         }
         Some(DataType::Video(video)) => {

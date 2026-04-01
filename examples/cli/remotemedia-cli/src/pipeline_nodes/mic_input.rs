@@ -340,6 +340,7 @@ impl NodeExecutor for MicInputNode {
                 stream_id: None,
                 timestamp_us: None,
                 arrival_ts_us: None,
+                metadata: None,
             };
 
             let value = serde_json::to_value(&audio_data)?;

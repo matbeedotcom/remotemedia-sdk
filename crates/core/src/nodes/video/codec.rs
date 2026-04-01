@@ -315,7 +315,7 @@ impl VideoDecoderBackend for FFmpegDecoder {
                     expected, codec
                 )));
             }
-        }
+            }
 
         // Lazy initialize decoder on first frame
         if self.decoder.is_none() {

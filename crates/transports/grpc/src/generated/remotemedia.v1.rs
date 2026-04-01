@@ -80,6 +80,10 @@ pub struct AudioBuffer {
     /// duration_seconds = num_frames / sample_rate
     #[prost(uint64, tag = "5")]
     pub num_samples: u64,
+    /// Optional extensible metadata as JSON bytes (UTF-8)
+    /// Used for annotations like speaker diarization, confidence scores
+    #[prost(bytes = "vec", optional, tag = "6")]
+    pub metadata_json: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
 }
 /// Video frame data with pixel format and dimensions
 ///

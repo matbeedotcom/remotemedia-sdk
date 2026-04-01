@@ -1,0 +1,36 @@
+# Text-to-Speech Pipeline (Male Voice)
+# Usage: remotemedia run tts-voice-b.yaml -i "Hello" -O speech.pcm
+
+version: v1
+metadata:
+  name: tts-voice-b
+  description: TTS with male voice for testing speaker diarization
+
+nodes:
+  - id: input
+    node_type: TextInput
+    params:
+      encoding: utf-8
+
+  - id: kokoro
+    node_type: KokoroTTSNode
+    params:
+      voice: am_adam
+      speed: 1.0
+      sample_rate: 24000
+    python_deps:
+      - "kokoro>=0.9.4"
+      - soundfile
+
+  - id: output
+    node_type: AudioOutput
+    params:
+      sample_rate: 24000
+      channels: 1
+      format: f32
+
+connections:
+  - from: input
+    to: kokoro
+  - from: kokoro
+    to: output

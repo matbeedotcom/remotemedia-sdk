@@ -2159,6 +2159,7 @@ mod dual_runtime_discovered_tests {
                 stream_id: None,
                 timestamp_us: None,
                 arrival_ts_us: None,
+                metadata: None,
             })
         }
 
@@ -3229,6 +3230,7 @@ mod node_lifecycle_tests {
                 stream_id: None,
                 timestamp_us: None,
                 arrival_ts_us: None,
+                metadata: None,
             })
         }
 

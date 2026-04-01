@@ -352,20 +352,36 @@ impl AsyncStreamingNode for SpeakerDiarizationNode {
 
             let mut outputs = 0;
 
-            // Output 1: JSON with speaker segments
-            let json_output = RuntimeData::Json(serde_json::json!({
-                "segments": speaker_segments,
-                "num_speakers": num_speakers,
-                "time_offset": time_offset,
-                "duration": mono.len() as f64 / self.sample_rate as f64,
-            }));
-            callback(json_output)?;
-            outputs += 1;
-
-            // Output 2: Passthrough original audio (if enabled)
             if self.passthrough_audio {
-                callback(data)?;
-                outputs += 1;
+                // Emit single annotated audio with speaker segments in metadata
+                if let RuntimeData::Audio {
+                    samples,
+                    sample_rate: orig_sr,
+                    channels: orig_ch,
+                    stream_id,
+                    timestamp_us,
+                    arrival_ts_us,
+                    ..
+                } = data
+                {
+                    callback(RuntimeData::Audio {
+                        samples,
+                        sample_rate: orig_sr,
+                        channels: orig_ch,
+                        stream_id,
+                        timestamp_us,
+                        arrival_ts_us,
+                        metadata: Some(serde_json::json!({
+                            "diarization": {
+                                "segments": speaker_segments,
+                                "num_speakers": num_speakers,
+                                "time_offset": time_offset,
+                                "duration": mono.len() as f64 / self.sample_rate as f64,
+                            }
+                        })),
+                    })?;
+                    outputs += 1;
+                }
             }
 
             Ok(outputs)
@@ -436,10 +452,10 @@ impl crate::nodes::StreamingNodeFactory for SpeakerDiarizationNodeFactory {
         use crate::nodes::schema::{NodeSchema, RuntimeDataType};
         Some(
             NodeSchema::new("SpeakerDiarizationNode")
-                .description("Identifies speakers in audio streams using pyannote diarization")
+                .description("Identifies speakers in audio streams and annotates audio with speaker metadata")
                 .category("ml")
                 .accepts([RuntimeDataType::Audio])
-                .produces([RuntimeDataType::Json, RuntimeDataType::Audio])
+                .produces([RuntimeDataType::Audio])
                 .config_schema_from::<SpeakerDiarizationConfig>(),
         )
     }

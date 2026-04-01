@@ -195,6 +195,7 @@ impl AsyncStreamingNode for AudioChunkerNode {
                 stream_id: None,
                 timestamp_us: None,
                 arrival_ts_us: None,
+                metadata: None,
             })?;
             output_count += 1;
         }

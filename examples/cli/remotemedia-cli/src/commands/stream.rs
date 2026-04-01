@@ -257,6 +257,7 @@ async fn stream_pipeline(
                     stream_id: None,
                     timestamp_us: None,
                     arrival_ts_us: None,
+                    metadata: None,
                 };
 
                 session.send(audio).await?;
@@ -298,6 +299,7 @@ async fn stream_pipeline(
                                 stream_id: None,
                                 timestamp_us: None,
                                 arrival_ts_us: None,
+                                metadata: None,
                             };
                             session.send(audio).await?;
                         }
@@ -324,6 +326,7 @@ async fn stream_pipeline(
                         stream_id: None,
                         timestamp_us: None,
                         arrival_ts_us: None,
+                        metadata: None,
                     };
 
                     session.send(audio).await?;

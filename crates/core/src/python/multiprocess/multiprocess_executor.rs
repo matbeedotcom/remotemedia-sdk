@@ -798,10 +798,10 @@ impl MultiprocessExecutor {
                 samples,
                 sample_rate,
                 channels,
+                metadata,
                 ..
             } => {
-                // RuntimeData::Audio has inline f32 samples, convert directly
-                IPCRuntimeData::audio(samples, *sample_rate, *channels as u16, session_id)
+                IPCRuntimeData::audio(samples, *sample_rate, *channels as u16, session_id, metadata.as_ref())
             }
             MainRD::Binary(bytes) => {
                 // Binary data
@@ -881,21 +881,47 @@ impl MultiprocessExecutor {
                 Ok(MainRD::Text(text))
             }
             DataType::Audio => {
-                // IPC payload is f32 samples as little-endian bytes
-                let samples: Vec<f32> = ipc_data
-                    .payload
+                // IPC payload format: sample_rate(4) | channels(2) | metadata_len(4) | metadata | samples
+                let payload = &ipc_data.payload;
+                if payload.len() < 10 {
+                    return Err(crate::Error::IpcError("Audio IPC payload too short".into()));
+                }
+
+                let mut pos = 0;
+
+                let sample_rate = u32::from_le_bytes([
+                    payload[pos], payload[pos + 1], payload[pos + 2], payload[pos + 3],
+                ]);
+                pos += 4;
+
+                let channels = u16::from_le_bytes([payload[pos], payload[pos + 1]]) as u32;
+                pos += 2;
+
+                let metadata_len = u32::from_le_bytes([
+                    payload[pos], payload[pos + 1], payload[pos + 2], payload[pos + 3],
+                ]) as usize;
+                pos += 4;
+
+                let metadata = if metadata_len > 0 && pos + metadata_len <= payload.len() {
+                    serde_json::from_slice(&payload[pos..pos + metadata_len]).ok()
+                } else {
+                    None
+                };
+                pos += metadata_len;
+
+                let samples: Vec<f32> = payload[pos..]
                     .chunks_exact(4)
                     .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                     .collect();
 
-                // Create audio with inline fields
                 Ok(MainRD::Audio {
                     samples,
-                    sample_rate: 24000, // TODO: Extract from IPC metadata
-                    channels: 1,        // TODO: Extract from IPC metadata
+                    sample_rate,
+                    channels,
                     stream_id: None,
-                    timestamp_us: Some(ipc_data.timestamp), // spec 026
-                    arrival_ts_us: None, // spec 026: Set by transport layer
+                    timestamp_us: Some(ipc_data.timestamp),
+                    arrival_ts_us: None,
+                    metadata,
                 })
             }
             DataType::Video => {

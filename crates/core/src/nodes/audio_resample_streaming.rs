@@ -90,6 +90,7 @@ impl AsyncStreamingNode for ResampleStreamingNode {
                 stream_id: None,
                 timestamp_us: None,
                 arrival_ts_us: None,
+                metadata: None,
             });
         }
 
@@ -146,6 +147,7 @@ impl AsyncStreamingNode for ResampleStreamingNode {
             stream_id: None,
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         })
     }
 }
@@ -357,6 +359,7 @@ impl AsyncStreamingNode for AutoResampleStreamingNode {
                 stream_id: None,
                 timestamp_us: None,
                 arrival_ts_us: None,
+                metadata: None,
             });
         }
 
@@ -390,6 +393,7 @@ impl AsyncStreamingNode for AutoResampleStreamingNode {
                 stream_id: None,
                 timestamp_us: None,
                 arrival_ts_us: None,
+                metadata: None,
             });
         }
 
@@ -427,6 +431,7 @@ impl AsyncStreamingNode for AutoResampleStreamingNode {
             stream_id: None,
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         })
     }
 }

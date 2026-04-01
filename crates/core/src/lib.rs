@@ -149,6 +149,10 @@ pub mod data {
             /// Set by transport ingest layer for drift monitoring
             #[serde(default, skip_serializing_if = "Option::is_none")]
             arrival_ts_us: Option<u64>,
+            /// Optional extensible metadata (e.g., speaker diarization, confidence scores)
+            /// Flows through pipeline with the audio data. Nodes that don't use it ignore it.
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            metadata: Option<serde_json::Value>,
         },
         /// Video frame
         Video {
@@ -769,6 +773,7 @@ mod tests {
             stream_id: Some("audio_main".to_string()),
             timestamp_us: Some(1_000_000),
             arrival_ts_us: Some(1_001_000),
+            metadata: None,
         };
 
         let (media_ts, arrival_ts) = audio.timing();
@@ -826,6 +831,7 @@ mod tests {
             stream_id: None,
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         };
 
         // Set arrival timestamp

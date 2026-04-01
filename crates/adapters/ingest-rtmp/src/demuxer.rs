@@ -187,6 +187,7 @@ impl RtmpDemuxer {
                 stream_id: Some("audio:0".to_string()),
                 timestamp_us: Some(timestamp_us),
                 arrival_ts_us: Some(arrival_ts),
+                metadata: None,
             })),
             Ok(WorkerResponse::Video {
                 pixel_data,

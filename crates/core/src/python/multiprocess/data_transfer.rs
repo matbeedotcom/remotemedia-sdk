@@ -23,14 +23,37 @@ pub struct RuntimeData {
 
 impl RuntimeData {
     /// Create audio runtime data
-    pub fn audio(samples: &[f32], _sample_rate: u32, _channels: u16, session_id: &str) -> Self {
-        let payload = unsafe {
+    ///
+    /// Binary payload format:
+    ///   sample_rate  (4 bytes, u32 LE)
+    ///   channels     (2 bytes, u16 LE)
+    ///   metadata_len (4 bytes, u32 LE, 0 = no metadata)
+    ///   metadata     (metadata_len bytes, UTF-8 JSON)
+    ///   samples      (remaining bytes, f32 LE)
+    pub fn audio(
+        samples: &[f32],
+        sample_rate: u32,
+        channels: u16,
+        session_id: &str,
+        metadata: Option<&serde_json::Value>,
+    ) -> Self {
+        let metadata_bytes = metadata
+            .map(|m| serde_json::to_vec(m).unwrap_or_default())
+            .unwrap_or_default();
+
+        let samples_bytes = unsafe {
             std::slice::from_raw_parts(
                 samples.as_ptr() as *const u8,
                 samples.len() * std::mem::size_of::<f32>(),
             )
-        }
-        .to_vec();
+        };
+
+        let mut payload = Vec::with_capacity(10 + metadata_bytes.len() + samples_bytes.len());
+        payload.extend_from_slice(&sample_rate.to_le_bytes());
+        payload.extend_from_slice(&channels.to_le_bytes());
+        payload.extend_from_slice(&(metadata_bytes.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&metadata_bytes);
+        payload.extend_from_slice(samples_bytes);
 
         Self {
             data_type: DataType::Audio,

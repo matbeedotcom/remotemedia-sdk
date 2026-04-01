@@ -61,6 +61,7 @@ class AudioMetadata:
     channels: int     # 1=mono, 2=stereo
     format: AudioFormat
     duration_ms: int  # Duration in milliseconds
+    annotations: Optional[dict] = None  # Pipeline metadata (e.g., speaker diarization)
 
 
 @dataclass

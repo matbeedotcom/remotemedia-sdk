@@ -438,6 +438,7 @@ impl ServerPeer {
                                             stream_id: None, // From client, uses default track
                                             timestamp_us: Some(0),
                                             arrival_ts_us: None,
+                                            metadata: None,
                                         },
                                         sequence: None,
                                         metadata: std::collections::HashMap::new(),

@@ -284,6 +284,7 @@ impl NapiRuntimeData {
                 stream_id: None,
                 timestamp_us: None,
                 arrival_ts_us: None,
+                metadata: None,
             },
         })
     }
@@ -329,6 +330,7 @@ impl NapiRuntimeData {
                 is_keyframe,
                 stream_id: None,
                 arrival_ts_us: None,
+                metadata: None,
             },
         })
     }

@@ -596,6 +596,7 @@ async fn run_srt_analysis(
                             stream_id: None,
                             timestamp_us: Some(audio.timestamp_us),
                             arrival_ts_us: None,
+                            metadata: None,
                         };
 
                         // Send to pipeline
@@ -863,6 +864,7 @@ async fn run_unary_analysis(
             stream_id: Some("audio".to_string()),
             timestamp_us: Some(timestamp_us),
             arrival_ts_us: Some(arrival_us),
+            metadata: None,
         };
 
         // Send to pipeline
@@ -972,6 +974,7 @@ async fn run_streaming_analysis(
                                 stream_id: Some("audio".to_string()),
                                 timestamp_us: Some(timestamp_us),
                                 arrival_ts_us: Some(arrival_us),
+                                metadata: None,
                             };
 
                             // Send to pipeline
@@ -1012,6 +1015,7 @@ async fn run_streaming_analysis(
             stream_id: Some("audio".to_string()),
             timestamp_us: Some(timestamp_us),
             arrival_ts_us: Some(arrival_us),
+            metadata: None,
         };
 
         let _ = session.send(audio).await;

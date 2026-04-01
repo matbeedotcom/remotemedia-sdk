@@ -597,11 +597,37 @@ class MultiprocessNode(BaseNode):
                 import numpy as np
 
                 if data_type == 1:  # Audio
-                    # Payload is f32 audio samples
-                    audio_samples = np.frombuffer(payload, dtype=np.float32)
-                    self.logger.info(f"Received audio via IPC: {len(audio_samples)} samples")
-                    # Convert to RuntimeData.Audio (assume 24kHz mono for now)
-                    rd = RuntimeData.audio(audio_samples, 24000, channels=1)
+                    # New format: sample_rate(4) | channels(2) | metadata_len(4) | metadata | samples
+                    import struct
+                    if len(payload) < 10:
+                        self.logger.error(f"Audio payload too short: {len(payload)} bytes")
+                        return None
+
+                    pos = 0
+                    sample_rate = struct.unpack_from('<I', payload, pos)[0]
+                    pos += 4
+                    channels = struct.unpack_from('<H', payload, pos)[0]
+                    pos += 2
+                    metadata_len = struct.unpack_from('<I', payload, pos)[0]
+                    pos += 4
+
+                    annotations = None
+                    if metadata_len > 0 and pos + metadata_len <= len(payload):
+                        import json
+                        try:
+                            annotations = json.loads(payload[pos:pos + metadata_len])
+                        except json.JSONDecodeError:
+                            self.logger.warning("Failed to parse audio annotations JSON")
+                        pos += metadata_len
+
+                    audio_samples = np.frombuffer(payload[pos:], dtype=np.float32)
+                    self.logger.info(
+                        f"Received audio via IPC: {len(audio_samples)} samples, "
+                        f"{sample_rate}Hz, {channels}ch, annotations={'yes' if annotations else 'no'}"
+                    )
+                    rd = RuntimeData.audio(audio_samples, sample_rate, channels=channels)
+                    if annotations:
+                        rd.metadata.annotations = annotations
                     return rd
                 elif data_type == 3:  # Text
                     text = payload.decode('utf-8')

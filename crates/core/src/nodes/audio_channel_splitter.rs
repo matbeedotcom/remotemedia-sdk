@@ -273,6 +273,7 @@ impl AsyncStreamingNode for AudioChannelSplitterNode {
                 stream_id: input_stream_id,
                 timestamp_us,
                 arrival_ts_us,
+                metadata: _,
             } => {
                 // Validate sample rate matches expected (diarization models expect specific rate)
                 if *sample_rate != self.sample_rate {
@@ -336,6 +337,7 @@ impl AsyncStreamingNode for AudioChannelSplitterNode {
                                 stream_id: Some(stream_id),
                                 timestamp_us: *timestamp_us,
                                 arrival_ts_us: *arrival_ts_us,
+                                metadata: None,
                             })?;
                             outputs += 1;
                         }
@@ -360,6 +362,7 @@ impl AsyncStreamingNode for AudioChannelSplitterNode {
                             stream_id: input_stream_id.clone(),
                             timestamp_us: *timestamp_us,
                             arrival_ts_us: *arrival_ts_us,
+                            metadata: None,
                         })?;
                         outputs += 1;
                     }

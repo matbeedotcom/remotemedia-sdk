@@ -71,6 +71,7 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             samples,
             sample_rate,
             channels,
+            metadata,
             stream_id: _,      // stream_id not included in protobuf (yet)
             timestamp_us: _,   // spec 026: not included in protobuf
             arrival_ts_us: _,  // spec 026: not included in protobuf
@@ -80,6 +81,9 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             channels: *channels,
             format: AudioFormat::F32 as i32,
             num_samples: samples.len() as u64,
+            metadata_json: metadata.as_ref().map(|m| {
+                serde_json::to_vec(m).unwrap_or_default()
+            }),
         }),
         RuntimeData::Video {
             pixel_data,
@@ -228,9 +232,12 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
                 samples,
                 sample_rate: audio.sample_rate,
                 channels: audio.channels,
-                stream_id: None, // stream_id not in protobuf (yet)
+                stream_id: None,
                 timestamp_us: None,
                 arrival_ts_us,
+                metadata: audio.metadata_json.as_ref().and_then(|bytes| {
+                    serde_json::from_slice(bytes).ok()
+                }),
             })
         }
         Some(DataType::Video(video)) => Some(RuntimeData::Video {

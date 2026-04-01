@@ -230,6 +230,7 @@ impl SpeculativeVADGate {
             stream_id: None,
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         };
         outputs.push(audio_output);
 
@@ -369,6 +370,7 @@ mod tests {
             stream_id: None,
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         };
 
         let mut outputs = Vec::new();
@@ -410,6 +412,7 @@ mod tests {
             stream_id: None,
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         };
 
         use crate::nodes::AsyncStreamingNode;
@@ -438,6 +441,7 @@ mod tests {
                 stream_id: None,
                 timestamp_us: None,
                 arrival_ts_us: None,
+                metadata: None,
             };
 
             use crate::nodes::AsyncStreamingNode;

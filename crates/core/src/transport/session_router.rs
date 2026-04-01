@@ -1150,6 +1150,7 @@ mod tests {
             stream_id: Some("stream_1".to_string()),
             timestamp_us: Some(1_000_000),
             arrival_ts_us: Some(1_001_000),
+            metadata: None,
         };
 
         router.record_drift_sample(&audio_data).await;
@@ -1193,6 +1194,7 @@ mod tests {
             stream_id: Some("test_stream".to_string()),
             timestamp_us: Some(1_000_000),
             arrival_ts_us: Some(1_000_000),
+            metadata: None,
         };
         router.record_drift_sample(&audio_data).await;
 
@@ -1233,6 +1235,7 @@ mod tests {
             stream_id: Some("audio_1".to_string()),
             timestamp_us: Some(1_000_000),
             arrival_ts_us: Some(1_000_500),
+            metadata: None,
         };
         let audio_2 = RuntimeData::Audio {
             samples: vec![0.2; 100],
@@ -1241,6 +1244,7 @@ mod tests {
             stream_id: Some("audio_2".to_string()),
             timestamp_us: Some(2_000_000),
             arrival_ts_us: Some(2_001_000),
+            metadata: None,
         };
 
         router.record_drift_sample(&audio_1).await;

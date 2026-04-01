@@ -263,6 +263,7 @@ impl AsyncStreamingNode for SpeculativeVADCoordinator {
             stream_id: None,
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         };
         callback(audio_output)?;
         output_count += 1;
@@ -453,6 +454,7 @@ mod tests {
             stream_id: None,
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         };
 
         let mut outputs = Vec::new();
@@ -504,6 +506,7 @@ mod tests {
                 stream_id: None,
                 timestamp_us: None,
                 arrival_ts_us: None,
+                metadata: None,
             };
 
             let callback = |_: RuntimeData| Ok(());
@@ -534,6 +537,7 @@ mod tests {
             stream_id: None,
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         };
 
         let callback = |_: RuntimeData| Ok(());

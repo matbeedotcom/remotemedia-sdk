@@ -54,12 +54,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         samples: audio_samples.clone(),
         sample_rate: 16000,
         channels: 1,
+        stream_id: None,
+        timestamp_us: None,
+        arrival_ts_us: None,
+        metadata: None,
     })
     .with_sequence(1);
 
     let audio_output = transport.execute(manifest, audio_input).await?;
     match audio_output.data {
-        RuntimeData::Audio { samples, sample_rate, channels } => {
+        RuntimeData::Audio { samples, sample_rate, channels, .. } => {
             println!("✓ Audio output:");
             println!("  - Samples: {} samples", samples.len());
             println!("  - Sample rate: {} Hz", sample_rate);

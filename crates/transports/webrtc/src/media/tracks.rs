@@ -661,6 +661,7 @@ pub async fn rtp_to_runtime_data(
             stream_id: None,
             timestamp_us: None,
             arrival_ts_us,
+            metadata: None,
         })
     } else {
         let video_track = video_track.ok_or_else(|| {

@@ -83,6 +83,10 @@ message AudioBuffer {
   // num_frames = num_samples / channels
   // duration_seconds = num_frames / sample_rate
   uint64 num_samples = 5;
+
+  // Optional extensible metadata as JSON bytes (UTF-8)
+  // Used for annotations like speaker diarization, confidence scores
+  optional bytes metadata_json = 6;
 }
 
 // Audio sample encoding format

@@ -185,6 +185,7 @@ async fn test_pipeline_runner_end_to_end() {
         frame_number: 0,
         timestamp_us: 0,
         arrival_ts_us: None,
+        metadata: None,
     };
 
     session

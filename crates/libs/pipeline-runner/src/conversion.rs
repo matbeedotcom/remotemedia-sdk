@@ -106,6 +106,7 @@ mod tests {
             stream_id: None,
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         };
         let event = convert_output_to_health_event(&data);
         assert!(event.is_none());

@@ -533,6 +533,7 @@ mod tests {
             stream_id: Some("test".to_string()),
             timestamp_us: Some(100_000),
             arrival_ts_us: None,
+            metadata: None,
         };
 
         let result = node.process_async(silent_input).await.unwrap();
@@ -565,6 +566,7 @@ mod tests {
             stream_id: Some("test".to_string()),
             timestamp_us: Some(100_000),
             arrival_ts_us: None,
+            metadata: None,
         };
 
         let result = node.process_async(input).await.unwrap();

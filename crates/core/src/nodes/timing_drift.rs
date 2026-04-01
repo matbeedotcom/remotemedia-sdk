@@ -434,6 +434,7 @@ mod tests {
             stream_id: Some("test".to_string()),
             timestamp_us: Some(100_000),
             arrival_ts_us: Some(100_000),
+            metadata: None,
         };
 
         let result = node.process_async(input).await.unwrap();
@@ -463,6 +464,7 @@ mod tests {
                 stream_id: Some("test".to_string()),
                 timestamp_us: Some(i * 100_000),
                 arrival_ts_us: Some(i * 100_000),
+                metadata: None,
             };
             node.process_async(input).await.unwrap();
         }
@@ -478,6 +480,7 @@ mod tests {
             stream_id: Some("test".to_string()),
             timestamp_us: Some(500_000),
             arrival_ts_us: Some(500_000),
+            metadata: None,
         };
 
         let result = node.process_async(input).await.unwrap();

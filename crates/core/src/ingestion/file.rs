@@ -443,6 +443,7 @@ fn decode_stdin(audio_config: Option<&AudioConfig>) -> Result<(IngestMetadata, V
                 .map(|d| d.as_micros() as u64)
                 .unwrap_or(0),
         ),
+        metadata: None,
     };
 
     Ok((metadata, vec![chunk]))
@@ -667,6 +668,7 @@ fn decode_with_ffmpeg(
                     .map(|d| d.as_micros() as u64)
                     .unwrap_or(0),
             ),
+            metadata: None,
         };
         chunks.push(chunk);
 
@@ -764,6 +766,7 @@ fn decode_wav_file(
                 .map(|d| d.as_micros() as u64)
                 .unwrap_or(0),
         ),
+        metadata: None,
     };
 
     Ok((metadata, vec![chunk]))

@@ -239,7 +239,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for _ in 0..THROUGHPUT_FRAMES {
             timeout(Duration::from_secs(10), session.recv_output())
                 .await
-                .map_err(|_| "Throughput test timeout")??;
+                .map_err(|_| "Throughput test timeout")??
+                .ok_or("No output received")?
+                .data;
         }
 
         let elapsed = start.elapsed();

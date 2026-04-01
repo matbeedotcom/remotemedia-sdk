@@ -139,6 +139,7 @@ impl AsyncStreamingNode for MicInputStreamingNode {
                     stream_id: None,
                     timestamp_us: None,
                     arrival_ts_us: None,
+                    metadata: None,
                 })
             }
             None => {
@@ -150,6 +151,7 @@ impl AsyncStreamingNode for MicInputStreamingNode {
                     stream_id: None,
                     timestamp_us: None,
                     arrival_ts_us: None,
+                    metadata: None,
                 })
             }
         }
@@ -187,6 +189,7 @@ impl AsyncStreamingNode for MicInputStreamingNode {
                     stream_id: None,
                     timestamp_us: None,
                     arrival_ts_us: None,
+                    metadata: None,
                 })?;
                 chunks_sent += 1;
             }
@@ -201,6 +204,7 @@ impl AsyncStreamingNode for MicInputStreamingNode {
                 stream_id: None,
                 timestamp_us: None,
                 arrival_ts_us: None,
+                metadata: None,
             })?;
             chunks_sent += 1;
         }

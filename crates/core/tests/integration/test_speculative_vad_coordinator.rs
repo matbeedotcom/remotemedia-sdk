@@ -34,6 +34,7 @@ fn create_coordinator_manifest() -> Manifest {
             ..Default::default()
         }],
         connections: vec![],
+        python_env: None,
     }
 }
 
@@ -61,6 +62,7 @@ fn create_coordinator_manifest_with_config(
             ..Default::default()
         }],
         connections: vec![],
+        python_env: None,
     }
 }
 
@@ -98,6 +100,7 @@ async fn test_coordinator_via_pipeline_runner_streaming() {
         stream_id: None,
         timestamp_us: None,
         arrival_ts_us: None,
+        metadata: None,
     };
 
     // Send audio to session (wrap in TransportData)
@@ -167,6 +170,7 @@ async fn test_coordinator_immediate_forwarding_latency() {
         stream_id: None,
         timestamp_us: None,
         arrival_ts_us: None,
+        metadata: None,
     };
 
     // Measure time from send to first output
@@ -225,6 +229,7 @@ async fn test_coordinator_multiple_chunks() {
             stream_id: Some(format!("chunk_{}", i)),
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         };
 
         session
@@ -290,6 +295,7 @@ async fn test_coordinator_with_custom_config() {
         stream_id: None,
         timestamp_us: None,
         arrival_ts_us: None,
+        metadata: None,
     };
 
     session
@@ -329,6 +335,7 @@ async fn test_coordinator_unary_execution() {
         stream_id: None,
         timestamp_us: None,
         arrival_ts_us: None,
+        metadata: None,
     };
 
     let transport_input = TransportData::new(audio_input);
@@ -377,6 +384,7 @@ async fn test_coordinator_session_isolation() {
         stream_id: Some("session1_audio".to_string()),
         timestamp_us: None,
         arrival_ts_us: None,
+        metadata: None,
     };
 
     let audio2 = RuntimeData::Audio {
@@ -386,6 +394,7 @@ async fn test_coordinator_session_isolation() {
         stream_id: Some("session2_audio".to_string()),
         timestamp_us: None,
         arrival_ts_us: None,
+        metadata: None,
     };
 
     session1.send_input(TransportData::new(audio1)).await.expect("Send to session 1");

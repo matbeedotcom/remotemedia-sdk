@@ -141,6 +141,7 @@ fn to_runtime_data(data: Vec<u8>, format: InputFormat, path: Option<&str>) -> Re
                 stream_id: None,
                 timestamp_us: None,
                 arrival_ts_us: None,
+                metadata: None,
             })
         }
         InputFormat::RawPcm => {
@@ -162,6 +163,7 @@ fn to_runtime_data(data: Vec<u8>, format: InputFormat, path: Option<&str>) -> Re
                     stream_id: None,
                     timestamp_us: None,
                     arrival_ts_us: None,
+                    metadata: None,
                 })
             } else {
                 // Assume 16-bit signed PCM
@@ -179,6 +181,7 @@ fn to_runtime_data(data: Vec<u8>, format: InputFormat, path: Option<&str>) -> Re
                     stream_id: None,
                     timestamp_us: None,
                     arrival_ts_us: None,
+                    metadata: None,
                 })
             }
         }

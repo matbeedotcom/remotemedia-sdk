@@ -81,6 +81,7 @@ impl AsyncStreamingNode for MockSpeculativeVADGate {
                     stream_id: stream_id.clone(),
                     timestamp_us: None,
                     arrival_ts_us: None,
+                    metadata: None,
                 };
 
                 // Store in outputs for test validation
@@ -141,6 +142,7 @@ async fn test_speculative_forwarding_immediate() {
         stream_id: None,
         timestamp_us: None,
         arrival_ts_us: None,
+        metadata: None,
     };
 
     let mut callback_outputs = Vec::new();
@@ -182,6 +184,7 @@ async fn test_cancellation_on_false_positive() {
         stream_id: None,
         timestamp_us: None,
         arrival_ts_us: None,
+        metadata: None,
     };
 
     let mut callback_outputs = Vec::new();
@@ -256,6 +259,7 @@ async fn test_ring_buffer_storage() {
             stream_id: None,
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         };
 
         let callback = |_: RuntimeData| Ok(());
@@ -290,6 +294,7 @@ async fn test_speculation_acceptance_tracking() {
         stream_id: None,
         timestamp_us: None,
         arrival_ts_us: None,
+        metadata: None,
     };
 
     // Accepted speculation (no cancellation)
@@ -341,6 +346,7 @@ async fn test_concurrent_sessions() {
                 stream_id: None,
                 timestamp_us: None,
                 arrival_ts_us: None,
+                metadata: None,
             };
 
             let callback = |_: RuntimeData| Ok(());

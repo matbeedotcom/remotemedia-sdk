@@ -128,6 +128,7 @@ async fn run_pipeline_with_av(
                             stream_id: Some(session_id.clone()),
                             timestamp_us: Some(audio.timestamp_us),
                             arrival_ts_us: Some(arrival_ts),
+                            metadata: None,
                         };
 
                         // Send to pipeline

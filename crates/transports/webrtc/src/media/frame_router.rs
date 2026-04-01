@@ -296,6 +296,7 @@ pub fn with_stream_id(data: RuntimeData, new_stream_id: Option<String>) -> Runti
             stream_id: new_stream_id,
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         },
         RuntimeData::Video {
             pixel_data,
@@ -336,6 +337,7 @@ mod tests {
             stream_id: Some("voice".to_string()),
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         };
 
         assert_eq!(extract_stream_id(&data), Some("voice"));
@@ -350,6 +352,7 @@ mod tests {
             stream_id: None,
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         };
 
         assert_eq!(extract_stream_id(&data), None);
@@ -390,6 +393,7 @@ mod tests {
             stream_id: None,
             timestamp_us: None,
             arrival_ts_us: None,
+            metadata: None,
         };
 
         let modified = with_stream_id(data, Some("voice".to_string()));

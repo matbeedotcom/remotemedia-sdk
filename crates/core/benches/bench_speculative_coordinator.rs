@@ -47,6 +47,7 @@ fn create_test_audio(duration_ms: u64) -> RuntimeData {
         stream_id: None,
         timestamp_us: None,
         arrival_ts_us: None,
+        metadata: None,
     }
 }
 
@@ -73,6 +74,7 @@ fn create_speculative_manifest() -> Manifest {
             ..Default::default()
         }],
         connections: vec![],
+        python_env: None,
     }
 }
 
@@ -96,6 +98,7 @@ fn create_traditional_manifest() -> Manifest {
             ..Default::default()
         }],
         connections: vec![],
+        python_env: None,
     }
 }
 

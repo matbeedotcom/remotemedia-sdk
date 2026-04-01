@@ -33,6 +33,7 @@ fn create_test_audio() -> RuntimeData {
         stream_id: None,
         timestamp_us: None,
         arrival_ts_us: None,
+        metadata: None,
     }
 }
 
