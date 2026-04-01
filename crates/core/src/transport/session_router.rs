@@ -98,8 +98,8 @@ pub struct SessionRouter {
     /// Channel to receive inputs from client
     input_rx: Option<mpsc::UnboundedReceiver<DataPacket>>,
 
-    /// Channel to send inputs to router (held by external code)
-    input_tx: mpsc::UnboundedSender<DataPacket>,
+    /// Channel to send inputs to router (held by external code, dropped in run())
+    input_tx: Option<mpsc::UnboundedSender<DataPacket>>,
 
     /// Shutdown signal receiver
     shutdown_rx: Option<mpsc::Receiver<()>>,
@@ -215,7 +215,7 @@ impl SessionRouter {
             cached_nodes: HashMap::new(),
             output_tx,
             input_rx: Some(input_rx),
-            input_tx,
+            input_tx: Some(input_tx),
             shutdown_rx: Some(shutdown_rx),
             _shutdown_tx: shutdown_tx,
             resolution_ctx: None,
@@ -229,7 +229,7 @@ impl SessionRouter {
 
     /// Get the input sender for feeding data to the router
     pub fn get_input_sender(&self) -> mpsc::UnboundedSender<DataPacket> {
-        self.input_tx.clone()
+        self.input_tx.clone().expect("input_tx not yet consumed by run()")
     }
 
     /// Get the pipeline graph
@@ -442,6 +442,10 @@ impl SessionRouter {
         // Initialize all nodes before processing starts
         self.initialize_nodes().await?;
 
+        // Drop router's own input_tx so the channel closes when
+        // all external senders (SessionHandle) are dropped
+        self.input_tx.take();
+
         let mut input_rx = self
             .input_rx
             .take()
@@ -459,17 +463,25 @@ impl SessionRouter {
 
         loop {
             tokio::select! {
-                Some(packet) = input_rx.recv() => {
-                    tracing::debug!(
-                        "Session {}: Received input packet (seq: {}, from: {})",
-                        self.session_id,
-                        packet.sequence,
-                        packet.from_node
-                    );
+                result = input_rx.recv() => {
+                    match result {
+                        Some(packet) => {
+                            tracing::debug!(
+                                "Session {}: Received input packet (seq: {}, from: {})",
+                                self.session_id,
+                                packet.sequence,
+                                packet.from_node
+                            );
 
-                    if let Err(e) = self.process_input(packet).await {
-                        tracing::error!("Session {}: Processing error: {}", self.session_id, e);
-                        // Continue processing other inputs
+                            if let Err(e) = self.process_input(packet).await {
+                                tracing::error!("Session {}: Processing error: {}", self.session_id, e);
+                                // Continue processing other inputs
+                            }
+                        }
+                        None => {
+                            tracing::info!("Session {}: Input channel closed, shutting down", self.session_id);
+                            break;
+                        }
                     }
                 }
                 _ = shutdown_rx.recv() => {

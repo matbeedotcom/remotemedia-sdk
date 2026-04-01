@@ -27,7 +27,9 @@
       "Bash(xargs grep:*)",
       "Bash(git worktree:*)",
       "Bash(cargo run:*)",
-      "Bash(grep -v \"^warning\\\\|^   Comp\\\\|^   Check\\\\|^   Finish\\\\|^    |^$\")"
+      "Bash(grep -v \"^warning\\\\|^   Comp\\\\|^   Check\\\\|^   Finish\\\\|^    |^$\")",
+      "Bash(PATH=$HOME/.local/bin:$PATH cargo run -p remotemedia-manifest-test -- examples/inference-api/pipelines/whisper-transcribe.yaml --input audio.wav -v --timeout 120)",
+      "Bash(PATH=$HOME/.local/bin:$PATH cargo run -p remotemedia-manifest-test -- examples/nextjs-tts-app/pipelines/vad-s2s-pipeline.json --input audio.wav -v --timeout 30)"
     ],
     "deny": [],
     "ask": []

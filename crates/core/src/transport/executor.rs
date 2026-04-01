@@ -67,8 +67,8 @@ impl Default for ExecutorConfig {
 pub struct SessionHandle {
     /// Unique session identifier
     pub session_id: String,
-    /// Channel for sending input data to the session
-    input_tx: mpsc::UnboundedSender<DataPacket>,
+    /// Channel for sending input data to the session (None after input complete)
+    input_tx: Option<mpsc::UnboundedSender<DataPacket>>,
     /// Channel for receiving output data from the session
     output_rx: mpsc::UnboundedReceiver<RuntimeData>,
     /// Shutdown signal sender
@@ -98,7 +98,10 @@ impl SessionHandle {
             sub_sequence: data.sequence.unwrap_or(0),
         };
 
-        self.input_tx.send(packet).map_err(|e| {
+        let tx = self.input_tx.as_ref().ok_or_else(|| {
+            crate::Error::Execution("Input channel closed (input complete signalled)".to_string())
+        })?;
+        tx.send(packet).map_err(|e| {
             crate::Error::Execution(format!("Failed to send input: {}", e))
         })?;
 
@@ -129,6 +132,15 @@ impl SessionHandle {
     /// Check if the session is still active
     pub fn is_active(&self) -> bool {
         self.is_active && !self.task_handle.is_finished()
+    }
+
+    /// Signal that no more input will be sent
+    ///
+    /// This closes the input channel, allowing the session router to detect
+    /// end-of-input and shut down gracefully after processing remaining data.
+    /// Outputs can still be received via `recv_output()` after calling this.
+    pub fn signal_input_complete(&mut self) {
+        self.input_tx = None;
     }
 
     /// Close the session gracefully
@@ -385,7 +397,7 @@ impl PipelineExecutor {
 
         Ok(SessionHandle {
             session_id,
-            input_tx,
+            input_tx: Some(input_tx),
             output_rx,
             shutdown_tx,
             task_handle,

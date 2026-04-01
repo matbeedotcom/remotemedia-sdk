@@ -5572,6 +5572,7 @@ dependencies = [
  "remotemedia-core",
  "remotemedia-manifest-analyzer",
  "remotemedia-manifest-tester",
+ "remotemedia-python-nodes",
  "serde_json",
  "tokio",
  "tracing",

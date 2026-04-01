@@ -16,28 +16,44 @@ Key features:
 """
 
 import logging
-import numpy as np
-import torch
-import torchaudio
-from typing import AsyncGenerator, Optional, Dict, List, Any, TYPE_CHECKING, Union
-from liquid_audio import ChatState, LFMModality
-# Import liquid_audio here to avoid import errors if not installed
-from liquid_audio import LFM2AudioModel, LFM2AudioProcessor
 import asyncio
+from typing import AsyncGenerator, Optional, Dict, List, Any, TYPE_CHECKING, Union
 from dataclasses import dataclass, field
 from datetime import datetime
+
+# Defer heavy ML imports to initialization time so the node can be registered
+# even when liquid_audio / torch aren't installed
+try:
+    import numpy as np
+    import torch
+    import torchaudio
+    from liquid_audio import ChatState, LFMModality
+    from liquid_audio import LFM2AudioModel, LFM2AudioProcessor
+    _ML_DEPS_AVAILABLE = True
+except ImportError:
+    _ML_DEPS_AVAILABLE = False
+    np = None  # type: ignore
+    torch = None  # type: ignore
+    torchaudio = None  # type: ignore
+    ChatState = None  # type: ignore
+    LFMModality = None  # type: ignore
+    LFM2AudioModel = None  # type: ignore
+    LFM2AudioProcessor = None  # type: ignore
+
 try:
     import resampy
 except ImportError:
     resampy = None
-    logging.warning("resampy not installed. Audio resampling will use torchaudio instead.")
+    if _ML_DEPS_AVAILABLE:
+        logging.warning("resampy not installed. Audio resampling will use torchaudio instead.")
 
 # Suppress torch dynamo compilation errors (fall back to eager mode)
-try:
-    import torch._dynamo
-    torch._dynamo.config.suppress_errors = True
-except (ImportError, AttributeError):
-    pass
+if _ML_DEPS_AVAILABLE:
+    try:
+        import torch._dynamo
+        torch._dynamo.config.suppress_errors = True
+    except (ImportError, AttributeError):
+        pass
 
 # Import RuntimeData bindings
 if TYPE_CHECKING:
@@ -151,8 +167,14 @@ class LFM2AudioNode(MultiprocessNode):
             text_only = params.get('text_only', text_only)
         else:
             # Standalone mode without multiprocess
-            self.node_id = node_id or "lfm2_audio"
-            self.node_type = "LFM2AudioNode"
+            # Still need to initialize base class to set up _status and other attributes
+            from remotemedia.core.multiprocessing.node import NodeConfig
+            minimal_config = NodeConfig(
+                node_id=node_id or "lfm2_audio",
+                node_type="LFM2AudioNode",
+                params={}
+            )
+            super().__init__(minimal_config, **kwargs)
             self.logger = logging.getLogger(__name__)
 
         # LFM2-specific configuration
@@ -170,10 +192,10 @@ class LFM2AudioNode(MultiprocessNode):
 
         # Auto-detect device if not specified
         if device is None:
-            if torch.cuda.is_available():
+            if _ML_DEPS_AVAILABLE and torch.cuda.is_available():
                 self.device = "cuda"
             else:
-                self.device = "cpu"
+                self.device = device or "cpu"
         else:
             self.device = device
 
@@ -187,6 +209,11 @@ class LFM2AudioNode(MultiprocessNode):
 
     async def initialize(self) -> None:
         """Initialize the LFM2-Audio model and processor."""
+        if not _ML_DEPS_AVAILABLE:
+            raise RuntimeError(
+                "LFM2AudioNode requires 'liquid_audio', 'torch', and 'torchaudio' packages. "
+                "Install with: pip install liquid-audio torch torchaudio"
+            )
         if self._initialized:
             return
 

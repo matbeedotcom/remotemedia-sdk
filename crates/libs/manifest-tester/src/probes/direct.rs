@@ -188,6 +188,10 @@ impl ProbeBackend for DirectProbe {
                             }
                         }
 
+                        // Signal that all input has been sent so the router
+                        // can shut down after processing remaining data
+                        session.signal_input_complete();
+
                         // Try to receive outputs with timeout
                         let recv_deadline = Instant::now() + ctx.timeout;
                         loop {
