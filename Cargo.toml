@@ -58,7 +58,7 @@ async-trait = "0.1"
 rubato = "0.15"
 rustfft = "6.2"
 bytemuck = "1.14"
-ort = { version = "2.0.0-rc.10", features = ["half", "download-binaries"] }
+ort = { version = "=2.0.0-rc.10", features = ["half", "download-binaries"] }
 ndarray = "0.15"
 
 # WASM runtime
