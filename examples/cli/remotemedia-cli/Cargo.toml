@@ -78,6 +78,7 @@ grpc = ["dep:remotemedia-grpc"]
 http = ["dep:remotemedia-http"]
 webrtc = ["dep:remotemedia-webrtc"]
 ui = ["dep:remotemedia-ui"]
+speaker-diarization = ["remotemedia-core/speaker-diarization"]
 
 [dev-dependencies]
 tempfile = "3.8"

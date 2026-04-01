@@ -671,9 +671,16 @@ class MultiprocessNode(BaseNode):
                 payload = data.as_text().encode('utf-8')
             elif data.is_audio():
                 data_type = 1  # Audio
-                # Get audio data as numpy array, then convert to bytes
+                # New format: sample_rate(4) | channels(2) | metadata_len(4) | metadata | samples
+                import struct
+                import json as json_mod
                 audio_array = data.as_numpy()
-                payload = audio_array.astype(np.float32).tobytes()
+                sample_rate = data.metadata.sample_rate if data.metadata else 24000
+                channels = data.metadata.channels if data.metadata else 1
+                annotations = getattr(data.metadata, 'annotations', None) if data.metadata else None
+                metadata_bytes = json_mod.dumps(annotations).encode('utf-8') if annotations else b''
+                header = struct.pack('<IHI', sample_rate, channels, len(metadata_bytes))
+                payload = header + metadata_bytes + audio_array.astype(np.float32).tobytes()
             else:
                 self.logger.warning(f"Unsupported data type for IPC send: {data.type}")
                 return
