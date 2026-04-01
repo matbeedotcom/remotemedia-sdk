@@ -1,0 +1,45 @@
+[package]
+name = "remotemedia-manifest-tester"
+description = "Universal manifest testing framework for RemoteMedia SDK"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+probe-grpc = ["remotemedia-grpc"]
+probe-webrtc = ["remotemedia-webrtc"]
+probe-http = ["remotemedia-http"]
+all-probes = ["probe-grpc", "probe-webrtc", "probe-http"]
+
+[dependencies]
+# Core
+remotemedia-core = { path = "../../core" }
+remotemedia-manifest-analyzer = { path = "../manifest-analyzer" }
+remotemedia-pipeline-runner = { path = "../pipeline-runner" }
+
+# Optional transport probes
+remotemedia-grpc = { path = "../../transports/grpc", optional = true }
+remotemedia-webrtc = { path = "../../transports/webrtc", optional = true }
+remotemedia-http = { path = "../../transports/http", optional = true }
+
+# Async
+tokio = { workspace = true, features = ["sync", "macros", "rt-multi-thread", "time", "process"] }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

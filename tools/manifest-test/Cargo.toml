@@ -1,0 +1,34 @@
+[package]
+name = "remotemedia-manifest-test"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Universal manifest testing CLI for RemoteMedia SDK"
+license.workspace = true
+
+[[bin]]
+name = "remotemedia-test-manifest"
+path = "src/main.rs"
+
+[dependencies]
+# CLI framework
+clap = { version = "4.4", features = ["derive"] }
+
+# RemoteMedia
+remotemedia-core = { path = "../../crates/core" }
+remotemedia-manifest-analyzer = { path = "../../crates/libs/manifest-analyzer" }
+remotemedia-manifest-tester = { path = "../../crates/libs/manifest-tester" }
+
+# Async
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+# Serialization
+serde_json = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

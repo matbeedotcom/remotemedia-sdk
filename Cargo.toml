@@ -11,11 +11,14 @@ members = [
     "crates/adapters/ingest-rtmp",  # RTMP ingestion adapter
     "crates/libs/stream-health-analyzer",  # Shared stream health analysis
     "crates/libs/pipeline-runner",  # Shared pipeline execution
+    "crates/libs/manifest-analyzer",  # Manifest analysis (classification, transport detection)
+    "crates/libs/manifest-tester",  # Manifest testing framework (probes, reporting)
     "crates/services/ingest-srt",  # SRT ingest gateway
     "crates/services/grpc-server",  # gRPC server binary
     "crates/services/http-server",  # HTTP server binary
     "crates/services/webrtc-server",  # WebRTC server binary
     "tools/pack-pipeline",  # Pipeline packaging CLI
+    "tools/manifest-test",  # Universal manifest testing CLI
     "crates/ui",  # Embedded web UI
 ]
 exclude = [

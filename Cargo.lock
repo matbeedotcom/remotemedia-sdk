@@ -5550,6 +5550,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "remotemedia-manifest-analyzer"
+version = "0.4.0"
+dependencies = [
+ "remotemedia-core",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "remotemedia-manifest-test"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "remotemedia-core",
+ "remotemedia-manifest-analyzer",
+ "remotemedia-manifest-tester",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "remotemedia-manifest-tester"
+version = "0.4.0"
+dependencies = [
+ "async-trait",
+ "remotemedia-core",
+ "remotemedia-grpc",
+ "remotemedia-http",
+ "remotemedia-manifest-analyzer",
+ "remotemedia-pipeline-runner",
+ "remotemedia-webrtc",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "remotemedia-pack"
 version = "0.4.0"
 dependencies = [

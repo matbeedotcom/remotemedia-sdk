@@ -446,6 +446,15 @@ test-services: test-ingest-srt ## Run all service tests
 test-ingest-srt: ## Run SRT ingest gateway tests
 	cargo test -p remotemedia-ingest-srt
 
+test-manifest-analyzer: ## Run manifest analyzer tests
+	cargo test -p remotemedia-manifest-analyzer
+
+test-manifest-tester: ## Run manifest tester tests
+	cargo test -p remotemedia-manifest-tester
+
+test-manifests: ## Test example manifests via CLI (dry-run)
+	cargo run -p remotemedia-manifest-test -- --dry-run examples/shared-pipelines/*.yaml examples/shared-pipelines/*.json 2>/dev/null || true
+
 # =============================================================================
 # BENCHMARK TARGETS
 # =============================================================================
