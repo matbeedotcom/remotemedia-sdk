@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use remotemedia_core::data::RuntimeData;
 use remotemedia_core::manifest::Manifest;
 use remotemedia_manifest_analyzer::AnalysisResult;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Specification for which probe to run
@@ -39,6 +39,8 @@ pub struct ProbeContext {
     pub test_data: Vec<RuntimeData>,
     pub timeout: Duration,
     pub skip_ml: bool,
+    /// If set, collected output data will be pushed here
+    pub output_collector: Option<Arc<Mutex<Vec<RuntimeData>>>>,
 }
 
 /// Trait for pluggable test probe backends

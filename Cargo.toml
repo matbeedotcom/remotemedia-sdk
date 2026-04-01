@@ -95,6 +95,7 @@ prometheus = "0.13"
 
 # Platform-specific
 nix = { version = "0.30.1", features = ["signal", "process"] }
+libc = "0.2"
 windows = { version = "0.52", features = ["Win32_System_ProcessStatus", "Win32_Foundation"] }
 
 # Error handling

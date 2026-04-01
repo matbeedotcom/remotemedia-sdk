@@ -218,6 +218,33 @@ pub struct ProcessManager {
     exit_handlers: Arc<RwLock<Vec<Box<dyn Fn(u32, ExitReason) + Send + Sync>>>>,
 }
 
+impl Drop for ProcessManager {
+    fn drop(&mut self) {
+        // Best-effort synchronous kill of all tracked child processes.
+        // This runs even when the tokio runtime is shutting down (where async
+        // code would panic), so we use try_write() / try_lock() instead of
+        // .await variants.
+        if let Ok(processes) = self.processes.try_write() {
+            for (pid, handle) in processes.iter() {
+                // Try to kill via the Child handle first
+                if let Ok(mut guard) = handle.inner.try_lock() {
+                    if let Some(ref mut child) = *guard {
+                        let _ = child.kill();
+                    }
+                } else {
+                    // Fallback: send SIGKILL directly via pid
+                    #[cfg(unix)]
+                    {
+                        use nix::sys::signal::{kill, Signal};
+                        use nix::unistd::Pid;
+                        let _ = kill(Pid::from_raw(*pid as i32), Signal::SIGKILL);
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl ProcessManager {
     /// Create a new process manager
     pub fn new(config: MultiprocessConfig) -> Self {
@@ -317,11 +344,22 @@ impl ProcessManager {
             command.current_dir(dir);
         }
 
-        // Configure process group for cleanup
+        // Configure process group and parent-death signal for cleanup
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
+            // SAFETY: prctl(PR_SET_PDEATHSIG) is async-signal-safe.
+            // When the parent process dies (crash, SIGKILL, normal exit),
+            // the kernel sends SIGTERM to this child automatically.
+            unsafe {
+                command.pre_exec(|| {
+                    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
         }
 
         // Configure I/O

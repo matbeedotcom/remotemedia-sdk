@@ -218,13 +218,26 @@ impl ProbeBackend for DirectProbe {
                             )
                             .await
                             {
-                                Ok(Ok(Some(_output))) => {
+                                Ok(Ok(Some(output))) => {
                                     output_count += 1;
                                     if first_output_ms.is_none() {
                                         first_output_ms =
                                             Some(start.elapsed().as_millis() as u64);
                                     }
-                                    info!("Received output #{output_count}");
+                                    match &output.data {
+                                        remotemedia_core::data::RuntimeData::Text(text) => {
+                                            info!("Received output #{output_count}: Text({:?})", text);
+                                        }
+                                        other => {
+                                            info!("Received output #{output_count}: {}", other.data_type());
+                                        }
+                                    }
+                                    // Collect output if requested
+                                    if let Some(ref collector) = ctx.output_collector {
+                                        if let Ok(mut outputs) = collector.lock() {
+                                            outputs.push(output.data);
+                                        }
+                                    }
                                 }
                                 Ok(Ok(None)) => {
                                     info!("Session stream ended after {output_count} outputs");

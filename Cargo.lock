@@ -5328,6 +5328,7 @@ dependencies = [
  "iceoryx2-log",
  "inventory",
  "jsonschema",
+ "libc",
  "ndarray 0.15.6",
  "nix 0.30.1",
  "num_cpus",

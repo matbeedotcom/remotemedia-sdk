@@ -91,6 +91,7 @@ openssl-sys = { version = "0.9", features = ["vendored"] }
 # Platform-specific
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true }
+libc = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }

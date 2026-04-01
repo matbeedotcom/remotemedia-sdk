@@ -11,7 +11,7 @@ use remotemedia_core::data::RuntimeData;
 use remotemedia_core::manifest::Manifest;
 use remotemedia_manifest_analyzer::{self as analyzer, AnalyzerError};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::info;
 
@@ -23,6 +23,7 @@ pub struct ManifestTester {
     skip_ml: bool,
     dry_run: bool,
     custom_test_data: Option<Vec<RuntimeData>>,
+    output_collector: Option<Arc<Mutex<Vec<RuntimeData>>>>,
 }
 
 impl ManifestTester {
@@ -35,7 +36,14 @@ impl ManifestTester {
             skip_ml: false,
             dry_run: false,
             custom_test_data: None,
+            output_collector: None,
         }
+    }
+
+    /// Collect pipeline output data (for writing to file/stdout)
+    pub fn collect_outputs(mut self, collector: Arc<Mutex<Vec<RuntimeData>>>) -> Self {
+        self.output_collector = Some(collector);
+        self
     }
 
     /// Set which probes to run
@@ -164,6 +172,7 @@ impl ManifestTester {
             test_data,
             timeout: self.timeout,
             skip_ml: self.skip_ml,
+            output_collector: self.output_collector.clone(),
         };
 
         // Step 6: Run probes sequentially

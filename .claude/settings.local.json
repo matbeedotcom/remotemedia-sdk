@@ -31,7 +31,10 @@
       "Bash(PATH=$HOME/.local/bin:$PATH cargo run -p remotemedia-manifest-test -- examples/inference-api/pipelines/whisper-transcribe.yaml --input audio.wav -v --timeout 120)",
       "Bash(PATH=$HOME/.local/bin:$PATH cargo run -p remotemedia-manifest-test -- examples/nextjs-tts-app/pipelines/vad-s2s-pipeline.json --input audio.wav -v --timeout 30)",
       "Bash(rm -rf /tmp/iceoryx2/services/* /tmp/iceoryx2/nodes/*)",
-      "Bash(PYTHON_ENV_MODE=managed PATH=$HOME/.local/bin:$PATH cargo run -p remotemedia-manifest-test -- examples/inference-api/pipelines/tts-kokoro.yaml --input audio.wav -v --timeout 120)"
+      "Bash(PYTHON_ENV_MODE=managed PATH=$HOME/.local/bin:$PATH cargo run -p remotemedia-manifest-test -- examples/inference-api/pipelines/tts-kokoro.yaml --input audio.wav -v --timeout 120)",
+      "Bash(PYTHON_EXECUTABLE=/home/acidhax/anaconda3/envs/remotemedia/bin/python PYTHON_ENV_MODE=managed PATH=$HOME/.local/bin:$PATH cargo run -p remotemedia-manifest-test -- examples/inference-api/pipelines/tts-kokoro.yaml --input \"Hello, this is a test of text to speech.\" -v --timeout 30)",
+      "Bash(PYTHON_EXECUTABLE=/home/acidhax/anaconda3/envs/remotemedia/bin/python PYTHON_ENV_MODE=managed PATH=$HOME/.local/bin:$PATH cargo run -p remotemedia-manifest-test -- examples/inference-api/pipelines/tts-kokoro.yaml --input \"Hello world\" -v --timeout 30)",
+      "Bash(PYTHON_ENV_MODE=managed ./target/debug/remotemedia-test-manifest examples/inference-api/pipelines/tts-kokoro.yaml --input \"Hello world\" -v --timeout 60 --output /tmp/tts.pcm)"
     ],
     "deny": [],
     "ask": []

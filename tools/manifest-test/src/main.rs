@@ -47,13 +47,17 @@ struct Cli {
     #[arg(long)]
     skip_ml: bool,
 
-    /// Path to input audio WAV file (overrides synthetic data generation)
+    /// Input data: a WAV file path for audio pipelines, or raw text for text pipelines
     #[arg(short, long)]
-    input: Option<PathBuf>,
+    input: Option<String>,
 
     /// Chunk size for streaming audio input (samples per chunk)
     #[arg(long, default_value = "1024")]
     chunk_size: usize,
+
+    /// Write pipeline audio output to file (raw f32le PCM) or "-" for stdout
+    #[arg(long)]
+    output: Option<String>,
 
     /// Increase verbosity
     #[arg(short, long, action = clap::ArgAction::Count)]
@@ -97,8 +101,22 @@ fn transport_args_to_specs(args: &[TransportArg]) -> Vec<ProbeSpec> {
     specs
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    // Use a manually-built runtime so that when main() returns, the runtime
+    // is dropped first (cleaning up async tasks) and then all remaining Rust
+    // destructors run — including ProcessManager::drop which kills child
+    // processes.  The previous `#[tokio::main]` + `std::process::exit()`
+    // approach skipped all destructors, leaving Python children orphaned.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let code = rt.block_on(async_main())?;
+    // Drop the runtime explicitly so spawned tasks are cancelled.
+    drop(rt);
+    std::process::exit(code);
+}
+
+async fn async_main() -> Result<i32> {
     let cli = Cli::parse();
 
     // Setup logging
@@ -115,17 +133,30 @@ async fn main() -> Result<()> {
         .init();
 
     // Load custom test data if provided
-    let custom_data = if let Some(input_path) = &cli.input {
+    let custom_data = if let Some(input) = &cli.input {
+        use remotemedia_core::data::RuntimeData;
         use remotemedia_manifest_tester::synthetic_data::SyntheticDataFactory;
-        let chunks = SyntheticDataFactory::load_wav_chunked(input_path, cli.chunk_size)
-            .map_err(|e| anyhow::anyhow!("Failed to load input audio: {e}"))?;
-        Some(chunks)
+
+        let path = std::path::Path::new(input);
+        if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("wav")) && path.exists() {
+            // WAV file → chunked audio
+            let chunks = SyntheticDataFactory::load_wav_chunked(path, cli.chunk_size)
+                .map_err(|e| anyhow::anyhow!("Failed to load input audio: {e}"))?;
+            Some(chunks)
+        } else {
+            // Raw text input
+            Some(vec![RuntimeData::Text(input.clone())])
+        }
     } else {
         None
     };
 
     // Build and run tester
     let specs = transport_args_to_specs(&cli.transport);
+    let output_collector = cli.output.as_ref().map(|_| {
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::<remotemedia_core::data::RuntimeData>::new()))
+    });
+
     let mut tester = ManifestTester::test(&cli.manifest)
         .with_probes(&specs)
         .with_timeout(Duration::from_secs(cli.timeout))
@@ -135,16 +166,70 @@ async fn main() -> Result<()> {
     if let Some(data) = custom_data {
         tester = tester.with_test_data(data);
     }
+    if let Some(ref collector) = output_collector {
+        tester = tester.collect_outputs(collector.clone());
+    }
 
     let report = tester.run().await;
 
-    // Output results
+    // Write collected output if requested
+    if let (Some(output_path), Some(collector)) = (&cli.output, &output_collector) {
+        use std::io::Write;
+        let outputs = collector.lock().unwrap();
+
+        // Separate text and audio outputs
+        let mut all_text: Vec<String> = Vec::new();
+        let mut all_samples: Vec<f32> = Vec::new();
+        let mut sample_rate = 24000u32;
+        for data in outputs.iter() {
+            match data {
+                remotemedia_core::data::RuntimeData::Text(text) => {
+                    all_text.push(text.clone());
+                }
+                remotemedia_core::data::RuntimeData::Audio { samples, sample_rate: sr, .. } => {
+                    all_samples.extend_from_slice(samples);
+                    sample_rate = *sr;
+                }
+                _ => {}
+            }
+        }
+
+        if !all_text.is_empty() {
+            let joined = all_text.join("\n");
+            if output_path == "-" {
+                std::io::stdout().write_all(joined.as_bytes()).ok();
+                std::io::stdout().write_all(b"\n").ok();
+            } else {
+                std::fs::write(output_path, &joined)
+                    .map_err(|e| anyhow::anyhow!("Failed to write output: {e}"))?;
+                eprintln!("Wrote {} text output(s) to {}", all_text.len(), output_path);
+            }
+        } else if !all_samples.is_empty() {
+            let raw_bytes: Vec<u8> = all_samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+            if output_path == "-" {
+                std::io::stdout().write_all(&raw_bytes).ok();
+            } else {
+                std::fs::write(output_path, &raw_bytes)
+                    .map_err(|e| anyhow::anyhow!("Failed to write output: {e}"))?;
+                eprintln!(
+                    "Wrote {} samples ({:.2}s) of audio to {} (f32le, {}Hz, mono)",
+                    all_samples.len(),
+                    all_samples.len() as f32 / sample_rate as f32,
+                    output_path,
+                    sample_rate
+                );
+            }
+        }
+    }
+
+    // Output results (use stderr when piping audio to stdout)
+    let use_stderr = cli.output.as_deref() == Some("-");
     match cli.output_format {
         OutputFormat::Text => {
-            println!("{report}");
+            if use_stderr { eprintln!("{report}"); } else { println!("{report}"); }
         }
         OutputFormat::Json => {
-            println!("{}", report.to_json());
+            if use_stderr { eprintln!("{}", report.to_json()); } else { println!("{}", report.to_json()); }
         }
     }
 
@@ -162,5 +247,5 @@ async fn main() -> Result<()> {
         }
     };
 
-    std::process::exit(code);
+    Ok(code)
 }

@@ -516,13 +516,35 @@ impl MultiprocessExecutor {
             ctx.node_id
         );
 
+        // Timeout for waiting on outputs — if no output arrives within this duration
+        // after we've already received at least one, assume the node is done processing
+        // this input. For the first output, use a longer timeout to allow for model inference.
+        let initial_timeout = std::time::Duration::from_secs(300); // 5 min for first output (model loading)
+        let subsequent_timeout = std::time::Duration::from_secs(2); // 2s gap = done
+
         loop {
             tracing::debug!(
                 "[Multiprocess] Waiting for response from IPC thread for node '{}'",
                 ctx.node_id
             );
 
-            match resp_rx.recv().await {
+            let timeout = if output_count == 0 {
+                initial_timeout
+            } else {
+                subsequent_timeout
+            };
+
+            match tokio::time::timeout(timeout, resp_rx.recv()).await {
+                Err(_) => {
+                    // Timeout — no more outputs from the node for this input
+                    tracing::debug!(
+                        "[Multiprocess] Output receive timeout for node '{}' after {} outputs",
+                        ctx.node_id,
+                        output_count
+                    );
+                    return Ok(output_count);
+                }
+                Ok(recv_result) => match recv_result {
                 Some(IpcResponse::OutputData(ipc_output)) => {
                     tracing::debug!(
                         "[Multiprocess] Received OutputData from node '{}': type={:?}, {} bytes",
@@ -578,7 +600,8 @@ impl MultiprocessExecutor {
                     );
                     return Ok(output_count);
                 }
-            }
+                } // match recv_result
+            } // match timeout
         }
     }
 
