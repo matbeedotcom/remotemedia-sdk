@@ -343,6 +343,7 @@ async fn test_docker_ipc_data_transfer() {
                                 sample_rate,
                                 channels as u16,
                                 &session_id,
+                                None,
                             );
 
                             let send_start = Instant::now();
@@ -1137,6 +1138,7 @@ async fn test_docker_ipc_channel_lifecycle() {
                                 sample_rate,
                                 channels as u16,
                                 &session_id,
+                                None,
                             );
 
                             match executor.execute_streaming(ipc_data).await {

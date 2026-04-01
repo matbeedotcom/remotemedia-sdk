@@ -4,7 +4,7 @@ use remotemedia_core::data::RuntimeData;
 use remotemedia_core::nodes::schema::RuntimeDataType;
 use std::f32::consts::PI;
 use std::path::Path;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Factory for generating synthetic test data
 pub struct SyntheticDataFactory;
@@ -14,12 +14,12 @@ impl SyntheticDataFactory {
     pub fn generate(data_type: &RuntimeDataType) -> Vec<RuntimeData> {
         match data_type {
             RuntimeDataType::Audio => vec![Self::generate_audio()],
-            RuntimeDataType::Video => vec![Self::generate_video()],
-            RuntimeDataType::Text => vec![Self::generate_text()],
-            RuntimeDataType::Json => vec![Self::generate_json()],
-            RuntimeDataType::Binary => vec![Self::generate_binary()],
-            RuntimeDataType::Tensor => vec![Self::generate_tensor()],
-            RuntimeDataType::Numpy => vec![Self::generate_numpy()],
+            RuntimeDataType::Video => vec![generate_video()],
+            RuntimeDataType::Text => vec![generate_text()],
+            RuntimeDataType::Json => vec![generate_json()],
+            RuntimeDataType::Binary => vec![generate_binary()],
+            RuntimeDataType::Tensor => vec![generate_tensor()],
+            RuntimeDataType::Numpy => vec![generate_numpy()],
             RuntimeDataType::ControlMessage => vec![], // Internal type, not generated
         }
     }
@@ -283,7 +283,7 @@ pub fn load_wav(path: &Path) -> Result<RuntimeData, String> {
 
 /// Load audio from a WAV file and chunk it for streaming pipelines
 pub fn load_wav_chunked(path: &Path, chunk_size: usize) -> Result<Vec<RuntimeData>, String> {
-    let audio = Self::load_wav(path)?;
+    let audio = load_wav(path)?;
     match audio {
         RuntimeData::Audio {
             samples,
