@@ -1,5 +1,5 @@
 # Text-to-Speech Pipeline
-# Usage: remotemedia run tts.yaml --input "Hello, world!"
+# Usage: remotemedia run tts.yaml -i "Hello, world!" -O speech.pcm
 
 version: v1
 metadata:
@@ -13,11 +13,14 @@ nodes:
       encoding: utf-8
 
   - id: kokoro
-    node_type: KokoroTTS
+    node_type: KokoroTTSNode
     params:
       voice: af_bella
       speed: 1.0
       sample_rate: 24000
+    python_deps:
+      - "kokoro>=0.9.4"
+      - soundfile
 
   - id: output
     node_type: AudioOutput

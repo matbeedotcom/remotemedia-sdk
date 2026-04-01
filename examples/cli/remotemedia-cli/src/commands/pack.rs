@@ -13,16 +13,16 @@ pub struct PackArgs {
     pipeline: PathBuf,
 
     /// Output directory for the generated package
-    #[arg(short, long, default_value = "./dist")]
+    #[arg(short = 'O', long, default_value = "./dist")]
     output: PathBuf,
 
     /// Override the package name (default: from manifest)
-    #[arg(short, long)]
+    #[arg(short = 'n', long)]
     name: Option<String>,
 
     /// Package version
-    #[arg(long, default_value = "0.1.0")]
-    version: String,
+    #[arg(long = "pkg-version", default_value = "0.1.0")]
+    pkg_version: String,
 
     /// Build the wheel after generating
     #[arg(long)]
@@ -74,7 +74,7 @@ pub async fn execute(args: PackArgs) -> Result<()> {
         cmd.arg("--name").arg(name);
     }
     
-    cmd.arg("--version").arg(&args.version);
+    cmd.arg("--version").arg(&args.pkg_version);
     
     if args.build {
         cmd.arg("--build");

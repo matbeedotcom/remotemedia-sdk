@@ -8,15 +8,13 @@ metadata:
 
 nodes:
   - id: mic_input
-    node_type: AudioInput
+    node_type: MicInput
     params:
       sample_rate: 16000
       channels: 1
-      format: f32
-      source: microphone
 
   - id: vad
-    node_type: SileroVAD
+    node_type: SileroVADNode
     params:
       threshold: 0.5
       min_speech_duration_ms: 250
@@ -24,12 +22,15 @@ nodes:
       pre_speech_pad_ms: 300
 
   - id: whisper
-    node_type: WhisperSTT
+    node_type: HFWhisperNode
     params:
       model: base.en
       language: en
       task: transcribe
 
+  # NOTE: OllamaLLM is not yet implemented as a registered node.
+  # Replace with your own LLM node or a RemotePipelineNode pointing
+  # to an inference endpoint.
   - id: llm
     node_type: OllamaLLM
     params:
@@ -41,25 +42,23 @@ nodes:
       temperature: 0.7
 
   - id: tts
-    node_type: KokoroTTS
+    node_type: KokoroTTSNode
     params:
       voice: af_bella
       speed: 1.0
       sample_rate: 24000
 
   - id: resample
-    node_type: AudioResample
+    node_type: FastResampleNode
     params:
       target_sample_rate: 48000
-      quality: high
+      quality: Medium
 
   - id: speaker_output
-    node_type: AudioOutput
+    node_type: SpeakerOutput
     params:
       sample_rate: 48000
       channels: 1
-      format: f32
-      destination: speaker
 
 connections:
   - from: mic_input

@@ -22,6 +22,8 @@ The CLI uses Cargo features to control which transport backends are compiled in.
 | `grpc`   | gRPC      | Yes     |
 | `http`   | HTTP/REST + SSE | No |
 | `webrtc` | WebRTC    | No      |
+| `ui`     | Web UI    | No      |
+| `candle` | Candle ML nodes | No |
 
 ```bash
 # Default build (gRPC only)
@@ -35,6 +37,9 @@ cargo build --release --no-default-features --features http
 
 # With Candle ML nodes
 cargo build --release --features candle
+
+# With embedded web UI
+cargo build --release --features ui
 ```
 
 ### Add to PATH
@@ -53,10 +58,10 @@ cargo install --path .
 
 ```bash
 # Transcribe an audio file
-remotemedia run pipelines/transcribe.yaml --input audio.wav
+remotemedia run pipelines/transcribe.yaml -i audio.wav
 
 # Generate speech from text
-remotemedia run pipelines/tts.yaml --input "Hello, world!" --output speech.wav
+remotemedia run pipelines/tts.yaml -i "Hello, world!" -O speech.wav
 
 # Stream with microphone and speaker
 remotemedia stream pipelines/voice-assistant.yaml --mic --speaker
@@ -82,12 +87,14 @@ remotemedia nodes info WhisperSTT
 Run a pipeline with file input/output.
 
 ```bash
-remotemedia run <manifest> --input <file> [--output <file>]
+remotemedia run <manifest> [options]
 
 Options:
-  --input, -i    Input source: file path, named pipe (FIFO), or '-' for stdin
-  --output, -o   Output destination: file path, named pipe (FIFO), or '-' for stdout
-  --timeout      Execution timeout in seconds
+  -i, --input          Input source: file path, named pipe (FIFO), or '-' for stdin
+  -O, --output         Output destination: file path, named pipe (FIFO), or '-' for stdout
+  --params             Override node parameters (JSON string)
+  --timeout            Execution timeout (default: 300s)
+  --input-format       Input format hint: auto, wav, text, json, raw (default: auto)
 ```
 
 ### `stream` - Streaming Execution
@@ -98,10 +105,13 @@ Run a pipeline in streaming mode.
 remotemedia stream <manifest> [options]
 
 Options:
-  --mic          Use microphone input
-  --speaker      Use speaker output
-  --input, -i    Input source: file path, named pipe (FIFO), or '-' for stdin
-  --output, -o   Output destination: file path, named pipe (FIFO), or '-' for stdout
+  --mic                Use microphone input
+  --speaker            Play audio output to speaker
+  -i, --input          Input source: file path, named pipe (FIFO), or '-' for stdin
+  -O, --output         Output destination: file path, named pipe (FIFO), or '-' for stdout
+  --sample-rate        Audio sample rate (default: 16000)
+  --channels           Audio channels, 1 or 2 (default: 1)
+  --chunk-size         Chunk size in samples for streaming (default: 4000)
 ```
 
 ### `validate` - Validate Manifest
@@ -109,7 +119,11 @@ Options:
 Check a pipeline manifest for errors.
 
 ```bash
-remotemedia validate <manifest>
+remotemedia validate <manifest> [options]
+
+Options:
+  --check-nodes        Verify that node types are registered
+  --server             Check nodes against a remote server
 
 Checks:
   - YAML syntax
@@ -127,11 +141,15 @@ Start a local server for pipeline execution. Requires the corresponding transpor
 remotemedia serve <manifest> [options]
 
 Options:
-  --port         Server port (default: 8080)
-  --host         Bind address (default: 0.0.0.0)
-  --transport    Transport type: grpc, http, webrtc (default: grpc)
-  --auth-token   Require this token for authentication
-  --max-sessions Maximum concurrent sessions (default: 100)
+  --port               Server port (default: 8080)
+  --host               Bind address (default: 0.0.0.0)
+  --transport          Transport type: grpc, http, webrtc (default: grpc)
+  --auth-token         Require this token for authentication
+  --max-sessions       Maximum concurrent sessions (default: 100)
+  --ui                 Enable embedded web UI (requires --features ui)
+  --ui-port            Web UI port when --ui is enabled (default: 3001)
+  --signal-port        Start a signaling server for browser WebRTC connections
+  --signal-type        Signaling protocol: websocket or grpc (default: websocket)
 ```
 
 ```bash
@@ -143,6 +161,12 @@ remotemedia serve pipeline.yaml --transport http --port 8080
 
 # Start with authentication
 remotemedia serve pipeline.yaml --transport grpc --auth-token my-secret
+
+# Start with WebRTC and browser signaling
+remotemedia serve pipeline.yaml --transport webrtc --signal-port 18091
+
+# Start with embedded web UI
+remotemedia serve pipeline.yaml --transport webrtc --signal-port 18091 --ui
 ```
 
 If you select a transport that wasn't compiled in, the CLI will print a message telling you which feature flag to enable.
@@ -151,7 +175,13 @@ If you select a transport that wasn't compiled in, the CLI will print a message 
 
 ```bash
 # List all available nodes
-remotemedia nodes list [--format json|table]
+remotemedia nodes list
+
+# Filter nodes by name pattern
+remotemedia nodes list --filter "audio"
+
+# List nodes from a remote server
+remotemedia nodes list --server grpc://localhost:50051
 
 # Get detailed info about a node
 remotemedia nodes info <node_type>
@@ -162,11 +192,14 @@ remotemedia nodes info <node_type>
 Execute pipelines on a remote server.
 
 ```bash
-# Run on remote server
-remotemedia remote run --server grpc://host:50051 <manifest> --input <file>
+# Run a local manifest on a remote server
+remotemedia remote run --server grpc://host:50051 manifest.yaml -i audio.wav
 
-# Stream on remote server
-remotemedia remote stream --server ws://host:8080 <manifest> --mic --speaker
+# Run a named pipeline on a remote server
+remotemedia remote run --server grpc://host:50051 --pipeline transcribe -i audio.wav
+
+# Stream a named pipeline on a remote server
+remotemedia remote stream --server ws://host:8080 --pipeline voice-assistant --mic --speaker
 ```
 
 ### `servers` - Server Management
@@ -178,10 +211,47 @@ Manage saved server configurations.
 remotemedia servers list
 
 # Add a server
-remotemedia servers add <name> <url> [--default]
+remotemedia servers add <name> <url> [--default] [--auth-token <token>]
 
 # Remove a server
 remotemedia servers remove <name>
+```
+
+### `models` - Model Management
+
+Manage Candle ML model cache (requires `--features candle`).
+
+```bash
+# List cached models
+remotemedia models list
+
+# Show cache statistics
+remotemedia models stats
+
+# Download a model for offline use
+remotemedia models download "openai/whisper-base"
+
+# Download a specific file
+remotemedia models download "openai/whisper-base" -f config.json
+
+# Remove a model from cache
+remotemedia models remove "openai/whisper-base"
+```
+
+### `pack` - Package a Pipeline
+
+Pack a pipeline into a self-contained Python wheel.
+
+```bash
+remotemedia pack <pipeline.yaml> [options]
+
+Options:
+  -O, --output         Output directory (default: ./dist)
+  -n, --name           Override package name (default: from manifest)
+  --pkg-version        Package version (default: 0.1.0)
+  --build              Build the wheel after generating
+  --release            Build in release mode (requires --build)
+  --test               Run tests after building (requires --build)
 ```
 
 ## Configuration
@@ -219,9 +289,9 @@ auth_token = "..."
 ## Global Options
 
 ```bash
--v, --verbose    Increase verbosity (-v, -vv, -vvv)
--q, --quiet      Suppress non-error output
--c, --config     Config file path
+-v, --verbose          Increase verbosity (-v, -vv, -vvv)
+-q, --quiet            Suppress non-error output
+-c, --config           Config file path
 -o, --output-format    Output format (text, json, table)
 ```
 
@@ -231,8 +301,8 @@ auth_token = "..."
 
 ```bash
 remotemedia run pipelines/transcribe.yaml \
-  --input recording.wav \
-  --output transcript.txt
+  -i recording.wav \
+  -O transcript.txt
 ```
 
 ### Voice Assistant Session
@@ -251,13 +321,13 @@ remotemedia servers add cloud grpc://ml.example.com:50051
 # Run transcription remotely
 remotemedia remote run --server cloud \
   pipelines/transcribe.yaml \
-  --input large-file.wav
+  -i large-file.wav
 ```
 
 ### JSON Output
 
 ```bash
-remotemedia nodes list --output-format json | jq '.nodes[].name'
+remotemedia nodes list -o json | jq '.nodes[].name'
 ```
 
 ## Unix Pipes and Named Pipes (FIFOs)
@@ -270,13 +340,13 @@ Use `-` as a shorthand for stdin (input) or stdout (output):
 
 ```bash
 # Read from stdin
-cat audio.wav | remotemedia run pipeline.yaml --input -
+cat audio.wav | remotemedia run pipeline.yaml -i -
 
 # Write to stdout
-remotemedia run pipeline.yaml --input audio.wav --output -
+remotemedia run pipeline.yaml -i audio.wav -O -
 
 # Filter mode (read from stdin, write to stdout)
-cat audio.wav | remotemedia run pipeline.yaml --input - --output - > processed.wav
+cat audio.wav | remotemedia run pipeline.yaml -i - -O - > processed.wav
 ```
 
 ### Named Pipes (FIFOs)
@@ -295,7 +365,7 @@ ffmpeg -i input.mp3 -f wav - > /tmp/audio_in
 cat /tmp/audio_out > processed.wav
 
 # In terminal 3: Run the pipeline
-remotemedia stream pipeline.yaml --input /tmp/audio_in --output /tmp/audio_out
+remotemedia stream pipeline.yaml -i /tmp/audio_in -O /tmp/audio_out
 ```
 
 ### Pipeline Composition with FFmpeg
@@ -303,11 +373,11 @@ remotemedia stream pipeline.yaml --input /tmp/audio_in --output /tmp/audio_out
 ```bash
 # Convert and transcribe in one pipeline
 ffmpeg -i video.mp4 -f wav -ar 16000 -ac 1 - | \
-  remotemedia run transcribe.yaml --input - --output transcript.txt
+  remotemedia run transcribe.yaml -i - -O transcript.txt
 
 # Real-time audio processing
 ffmpeg -f pulse -i default -f wav - | \
-  remotemedia stream voice-assistant.yaml --input - --speaker
+  remotemedia stream voice-assistant.yaml -i - --speaker
 ```
 
 ### Notes on Named Pipes

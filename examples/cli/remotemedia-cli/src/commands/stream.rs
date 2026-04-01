@@ -102,7 +102,9 @@ pub async fn execute(args: StreamArgs, _config: &Config, _format: OutputFormat) 
     );
 
     // Create pipeline runner
-    let runner = pipeline::create_runner().context("Failed to create pipeline runner")?;
+    let runner = pipeline::create_runner_with_cli_nodes()
+        .await
+        .context("Failed to create pipeline runner")?;
 
     // Create streaming session
     let manifest = Arc::new(manifest);

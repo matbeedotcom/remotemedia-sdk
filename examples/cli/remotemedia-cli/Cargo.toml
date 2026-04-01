@@ -19,6 +19,7 @@ path = "src/main.rs"
 # SDK dependencies
 remotemedia-core = { workspace = true, features = ["video"] }
 remotemedia-candle-nodes = { path = "../../../crates/candle-nodes", features = ["whisper", "vad"], optional = true }
+remotemedia-python-nodes = { path = "../../../crates/python-nodes", optional = true }
 
 # Transport crates (optional, feature-gated)
 remotemedia-grpc = { workspace = true, features = ["cli"], optional = true }
@@ -70,8 +71,9 @@ url = { workspace = true }
 openssl = { version = "0.10", features = ["vendored"] }
 
 [features]
-default = ["grpc"]
+default = ["grpc", "python-nodes"]
 candle = ["dep:remotemedia-candle-nodes"]
+python-nodes = ["dep:remotemedia-python-nodes"]
 grpc = ["dep:remotemedia-grpc"]
 http = ["dep:remotemedia-http"]
 webrtc = ["dep:remotemedia-webrtc"]

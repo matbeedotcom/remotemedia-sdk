@@ -38,10 +38,12 @@
 //!     to: speaker
 //! ```
 
+pub mod audio_output;
 pub mod mic_input;
 pub mod registry;
 pub mod speaker_output;
 pub mod srt_output;
+pub mod text_input;
 
 // Node types and configs
 pub use mic_input::{MicInputConfig, MicInputNode};
@@ -53,6 +55,8 @@ pub use registry::{
     create_cli_streaming_registry, get_cli_node_factories,
     MicInputNodeFactory, SpeakerOutputNodeFactory, SrtOutputNodeFactory,
 };
+pub use audio_output::AudioOutputNodeFactory;
+pub use text_input::TextInputNodeFactory;
 
 /// Register CLI-specific nodes with the streaming registry
 ///

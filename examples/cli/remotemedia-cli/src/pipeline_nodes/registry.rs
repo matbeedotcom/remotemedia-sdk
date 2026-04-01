@@ -19,9 +19,11 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use super::audio_output::AudioOutputNodeFactory;
 use super::mic_input::MicInputConfig;
 use super::speaker_output::SpeakerOutputConfig;
 use super::srt_output::SrtOutputConfig;
+use super::text_input::TextInputNodeFactory;
 
 // ============================================================================
 // MicInput Streaming Node
@@ -621,6 +623,8 @@ pub fn create_cli_streaming_registry() -> StreamingNodeRegistry {
     registry.register(Arc::new(MicInputNodeFactory));
     registry.register(Arc::new(SpeakerOutputNodeFactory));
     registry.register(Arc::new(SrtOutputNodeFactory));
+    registry.register(Arc::new(TextInputNodeFactory));
+    registry.register(Arc::new(AudioOutputNodeFactory));
 
     registry
 }
@@ -631,5 +635,7 @@ pub fn get_cli_node_factories() -> Vec<Arc<dyn StreamingNodeFactory>> {
         Arc::new(MicInputNodeFactory),
         Arc::new(SpeakerOutputNodeFactory),
         Arc::new(SrtOutputNodeFactory),
+        Arc::new(TextInputNodeFactory),
+        Arc::new(AudioOutputNodeFactory),
     ]
 }

@@ -20,9 +20,11 @@
 //! cat audio.wav | remotemedia run pipeline.yaml --input - --output -
 //! ```
 
-// Force-link candle-nodes so inventory auto-registers node providers
+// Force-link node crates so inventory auto-registers node providers
 #[cfg(feature = "candle")]
 use remotemedia_candle_nodes as _;
+#[cfg(feature = "python-nodes")]
+use remotemedia_python_nodes as _;
 
 mod audio;
 mod commands;
@@ -64,8 +66,29 @@ struct Cli {
     #[arg(short = 'o', long, global = true, default_value = "text")]
     output_format: output::OutputFormat,
 
+    /// Python environment mode for multiprocess nodes.
+    /// "system" uses the system Python (default).
+    /// "managed" auto-creates venvs with dependencies from the manifest.
+    /// "managed_with_python" also auto-downloads Python if not found.
+    #[arg(long, global = true, env = "PYTHON_ENV_MODE", default_value = "system")]
+    python_env: PythonEnvArg,
+
+    /// Python version for managed environments (e.g. "3.11", "3.12")
+    #[arg(long, global = true, env = "PYTHON_VERSION")]
+    python_version: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Clone, Debug, clap::ValueEnum)]
+enum PythonEnvArg {
+    /// Use system Python as-is (default, no env management)
+    System,
+    /// Auto-create venvs with node dependencies via uv or pip
+    Managed,
+    /// Same as managed, but also auto-downloads Python if not found
+    ManagedWithPython,
 }
 
 #[derive(Subcommand)]
@@ -132,6 +155,21 @@ async fn main() -> Result<()> {
 
     // Load config
     let config = config::load_config(cli.config.as_deref())?;
+
+    // Set Python env mode so MultiprocessConfig picks it up
+    let env_mode = match cli.python_env {
+        PythonEnvArg::System => "system",
+        PythonEnvArg::Managed => "managed",
+        PythonEnvArg::ManagedWithPython => "managed_with_python",
+    };
+    std::env::set_var("PYTHON_ENV_MODE", env_mode);
+    if let Some(ref ver) = cli.python_version {
+        std::env::set_var("PYTHON_VERSION", ver);
+    }
+
+    if !matches!(cli.python_env, PythonEnvArg::System) {
+        tracing::info!("Python environment mode: {}", env_mode);
+    }
 
     // Execute command
     let result = match cli.command {

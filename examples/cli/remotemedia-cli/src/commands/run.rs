@@ -249,7 +249,9 @@ pub async fn execute(args: RunArgs, _config: &Config, format: OutputFormat) -> R
     );
 
     // Create pipeline runner
-    let runner = pipeline::create_runner().context("Failed to create pipeline runner")?;
+    let runner = pipeline::create_runner_with_cli_nodes()
+        .await
+        .context("Failed to create pipeline runner")?;
 
     // Load input if provided
     let input_data = if let Some(input_path) = &args.input {
