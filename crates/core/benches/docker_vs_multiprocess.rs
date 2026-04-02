@@ -92,7 +92,7 @@ fn generate_test_audio_ipc(duration_ms: u32, frequency: f32, session_id: &str) -
         })
         .collect();
 
-    IPCRuntimeData::audio(&samples, sample_rate, 1, session_id)
+    IPCRuntimeData::audio(&samples, sample_rate, 1, session_id, None)
 }
 
 /// Helper to measure memory usage (platform-specific)

@@ -98,6 +98,7 @@ async fn test_transport(registry: &TransportPluginRegistry, transport_name: &str
                 ..Default::default()
             }],
             connections: vec![],
+            python_env: None,
         });
 
         let input = TransportData {

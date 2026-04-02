@@ -614,7 +614,7 @@ mod tests {
     #[test]
     fn test_audio_roundtrip() {
         let samples = vec![0.1f32, 0.2, 0.3, 0.4];
-        let data = RuntimeData::audio(&samples, 24000, 1, "test_session");
+        let data = RuntimeData::audio(&samples, 24000, 1, "test_session", None);
 
         let bytes = data.to_bytes();
         let recovered = RuntimeData::from_bytes(&bytes).unwrap();

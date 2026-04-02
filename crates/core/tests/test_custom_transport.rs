@@ -30,6 +30,7 @@ async fn test_remote_pipeline_node_with_mock_transport() {
             ..Default::default()
         }],
         connections: vec![],
+        python_env: None,
     };
 
     // Create client config
@@ -89,6 +90,7 @@ async fn test_remote_pipeline_node_streaming_with_mock_transport() {
             ..Default::default()
         }],
         connections: vec![],
+        python_env: None,
     };
 
     // Create client config

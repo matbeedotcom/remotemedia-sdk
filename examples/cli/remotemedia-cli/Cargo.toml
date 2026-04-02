@@ -73,6 +73,8 @@ openssl = { version = "0.10", features = ["vendored"] }
 [features]
 default = ["grpc", "python-nodes"]
 candle = ["dep:remotemedia-candle-nodes"]
+cuda = ["candle", "remotemedia-candle-nodes?/cuda"]
+metal = ["candle", "remotemedia-candle-nodes?/metal"]
 python-nodes = ["dep:remotemedia-python-nodes"]
 grpc = ["dep:remotemedia-grpc"]
 http = ["dep:remotemedia-http"]

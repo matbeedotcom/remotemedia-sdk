@@ -135,12 +135,12 @@ async fn async_main() -> Result<i32> {
     // Load custom test data if provided
     let custom_data = if let Some(input) = &cli.input {
         use remotemedia_core::data::RuntimeData;
-        use remotemedia_manifest_tester::synthetic_data::SyntheticDataFactory;
+        use remotemedia_manifest_tester::synthetic_data::load_wav_chunked;
 
         let path = std::path::Path::new(input);
         if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("wav")) && path.exists() {
             // WAV file → chunked audio
-            let chunks = SyntheticDataFactory::load_wav_chunked(path, cli.chunk_size)
+            let chunks = load_wav_chunked(path, cli.chunk_size)
                 .map_err(|e| anyhow::anyhow!("Failed to load input audio: {e}"))?;
             Some(chunks)
         } else {

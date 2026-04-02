@@ -125,7 +125,7 @@ async fn run_speculative_coordinator(audio: RuntimeData) -> BenchmarkResult {
     let mut control_count = 0;
     
     let mut session = runner
-        .create_stream_session(manifest)
+        .create_session(manifest)
         .await
         .expect("Failed to create streaming session");
     
@@ -240,7 +240,7 @@ async fn run_traditional_via_runner(audio: RuntimeData) -> BenchmarkResult {
     let mut has_speech_detected = false;
     
     let mut session = runner
-        .create_stream_session(manifest)
+        .create_session(manifest)
         .await
         .expect("Failed to create streaming session");
     
@@ -415,7 +415,7 @@ fn bench_multi_chunk_throughput(c: &mut Criterion) {
                     let runner = PipelineExecutor::new().expect("Failed to create PipelineExecutor");
                     let manifest = Arc::new(create_speculative_manifest());
                     let mut session = runner
-                        .create_stream_session(manifest)
+                        .create_session(manifest)
                         .await
                         .expect("Failed to create session");
                     

@@ -217,6 +217,7 @@ mod tests {
             },
             nodes: vec![],
             connections: vec![],
+            python_env: None,
         })
     }
 

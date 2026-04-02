@@ -66,6 +66,7 @@ fn create_test_manifest(node_count: usize) -> Manifest {
         },
         nodes,
         connections: vec![],
+        python_env: None,
     }
 }
 

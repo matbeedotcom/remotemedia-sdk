@@ -17,6 +17,7 @@ fn create_test_manifest(nodes: Vec<NodeManifest>) -> Manifest {
             },
         nodes,
         connections: vec![],
+        python_env: None,
     }
 }
 
