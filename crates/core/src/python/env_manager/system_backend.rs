@@ -88,13 +88,13 @@ impl EnvBackend for SystemBackend {
     ) -> Result<VenvInfo> {
         let venv_path = cache_dir.join(cache_key);
 
-        // Use --system-site-packages so the venv inherits system-installed
-        // packages (e.g. remotemedia itself, installed via pip install -e .)
+        // Create an isolated venv without --system-site-packages to avoid
+        // inheriting broken/conflicting system packages (e.g., numba/coverage).
+        // The remotemedia package is found via sys.path in the multiprocess runner.
         let output = Command::new(python)
             .args([
                 "-m",
                 "venv",
-                "--system-site-packages",
                 &venv_path.to_string_lossy(),
             ])
             .output()

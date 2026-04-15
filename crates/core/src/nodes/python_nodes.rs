@@ -65,6 +65,42 @@ impl NodeFactory for SimplePyTorchNodeFactory {
     }
 }
 
+/// Factory for CosyVoice3TTSNode (Python TTS engine)
+pub struct CosyVoice3TTSNodeFactory;
+
+impl NodeFactory for CosyVoice3TTSNodeFactory {
+    fn create(&self, _params: Value) -> Result<Box<dyn NodeExecutor>> {
+        let executor = PythonNodeExecutor::new("CosyVoice3TTSNode");
+        Ok(Box::new(executor))
+    }
+
+    fn node_type(&self) -> &str {
+        "CosyVoice3TTSNode"
+    }
+
+    fn is_rust_native(&self) -> bool {
+        false // Python implementation
+    }
+}
+
+/// Factory for VoxtralTTSNode (Python TTS engine)
+pub struct VoxtralTTSNodeFactory;
+
+impl NodeFactory for VoxtralTTSNodeFactory {
+    fn create(&self, _params: Value) -> Result<Box<dyn NodeExecutor>> {
+        let executor = PythonNodeExecutor::new("VoxtralTTSNode");
+        Ok(Box::new(executor))
+    }
+
+    fn node_type(&self) -> &str {
+        "VoxtralTTSNode"
+    }
+
+    fn is_rust_native(&self) -> bool {
+        false // Python implementation
+    }
+}
+
 /// Factory for LFM2AudioNode (Python LFM2 audio generation)
 pub struct LFM2AudioNodeFactory;
 
@@ -95,6 +131,10 @@ pub fn create_python_tts_registry() -> NodeRegistry {
 
     // Register VibeVoiceTTSNode as Python implementation
     registry.register_python(Arc::new(VibeVoiceTTSNodeFactory));
+
+    registry.register_python(Arc::new(CosyVoice3TTSNodeFactory));
+
+    registry.register_python(Arc::new(VoxtralTTSNodeFactory));
 
     registry.register_python(Arc::new(LFM2AudioNodeFactory));
 

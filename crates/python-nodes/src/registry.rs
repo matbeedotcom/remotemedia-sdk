@@ -249,6 +249,24 @@ pub fn register_default_python_nodes() {
             .produces(["audio"]),
     );
 
+    register_python_node(
+        PythonNodeConfig::new("CosyVoice3TTSNode")
+            .with_multi_output(true)
+            .with_description("Text-to-speech using CosyVoice3 with zero-shot voice cloning")
+            .with_category("tts")
+            .accepts(["text"])
+            .produces(["audio"]),
+    );
+
+    register_python_node(
+        PythonNodeConfig::new("VoxtralTTSNode")
+            .with_multi_output(true)
+            .with_description("Text-to-speech using Voxtral-4B TTS")
+            .with_category("tts")
+            .accepts(["text"])
+            .produces(["audio"]),
+    );
+
     // ML nodes
     register_python_node(
         PythonNodeConfig::new("LFM2AudioNode")

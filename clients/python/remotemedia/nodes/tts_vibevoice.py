@@ -1,9 +1,9 @@
 """
 VibeVoice TTS Node using RuntimeData API and MultiprocessNode base
 
-A streaming text-to-speech node built on the VibeVoice model family with multiprocess support.
-This node mirrors the shape and async/streaming behavior of KokoroTTSNode, but integrates the
-VibeVoice processor/model and its AudioStreamer.
+Uses the VibeVoice streaming inference model with pre-cached voice presets (.pt files).
+This is the correct approach for TTS generation - the streaming model uses prefilled
+prompt outputs for fast inference without requiring raw reference audio.
 
 Inherits from MultiprocessNode to enable concurrent execution in separate processes.
 
@@ -11,38 +11,25 @@ Inputs:
 - RuntimeData.Text (string)
 
 Outputs:
-- RuntimeData.Audio (float32 mono @ sample_rate, streamed in chunks)
+- RuntimeData.Audio (float32 mono @ 24000 Hz, streamed in chunks)
 
-Key notes:
-- Multiprocess execution support for concurrent operation with other AI models
-- Each next() call on the underlying generator is isolated on a worker thread to avoid PyTorch
-  heap corruption when called from Rust/PyO3 on Windows
-- Optional voice cloning via preloaded reference audio files
-- Model/device/attention/dtype choices follow the public VibeVoice demo patterns
+Requirements:
+- pip install vibevoice transformers torch
+- Voice preset .pt files in voices/streaming_model/ under the model directory
 """
 
 import asyncio
+import copy
 import logging
-import queue
 import threading
-from typing import AsyncGenerator, List, Optional, TYPE_CHECKING, Union, Dict, Any
+from typing import AsyncGenerator, Optional, Union, Dict, Any, List
 
 import numpy as np
 
-# RuntimeData bindings (type-safe passthrough with Rust runtime)
 from remotemedia.core.multiprocessing.data import RuntimeData
-logging.warning("[VibeVoiceTTSNode] RuntimeData: %s", RuntimeData)
-try:  # Runtime bridge
-    from remotemedia.core.multiprocessing.data import numpy_to_audio, audio_to_numpy
-    RUNTIME_DATA_AVAILABLE = True
-except ImportError:
-    RUNTIME_DATA_AVAILABLE = False
-    numpy_to_audio = None  # type: ignore
-    audio_to_numpy = None  # type: ignore
-    logging.warning("[VibeVoiceTTSNode] numpy_to_audio and audio_to_numpy bindings not available. Using fallback implementation.")
-
-# Import MultiprocessNode base class from core
 from remotemedia.core import MultiprocessNode, NodeConfig
+from .registration import streaming_node
+from remotemedia.core.multiprocessing import python_requires
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -53,651 +40,464 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 
-class VibeVoiceTTSNode(MultiprocessNode):
-    """Text-to-speech synthesis using VibeVoice with RuntimeData API and multiprocess support.
+def numpy_to_audio(samples: np.ndarray, sample_rate: int, channels: int = 1) -> RuntimeData:
+    """Convert numpy array to RuntimeData.Audio"""
+    return RuntimeData.audio(samples, sample_rate, channels)
 
-    Inherits from MultiprocessNode to enable concurrent execution in separate processes.
-    Parameters are intentionally similar to the public Gradio demo so you can
-    move between them easily.
+
+@streaming_node(
+    node_type="VibeVoiceTTSNode",
+    multi_output=True,
+    category="tts",
+    accepts=["text"],
+    produces=["audio"],
+    description="Text-to-speech synthesis using VibeVoice streaming model with voice presets"
+)
+@python_requires(["vibevoice @ git+https://github.com/microsoft/VibeVoice.git", "transformers", "torch"])
+class VibeVoiceTTSNode(MultiprocessNode):
+    """Text-to-speech synthesis using VibeVoice streaming inference model.
+
+    Uses pre-cached voice presets (.pt files) for fast, high-quality synthesis
+    without requiring raw reference audio. Supports multiple voice presets for
+    diverse output generation.
     """
 
     def __init__(
         self,
         node_id: str = None,
-        model_path: str = "/tmp/vibevoice-model",
-        device: Optional[str] = None,  # "cuda" | "mps" | "cpu" | None (auto)
-        inference_steps: int = 10,
-        cfg_scale: float = 1.3,
-        sample_rate: int = 24000,
-        stream_chunks: bool = True,
-        use_voice_cloning: bool = False,
-        voice_samples: Optional[List] = None,  # Can be file paths (str) or embedded audio (dict)
-        adapter_path: Optional[str] = None,
+        model_path: str = "microsoft/VibeVoice-Realtime-0.5B",
+        device: Optional[str] = None,
+        inference_steps: int = 5,
+        cfg_scale: float = 1.5,
+        voice: str = "",
+        voices_dir: Optional[str] = None,
         skip_tokens: Optional[List[str]] = None,
         config: Union[NodeConfig, Dict[str, Any]] = None,
         **kwargs,
     ) -> None:
         """
-        Initialize VibeVoice TTS node with RuntimeData and multiprocess support.
+        Initialize VibeVoice TTS node.
 
         Args:
             node_id: Unique identifier for this node instance
-            model_path: Path to VibeVoice model files
+            model_path: HuggingFace model ID or local path
             device: Device for inference ("cuda", "mps", "cpu", or None for auto-detect)
-            inference_steps: Number of denoising steps
-            cfg_scale: Classifier-free guidance scale
-            sample_rate: Output audio sample rate
-            stream_chunks: Whether to stream audio chunks
-            use_voice_cloning: Enable voice cloning
-            voice_samples: Voice samples for cloning (file paths or audio data)
-            adapter_path: Path to LoRA adapter
+            inference_steps: Number of denoising steps (default: 5 for streaming model)
+            cfg_scale: Classifier-free guidance scale (default: 1.5)
+            voice: Voice preset name (e.g., "en-Carter_man"). Empty = auto-select.
+            voices_dir: Path to voice presets directory. Default: auto-discover.
             skip_tokens: Tokens to filter from input text
-            config: NodeConfig for multiprocess mode (if available)
+            config: NodeConfig for multiprocess mode
             **kwargs: Additional parameters
         """
-        # Initialize MultiprocessNode base if config provided
         if config is not None:
             super().__init__(config, **kwargs)
-            # Extract params from config
             if isinstance(config, NodeConfig):
                 params = config.params
             else:
                 params = config.get('params', {})
 
-            # Override with params from config
             model_path = params.get('model_path', model_path)
             device = params.get('device', device)
             inference_steps = params.get('inference_steps', inference_steps)
             cfg_scale = params.get('cfg_scale', cfg_scale)
-            sample_rate = params.get('sample_rate', sample_rate)
-            stream_chunks = params.get('stream_chunks', stream_chunks)
-            use_voice_cloning = params.get('use_voice_cloning', use_voice_cloning)
-            voice_samples = params.get('voice_samples', voice_samples)
-            adapter_path = params.get('adapter_path', adapter_path)
+            voice = params.get('voice', voice)
+            voices_dir = params.get('voices_dir', voices_dir)
             skip_tokens = params.get('skip_tokens', skip_tokens)
         else:
-            # Standalone mode without multiprocess
-            self.node_id = node_id or "vibevoice_tts"
-            self.node_type = "VibeVoiceTTSNode"
+            from remotemedia.core.multiprocessing.node import NodeConfig as NC
+            minimal_config = NC(
+                node_id=node_id or "vibevoice_tts",
+                node_type="VibeVoiceTTSNode",
+                params={}
+            )
+            super().__init__(minimal_config, **kwargs)
             self.logger = logging.getLogger(__name__)
 
-        # VibeVoice-specific configuration
         self.model_path = model_path
         self.device = device
-        self.inference_steps = inference_steps
+        self.inference_steps = int(inference_steps)
         self.cfg_scale = float(cfg_scale)
-        self.sample_rate = int(sample_rate)
-        self.stream_chunks = bool(stream_chunks)
-        self.use_voice_cloning = bool(use_voice_cloning)
-        self.adapter_path = adapter_path
+        self.voice = voice
+        self.voices_dir = voices_dir
+        self.sample_rate = 24000
         self.skip_tokens = skip_tokens or ['<|text_end|>', '<|audio_end|>', '<|im_end|>', '<|im_start|>']
-
-        # Process voice samples - support both file paths and embedded audio data
-        self.voice_samples = []
-        self._embedded_audio_data = []  # Store pre-loaded audio numpy arrays
-
-        for sample in (voice_samples or []):
-            try:
-                if isinstance(sample, str):
-                    # Legacy: file path to load later
-                    self.voice_samples.append(sample)
-                elif isinstance(sample, dict) and 'audio' in sample:
-                    # New: embedded audio data from require()
-                    logger.info(f"Received embedded audio data, keys: {list(sample['audio'].keys())}")
-                    parsed_audio = self._parse_embedded_audio(sample['audio'])
-                    if parsed_audio.size > 0:
-                        self._embedded_audio_data.append(parsed_audio)
-                        logger.info(f"Successfully parsed embedded audio: {len(parsed_audio)} samples")
-                    else:
-                        logger.warning("Parsed audio is empty, skipping")
-                else:
-                    logger.warning(f"Ignoring unknown voice sample format: {type(sample)}")
-            except Exception as e:
-                logger.error(f"Error processing voice sample: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
-
         self.is_streaming = True
 
-        # Lazy-loaded heavy deps
         self._processor = None
         self._model = None
+        self._voice_presets: Dict[str, str] = {}  # name -> path
+        self._voice_cache: Dict[str, object] = {}  # name -> prefilled_outputs
         self._initialized = False
 
     async def initialize(self) -> None:
-        """Initialize VibeVoice processor and model.
-
-        We mirror the device/dtype/attention fallback logic in the demo code
-        (flash_attention_2 → sdpa) and move tensors to the correct device.
-        """
+        """Initialize VibeVoice streaming model, processor, and voice presets."""
         if self._initialized:
             return
 
         try:
             import torch
-            from vibevoice.processor.vibevoice_processor import VibeVoiceProcessor
-            from vibevoice.modular.modeling_vibevoice_inference import (
-                VibeVoiceForConditionalGenerationInference,
-            )
-            from vibevoice.modular.lora_loading import load_lora_assets
 
-            # Normalize/auto-detect device
-            dev = self.device
-            if dev is None:
-                if torch.cuda.is_available():
-                    dev = "cuda"
-                elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-                    dev = "mps"
-                else:
-                    dev = "cpu"
-            if isinstance(dev, str) and dev.lower() == "mpx":
-                dev = "mps"
-            self.device = dev
-
-            # Attention + dtype selection
-            if self.device == "mps":
-                torch_dtype = torch.float32
-                attn_impl_primary = "sdpa"
-            elif self.device == "cuda":
-                torch_dtype = torch.bfloat16
-                attn_impl_primary = "flash_attention_2"
-            else:
-                torch_dtype = torch.float32
-                attn_impl_primary = "sdpa"
-
-            logger.info(
-                f"Initializing VibeVoice: device={self.device}, dtype={torch_dtype}, attn={attn_impl_primary}"
-            )
-
-            # Load processor
-            self._processor = VibeVoiceProcessor.from_pretrained(self.model_path)
-
-            # Load model with fallback for attention implementation
-            try:
-                if self.device == "mps":
-                    self._model = VibeVoiceForConditionalGenerationInference.from_pretrained(
-                        self.model_path,
-                        torch_dtype=torch_dtype,
-                        attn_implementation=attn_impl_primary,
-                        device_map=None,
-                    )
-                    self._model.to("mps")
-                elif self.device == "cuda":
-                    self._model = VibeVoiceForConditionalGenerationInference.from_pretrained(
-                        self.model_path,
-                        torch_dtype=torch_dtype,
-                        device_map="cuda",
-                        attn_implementation=attn_impl_primary,
-                    )
-                else:
-                    self._model = VibeVoiceForConditionalGenerationInference.from_pretrained(
-                        self.model_path,
-                        torch_dtype=torch_dtype,
-                        device_map="cpu",
-                        attn_implementation=attn_impl_primary,
-                    )
-            except Exception as e:
-                if attn_impl_primary == "flash_attention_2":
-                    logger.warning(
-                        f"VibeVoice load failed with flash_attention_2 ({type(e).__name__}: {e}); falling back to sdpa"
-                    )
-                    self._model = VibeVoiceForConditionalGenerationInference.from_pretrained(
-                        self.model_path,
-                        torch_dtype=torch_dtype,
-                        device_map=(self.device if self.device in ("cuda", "cpu") else None),
-                        attn_implementation="sdpa",
-                    )
-                    if self.device == "mps":
-                        self._model.to("mps")
-                else:
-                    raise
-
-            # Optional adapters
-            if self.adapter_path:
-                try:
-                    report = load_lora_assets(self._model, self.adapter_path)
-                    loaded_components = [
-                        name
-                        for name, loaded in (
-                            ("language LoRA", report.language_model),
-                            ("diffusion head LoRA", report.diffusion_head_lora),
-                            ("diffusion head weights", report.diffusion_head_full),
-                            ("acoustic connector", report.acoustic_connector),
-                            ("semantic connector", report.semantic_connector),
-                        )
-                        if loaded
-                    ]
-                    if loaded_components:
-                        logger.info(f"Loaded adapters: {', '.join(loaded_components)}")
-                except Exception as e:
-                    logger.warning(f"Failed to load adapter assets: {e}")
-
-            # Eval mode + scheduler + steps
-            self._model.eval()
-            # Use SDE solver by default as in demo
-            try:
-                self._model.model.noise_scheduler = self._model.model.noise_scheduler.from_config(
-                    self._model.model.noise_scheduler.config,
-                    algorithm_type='sde-dpmsolver++',
-                    beta_schedule='squaredcos_cap_v2',
+            def _load():
+                from vibevoice.modular.modeling_vibevoice_streaming_inference import (
+                    VibeVoiceStreamingForConditionalGenerationInference,
                 )
-            except Exception:
-                # Not all builds expose this; safe to continue
-                pass
-            try:
-                self._model.set_ddpm_inference_steps(num_steps=int(self.inference_steps))
-            except Exception:
-                pass
+                from vibevoice.processor.vibevoice_streaming_processor import (
+                    VibeVoiceStreamingProcessor,
+                )
+
+                # Auto-detect device
+                dev = self.device
+                if dev is None:
+                    if torch.cuda.is_available():
+                        dev = "cuda"
+                    elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+                        dev = "mps"
+                    else:
+                        dev = "cpu"
+                if isinstance(dev, str) and dev.lower() == "mpx":
+                    dev = "mps"
+                self.device = dev
+                torch_device = torch.device(dev)
+
+                # Dtype + attention
+                if dev == "mps":
+                    load_dtype = torch.float32
+                    device_map = None
+                    attn_impl = "sdpa"
+                elif dev == "cuda":
+                    load_dtype = torch.bfloat16
+                    device_map = "cuda"
+                    attn_impl = "flash_attention_2"
+                else:
+                    load_dtype = torch.float32
+                    device_map = "cpu"
+                    attn_impl = "sdpa"
+
+                logger.info(f"Initializing VibeVoice streaming: device={dev}, dtype={load_dtype}, attn={attn_impl}")
+
+                # Load processor
+                processor = VibeVoiceStreamingProcessor.from_pretrained(self.model_path)
+
+                # Load model with flash_attention_2 fallback to sdpa
+                try:
+                    model = VibeVoiceStreamingForConditionalGenerationInference.from_pretrained(
+                        self.model_path,
+                        torch_dtype=load_dtype,
+                        device_map=device_map,
+                        attn_implementation=attn_impl,
+                    )
+                    if dev == "mps":
+                        model.to("mps")
+                except Exception as e:
+                    if attn_impl == "flash_attention_2":
+                        logger.warning(f"flash_attention_2 failed ({e}), falling back to sdpa")
+                        model = VibeVoiceStreamingForConditionalGenerationInference.from_pretrained(
+                            self.model_path,
+                            torch_dtype=load_dtype,
+                            device_map=device_map if device_map != "cuda" else dev,
+                            attn_implementation="sdpa",
+                        )
+                        if dev == "mps":
+                            model.to("mps")
+                    else:
+                        raise
+
+                model.eval()
+
+                # Configure scheduler
+                try:
+                    model.model.noise_scheduler = model.model.noise_scheduler.from_config(
+                        model.model.noise_scheduler.config,
+                        algorithm_type="sde-dpmsolver++",
+                        beta_schedule="squaredcos_cap_v2",
+                    )
+                except Exception:
+                    pass
+                try:
+                    model.set_ddpm_inference_steps(num_steps=self.inference_steps)
+                except Exception:
+                    pass
+
+                # Discover voice presets
+                voice_presets = self._discover_voice_presets(torch_device)
+
+                return processor, model, voice_presets, torch_device
+
+            self._processor, self._model, self._voice_presets, self._torch_device = await asyncio.to_thread(_load)
+
+            # Pre-cache the selected voice
+            if self.voice and self.voice in self._voice_presets:
+                await asyncio.to_thread(self._ensure_voice_cached, self.voice)
+            elif self._voice_presets:
+                # Auto-select: prefer en-Carter_man, else first available
+                default_key = "en-Carter_man"
+                if default_key not in self._voice_presets:
+                    default_key = next(iter(self._voice_presets))
+                self.voice = default_key
+                await asyncio.to_thread(self._ensure_voice_cached, self.voice)
+                logger.info(f"Auto-selected voice preset: {self.voice}")
+            else:
+                logger.warning("No voice presets found - synthesis will fail")
 
             self._initialized = True
-            logger.info("VibeVoice model initialized successfully")
+            logger.info(f"VibeVoice streaming model initialized. Voices: {list(self._voice_presets.keys())}")
 
         except ImportError as e:
             raise ImportError(
-                "VibeVoice is not installed. Install with: pip install vibevoice transformers soundfile librosa"
+                "VibeVoice is not installed. Install with: pip install vibevoice transformers torch"
             ) from e
         except Exception as e:
             logger.error(f"Failed to initialize VibeVoice: {e}")
             raise
 
+    def _discover_voice_presets(self, torch_device) -> Dict[str, str]:
+        """Find voice preset .pt files, downloading from GitHub if needed."""
+        import os
+        from pathlib import Path
+
+        presets: Dict[str, str] = {}
+
+        # Try voices_dir if specified
+        search_dirs = []
+        if self.voices_dir:
+            search_dirs.append(Path(self.voices_dir))
+
+        # Try local model path
+        local_voices = Path(self.model_path) / "voices" / "streaming_model"
+        if local_voices.exists():
+            search_dirs.append(local_voices)
+
+        # Try cache directory
+        cache_voices = Path.home() / ".cache" / "vibevoice" / "voices" / "streaming_model"
+        search_dirs.append(cache_voices)
+
+        for voices_dir in search_dirs:
+            if not voices_dir.exists():
+                continue
+            for pt_path in voices_dir.rglob("*.pt"):
+                presets[pt_path.stem] = str(pt_path)
+
+        # If no presets found, download from GitHub
+        if not presets:
+            logger.info("No local voice presets found, downloading from GitHub...")
+            presets = self._download_voice_presets_from_github(cache_voices)
+
+        if presets:
+            logger.info(f"Found {len(presets)} voice presets: {sorted(presets.keys())}")
+        else:
+            logger.warning("No voice presets found")
+
+        return dict(sorted(presets.items()))
+
+    def _download_voice_presets_from_github(self, target_dir) -> Dict[str, str]:
+        """Download voice preset .pt files from the VibeVoice GitHub repo."""
+        from pathlib import Path
+        import urllib.request
+        import json
+
+        presets: Dict[str, str] = {}
+        target_dir = Path(target_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        github_api = "https://api.github.com/repos/microsoft/VibeVoice/contents/demo/voices/streaming_model"
+        try:
+            req = urllib.request.Request(github_api, headers={"Accept": "application/vnd.github.v3+json"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                files = json.loads(resp.read().decode())
+
+            pt_files = [f for f in files if f["name"].endswith(".pt")]
+            logger.info(f"Found {len(pt_files)} voice presets on GitHub, downloading...")
+
+            for f in pt_files:
+                name = f["name"]
+                download_url = f["download_url"]
+                local_path = target_dir / name
+
+                if local_path.exists():
+                    presets[local_path.stem] = str(local_path)
+                    continue
+
+                logger.info(f"Downloading voice preset: {name}")
+                urllib.request.urlretrieve(download_url, str(local_path))
+                presets[local_path.stem] = str(local_path)
+
+        except Exception as e:
+            logger.error(f"Failed to download voice presets from GitHub: {e}")
+
+        return presets
+
+    def _ensure_voice_cached(self, key: str) -> object:
+        """Load and cache a voice preset."""
+        if key in self._voice_cache:
+            return self._voice_cache[key]
+
+        if key not in self._voice_presets:
+            raise RuntimeError(f"Voice preset '{key}' not found. Available: {list(self._voice_presets.keys())}")
+
+        import torch
+        preset_path = self._voice_presets[key]
+        logger.info(f"Loading voice preset '{key}' from {preset_path}")
+        prefilled_outputs = torch.load(preset_path, map_location=self._torch_device, weights_only=False)
+        self._voice_cache[key] = prefilled_outputs
+        return prefilled_outputs
+
+    def _generate_sync(self, text: str, voice_key: str) -> list:
+        """Run TTS generation synchronously (thread-safe). Returns list of numpy audio chunks."""
+        import torch
+        from vibevoice.modular.streamer import AudioStreamer
+
+        prefilled_outputs = self._ensure_voice_cached(voice_key)
+
+        # Prepare inputs using streaming processor with cached prompt
+        inputs = self._processor.process_input_with_cached_prompt(
+            text=text.strip(),
+            cached_prompt=prefilled_outputs,
+            padding=True,
+            return_tensors="pt",
+            return_attention_mask=True,
+        )
+        inputs = {
+            k: v.to(self._torch_device) if hasattr(v, "to") else v
+            for k, v in inputs.items()
+        }
+
+        # Set up streamer and generation thread
+        audio_streamer = AudioStreamer(batch_size=1, stop_signal=None, timeout=None)
+        errors = []
+        stop_event = threading.Event()
+
+        def run_generation():
+            try:
+                self._model.generate(
+                    **inputs,
+                    max_new_tokens=None,
+                    cfg_scale=self.cfg_scale,
+                    tokenizer=self._processor.tokenizer,
+                    generation_config={
+                        "do_sample": False,
+                        "temperature": 1.0,
+                        "top_p": 1.0,
+                    },
+                    audio_streamer=audio_streamer,
+                    stop_check_fn=stop_event.is_set,
+                    verbose=False,
+                    refresh_negative=True,
+                    all_prefilled_outputs=copy.deepcopy(prefilled_outputs),
+                )
+            except Exception as e:
+                errors.append(e)
+                logger.error(f"Generation thread error: {e}")
+                audio_streamer.end()
+
+        gen_thread = threading.Thread(target=run_generation, daemon=True)
+        gen_thread.start()
+
+        # Collect audio chunks from streamer
+        chunks = []
+        try:
+            stream = audio_streamer.get_stream(0)
+            for audio_chunk in stream:
+                if torch.is_tensor(audio_chunk):
+                    audio_chunk = audio_chunk.detach().cpu().to(torch.float32).numpy()
+                else:
+                    audio_chunk = np.asarray(audio_chunk, dtype=np.float32)
+
+                if audio_chunk.ndim > 1:
+                    audio_chunk = audio_chunk.reshape(-1)
+
+                # Normalize if clipping
+                peak = np.max(np.abs(audio_chunk)) if audio_chunk.size else 0.0
+                if peak > 1.0:
+                    audio_chunk = audio_chunk / peak
+
+                chunks.append(audio_chunk.astype(np.float32))
+        finally:
+            stop_event.set()
+            audio_streamer.end()
+            gen_thread.join(timeout=10)
+
+        if errors:
+            raise errors[0]
+
+        return chunks
+
     async def cleanup(self) -> None:
         self._model = None
         self._processor = None
+        self._voice_cache.clear()
+        self._voice_presets.clear()
         self._initialized = False
         logger.info("VibeVoice TTS node cleaned up")
 
-    def _parse_embedded_audio(self, audio_dict: dict) -> np.ndarray:
-        """Parse embedded audio data from require() call.
-
-        Args:
-            audio_dict: Dict with keys: samples (bytes/list), sampleRate, channels, format, numSamples
-
-        Returns:
-            Numpy array of float32 audio samples at target sample_rate
-        """
-        try:
-            import base64
-
-            samples_data = audio_dict.get('samples')
-            source_sr = audio_dict.get('sampleRate', self.sample_rate)
-            channels = audio_dict.get('channels', 1)
-            audio_format = audio_dict.get('format', 1)  # 0=I16, 1=F32
-
-            # Decode samples from base64 if needed (JSON sends bytes as base64)
-            if isinstance(samples_data, str):
-                samples_bytes = base64.b64decode(samples_data)
-            elif isinstance(samples_data, (bytes, bytearray)):
-                samples_bytes = bytes(samples_data)
-            elif isinstance(samples_data, dict) and 'data' in samples_data:
-                # Handle Buffer objects from Node.js which serialize as {type: 'Buffer', data: [...]}
-                samples_bytes = bytes(samples_data['data'])
-            else:
-                logger.error(f"Unexpected samples data type: {type(samples_data)}")
-                return np.array([], dtype=np.float32)
-
-            # Convert bytes to numpy array based on format
-            if audio_format == 1:  # F32
-                wav = np.frombuffer(samples_bytes, dtype=np.float32)
-            elif audio_format == 0:  # I16
-                wav_i16 = np.frombuffer(samples_bytes, dtype=np.int16)
-                wav = wav_i16.astype(np.float32) / 32768.0  # Normalize to [-1, 1]
-            else:
-                logger.error(f"Unknown audio format: {audio_format}")
-                return np.array([], dtype=np.float32)
-
-            # Handle multi-channel audio - convert to mono
-            if channels > 1:
-                wav = wav.reshape(-1, channels)
-                wav = wav.mean(axis=1)
-
-            # Resample if needed
-            if source_sr != self.sample_rate:
-                try:
-                    import librosa
-                    wav = librosa.resample(wav, orig_sr=source_sr, target_sr=self.sample_rate)
-                except Exception:
-                    # Fallback: naive resample
-                    ratio = self.sample_rate / float(source_sr)
-                    idx = (np.arange(int(len(wav) * ratio)) / ratio).round().astype(int)
-                    idx = np.clip(idx, 0, len(wav) - 1)
-                    wav = wav[idx]
-
-            logger.info(f"Parsed embedded audio: {len(wav)} samples @ {self.sample_rate} Hz")
-            return wav.astype(np.float32)
-
-        except Exception as e:
-            import traceback
-            logger.error(f"Failed to parse embedded audio: {e}")
-            logger.error(f"Traceback:\n{traceback.format_exc()}")
-            return np.array([], dtype=np.float32)
-
-    def _read_audio_file(self, path: str, target_sr: int) -> np.ndarray:
-        """Read a reference audio file to mono float32 target_sr."""
-        try:
-            import soundfile as sf
-            wav, sr = sf.read(path)
-            if wav.ndim > 1:
-                wav = wav.mean(axis=1)
-            if sr != target_sr:
-                try:
-                    import librosa
-                    wav = librosa.resample(wav, orig_sr=sr, target_sr=target_sr)
-                except Exception:
-                    # Fallback: naive resample (not recommended for prod, but avoids hard dep)
-                    ratio = target_sr / float(sr)
-                    idx = (np.arange(int(len(wav) * ratio)) / ratio).round().astype(int)
-                    idx = np.clip(idx, 0, len(wav) - 1)
-                    wav = wav[idx]
-            return wav.astype(np.float32)
-        except Exception as e:
-            logger.warning(f"Failed to read voice sample '{path}': {e}")
-            return np.array([], dtype=np.float32)
-
-    def _build_inputs(self, text: str):
-        import torch
-        processor_kwargs = {
-            "text": [text],
-            "padding": True,
-            "return_tensors": "pt",
-            "return_attention_mask": True,
-        }
-        # Pack voice samples if enabled and present
-        if self.use_voice_cloning:
-            voices: List[np.ndarray] = []
-
-            # Add embedded audio data (from require() calls)
-            for audio_np in self._embedded_audio_data:
-                if audio_np.size > 0:
-                    voices.append(audio_np)
-
-            # Add file-based voice samples
-            for p in self.voice_samples:
-                if not p:
-                    continue
-                a = self._read_audio_file(p, self.sample_rate)
-                if a.size > 0:
-                    voices.append(a)
-
-            if voices:
-                logger.info(f"Using {len(voices)} voice samples for cloning")
-                processor_kwargs["voice_samples"] = [voices]  # batch=1
-            else:
-                logger.warning("Voice cloning enabled but no valid voice samples available")
-
-        inputs = self._processor(**processor_kwargs)
-        # Move tensors to device and handle None values
-        target = self.device if self.device in ("cuda", "mps") else "cpu"
-        processed_inputs = {}
-        for k, v in list(inputs.items()):
-            if v is None:
-                # VibeVoice model tries to move tensors without checking for None
-                # For speech tensors, skip entirely rather than passing None
-                if k in ('speech_tensors', 'speech_masks'):
-                    logger.debug(f"Skipping None value for key: {k}")
-                    continue
-                processed_inputs[k] = v
-            elif torch.is_tensor(v):
-                processed_inputs[k] = v.to(target)
-            else:
-                processed_inputs[k] = v
-        return processed_inputs
-
-    def _generate_sync_thread(self, inputs, cfg_scale, is_prefill: bool, audio_streamer):
-        """
-        Run model.generate() synchronously in a dedicated thread (PyTorch-safe).
-
-        This runs in the background and populates the audio_streamer.
-        The main thread can iterate audio_streamer.get_stream(0) concurrently.
-        """
-        try:
-            logger.info("Generation thread: Starting")
-            logger.info(f"Generation thread: Generate params: cfg_scale={cfg_scale}, is_prefill={is_prefill}")
-
-            # Filter out None tensor values to avoid AttributeError in model.generate()
-            # The VibeVoice model tries to move tensors to device without checking for None
-            import torch
-            filtered_inputs = {}
-            for k, v in inputs.items():
-                if v is None and k in ('speech_tensors', 'speech_masks'):
-                    # Skip None speech tensors/masks - model will use default behavior
-                    logger.debug(f"Skipping None value for key: {k}")
-                    continue
-                filtered_inputs[k] = v
-
-            # Call generate with tokenizer in kwargs (required by VibeVoice)
-            # This will block until generation completes, but audio chunks are yielded via the streamer
-            result = self._model.generate(
-                **filtered_inputs,
-                max_new_tokens=None,
-                cfg_scale=cfg_scale,
-                tokenizer=self._processor.tokenizer,
-                audio_streamer=audio_streamer,
-                stop_check_fn=None,
-                is_prefill=is_prefill,
-            )
-            logger.info(f"Generation thread: model.generate() completed successfully")
-
-        except Exception as e:
-            import traceback
-            logger.error(f"Generation thread error: {e}")
-            logger.error(f"Generation thread traceback:\n{traceback.format_exc()}")
-            # Signal end of stream on error
-            try:
-                audio_streamer.end()
-            except:
-                pass
-
-    def _get_next_chunk_sync(self, stream_iter):
-        """
-        Get the next audio chunk from the stream synchronously (thread-safe).
-
-        This runs in a thread to isolate PyTorch operations from PyO3.
-
-        Args:
-            stream_iter: Iterator from VibeVoice AudioStreamer
-
-        Returns:
-            Audio tensor or None if exhausted
-        """
-        try:
-            chunk = next(stream_iter)
-            return chunk
-        except StopIteration:
-            return None
-
     async def process(self, data: RuntimeData) -> Union[RuntimeData, AsyncGenerator[RuntimeData, None], None]:
         """Process RuntimeData.Text to streamed RuntimeData.Audio chunks."""
-        try:
-            logger.info("VibeVoice process() called")
+        logger.info("VibeVoiceTTSNode process() called")
 
-            if not self._initialized:
-                logger.info("VibeVoice not initialized, initializing now")
-                await self.initialize()
-                logger.info("VibeVoice initialization complete")
+        if not self._initialized:
+            await self.initialize()
 
-            # Validate input type
-            if not data.is_text():
-                logger.info("VibeVoice: non-text data, passing through")
-                # Pass-through for non-text (keeps pipeline robust)
-                yield data
-                return
-
-            logger.info("VibeVoice: extracting text from RuntimeData")
-            try:
-                text = data.as_text()  # extract BEFORE awaits - THIS CROSSES RUST BOUNDARY
-                logger.info(f"VibeVoice: extracted text successfully, length: {len(text) if text else 0}")
-            except Exception as extract_e:
-                logger.error(f"VibeVoice: FAILED to extract text from RuntimeData: {extract_e}")
-                import traceback
-                logger.error(f"Extract text traceback:\n{traceback.format_exc()}")
-                return
-
-            if not text or not text.strip():
-                logger.info("VibeVoice: empty text, skipping")
-                return
-
-            # CRITICAL: Prevent error message feedback loops - skip synthesizing error messages
-            if "ERROR:" in text or "CUDA error" in text or "Traceback" in text or "RuntimeError" in text:
-                logger.warning(f"VibeVoice: skipping error message to prevent feedback loop: '{text[:100]}...'")
-                return
-        except Exception as early_e:
-            import traceback
-            logger.error(f"VibeVoice: Error in early process() setup: {early_e}")
-            logger.error(f"Early process() traceback:\n{traceback.format_exc()}")
+        if not data.is_text():
+            logger.info(f"VibeVoice: non-text data (type={data.type}), passing through")
+            yield data
             return
 
-        # Remove special tokens / sanitize
+        text = data.as_text()
+        if not text or not text.strip():
+            logger.warning("VibeVoice: empty text, skipping")
+            return
+
+        # Skip error messages to prevent feedback loops
+        if any(marker in text for marker in ("ERROR:", "CUDA error", "Traceback", "RuntimeError")):
+            logger.warning(f"VibeVoice: skipping error message: '{text[:80]}...'")
+            return
+
+        # Remove special tokens
         for tok in self.skip_tokens:
             text = text.replace(tok, '')
         text = text.replace('`', "'").replace('\t', ' ').strip()
         if not text:
-            logger.info("VibeVoice: only special tokens, skipping")
             return
-        # Format text with speaker label and newline (required by VibeVoice processor)
-        text = f"Speaker 1: {text}"
-        logger.info(f"VibeVoice: starting synthesis for: '{text[:100]}{'...' if len(text) > 100 else ''}'")
 
-        # Build inputs and generate audio using thread-safe approach
-        # ARCHITECTURE: Like Kokoro, we use asyncio.to_thread() for ALL PyTorch/CUDA operations
-        # to avoid heap corruption on Windows when called through Rust/PyO3
+        logger.info(f"VibeVoice: synthesizing '{text[:80]}{'...' if len(text) > 80 else ''}' with voice='{self.voice}'")
+
         try:
-            logger.info("About to import torch")
-            import torch
-            logger.info("Torch imported successfully")
+            audio_chunks = await asyncio.to_thread(self._generate_sync, text, self.voice)
 
-            # Build inputs in thread (PyTorch-safe)
-            logger.info(f"Building inputs from text (device: {self.device})")
-
-            def build_inputs_sync():
-                """Build inputs synchronously in thread."""
-                return self._build_inputs(text)
-
-            inputs = await asyncio.to_thread(build_inputs_sync)
-            logger.info(f"Inputs built successfully: keys={list(inputs.keys())}")
-
-            # Validate input shapes
-            if 'input_ids' in inputs:
-                input_shape = inputs['input_ids'].shape
-                logger.info(f"Input IDs shape: {input_shape}")
-                if len(input_shape) != 2 or input_shape[0] != 1:
-                    logger.warning(f"Unexpected input_ids shape: {input_shape}, expected (1, seq_len)")
-                if input_shape[1] > self._model.config.decoder_config.max_position_embeddings:
-                    logger.error(f"Input sequence length {input_shape[1]} exceeds max_position_embeddings")
-                    logger.warning("Truncating input to fit model constraints")
-                    max_len = self._model.config.decoder_config.max_position_embeddings
-                    inputs['input_ids'] = inputs['input_ids'][:, :max_len]
-                    if 'attention_mask' in inputs:
-                        inputs['attention_mask'] = inputs['attention_mask'][:, :max_len]
-                    logger.info(f"Truncated input shape: {inputs['input_ids'].shape}")
-
-            # Start generation in background thread using the pattern from Gradio demo
-            # Key: Don't wait for generation to complete - start iterating stream immediately
-            logger.info("Starting generation in background thread")
-
-            from vibevoice.modular.streamer import AudioStreamer
-            audio_streamer = AudioStreamer(batch_size=1, stop_signal=None, timeout=None)
-
-            # Start generation in a background thread (don't await!)
-            import threading
-            generation_thread = threading.Thread(
-                target=self._generate_sync_thread,
-                args=(inputs, float(self.cfg_scale), True, audio_streamer),
-                daemon=True
-            )
-            generation_thread.start()
-
-            # Give it a moment to start
-            await asyncio.sleep(0.1)
-
-            # Get stream iterator immediately (while generation is running in background)
-            stream_iter = audio_streamer.get_stream(0)
-            logger.info("Generation started, beginning to stream audio chunks")
-
-            # Iterate the stream, running EACH next() call in a thread (like Kokoro)
             total_samples = 0
-            chunk_idx = 0
-            duration = 0.0  # Initialize to avoid UnboundLocalError
-
-            while True:
-                # Get next chunk from stream in thread (PyTorch-safe)
-                chunk = await asyncio.to_thread(self._get_next_chunk_sync, stream_iter)
-
-                if chunk is None:
-                    # Stream exhausted
-                    logger.info(f"Stream exhausted after {chunk_idx} chunks")
-                    break
-
-                chunk_idx += 1
-                logger.info(f"Processing chunk {chunk_idx}")
-
-                # Convert tensor to numpy (can do this in main thread since we're just converting)
-                if torch.is_tensor(chunk):
-                    logger.info(f"Chunk is tensor with dtype {chunk.dtype}, shape {chunk.shape}")
-                    if chunk.dtype == torch.bfloat16:
-                        chunk = chunk.float()
-                    audio_np = chunk.detach().cpu().numpy().astype(np.float32)
-                else:
-                    audio_np = np.asarray(chunk, dtype=np.float32)
-
-                if audio_np.ndim > 1:
-                    audio_np = audio_np.squeeze()
-
+            for idx, audio_np in enumerate(audio_chunks):
                 total_samples += len(audio_np)
                 duration = total_samples / float(self.sample_rate)
                 logger.info(
-                    f"VibeVoice: yielding chunk {chunk_idx} ({len(audio_np)/self.sample_rate:.2f}s) | total {duration:.2f}s"
+                    f"VibeVoice: yielding chunk {idx + 1} "
+                    f"({len(audio_np) / self.sample_rate:.2f}s) | total {duration:.2f}s"
                 )
+                yield numpy_to_audio(audio_np, self.sample_rate, channels=1)
 
-                # Convert to RuntimeData.Audio and yield
-                audio_data = numpy_to_audio(audio_np, self.sample_rate, channels=1)
-                yield audio_data
-
-            logger.info(f"Streaming complete: {chunk_idx} chunks, {total_samples} samples ({duration:.2f}s)")
+            logger.info(f"VibeVoice: synthesis complete - {len(audio_chunks)} chunks, {total_samples} samples")
 
         except RuntimeError as e:
-            import traceback
             if "CUDA error" in str(e):
-                logger.error("VibeVoice: CUDA error during synthesis; clearing CUDA context and reinitializing")
-                logger.error(f"CUDA error traceback:\n{traceback.format_exc()}")
-
-                # Clear CUDA error state and free memory
+                logger.error(f"VibeVoice: CUDA error: {e}")
+                self._initialized = False
+                self._model = None
+                self._processor = None
                 try:
                     import torch
                     if torch.cuda.is_available():
-                        logger.info("VibeVoice: Clearing CUDA cache and synchronizing")
                         torch.cuda.empty_cache()
                         torch.cuda.synchronize()
-                        # Reset peak memory stats
-                        torch.cuda.reset_peak_memory_stats()
-                        logger.info("VibeVoice: CUDA context cleared")
-                except Exception as cuda_clear_e:
-                    logger.error(f"VibeVoice: Error clearing CUDA context: {cuda_clear_e}")
-
-                # Reinitialize the model
-                self._initialized = False
-                self._processor = None
-                self._model = None
+                except Exception:
+                    pass
                 try:
-                    logger.info("VibeVoice: Reinitializing model after CUDA error")
                     await self.initialize()
-                    logger.info("VibeVoice: Reinitialization completed successfully")
                 except Exception as reinit_e:
                     logger.error(f"VibeVoice: reinit failed: {reinit_e}")
-                    logger.error(f"Reinit traceback:\n{traceback.format_exc()}")
                 return
-            else:
-                logger.error(f"VibeVoice: runtime error: {e}")
-                logger.error(f"Runtime error traceback:\n{traceback.format_exc()}")
-                raise
-        except Exception as e:
-            import traceback
-            logger.error(f"VibeVoice: unexpected error: {e}")
-            logger.error(f"Unexpected error traceback:\n{traceback.format_exc()}")
             raise
-        finally:
-            logger.info("VibeVoice: cleanup complete")
-
-        logger.info("VibeVoice: streaming complete")
+        except Exception as e:
+            logger.error(f"VibeVoice: unexpected error: {e}")
+            raise
 
     def get_config(self) -> dict:
         return {
@@ -707,66 +507,7 @@ class VibeVoiceTTSNode(MultiprocessNode):
             "device": self.device,
             "inference_steps": self.inference_steps,
             "cfg_scale": self.cfg_scale,
+            "voice": self.voice,
             "sample_rate": self.sample_rate,
-            "stream_chunks": self.stream_chunks,
-            "use_voice_cloning": self.use_voice_cloning,
-            "voice_samples": list(self.voice_samples),
-            "adapter_path": self.adapter_path,
+            "available_voices": list(self._voice_presets.keys()) if self._voice_presets else [],
         }
-
-
-# Example usage (manual quick test)
-async def main():
-    if not RUNTIME_DATA_AVAILABLE:
-        print("RuntimeData bindings not available. Please build the Rust extension (cargo build --release).")
-        return
-
-    print("=" * 60)
-    print("VibeVoice TTS Node with RuntimeData API")
-    print("=" * 60)
-
-    import os
-    # Get the path to the voice sample relative to the SDK root
-    # File structure: python-client/remotemedia/nodes/tts_vibevoice.py -> go up 4 levels to SDK root
-    sdk_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    voice_sample_path = os.path.join(sdk_root, "examples", "transcribe_demo.wav")
-    print(f"Voice sample path: {voice_sample_path}")
-    
-    node = VibeVoiceTTSNode(
-        node_id="vibevoice_tts_1",
-        model_path="vibevoice/VibeVoice-1.5B",
-        device=None,  # auto
-        inference_steps=10,
-        cfg_scale=1.3,
-        sample_rate=24000,
-        use_voice_cloning=True,
-        voice_samples=[voice_sample_path],
-    )
-
-    await node.initialize()
-
-    # Prepare input text (longer text for more audio generation)
-    text_in = RuntimeData.text(
-        "Hello! This is a demonstration of the VibeVoice text-to-speech node using the RuntimeData API. "
-        "The system supports real-time streaming of high-quality speech synthesis with voice cloning capabilities. "
-        "You can use custom voice samples to generate speech that matches the characteristics of the reference audio. "
-        "This technology enables natural-sounding text-to-speech for various applications including virtual assistants, "
-        "audiobook narration, and accessibility tools."
-    )
-
-    print("\nSynthesizing...")
-    chunks = []
-    async for audio_chunk in node.process(text_in):
-        arr = audio_to_numpy(audio_chunk)
-        chunks.append(arr)
-        print(f"  Got chunk: {len(arr)} samples")
-
-    await node.cleanup()
-
-    total = sum(len(c) for c in chunks)
-    dur = total / float(node.sample_rate)
-    print(f"\nDone. Chunks={len(chunks)}, total={total} samples ({dur:.2f}s) @ {node.sample_rate} Hz")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

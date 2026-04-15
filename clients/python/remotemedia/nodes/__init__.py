@@ -47,6 +47,18 @@ from .audio import AudioTransform, AudioBuffer, AudioResampler, VoiceActivityDet
 from .transcription import WhisperXTranscriber, RustWhisperTranscriber
 from .tts import KokoroTTSNode
 from .tts_vibevoice import VibeVoiceTTSNode
+try:
+    from .tts_voxtral import VoxtralTTSNode
+    _has_voxtral = True
+except ImportError:
+    VoxtralTTSNode = None
+    _has_voxtral = False
+try:
+    from .tts_cosyvoice3 import CosyVoice3TTSNode
+    _has_cosyvoice3 = True
+except ImportError:
+    CosyVoice3TTSNode = None
+    _has_cosyvoice3 = False
 from .simple_pytorch_test import SimplePyTorchNode
 # Optional import: LFM2AudioNode requires liquid_audio package
 try:
@@ -135,6 +147,7 @@ __all__ = [
     # TTS nodes
     "KokoroTTSNode",
     "VibeVoiceTTSNode",
+    "VoxtralTTSNode",
     # Test nodes
     "SimplePyTorchNode",
     # Integration test nodes
@@ -151,4 +164,8 @@ __all__ = [
 
 # Add optional ML nodes if available
 if _has_lfm2:
-    __all__.append("LFM2AudioNode") 
+    __all__.append("LFM2AudioNode")
+if _has_voxtral:
+    __all__.append("VoxtralTTSNode")
+if _has_cosyvoice3:
+    __all__.append("CosyVoice3TTSNode") 

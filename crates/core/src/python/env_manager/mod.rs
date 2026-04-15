@@ -537,6 +537,27 @@ impl PythonEnvManager {
             .await
     }
 
+    /// Install additional dependencies into an existing virtual environment.
+    ///
+    /// This is used as a fallback when node-declared deps are discovered
+    /// after the initial venv was created (e.g., via the DEPS control channel).
+    /// The deps are installed into the given venv without recreating it.
+    pub async fn install_additional_deps(
+        &self,
+        venv: &VenvInfo,
+        deps: &[String],
+    ) -> Result<()> {
+        if deps.is_empty() {
+            return Ok(());
+        }
+        tracing::info!(
+            cache_key = %venv.cache_key,
+            deps = ?deps,
+            "Installing additional dependencies into existing venv"
+        );
+        self.backend.install_deps(venv, deps).await
+    }
+
     /// Get the current configuration.
     pub fn config(&self) -> &PythonEnvConfig {
         &self.config

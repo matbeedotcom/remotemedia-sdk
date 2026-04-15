@@ -411,6 +411,64 @@ impl StreamingNodeFactory for VibeVoiceTTSNodeFactory {
     }
 }
 
+struct CosyVoice3TTSNodeFactory;
+impl StreamingNodeFactory for CosyVoice3TTSNodeFactory {
+    fn create(
+        &self,
+        node_id: String,
+        params: &Value,
+        session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = if let Some(sid) = session_id {
+            PythonStreamingNode::with_session(node_id, "CosyVoice3TTSNode", params, sid)?
+        } else {
+            PythonStreamingNode::new(node_id, "CosyVoice3TTSNode", params)?
+        };
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "CosyVoice3TTSNode"
+    }
+
+    fn is_python_node(&self) -> bool {
+        true
+    }
+
+    fn is_multi_output_streaming(&self) -> bool {
+        true // CosyVoice3 yields multiple audio chunks per text input
+    }
+}
+
+struct VoxtralTTSNodeFactory;
+impl StreamingNodeFactory for VoxtralTTSNodeFactory {
+    fn create(
+        &self,
+        node_id: String,
+        params: &Value,
+        session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        let node = if let Some(sid) = session_id {
+            PythonStreamingNode::with_session(node_id, "VoxtralTTSNode", params, sid)?
+        } else {
+            PythonStreamingNode::new(node_id, "VoxtralTTSNode", params)?
+        };
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "VoxtralTTSNode"
+    }
+
+    fn is_python_node(&self) -> bool {
+        true
+    }
+
+    fn is_multi_output_streaming(&self) -> bool {
+        true
+    }
+}
+
 struct SimplePyTorchNodeFactory;
 impl StreamingNodeFactory for SimplePyTorchNodeFactory {
     fn create(

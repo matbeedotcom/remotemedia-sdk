@@ -1,0 +1,25 @@
+# TTS Dataset Generation Pipeline
+# Generates diverse audio samples for wake-word model training
+# Template variables are substituted by the tts-dataset-gen CLI tool
+
+version: "v1"
+metadata:
+  name: "tts-dataset"
+  description: "TTS synthesis for dataset generation with configurable model and voice"
+  category: "tts"
+
+python_env:
+  python_version: "3.11"
+
+nodes:
+  - id: tts
+    node_type: ${TTS_NODE_TYPE:-KokoroTTSNode}
+    params:
+      voice: ${VOICE:-af_heart}
+      speed: ${SPEED:-1.0}
+      sample_rate: ${SAMPLE_RATE:-24000}
+      lang_code: ${LANG_CODE:-a}
+      speaker_description: ${SPEAKER_DESC:-A clear, neutral voice speaks at a moderate pace.}
+      model_path: ${MODEL_PATH:-microsoft/VibeVoice-Realtime-0.5B}
+
+connections: []

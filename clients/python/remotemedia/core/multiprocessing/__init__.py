@@ -138,6 +138,18 @@ def _auto_register_builtin_nodes():
         pass  # VibeVoice not installed
 
     try:
+        from remotemedia.nodes.tts_cosyvoice3 import CosyVoice3TTSNode
+        _NODE_REGISTRY["CosyVoice3TTSNode"] = CosyVoice3TTSNode
+    except ImportError:
+        pass  # CosyVoice3 not installed
+
+    try:
+        from remotemedia.nodes.tts_voxtral import VoxtralTTSNode
+        _NODE_REGISTRY["VoxtralTTSNode"] = VoxtralTTSNode
+    except ImportError:
+        pass  # Voxtral not installed
+
+    try:
         from remotemedia.nodes.ml.lfm2_audio import LFM2AudioNode
         _NODE_REGISTRY["LFM2AudioNode"] = LFM2AudioNode
         _NODE_REGISTRY["LFM2Node"] = LFM2AudioNode  # Alias

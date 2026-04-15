@@ -154,6 +154,15 @@ impl StreamingSession {
             .map_err(|e| anyhow::anyhow!("Failed to send data: {}", e))
     }
 
+    /// Signal that no more input will be sent
+    ///
+    /// This closes the input channel, allowing the session router to shut down
+    /// gracefully after processing remaining data. Outputs can still be received
+    /// via `recv()` after calling this.
+    pub fn signal_input_complete(&mut self) {
+        self.handle.signal_input_complete();
+    }
+
     /// Receive output from the pipeline
     ///
     /// Returns None if the session has ended.

@@ -1208,6 +1208,107 @@ impl MultiprocessExecutor {
         &self.channel_registry
     }
 
+    /// Discover Python package requirements declared by a node class via `@python_requires`.
+    ///
+    /// Runs a lightweight Python probe using the base Python interpreter (before venv setup)
+    /// to import the node class and read its `__python_requires__` attribute. This allows
+    /// the managed environment to include node-declared deps in the initial venv creation,
+    /// avoiding a failed first spawn.
+    ///
+    /// Returns an empty Vec if discovery fails (e.g., node not found, Python not available).
+    async fn discover_node_deps(&self, node_type: &str) -> Vec<String> {
+        let python = self.config.python_executable.clone();
+
+        // Read spawn config and extract what we need, then drop the lock
+        let (python_path_env, register_imports) = {
+            let spawn_config = self.process_manager.spawn_config().read().await;
+
+            let path_env = if !self.config.python_path.is_empty() {
+                self.config
+                    .python_path
+                    .iter()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .collect::<Vec<_>>()
+                    .join(if cfg!(windows) { ";" } else { ":" })
+            } else if !spawn_config.python_path.is_empty() {
+                spawn_config
+                    .python_path
+                    .iter()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .collect::<Vec<_>>()
+                    .join(if cfg!(windows) { ";" } else { ":" })
+            } else {
+                String::new()
+            };
+
+            let imports: String = spawn_config
+                .register_modules
+                .iter()
+                .map(|m| format!("    __import__('{m}')\n"))
+                .collect();
+
+            (path_env, imports)
+        };
+
+        let script = format!(
+            r#"
+import json, sys
+try:
+{register_imports}    from remotemedia.core.multiprocessing import get_node_requirements
+    print(json.dumps(get_node_requirements("{node_type}")))
+except Exception:
+    print("[]")
+"#,
+        );
+
+        let mut cmd = tokio::process::Command::new(python);
+        cmd.args(["-c", &script]);
+        if !python_path_env.is_empty() {
+            cmd.env("PYTHONPATH", &python_path_env);
+        }
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::null());
+
+        match tokio::time::timeout(std::time::Duration::from_secs(15), cmd.output()).await {
+            Ok(Ok(output)) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                match serde_json::from_str::<Vec<String>>(stdout.trim()) {
+                    Ok(deps) if !deps.is_empty() => {
+                        tracing::info!(
+                            node_type = %node_type,
+                            deps = ?deps,
+                            "Discovered node-declared Python requirements"
+                        );
+                        deps
+                    }
+                    _ => Vec::new(),
+                }
+            }
+            Ok(Ok(_)) => {
+                tracing::debug!(
+                    node_type = %node_type,
+                    "Node deps discovery probe exited with non-zero status"
+                );
+                Vec::new()
+            }
+            Ok(Err(e)) => {
+                tracing::debug!(
+                    node_type = %node_type,
+                    error = %e,
+                    "Failed to run node deps discovery probe"
+                );
+                Vec::new()
+            }
+            Err(_) => {
+                tracing::debug!(
+                    node_type = %node_type,
+                    "Node deps discovery probe timed out"
+                );
+                Vec::new()
+            }
+        }
+    }
+
     /// Get the Docker support instance if available
     #[cfg(feature = "docker")]
     pub fn docker_support(&self) -> Option<&Arc<DockerSupport>> {
@@ -1662,9 +1763,20 @@ impl MultiprocessExecutor {
                         if bytes == b"READY" {
                             tracing::debug!("Node {} signaled READY via iceoryx2", node_id_clone);
                             return Ok(true);
+                        } else if bytes.starts_with(b"DEPS:") {
+                            // Node is reporting its Python package requirements.
+                            // In managed mode these were already pre-discovered and
+                            // installed before spawning, so this is informational only.
+                            let deps_json = std::str::from_utf8(&bytes[5..]).unwrap_or("[]");
+                            tracing::debug!(
+                                "Node {} declared dependencies: {}",
+                                node_id_clone,
+                                deps_json
+                            );
                         } else {
                             tracing::warn!(
-                                "Received non-READY control message - expected 'READY', got: {:?}",
+                                "Received unexpected control message from node {}: {:?}",
+                                node_id_clone,
                                 std::str::from_utf8(bytes).unwrap_or("<invalid utf8>")
                             );
                         }
@@ -2200,9 +2312,15 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
         // This updates the process manager's spawn config with the venv python
         // before any spawn calls below.
         if let Some(ref env_mgr) = self.env_manager {
+            // Pre-discover node-declared deps (via @python_requires decorator)
+            // by running a lightweight Python probe BEFORE spawning the real process.
+            // This ensures the managed venv includes all required packages upfront.
+            let node_deps = self.discover_node_deps(&ctx.node_type).await;
+
             // Collect deps from:
-            // 1. Node params __python_deps__ (injected from manifest's python_deps)
-            // 2. Manifest-level extra_deps (via __python_extra_deps__)
+            // 1. Node class __python_requires__ (discovered via probe above)
+            // 2. Node params __python_deps__ (injected from manifest's python_deps)
+            // 3. Manifest-level extra_deps (via __python_extra_deps__)
             let manifest_deps: Vec<String> = ctx
                 .params
                 .get("__python_deps__")
@@ -2226,7 +2344,7 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
                 .unwrap_or_default();
 
             let merged = crate::python::env_manager::merge_deps(
-                &[], // node base deps (discovered post-spawn via DEPS control channel)
+                &node_deps,
                 &manifest_deps,
                 &extra_deps,
             );
@@ -2254,6 +2372,19 @@ impl ExecutorNodeExecutor for MultiprocessExecutor {
                                 spawn_cfg.python_path.push(path.clone());
                             }
                         }
+                    }
+
+                    // Clear LD_LIBRARY_PATH for managed venvs so that pip-installed
+                    // nvidia-* packages (cuDNN, CUDA runtime, etc.) resolve their
+                    // bundled native libs without interference from potentially
+                    // incompatible system libraries on the host LD_LIBRARY_PATH.
+                    if std::env::var("LD_LIBRARY_PATH").is_ok() {
+                        tracing::debug!(
+                            "Clearing inherited LD_LIBRARY_PATH for managed venv subprocess"
+                        );
+                        spawn_cfg
+                            .env_vars
+                            .insert("LD_LIBRARY_PATH".to_string(), String::new());
                     }
                 }
                 Err(e) => {
