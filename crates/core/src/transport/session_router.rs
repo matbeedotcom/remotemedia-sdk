@@ -49,6 +49,33 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
 
+/// Default capacity for the router's internal input channel.
+///
+/// Sized for ~160 ms of headroom at 48 kHz / 20 ms frames (8 frames × 20 ms).
+/// Bounded channels apply block-producer backpressure on the transport side,
+/// which is the desired behavior for real-time media pipelines — we'd rather
+/// stall the ingress than grow memory unboundedly.
+///
+/// Override at session creation via `REMOTEMEDIA_ROUTER_INPUT_CAPACITY`.
+pub const DEFAULT_ROUTER_INPUT_CAPACITY: usize = 8;
+
+/// Default capacity for per-session client output channels.
+///
+/// Callers (`PipelineExecutor::create_session`, transport streaming handlers)
+/// create the output channel and pass the sender in; this constant is the
+/// recommended default. Same sizing rationale as the input capacity.
+pub const DEFAULT_ROUTER_OUTPUT_CAPACITY: usize = 8;
+
+/// Read the input-channel capacity from the environment, falling back to
+/// [`DEFAULT_ROUTER_INPUT_CAPACITY`].
+fn input_capacity_from_env() -> usize {
+    std::env::var("REMOTEMEDIA_ROUTER_INPUT_CAPACITY")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_ROUTER_INPUT_CAPACITY)
+}
+
 /// Data packet flowing through the pipeline
 #[derive(Clone, Debug)]
 pub struct DataPacket {
@@ -92,14 +119,19 @@ pub struct SessionRouter {
     /// Cached node instances (created once per session)
     cached_nodes: HashMap<String, Box<dyn StreamingNode>>,
 
-    /// Channel to send outputs to client
-    output_tx: mpsc::UnboundedSender<RuntimeData>,
+    /// Channel to send outputs to client.
+    ///
+    /// Bounded — caller picks the capacity when creating the channel. Sends
+    /// block when full, producing natural backpressure toward the sink node.
+    output_tx: mpsc::Sender<RuntimeData>,
 
-    /// Channel to receive inputs from client
-    input_rx: Option<mpsc::UnboundedReceiver<DataPacket>>,
+    /// Channel to receive inputs from client.
+    ///
+    /// Bounded — see [`DEFAULT_ROUTER_INPUT_CAPACITY`].
+    input_rx: Option<mpsc::Receiver<DataPacket>>,
 
-    /// Channel to send inputs to router (held by external code, dropped in run())
-    input_tx: Option<mpsc::UnboundedSender<DataPacket>>,
+    /// Channel to send inputs to router (held by external code, dropped in run()).
+    input_tx: Option<mpsc::Sender<DataPacket>>,
 
     /// Shutdown signal receiver
     shutdown_rx: Option<mpsc::Receiver<()>>,
@@ -130,7 +162,10 @@ impl SessionRouter {
     /// * `session_id` - Unique identifier for this session
     /// * `manifest` - Pipeline manifest defining nodes and connections
     /// * `registry` - Registry for creating streaming nodes
-    /// * `output_tx` - Channel for sending outputs to the client
+    /// * `output_tx` - Bounded channel for sending outputs to the client.
+    ///   Callers create this via `mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY)`
+    ///   or similar; the capacity determines how much backpressure the sink
+    ///   can absorb before the router's send awaits.
     ///
     /// # Returns
     ///
@@ -140,7 +175,7 @@ impl SessionRouter {
         session_id: String,
         manifest: Arc<Manifest>,
         registry: Arc<StreamingNodeRegistry>,
-        output_tx: mpsc::UnboundedSender<RuntimeData>,
+        output_tx: mpsc::Sender<RuntimeData>,
     ) -> Result<(Self, mpsc::Sender<()>)> {
         Self::with_config(
             session_id,
@@ -159,7 +194,7 @@ impl SessionRouter {
     /// * `session_id` - Unique identifier for this session
     /// * `manifest` - Pipeline manifest defining nodes and connections
     /// * `registry` - Registry for creating streaming nodes
-    /// * `output_tx` - Channel for sending outputs to the client
+    /// * `output_tx` - Bounded channel for sending outputs to the client.
     /// * `scheduler_config` - Optional scheduler configuration (uses defaults if None)
     /// * `drift_thresholds` - Optional drift threshold configuration (uses defaults if None)
     ///
@@ -171,7 +206,7 @@ impl SessionRouter {
         session_id: String,
         manifest: Arc<Manifest>,
         registry: Arc<StreamingNodeRegistry>,
-        output_tx: mpsc::UnboundedSender<RuntimeData>,
+        output_tx: mpsc::Sender<RuntimeData>,
         scheduler_config: Option<SchedulerConfig>,
         drift_thresholds: Option<DriftThresholds>,
     ) -> Result<(Self, mpsc::Sender<()>)> {
@@ -186,8 +221,14 @@ impl SessionRouter {
             graph.sinks
         );
 
-        // Create input/shutdown channels
-        let (input_tx, input_rx) = mpsc::unbounded_channel();
+        // Create input/shutdown channels.
+        //
+        // The input channel is bounded so that transport ingress applies
+        // backpressure to the upstream (gRPC/WebRTC/etc.) when the pipeline
+        // falls behind. Capacity is configurable via
+        // `REMOTEMEDIA_ROUTER_INPUT_CAPACITY` (default 8 frames ≈ 160 ms at
+        // 48 kHz/20 ms) — see [`DEFAULT_ROUTER_INPUT_CAPACITY`].
+        let (input_tx, input_rx) = mpsc::channel(input_capacity_from_env());
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         let shutdown_tx_clone = shutdown_tx.clone();
 
@@ -227,8 +268,12 @@ impl SessionRouter {
         Ok((router, shutdown_tx_clone))
     }
 
-    /// Get the input sender for feeding data to the router
-    pub fn get_input_sender(&self) -> mpsc::UnboundedSender<DataPacket> {
+    /// Get the input sender for feeding data to the router.
+    ///
+    /// The returned sender is bounded; callers should `.send(...).await`
+    /// and treat the back-pressure as real (drop-on-deadline is a policy
+    /// decision for the transport ingress, not the router).
+    pub fn get_input_sender(&self) -> mpsc::Sender<DataPacket> {
         self.input_tx.clone().expect("input_tx not yet consumed by run()")
     }
 
@@ -707,7 +752,10 @@ impl SessionRouter {
                         self.session_id,
                         sink_id
                     );
-                    if let Err(e) = self.output_tx.send(output.clone()) {
+                    // Bounded channel: await applies backpressure when the
+                    // client consumer is slow. An Err here means the receiver
+                    // has been dropped (client disconnected).
+                    if let Err(e) = self.output_tx.send(output.clone()).await {
                         tracing::warn!(
                             "Session {}: Failed to send output from sink '{}': {}",
                             self.session_id,
@@ -921,7 +969,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let result = SessionRouter::new(
             "test-session".to_string(),
@@ -947,7 +995,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let result = SessionRouter::new(
             "test-session".to_string(),
@@ -974,7 +1022,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let (router, _shutdown_tx) = SessionRouter::new(
             "test-session".to_string(),
@@ -999,7 +1047,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let (router, _shutdown_tx) = SessionRouter::new(
             "test-session".to_string(),
@@ -1029,7 +1077,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let (router, _shutdown_tx) = SessionRouter::new(
             "test-session".to_string(),
@@ -1066,7 +1114,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let scheduler_config = SchedulerConfig::with_concurrency(8)
             .with_timeout(5000)
@@ -1097,7 +1145,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let drift_thresholds = DriftThresholds {
             slope_threshold_ms_per_s: 10.0,
@@ -1129,7 +1177,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let (router, _shutdown_tx) = SessionRouter::new(
             "test-session".to_string(),
@@ -1176,7 +1224,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let (router, _shutdown_tx) = SessionRouter::new(
             "test-session".to_string(),
@@ -1217,7 +1265,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let (router, _shutdown_tx) = SessionRouter::new(
             "test-session".to_string(),
@@ -1267,7 +1315,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let (router, _shutdown_tx) = SessionRouter::new(
             "test-session".to_string(),

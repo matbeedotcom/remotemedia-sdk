@@ -67,10 +67,14 @@ impl Default for ExecutorConfig {
 pub struct SessionHandle {
     /// Unique session identifier
     pub session_id: String,
-    /// Channel for sending input data to the session (None after input complete)
-    input_tx: Option<mpsc::UnboundedSender<DataPacket>>,
-    /// Channel for receiving output data from the session
-    output_rx: mpsc::UnboundedReceiver<RuntimeData>,
+    /// Channel for sending input data to the session (None after input complete).
+    ///
+    /// Bounded — see `DEFAULT_ROUTER_INPUT_CAPACITY` in `session_router`.
+    input_tx: Option<mpsc::Sender<DataPacket>>,
+    /// Channel for receiving output data from the session.
+    ///
+    /// Bounded — see `DEFAULT_ROUTER_OUTPUT_CAPACITY` in `session_router`.
+    output_rx: mpsc::Receiver<RuntimeData>,
     /// Shutdown signal sender
     shutdown_tx: mpsc::Sender<()>,
     /// Handle to the session router task
@@ -101,7 +105,10 @@ impl SessionHandle {
         let tx = self.input_tx.as_ref().ok_or_else(|| {
             crate::Error::Execution("Input channel closed (input complete signalled)".to_string())
         })?;
-        tx.send(packet).map_err(|e| {
+        // Bounded channel: this `.await` is the ingress backpressure point.
+        // When the router's input queue is full, the producer stalls here
+        // rather than growing memory unboundedly.
+        tx.send(packet).await.map_err(|e| {
             crate::Error::Execution(format!("Failed to send input: {}", e))
         })?;
 
@@ -366,8 +373,11 @@ impl PipelineExecutor {
 
         let session_id = self.generate_session_id();
 
-        // Create output channel
-        let (output_tx, output_rx) = mpsc::unbounded_channel();
+        // Create bounded output channel. Capacity mirrors the router input
+        // default so producer and consumer side backpressure are balanced.
+        let (output_tx, output_rx) = mpsc::channel(
+            crate::transport::session_router::DEFAULT_ROUTER_OUTPUT_CAPACITY,
+        );
 
         // Get a snapshot of the registry for the session
         let registry_snapshot = {

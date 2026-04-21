@@ -31,7 +31,41 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
 use tonic::Status;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
+
+/// Capacity of the client-ingress channel (client → router).
+///
+/// Small by design: this is the actual backpressure knob for the gRPC
+/// streaming handler. At 48 kHz / 20 ms frames this is ~160 ms of headroom.
+///
+/// Override via `REMOTEMEDIA_GRPC_ROUTER_INPUT_CAPACITY`.
+pub const DEFAULT_GRPC_CLIENT_INPUT_CAPACITY: usize = 8;
+
+/// Capacity of the node-to-router loopback channel.
+///
+/// Sized large (32× client-ingress) so that in normal operation the
+/// loopback never fills — client-ingress backpressure is the only
+/// bound that should ever matter. A full loopback indicates a real
+/// pipeline problem (runaway fan-out or a stalled sink consumer).
+///
+/// Override via `REMOTEMEDIA_GRPC_ROUTER_LOOPBACK_CAPACITY`.
+pub const DEFAULT_GRPC_LOOPBACK_CAPACITY: usize = 256;
+
+fn grpc_client_input_capacity() -> usize {
+    std::env::var("REMOTEMEDIA_GRPC_ROUTER_INPUT_CAPACITY")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_GRPC_CLIENT_INPUT_CAPACITY)
+}
+
+fn grpc_loopback_capacity() -> usize {
+    std::env::var("REMOTEMEDIA_GRPC_ROUTER_LOOPBACK_CAPACITY")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_GRPC_LOOPBACK_CAPACITY)
+}
 
 #[cfg(feature = "multiprocess")]
 use remotemedia_core::python::multiprocess::MultiprocessExecutor;
@@ -71,11 +105,23 @@ pub struct SessionRouter {
     /// Channel to send results to client
     client_tx: mpsc::Sender<Result<StreamResponse, Status>>,
 
-    /// Channel to receive new chunks from client
-    input_rx: mpsc::UnboundedReceiver<DataPacket>,
+    /// Bounded channel receiving new chunks from the client (transport ingress).
+    ///
+    /// Full → the gRPC handler's `.await send` stalls, applying real
+    /// backpressure to the client stream.
+    client_input_rx: mpsc::Receiver<DataPacket>,
 
-    /// Channel to send new chunks to the router
-    input_tx: mpsc::UnboundedSender<DataPacket>,
+    /// Sender half of the client-ingress channel. Cloned and handed to the
+    /// transport handler via `get_input_sender()`.
+    client_input_tx: mpsc::Sender<DataPacket>,
+
+    /// Bounded channel receiving node outputs routed back for further
+    /// dispatch (the self-loop). Separate from `client_input_*` so that
+    /// bounding ingress doesn't risk deadlocking the node → router path.
+    loopback_rx: mpsc::Receiver<DataPacket>,
+
+    /// Sender half of the loopback channel. Cloned into each node task.
+    loopback_tx: mpsc::Sender<DataPacket>,
 
     /// Channel to receive shutdown signal
     shutdown_rx: mpsc::Receiver<()>,
@@ -135,7 +181,13 @@ impl SessionRouter {
             graph.sinks
         );
 
-        let (input_tx, input_rx) = mpsc::unbounded_channel();
+        // Client ingress is bounded small — this is the real backpressure
+        // surface toward the gRPC client stream.
+        let (client_input_tx, client_input_rx) = mpsc::channel(grpc_client_input_capacity());
+        // Loopback is bounded but generous. Sized so that client-ingress
+        // backpressure is the limiting factor in practice; a full loopback
+        // logs a warning and indicates a pipeline design problem.
+        let (loopback_tx, loopback_rx) = mpsc::channel(grpc_loopback_capacity());
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         let shutdown_tx_clone = shutdown_tx.clone();
 
@@ -145,8 +197,10 @@ impl SessionRouter {
             session,
             graph,
             client_tx,
-            input_rx,
-            input_tx,
+            client_input_rx,
+            client_input_tx,
+            loopback_rx,
+            loopback_tx,
             shutdown_rx,
             _shutdown_tx: shutdown_tx,
             node_tasks: HashMap::new(),
@@ -159,9 +213,12 @@ impl SessionRouter {
         Ok((router, shutdown_tx_clone))
     }
 
-    /// Get the input sender for feeding chunks from the client
-    pub fn get_input_sender(&self) -> mpsc::UnboundedSender<DataPacket> {
-        self.input_tx.clone()
+    /// Get the bounded input sender for feeding chunks from the client.
+    ///
+    /// Callers should `.await` the send — the channel applies real
+    /// backpressure when the pipeline is behind.
+    pub fn get_input_sender(&self) -> mpsc::Sender<DataPacket> {
+        self.client_input_tx.clone()
     }
 
     /// Get the pipeline graph
@@ -415,23 +472,42 @@ impl SessionRouter {
     async fn run(&mut self) -> Result<(), Status> {
         info!("📡 Session router running - waiting for chunks from client...");
 
-        // Process incoming packets from the client or shutdown signal
+        // Process incoming packets from client ingress OR from node loopback,
+        // plus the shutdown signal. Keeping client and loopback as separate
+        // bounded channels lets us apply real backpressure to the client
+        // (small ingress capacity) without risking deadlock on the node →
+        // router loopback (generous capacity).
         loop {
             tokio::select! {
-                packet = self.input_rx.recv() => {
+                packet = self.client_input_rx.recv() => {
                     match packet {
                         Some(packet) => {
-                            debug!("📥 Router received packet from '{}' (seq: {})",
+                            debug!("📥 Router received CLIENT packet from '{}' (seq: {})",
                                    packet.from_node, packet.sequence);
-
-                            // Route the packet through the pipeline
                             if let Err(e) = self.route_packet(packet).await {
                                 error!("Failed to route packet: {}", e);
-                                // Continue processing other packets even if one fails
                             }
                         }
                         None => {
-                            info!("✅ Session router input channel closed - shutting down");
+                            info!("✅ Session router client-input channel closed - shutting down");
+                            break;
+                        }
+                    }
+                }
+                packet = self.loopback_rx.recv() => {
+                    match packet {
+                        Some(packet) => {
+                            debug!("🔁 Router received LOOPBACK packet from '{}' (seq: {})",
+                                   packet.from_node, packet.sequence);
+                            if let Err(e) = self.route_packet(packet).await {
+                                error!("Failed to route packet: {}", e);
+                            }
+                        }
+                        None => {
+                            // Loopback senders live with node tasks and the
+                            // router itself. This branch triggers only at
+                            // full session teardown — fine to treat as EOS.
+                            info!("✅ Session router loopback channel closed - shutting down");
                             break;
                         }
                     }
@@ -505,7 +581,7 @@ impl SessionRouter {
         // Clone what we need for the task
         let node_id_clone = node_id.clone();
         let session_id = self.session_id.clone();
-        let router_tx = self.input_tx.clone(); // Send outputs back to router
+        let router_tx = self.loopback_tx.clone(); // Bounded loopback: node → router
 
         // Check if this is a multiprocess node and set up continuous output draining
         #[cfg(feature = "multiprocess")]
@@ -526,8 +602,17 @@ impl SessionRouter {
             #[cfg(feature = "multiprocess")]
             if is_multiprocess_node {
                 if let Some(ref executor) = multiprocess_executor {
-                    // Create channel for continuous output forwarding
-                    let (output_tx, mut output_rx) = tokio::sync::mpsc::unbounded_channel();
+                    // Create bounded channel for continuous output forwarding.
+                    //
+                    // The IPC thread `blocking_send`s onto this channel, so a
+                    // slow drain back-pressures the iceoryx2 subscriber loop
+                    // and then the Python publisher. Capacity of 8 gives ~160
+                    // ms headroom at 48 kHz / 20 ms frames — enough to absorb
+                    // async scheduling jitter, tight enough to surface real
+                    // consumer stalls quickly.
+                    let (output_tx, mut output_rx) = tokio::sync::mpsc::channel(
+                        remotemedia_core::transport::DEFAULT_ROUTER_OUTPUT_CAPACITY,
+                    );
 
                     // Register callback with IPC thread
                     if let Err(e) = executor
@@ -566,7 +651,10 @@ impl SessionRouter {
                                             sub_sequence,
                                         };
 
-                                        if let Err(e) = router_tx_for_drain.send(output_packet) {
+                                        // Bounded loopback: .await applies
+                                        // backpressure when the router is
+                                        // behind on dispatching.
+                                        if let Err(e) = router_tx_for_drain.send(output_packet).await {
                                             error!("Failed to forward output from '{}': {}", node_id_for_drain, e);
                                             break;
                                         }
@@ -622,17 +710,43 @@ impl SessionRouter {
                                         sub_sequence: output_count,
                                     };
 
-                                    // Send output back to router for further routing
-                                    if let Err(e) = router_tx_for_cb.send(output_packet) {
-                                        error!(
-                                            "Failed to send output from '{}': {}",
-                                            node_id_for_cb, e
-                                        );
-                                        return Err(remotemedia_core::Error::Execution(
-                                            "Channel closed".into(),
-                                        ));
+                                    // Send output back to router for further routing.
+                                    //
+                                    // This callback is a sync `FnMut` called from
+                                    // inside the node's streaming process fn — we
+                                    // cannot `.await` here. We `try_send` on the
+                                    // bounded loopback and log on overflow. The
+                                    // loopback is sized (256 slots, 32× client
+                                    // ingress capacity) so that in practice only a
+                                    // stalled sink — not ingress pressure — can
+                                    // fill it. If that happens the client-ingress
+                                    // channel is the correct place to apply real
+                                    // backpressure, and it will (outputs stop
+                                    // flowing → ingress fills → client stalls).
+                                    //
+                                    // Making this fully block-producer without
+                                    // drops requires changing the streaming
+                                    // callback signature to async; tracked as
+                                    // follow-up to the tokio-off-data-plane work.
+                                    match router_tx_for_cb.try_send(output_packet) {
+                                        Ok(()) => Ok(()),
+                                        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                            warn!(
+                                                "Loopback full — dropping output from '{}' (session saturated)",
+                                                node_id_for_cb
+                                            );
+                                            Ok(())
+                                        }
+                                        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                            error!(
+                                                "Loopback closed while sending output from '{}'",
+                                                node_id_for_cb
+                                            );
+                                            Err(remotemedia_core::Error::Execution(
+                                                "Channel closed".into(),
+                                            ))
+                                        }
                                     }
-                                    Ok(())
                                 }),
                             )
                             .await;
@@ -659,8 +773,9 @@ impl SessionRouter {
                                 sub_sequence: 0,
                             };
 
-                            // Send output back to router
-                            if let Err(e) = router_tx.send(output_packet) {
+                            // Send output back to router via bounded loopback.
+                            // `.await` is safe: we're already in async context.
+                            if let Err(e) = router_tx.send(output_packet).await {
                                 error!("Failed to send output from '{}': {}", node_id_clone, e);
                             }
                         }
@@ -795,8 +910,11 @@ impl SessionRouter {
         info!("All node tasks shut down");
     }
 
-    /// Feed a chunk from the client into the router
-    pub fn feed_chunk(
+    /// Feed a chunk from the client into the router.
+    ///
+    /// Async because the client-ingress channel is bounded — a full queue
+    /// stalls the caller until the router catches up.
+    pub async fn feed_chunk(
         &self,
         data: RuntimeData,
         from_node_id: String,
@@ -811,8 +929,10 @@ impl SessionRouter {
             sub_sequence: 0,
         };
 
-        self.input_tx
+        // Bounded client-ingress: `.await` applies real backpressure.
+        self.client_input_tx
             .send(packet)
+            .await
             .map_err(|e| format!("Failed to feed chunk: {}", e))
     }
 }

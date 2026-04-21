@@ -222,8 +222,11 @@ pub(crate) struct StreamSession {
     /// Cache misses for this session (Feature 005)
     pub(crate) cache_misses: u64,
 
-    /// Input sender to feed chunks to the session router
-    pub(crate) router_input: Option<tokio::sync::mpsc::UnboundedSender<DataPacket>>,
+    /// Bounded input sender to feed chunks to the session router.
+    ///
+    /// Sends use `.await` and block the gRPC handler when the pipeline is
+    /// behind — this is the transport-level backpressure surface.
+    pub(crate) router_input: Option<tokio::sync::mpsc::Sender<DataPacket>>,
 
     /// Router task handle
     pub(crate) router_task: Option<JoinHandle<()>>,
@@ -654,8 +657,9 @@ async fn handle_stream(
                         sub_sequence: 0,
                     };
 
-                    // Send to router (outputs will be sent back via the router's tx channel)
-                    router_input.send(packet).map_err(|e| {
+                    // Bounded router-input: .await applies real backpressure
+                    // to the gRPC client when the pipeline falls behind.
+                    router_input.send(packet).await.map_err(|e| {
                         ServiceError::Internal(format!("Failed to send audio to router: {}", e))
                     })?;
 
@@ -735,8 +739,8 @@ async fn handle_stream(
                         sub_sequence: 0,
                     };
 
-                    // Send to router
-                    router_input.send(packet).map_err(|e| {
+                    // Bounded router-input: .await applies real backpressure.
+                    router_input.send(packet).await.map_err(|e| {
                         ServiceError::Internal(format!("Failed to send to router: {}", e))
                     })?;
 

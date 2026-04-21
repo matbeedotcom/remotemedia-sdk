@@ -42,7 +42,9 @@ pub use data::TransportData;
 pub use executor::{ExecutorConfig, PipelineExecutor, SessionHandle};
 pub use plugin_registry::TransportPluginRegistry;
 pub use session::{StreamSession, StreamSessionHandle};
-pub use session_router::{DataPacket, SessionRouter};
+pub use session_router::{
+    DataPacket, SessionRouter, DEFAULT_ROUTER_INPUT_CAPACITY, DEFAULT_ROUTER_OUTPUT_CAPACITY,
+};
 
 
 /// Configuration for creating a transport client
