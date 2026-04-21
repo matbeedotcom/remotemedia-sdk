@@ -4,6 +4,7 @@ members = [
     "crates/core-derive",  # Proc-macros for NodeConfig
     "crates/python-nodes",  # Python node dynamic registration
     "crates/candle-nodes",  # Candle ML inference nodes
+    "crates/hearing-nodes",  # Hearing aid DSP nodes (WDRC, CROS, HRTF)
     "crates/transports/grpc",  # gRPC transport
     "crates/transports/ffi",   # Python FFI transport
     "crates/transports/webrtc", # WebRTC transport

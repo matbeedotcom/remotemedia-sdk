@@ -352,6 +352,8 @@ impl ProcessManager {
             // SAFETY: prctl(PR_SET_PDEATHSIG) is async-signal-safe.
             // When the parent process dies (crash, SIGKILL, normal exit),
             // the kernel sends SIGTERM to this child automatically.
+            // Only available on Linux; macOS/BSD lack PR_SET_PDEATHSIG.
+            #[cfg(target_os = "linux")]
             unsafe {
                 command.pre_exec(|| {
                     if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
