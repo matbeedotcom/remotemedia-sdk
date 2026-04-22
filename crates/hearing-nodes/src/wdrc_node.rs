@@ -1,8 +1,26 @@
 //! WDRC streaming node.
+//!
+//! # Real-time safety
+//!
+//! This node is **RT-safe** under the following constraints:
+//!
+//! - Called via [`remotemedia_rt_bridge::RtBridge`] (single-consumer), so
+//!   the `parking_lot::Mutex` is uncontended and its fast path is a
+//!   single CAS.
+//! - Input arrives as `AudioSamples::Vec` or `AudioSamples::Pooled`. An
+//!   `AudioSamples::Arc` would force a one-time copy (see [`crate::util::take_audio`]).
+//! - The `sample_rate` is configured once at node creation (or on the
+//!   first call). A *change* in sample rate between calls will trigger
+//!   a filterbank + engine rebuild — **not RT-safe**, but expected to
+//!   happen only at session boundaries.
+//! - The DSP core (`dsp_core::filterbank::Filterbank`,
+//!   `wdrc::WdrcEngine`) must be RT-safe per `process_sample` — audit
+//!   those crates if you are deploying to a HAL callback.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+use parking_lot::Mutex;
+use serde::Deserialize;
 use serde_json::Value;
 
 use audiogram::{Audiogram, EarAudiogram};
@@ -99,7 +117,8 @@ impl WdrcNode {
         }
         .tap(|n| {
             if let Some(sr) = sample_rate {
-                n.state.lock().unwrap().ensure(sr);
+                // Construction-time warm-up — never on RT path.
+                n.state.lock().ensure(sr);
             }
         })
     }
@@ -119,11 +138,18 @@ impl SyncStreamingNode for WdrcNode {
     }
 
     fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+        // RT-safe path: `take_audio` is a move for Vec/Pooled variants;
+        // `emit_audio` is a move back. The Vec is mutated in place;
+        // no allocations per call.
         let (mut samples, sr, ch, sid, meta) = util::take_audio(data)?;
         if ch == 0 || samples.is_empty() {
             return Ok(util::emit_audio(samples, sr, ch, sid, meta));
         }
-        let mut st = self.state.lock().unwrap();
+        // Uncontended parking_lot::Mutex fast path (single CAS) under
+        // the single-consumer rt-bridge invariant.
+        let mut st = self.state.lock();
+        // `ensure` is a no-op after the first call at a given sample
+        // rate; only a sample-rate change re-builds state (non-RT).
         st.ensure(sr);
         // Split-borrow: get independent mut refs to the two fields via the struct.
         let WdrcState { filterbank, engine, .. } = &mut *st;
@@ -164,7 +190,18 @@ impl SyncStreamingNode for WdrcNode {
     }
 }
 
+fn build_wdrc(params: &Value) -> Result<WdrcNode, Error> {
+    let p: Params = serde_json::from_value(params.clone())
+        .map_err(|e| Error::Execution(format!("WdrcNode params: {e}")))?;
+    let ag: Audiogram = p.audiogram.into();
+    Ok(WdrcNode::new(ag, p.sample_rate))
+}
+
 /// Factory for `WdrcNode`. Registers as node type `"WdrcNode"`.
+///
+/// Implements both the async [`StreamingNodeFactory`] and the RT-safe
+/// [`remotemedia_core::executor::sync_executor::SyncStreamingNodeFactory`],
+/// so a single registration works in both executors.
 pub struct WdrcNodeFactory;
 
 impl StreamingNodeFactory for WdrcNodeFactory {
@@ -174,11 +211,21 @@ impl StreamingNodeFactory for WdrcNodeFactory {
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
-        let p: Params = serde_json::from_value(params.clone())
-            .map_err(|e| Error::Execution(format!("WdrcNode params: {e}")))?;
-        let ag: Audiogram = p.audiogram.into();
-        let node = WdrcNode::new(ag, p.sample_rate);
-        Ok(Box::new(SyncNodeWrapper(node)))
+        Ok(Box::new(SyncNodeWrapper(build_wdrc(params)?)))
+    }
+
+    fn node_type(&self) -> &str {
+        "WdrcNode"
+    }
+}
+
+impl remotemedia_core::executor::sync_executor::SyncStreamingNodeFactory for WdrcNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+    ) -> Result<Box<dyn SyncStreamingNode>, Error> {
+        Ok(Box::new(build_wdrc(params)?))
     }
 
     fn node_type(&self) -> &str {

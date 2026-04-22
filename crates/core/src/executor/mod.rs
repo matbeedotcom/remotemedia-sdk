@@ -14,6 +14,7 @@ pub mod node_executor;
 pub mod retry;
 pub mod runtime_selector;
 pub mod scheduler;
+pub mod sync_executor;
 
 // Multiprocess integration modules (spec 002)
 pub mod data_conversion;

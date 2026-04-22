@@ -1,7 +1,15 @@
 //! CROS cross-feed streaming node.
+//!
+//! # Real-time safety
+//!
+//! RT-safe under the same contract as [`crate::wdrc_node::WdrcNode`]:
+//! single-consumer access via `rt-bridge`, Vec/Pooled input variants,
+//! and stable sample rate across calls. `CrossFeedProcessor::process_frame`
+//! must be RT-safe per frame — audit the `cros` crate for deployment.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -83,11 +91,14 @@ impl SyncStreamingNode for CrosNode {
     fn node_type(&self) -> &str { "CrosNode" }
 
     fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+        // RT path: owned Vec in → in-place DSP → owned Vec back out.
+        // No heap operations on the steady-state path (after the first
+        // call at a given sample rate).
         let (mut samples, sr, ch, sid, meta) = util::take_audio(data)?;
         if ch == 0 || samples.is_empty() {
             return Ok(util::emit_audio(samples, sr, ch, sid, meta));
         }
-        let mut st = self.state.lock().unwrap();
+        let mut st = self.state.lock();
         st.ensure(sr);
         let channels = ch as usize;
         let frames = samples.len() / channels;
@@ -100,6 +111,18 @@ impl SyncStreamingNode for CrosNode {
     }
 }
 
+fn build_cros(params: &Value) -> Result<CrosNode, Error> {
+    let p: Params = serde_json::from_value(params.clone())
+        .map_err(|e| Error::Execution(format!("CrosNode params: {e}")))?;
+    let cfg = CrossFeedConfig {
+        mode: parse_mode(&p.mode),
+        level_db: p.level_db,
+        head_shadow_hz: p.head_shadow_hz,
+        cross_surround: p.cross_surround,
+    };
+    Ok(CrosNode::new(cfg))
+}
+
 pub struct CrosNodeFactory;
 
 impl StreamingNodeFactory for CrosNodeFactory {
@@ -109,15 +132,19 @@ impl StreamingNodeFactory for CrosNodeFactory {
         params: &Value,
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
-        let p: Params = serde_json::from_value(params.clone())
-            .map_err(|e| Error::Execution(format!("CrosNode params: {e}")))?;
-        let cfg = CrossFeedConfig {
-            mode: parse_mode(&p.mode),
-            level_db: p.level_db,
-            head_shadow_hz: p.head_shadow_hz,
-            cross_surround: p.cross_surround,
-        };
-        Ok(Box::new(SyncNodeWrapper(CrosNode::new(cfg))))
+        Ok(Box::new(SyncNodeWrapper(build_cros(params)?)))
+    }
+
+    fn node_type(&self) -> &str { "CrosNode" }
+}
+
+impl remotemedia_core::executor::sync_executor::SyncStreamingNodeFactory for CrosNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+    ) -> Result<Box<dyn SyncStreamingNode>, Error> {
+        Ok(Box::new(build_cros(params)?))
     }
 
     fn node_type(&self) -> &str { "CrosNode" }

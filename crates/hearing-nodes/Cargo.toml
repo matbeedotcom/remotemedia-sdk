@@ -12,6 +12,7 @@ description = "Hearing aid DSP nodes (WDRC, CROS, HRTF) for RemoteMedia pipeline
 remotemedia-core = { path = "../core" }
 
 async-trait.workspace = true
+parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -27,6 +28,7 @@ hrtf-synth = { path = "../../../Realtime_Competitive_Game_Audio/crates/hrtf-synt
 
 [dev-dependencies]
 criterion.workspace = true
+remotemedia-rt-bridge = { path = "../rt-bridge" }
 
 [[bench]]
 name = "process_sync_rt"
