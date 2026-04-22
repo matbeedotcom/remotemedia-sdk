@@ -3,7 +3,7 @@ LFM2-Audio speech-to-speech node — MLX backend for Apple Silicon.
 
 Sibling of :mod:`remotemedia.nodes.ml.lfm2_audio` (torch/liquid-audio).
 This variant uses the MLX-quantised model published at
-``mlx-community/LFM2.5-Audio-1.5B-5bit`` and Apple's ``mlx-audio`` Python
+``mlx-community/LFM2.5-Audio-1.5B-4bit`` and Apple's ``mlx-audio`` Python
 package, so it runs natively on M-series Macs without any CUDA/torch
 install. Public surface (aux ports, setters, streaming output shape) is
 kept identical to the torch node so pipelines can swap ``LFM2AudioNode``
@@ -90,7 +90,7 @@ from remotemedia.core.multiprocessing import (
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_HF_REPO = "mlx-community/LFM2.5-Audio-1.5B-5bit"
+DEFAULT_HF_REPO = "mlx-community/LFM2.5-Audio-1.5B-4bit"
 DEFAULT_SYSTEM_PROMPT = "Respond with interleaved text and audio."
 AUX_PORT_KEY = "__aux_port__"
 
@@ -479,26 +479,45 @@ class LFM2AudioMlxNode(MultiprocessNode):
         audio_pending: List[Any] = []
         token_idx = 0
 
-        def _decode_audio_chunk(tokens: List[Any]) -> Optional[Any]:
+        def _decode_audio_chunk(
+            tokens: List[Any], *, drop_last: bool = False
+        ) -> Optional[Any]:
             """Decode a batch of codebook tokens (shape (8,) each) → audio.
 
-            The installed mlx-audio (0.3+) exposes ``processor.decode_audio``
-            which takes (1, 8, T) codebook tokens and returns an audio
-            array. Shape of the return varies by version — commonly
-            (1, 1, T_audio) or (1, T_audio); normalise to 1-D f32 before
-            handing it to RuntimeData.
+            The mlx-audio model-card pattern:
+
+                codes = mx.stack(tokens[:-1], axis=1)[None, :]  # (1, 8, T)
+                waveform = processor.decode_with_detokenizer(codes)
+                sf.write("response.wav", waveform[0].tolist(), 24000)
+
+            ``decode_with_detokenizer`` returns a (1, T_audio) mx.array.
+            During streaming we feed every batch through; at end-of-turn
+            the final ``audio_out[-1]`` is an end-of-audio marker and
+            gets dropped via ``drop_last=True``.
+
+            Falls back to ``decode_audio`` (the alternative Mimi-codec
+            path) for mlx-audio builds that don't expose the detokeniser
+            entrypoint.
             """
             if not tokens:
                 return None
+            usable = tokens[:-1] if drop_last else tokens
+            if not usable:
+                return None
             try:
-                # Stack per-timestep (8,) tokens into (8, N), add batch
-                # dim → (1, 8, N)
-                codes = mx.stack(tokens, axis=1)[None, :]
-                waveform = self._processor.decode_audio(codes)
+                codes = mx.stack(usable, axis=1)[None, :]  # (1, 8, T)
+                decode = getattr(self._processor, "decode_with_detokenizer", None)
+                if decode is None:
+                    decode = self._processor.decode_audio
+                waveform = decode(codes)
                 mx.eval(waveform)
                 arr = np.array(waveform, copy=False)
+                # Normalise to 1-D f32. Depending on the entrypoint the
+                # shape is (1, T) (detokenizer) or (1, 1, T) (decode_audio).
                 while arr.ndim > 1:
                     arr = arr[0]
+                if arr.size == 0:
+                    return None
                 return RuntimeData.audio(
                     arr.astype(np.float32, copy=False),
                     self.sample_rate,
@@ -507,7 +526,7 @@ class LFM2AudioMlxNode(MultiprocessNode):
             except Exception as e:  # noqa: BLE001
                 logger.warning(
                     "[%s] MLX audio decode failed on %d tokens: %s",
-                    self.node_id, len(tokens), e,
+                    self.node_id, len(usable), e,
                 )
                 return None
 
@@ -571,9 +590,10 @@ class LFM2AudioMlxNode(MultiprocessNode):
                         yield rd
 
         # Drain any remaining audio tokens. mlx-audio's end-of-audio
-        # marker is the last codebook token — drop it before decoding.
-        if len(audio_pending) > 1:
-            rd = _decode_audio_chunk(audio_pending[:-1])
+        # marker is the last codebook token — drop it before decoding
+        # (matches the model-card snippet: `audio_out[:-1]`).
+        if audio_pending:
+            rd = _decode_audio_chunk(audio_pending, drop_last=True)
             audio_pending = []
             if rd is not None:
                 yield rd

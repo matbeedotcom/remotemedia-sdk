@@ -112,7 +112,7 @@ fn lfm2_audio_manifest() -> Manifest {
     });
 
     // Backend selector. Set `LFM2_AUDIO_BACKEND=mlx` to run the
-    // Apple-Silicon-native MLX build (mlx-community/LFM2.5-Audio-1.5B-5bit),
+    // Apple-Silicon-native MLX build (mlx-community/LFM2.5-Audio-1.5B-4bit),
     // which runs on Metal without torch or CUDA. Default is "torch"
     // (liquid-audio + torch/torchaudio).
     let use_mlx = matches!(
@@ -124,7 +124,7 @@ fn lfm2_audio_manifest() -> Manifest {
         (
             "LFM2AudioMlxNode".to_string(),
             serde_json::json!({
-                "hf_repo": "mlx-community/LFM2.5-Audio-1.5B-5bit",
+                "hf_repo": "mlx-community/LFM2.5-Audio-1.5B-4bit",
                 "max_new_tokens": 512,
                 "sample_rate": 24000,
                 "text_only": false,
@@ -238,9 +238,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Pre-create a session so the Python test can attach without needing
     // to drive StreamPipeline itself. Manifest selected by
     // `TEST_SESSION_KIND` env var (default: calc, valid: lfm2).
-    let session = executor
-        .create_session(Arc::new(select_manifest()))
-        .await?;
+    let session = executor.create_session(Arc::new(select_manifest())).await?;
     let session_id = session.session_id.clone();
     // Leak the session handle so the router task keeps running for the
     // test's lifetime. Dropping it would close the input channel and
@@ -250,8 +248,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build services.
     let config = ServiceConfig::default();
     let metrics = Arc::new(ServiceMetrics::with_default_registry()?);
-    let execution =
-        ExecutionServiceImpl::new(config.auth.clone(), config.limits.clone(), metrics.clone(), executor.clone());
+    let execution = ExecutionServiceImpl::new(
+        config.auth.clone(),
+        config.limits.clone(),
+        metrics.clone(),
+        executor.clone(),
+    );
     let streaming =
         StreamingServiceImpl::new(config.auth, config.limits, metrics, executor.clone());
     let control = ControlServiceImpl::new(executor.control_bus());
