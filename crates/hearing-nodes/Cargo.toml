@@ -24,3 +24,10 @@ wdrc = { path = "../../../Realtime_Competitive_Game_Audio/crates/wdrc" }
 cros = { path = "../../../Realtime_Competitive_Game_Audio/crates/cros" }
 hrtf = { path = "../../../Realtime_Competitive_Game_Audio/crates/hrtf" }
 hrtf-synth = { path = "../../../Realtime_Competitive_Game_Audio/crates/hrtf-synth", default-features = false }
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "process_sync_rt"
+harness = false
