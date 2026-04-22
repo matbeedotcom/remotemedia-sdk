@@ -17,7 +17,7 @@ use crate::nodes::AsyncStreamingNode;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use parking_lot::Mutex;
 
 /// Audio Chunker Node configuration
 ///
@@ -165,46 +165,46 @@ impl AsyncStreamingNode for AudioChunkerNode {
             }
         };
 
-        // Get or create state for this session
+        // Get or create state for this session. Collect ready chunks under
+        // the lock, release, then fire callbacks. parking_lot::Mutex is fine
+        // here because we never hold it across an `.await`.
         let session_key = session_id.unwrap_or_else(|| "default".to_string());
-        let mut states = self.states.lock().await;
-        let state = states
-            .entry(session_key)
-            .or_insert_with(ChunkerState::default);
+        let (chunks, buffered_len) = {
+            let mut states = self.states.lock();
+            let state = states
+                .entry(session_key)
+                .or_insert_with(ChunkerState::default);
+            state.sample_rate = input_sample_rate;
+            state.channels = input_channels;
+            state.format = 1; // F32
+            state.buffer.extend_from_slice(&input_samples);
 
-        // Update state with current audio format
-        state.sample_rate = input_sample_rate;
-        state.channels = input_channels;
-        state.format = 1; // F32
+            let mut chunks: Vec<RuntimeData> = Vec::new();
+            while state.buffer.len() >= self.chunk_size {
+                let chunk: Vec<f32> = state.buffer.drain(..self.chunk_size).collect();
+                chunks.push(RuntimeData::Audio {
+                    samples: chunk,
+                    sample_rate: state.sample_rate,
+                    channels: state.channels,
+                    stream_id: None,
+                    timestamp_us: None,
+                    arrival_ts_us: None,
+                    metadata: None,
+                });
+            }
+            (chunks, state.buffer.len())
+        };
 
-        // Add new samples to buffer (already f32)
-        state.buffer.extend_from_slice(&input_samples);
-
-        let mut output_count = 0;
-
-        // Emit chunks while we have enough samples
-        while state.buffer.len() >= self.chunk_size {
-            // Extract one chunk
-            let chunk: Vec<f32> = state.buffer.drain(..self.chunk_size).collect();
-
-            // Emit chunk with current state's format
-            callback(RuntimeData::Audio {
-                samples: chunk,
-                sample_rate: state.sample_rate,
-                channels: state.channels,
-                stream_id: None,
-                timestamp_us: None,
-                arrival_ts_us: None,
-                metadata: None,
-            })?;
-            output_count += 1;
+        let output_count = chunks.len();
+        for chunk in chunks {
+            callback(chunk)?;
         }
 
         tracing::debug!(
             "AudioChunker: processed {} samples, emitted {} chunks, {} samples buffered",
             input_samples.len(),
             output_count,
-            state.buffer.len()
+            buffered_len
         );
 
         Ok(output_count)

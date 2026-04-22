@@ -81,6 +81,8 @@ histogram = "0.11.3"
 crossbeam.workspace = true
 sha2.workspace = true
 hdrhistogram.workspace = true
+parking_lot.workspace = true
+dashmap.workspace = true
 hyper = { workspace = true, features = ["full"] }
 http-body-util = { version = "0.1", optional = true }
 
@@ -117,6 +119,9 @@ rand = { workspace = true }
 url = { workspace = true }
 
 # Low-latency streaming optimizations (spec 007)
+# NOTE: These appear to be duplicated under the `[target.'cfg(windows)'.dependencies]`
+# scope above due to a missing section header in the original file. The real
+# declarations are in the main `[dependencies]` block near `histogram = ...`.
 crossbeam = { workspace = true }
 hdrhistogram = { workspace = true }
 

@@ -10,7 +10,12 @@ use crate::nodes::{
     AsyncStreamingNode,
 };
 use async_trait::async_trait;
-use tokio::sync::Mutex;
+// `parking_lot::Mutex` chosen deliberately: all locking sites in this
+// file cover pure synchronous CPU work (rubato resampling, atomic config
+// field updates). We never hold these locks across an `.await`, so the
+// async-aware `tokio::sync::Mutex` was pure overhead + priority-inversion
+// risk. parking_lot is lock-free fast-path + much cheaper contended case.
+use parking_lot::Mutex;
 
 pub struct ResampleStreamingNode {
     inner: Mutex<FastResampleNode>,
@@ -55,7 +60,7 @@ impl AsyncStreamingNode for ResampleStreamingNode {
         };
 
         // Lock and process - need to chunk input for FftFixedIn resampler
-        let mut inner = self.inner.lock().await;
+        let mut inner = self.inner.lock();
 
         // FftFixedIn requires fixed chunk sizes - split input into chunks
         let chunk_size = 1024; // Match Medium quality chunk size
@@ -94,26 +99,47 @@ impl AsyncStreamingNode for ResampleStreamingNode {
             });
         }
 
-        // Large buffer - process in chunks
-        tracing::info!(
+        // Large buffer - process in chunks. Downgraded to `debug!` since
+        // this fires once per long input and was otherwise noisy in hot
+        // streaming paths.
+        tracing::debug!(
             "Resampling large buffer: {} samples in chunks of {}",
             total_samples,
             chunk_size
         );
-        let mut all_output_samples = Vec::new();
+        // Pre-size the output Vec. FftFixedIn output length is
+        // `chunk_size * target/source` per input chunk, rounded; we
+        // estimate the total with ceil(total / chunk_size) * chunk_size
+        // upper-bounded at input size * 2 to avoid pathological growth.
+        // A small over-estimate is fine — `extend_from_slice` uses the
+        // reserve, no reallocation in steady state.
+        let num_chunks = (total_samples + chunk_size - 1) / chunk_size;
+        let mut all_output_samples: Vec<f32> = Vec::with_capacity(num_chunks * chunk_size * 2);
+        // Reusable scratch buffer for the padded last chunk. Only grows
+        // to chunk_size once; subsequent iterations reuse the alloc.
+        let mut chunk_vec: Vec<f32> = Vec::with_capacity(chunk_size);
 
         for chunk_start in (0..total_samples).step_by(chunk_size) {
             let chunk_end = (chunk_start + chunk_size).min(total_samples);
             let chunk_samples = &f32_samples[chunk_start..chunk_end];
 
-            // Pad last chunk if needed
-            let mut chunk_vec = chunk_samples.to_vec();
+            chunk_vec.clear();
+            chunk_vec.extend_from_slice(chunk_samples);
             if chunk_vec.len() < chunk_size {
                 chunk_vec.resize(chunk_size, 0.0);
             }
 
+            // FastResampleNode::process_audio takes ownership of the
+            // AudioBuffer, so we must hand it an owned Vec. Swap our
+            // scratch Vec out and replace with an empty one that will
+            // grow back to capacity on the next iteration; this keeps
+            // the allocation churn to one realloc per call rather than
+            // per chunk.
+            let owned_chunk = std::mem::take(&mut chunk_vec);
+            chunk_vec = Vec::with_capacity(chunk_size);
+
             let chunk_data = AudioData::new(
-                crate::audio::buffer::AudioBuffer::new_f32(chunk_vec),
+                crate::audio::buffer::AudioBuffer::new_f32(owned_chunk),
                 input_sample_rate,
                 input_channels as usize,
             );
@@ -130,7 +156,7 @@ impl AsyncStreamingNode for ResampleStreamingNode {
         drop(inner); // Release lock
 
         let num_samples = all_output_samples.len();
-        tracing::info!(
+        tracing::debug!(
             "Resampling complete: {} input samples -> {} output samples",
             total_samples,
             num_samples
@@ -228,12 +254,12 @@ impl AutoResampleStreamingNode {
 
     /// Set the target sample rate (called during capability resolution).
     pub async fn set_target_rate(&self, rate: u32) {
-        *self.resolved_target_rate.lock().await = Some(rate);
+        *self.resolved_target_rate.lock() = Some(rate);
     }
 
     /// Get the resolved target rate.
     pub async fn get_target_rate(&self) -> Option<u32> {
-        *self.resolved_target_rate.lock().await
+        *self.resolved_target_rate.lock()
     }
 
     /// Set the source sample rate from upstream discovery (spec 025).
@@ -246,17 +272,17 @@ impl AutoResampleStreamingNode {
             self.node_id,
             rate
         );
-        *self.resolved_source_rate.lock().await = Some(rate);
+        *self.resolved_source_rate.lock() = Some(rate);
     }
 
     /// Get the resolved source rate.
     pub async fn get_source_rate(&self) -> Option<u32> {
-        *self.resolved_source_rate.lock().await
+        *self.resolved_source_rate.lock()
     }
 
     /// Set the channel count from upstream discovery (spec 025).
     pub async fn set_channels(&self, channels: usize) {
-        *self.resolved_channels.lock().await = Some(channels);
+        *self.resolved_channels.lock() = Some(channels);
     }
 
     /// Initialize the resampler with detected/configured rates.
@@ -266,14 +292,14 @@ impl AutoResampleStreamingNode {
         target_rate: u32,
         channels: usize,
     ) -> Result<()> {
-        let mut inner = self.inner.lock().await;
+        let mut inner = self.inner.lock();
         if inner.is_some() {
             return Ok(()); // Already initialized
         }
 
         // Store resolved values
-        *self.resolved_source_rate.lock().await = Some(source_rate);
-        *self.resolved_channels.lock().await = Some(channels);
+        *self.resolved_source_rate.lock() = Some(source_rate);
+        *self.resolved_channels.lock() = Some(channels);
 
         // If source and target are the same, we can skip resampling
         if source_rate == target_rate {
@@ -340,7 +366,7 @@ impl AsyncStreamingNode for AutoResampleStreamingNode {
 
         // Determine target rate (from config, resolved value, or passthrough)
         let target_rate = {
-            let resolved = *self.resolved_target_rate.lock().await;
+            let resolved = *self.resolved_target_rate.lock();
             resolved.or(self.config.target_rate).unwrap_or(input_sample_rate)
         };
 
@@ -364,7 +390,7 @@ impl AsyncStreamingNode for AutoResampleStreamingNode {
         }
 
         // Process through resampler
-        let mut inner_guard = self.inner.lock().await;
+        let mut inner_guard = self.inner.lock();
         let inner = inner_guard.as_mut().ok_or_else(|| Error::Execution(
             format!("[{}] Resampler not initialized", self.node_id)
         ))?;

@@ -146,9 +146,25 @@ pub struct SessionRouter {
     /// StreamingScheduler for node execution with timeout, retry, circuit breaker (spec 026)
     scheduler: Arc<StreamingScheduler>,
 
-    /// Per-stream drift metrics for health monitoring (spec 026)
-    /// Key: stream_id (from RuntimeData.stream_id or "default")
-    drift_metrics: Arc<RwLock<HashMap<String, Arc<RwLock<DriftMetrics>>>>>,
+    /// Per-stream drift metrics for health monitoring (spec 026).
+    ///
+    /// Map is `DashMap` (lock-free sharded hashmap) so the per-packet
+    /// `record_drift_sample` doesn't take a tokio `RwLock` on every
+    /// audio/video frame. The per-stream `Arc<RwLock<DriftMetrics>>`
+    /// value still exists — only one writer per stream at a time — but
+    /// lookups are wait-free.
+    ///
+    /// Key: stream_id (from RuntimeData.stream_id or "default").
+    drift_metrics: Arc<dashmap::DashMap<String, Arc<RwLock<DriftMetrics>>>>,
+
+    /// Real-time latency probes (Phase 0 of the tokio-off-data-plane
+    /// migration). Records into `ingress` and `egress` today; `route_in`,
+    /// `node_in`, `node_out` are reserved for follow-up wiring inside
+    /// `process_input`.
+    ///
+    /// Accessed out-of-band via [`Self::probe_snapshots`]. Shared via
+    /// `Arc` because consumers may want to poll from a separate task.
+    probes: Arc<crate::metrics::RtProbeSet>,
 
     /// Drift thresholds for new streams
     drift_thresholds: DriftThresholds,
@@ -261,7 +277,8 @@ impl SessionRouter {
             _shutdown_tx: shutdown_tx,
             resolution_ctx: None,
             scheduler,
-            drift_metrics: Arc::new(RwLock::new(HashMap::new())),
+            drift_metrics: Arc::new(dashmap::DashMap::new()),
+            probes: Arc::new(crate::metrics::RtProbeSet::new()),
             drift_thresholds: drift_thresholds.unwrap_or_default(),
         };
 
@@ -529,10 +546,17 @@ impl SessionRouter {
         );
 
         loop {
+            // Start of the `recv` wait — used as the `ingress` probe sample.
+            // Measures how long the router sits idle between packets, i.e.
+            // the inverse of how hard the transport is pushing.
+            let ingress_start = std::time::Instant::now();
             tokio::select! {
                 result = input_rx.recv() => {
                     match result {
                         Some(packet) => {
+                            // ingress: wall time from loop-top to packet delivery.
+                            self.probes.ingress.record_since(ingress_start);
+
                             tracing::debug!(
                                 "Session {}: Received input packet (seq: {}, from: {})",
                                 self.session_id,
@@ -559,6 +583,18 @@ impl SessionRouter {
         }
 
         Ok(())
+    }
+
+    /// Snapshot all RT latency probes in declaration order:
+    /// `ingress, route_in, node_in, node_out, egress`.
+    ///
+    /// Only `ingress` and `egress` are actively recorded today; the
+    /// others will be populated as Phase 2 instruments the node
+    /// dispatch path.
+    pub fn probe_snapshots(
+        &self,
+    ) -> [(&'static str, crate::metrics::ProbeSnapshot); 5] {
+        self.probes.snapshot_all()
     }
 
     /// Process a single input through the pipeline graph
@@ -755,7 +791,14 @@ impl SessionRouter {
                     // Bounded channel: await applies backpressure when the
                     // client consumer is slow. An Err here means the receiver
                     // has been dropped (client disconnected).
-                    if let Err(e) = self.output_tx.send(output.clone()).await {
+                    //
+                    // `egress` probe: wall time from the moment we try to
+                    // enqueue this output to when the send completes. Spikes
+                    // here directly indicate a slow client consumer.
+                    let egress_start = std::time::Instant::now();
+                    let send_result = self.output_tx.send(output.clone()).await;
+                    self.probes.egress.record_since(egress_start);
+                    if let Err(e) = send_result {
                         tracing::warn!(
                             "Session {}: Failed to send output from sink '{}': {}",
                             self.session_id,
@@ -791,27 +834,19 @@ impl SessionRouter {
         // Get or create drift metrics for this stream
         let stream_id = data.stream_id().unwrap_or("default").to_string();
 
-        // Get or create metrics for this stream
-        let metrics = {
-            let metrics_map = self.drift_metrics.read().await;
-            if let Some(m) = metrics_map.get(&stream_id) {
-                m.clone()
-            } else {
-                drop(metrics_map);
-                let mut metrics_map = self.drift_metrics.write().await;
-                // Double-check after acquiring write lock
-                if let Some(m) = metrics_map.get(&stream_id) {
-                    m.clone()
-                } else {
-                    let new_metrics = Arc::new(RwLock::new(DriftMetrics::new(
-                        stream_id.clone(),
-                        self.drift_thresholds.clone(),
-                    )));
-                    metrics_map.insert(stream_id.clone(), new_metrics.clone());
-                    new_metrics
-                }
-            }
-        };
+        // Lock-free per-packet lookup via DashMap. `entry().or_insert_with`
+        // atomically gets-or-creates the per-stream metrics without the
+        // read-upgrade-write double-check pattern the old RwLock needed.
+        let metrics = self
+            .drift_metrics
+            .entry(stream_id.clone())
+            .or_insert_with(|| {
+                Arc::new(RwLock::new(DriftMetrics::new(
+                    stream_id.clone(),
+                    self.drift_thresholds.clone(),
+                )))
+            })
+            .clone();
 
         // Record the sample
         let mut metrics_guard = metrics.write().await;
@@ -857,19 +892,17 @@ impl SessionRouter {
 
     /// Get drift metrics for a specific stream
     pub async fn get_drift_metrics(&self, stream_id: &str) -> Option<serde_json::Value> {
-        let metrics_map = self.drift_metrics.read().await;
-        if let Some(metrics) = metrics_map.get(stream_id) {
-            let m = metrics.read().await;
-            Some(m.to_debug_json())
-        } else {
-            None
-        }
+        let metrics = self.drift_metrics.get(stream_id)?.clone();
+        let m = metrics.read().await;
+        Some(m.to_debug_json())
     }
 
     /// Get all stream IDs with drift metrics
     pub async fn get_stream_ids(&self) -> Vec<String> {
-        let metrics_map = self.drift_metrics.read().await;
-        metrics_map.keys().cloned().collect()
+        self.drift_metrics
+            .iter()
+            .map(|e| e.key().clone())
+            .collect()
     }
 
     /// Export all metrics in Prometheus format
@@ -879,18 +912,24 @@ impl SessionRouter {
         // Scheduler metrics
         output.push_str(&self.scheduler.to_prometheus().await);
 
-        // Drift metrics (aggregated - per-stream detail available via debug endpoint)
-        let metrics_map = self.drift_metrics.read().await;
-        if !metrics_map.is_empty() {
+        // Drift metrics (aggregated - per-stream detail available via debug endpoint).
+        // Snapshot via DashMap::iter (no global lock); we clone the Arcs out so we
+        // can await the per-stream read lock without holding the DashMap shard guard.
+        let stream_metrics: Vec<Arc<RwLock<DriftMetrics>>> = self
+            .drift_metrics
+            .iter()
+            .map(|e| e.value().clone())
+            .collect();
+        if !stream_metrics.is_empty() {
             output.push_str(&format!(
                 "session_router_active_streams{{session_id=\"{}\"}} {}\n",
                 self.session_id,
-                metrics_map.len()
+                stream_metrics.len()
             ));
 
             // Aggregate health score (minimum across streams)
             let mut min_health = 1.0f64;
-            for metrics in metrics_map.values() {
+            for metrics in &stream_metrics {
                 let m = metrics.read().await;
                 min_health = min_health.min(m.health_score());
             }
@@ -905,17 +944,22 @@ impl SessionRouter {
 
     /// Export per-stream debug metrics as JSON
     pub async fn debug_stream_metrics(&self) -> serde_json::Value {
-        let metrics_map = self.drift_metrics.read().await;
+        // Snapshot pairs first so the per-stream awaits happen off the DashMap guard.
+        let pairs: Vec<(String, Arc<RwLock<DriftMetrics>>)> = self
+            .drift_metrics
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect();
+        let stream_count = pairs.len();
         let mut streams = serde_json::Map::new();
-
-        for (stream_id, metrics) in metrics_map.iter() {
+        for (stream_id, metrics) in pairs {
             let m = metrics.read().await;
-            streams.insert(stream_id.clone(), m.to_debug_json());
+            streams.insert(stream_id, m.to_debug_json());
         }
 
         serde_json::json!({
             "session_id": self.session_id,
-            "stream_count": metrics_map.len(),
+            "stream_count": stream_count,
             "streams": streams,
             "scheduler": {
                 "max_concurrency": self.scheduler.config.max_concurrency,

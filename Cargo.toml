@@ -120,6 +120,8 @@ url = "2.5"
 crossbeam = "0.8"
 hdrhistogram = "7.5"
 bitflags = "2.4"
+parking_lot = "0.12"
+dashmap = "6.1"
 
 # Docker/build utilities
 tar = "0.4"

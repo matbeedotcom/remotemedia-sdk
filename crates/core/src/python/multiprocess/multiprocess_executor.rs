@@ -1762,8 +1762,11 @@ impl MultiprocessExecutor {
                 // Check for commands (non-blocking poll)
                 match cmd_rx.try_recv() {
                     Ok(IpcCommand::SendData { data }) => {
-                        // Send using persistent publisher (no delay needed!)
-                        tracing::info!(
+                        // Per-frame hot path: keep tracing at trace!/debug! to avoid
+                        // allocating a format-args record per audio frame. Use
+                        // `RUST_LOG=remotemedia_core::python::multiprocess=trace` to
+                        // re-enable for diagnostics.
+                        tracing::trace!(
                             "[IPC Thread] Node '{}': Received SendData command, {} bytes of type {:?}",
                             node_id_clone,
                             data.payload.len(),
@@ -1772,7 +1775,7 @@ impl MultiprocessExecutor {
 
                         match publisher.publish(data) {
                             Ok(_) => {
-                                tracing::info!(
+                                tracing::trace!(
                                     "[IPC Thread] Node '{}': Successfully published data to iceoryx2",
                                     node_id_clone
                                 );
