@@ -261,7 +261,7 @@ impl AsyncStreamingNode for SpeakerDiarizationNode {
                 );
                 self.resample_audio(&audio_samples, audio_sample_rate, self.sample_rate)
             } else {
-                audio_samples
+                audio_samples.into_vec()
             };
 
             // Convert to mono if stereo

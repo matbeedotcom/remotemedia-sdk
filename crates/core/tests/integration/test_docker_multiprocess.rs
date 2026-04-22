@@ -126,7 +126,7 @@ fn create_test_audio(duration_ms: u32, sample_rate: u32) -> RuntimeData {
         .collect();
 
     RuntimeData::Audio {
-        samples,
+        samples: samples.into(),
         sample_rate,
         channels: 1,
         stream_id: None,

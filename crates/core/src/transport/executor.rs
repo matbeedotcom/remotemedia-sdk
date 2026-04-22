@@ -84,10 +84,22 @@ pub struct SessionHandle {
 }
 
 impl SessionHandle {
-    /// Send input data to the session
+    /// Send input data to the session.
     ///
     /// The data will be processed through the pipeline and outputs
     /// will be available via `recv_output()`.
+    ///
+    /// # **REAL-TIME UNSAFE**
+    ///
+    /// This method is `async` and awaits on a bounded tokio channel. It
+    /// must not be called from a real-time-priority thread (Core Audio
+    /// HAL IO proc, AU render callback, JACK process callback, AAudio
+    /// data callback, etc.) — `.await` returns control to the tokio
+    /// scheduler, and a full queue parks the caller. For RT audio hosts,
+    /// use the [`remotemedia-rt-bridge`] crate, which pumps data from
+    /// RT threads into the async pipeline through pinned-thread SPSC
+    /// rings, or call [`crate::nodes::process_sync`] directly on a
+    /// [`crate::nodes::SyncStreamingNode`] to skip the executor entirely.
     pub async fn send_input(&self, data: TransportData) -> Result<()> {
         if !self.is_active {
             return Err(crate::Error::Execution("Session is closed".to_string()));

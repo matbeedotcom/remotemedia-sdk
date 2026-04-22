@@ -94,7 +94,7 @@ async fn test_coordinator_via_pipeline_runner_streaming() {
     // Generate 20ms of test audio at 16kHz (320 samples)
     let audio_samples = generate_test_audio(20, 16000);
     let audio_input = RuntimeData::Audio {
-        samples: audio_samples.clone(),
+        samples: audio_samples.clone().into(),
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
@@ -164,7 +164,7 @@ async fn test_coordinator_immediate_forwarding_latency() {
     // Generate audio
     let audio_samples = generate_test_audio(20, 16000);
     let audio_input = RuntimeData::Audio {
-        samples: audio_samples,
+        samples: audio_samples.clone().into(),
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
@@ -223,7 +223,7 @@ async fn test_coordinator_multiple_chunks() {
     for i in 0..5 {
         let audio_samples = generate_test_audio(20, 16000);
         let audio_input = RuntimeData::Audio {
-            samples: audio_samples,
+            samples: audio_samples.clone().into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: Some(format!("chunk_{}", i)),
@@ -289,7 +289,7 @@ async fn test_coordinator_with_custom_config() {
     // Send a short burst of audio (should be considered false positive with 500ms min)
     let audio_samples = generate_test_audio(20, 16000);
     let audio_input = RuntimeData::Audio {
-        samples: audio_samples,
+        samples: audio_samples.clone().into(),
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
@@ -329,7 +329,7 @@ async fn test_coordinator_unary_execution() {
 
     let audio_samples = generate_test_audio(20, 16000);
     let audio_input = RuntimeData::Audio {
-        samples: audio_samples.clone(),
+        samples: audio_samples.clone().into(),
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
@@ -378,7 +378,7 @@ async fn test_coordinator_session_isolation() {
 
     // Send different audio to each session
     let audio1 = RuntimeData::Audio {
-        samples: generate_test_audio(20, 16000),
+        samples: generate_test_audio(20, 16000).into(),
         sample_rate: 16000,
         channels: 1,
         stream_id: Some("session1_audio".to_string()),
@@ -388,7 +388,7 @@ async fn test_coordinator_session_isolation() {
     };
 
     let audio2 = RuntimeData::Audio {
-        samples: generate_test_audio(30, 16000), // Different duration
+        samples: generate_test_audio(30, 16000).into(), // Different duration
         sample_rate: 16000,
         channels: 1,
         stream_id: Some("session2_audio".to_string()),

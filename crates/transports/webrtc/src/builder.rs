@@ -186,7 +186,7 @@ mod grpc_builder {
     /// use std::sync::Arc;
     ///
     /// # async fn example() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    /// let executor = Arc::new(PipelineExecutor::new());
+    /// let executor = Arc::new(PipelineExecutor::new()?);
     /// let manifest: Arc<Manifest> = todo!();
     ///
     /// let server = WebRtcSignalingServerBuilder::new()

@@ -337,7 +337,7 @@ impl AsyncStreamingNode for SileroVADNode {
                 );
                 self.resample_audio(&samples, audio_sample_rate, self.sampling_rate)
             } else {
-                samples
+                samples.into_vec()
             };
 
             // Convert to mono if stereo

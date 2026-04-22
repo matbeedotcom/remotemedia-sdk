@@ -327,7 +327,7 @@ impl AudioBufferAccumulatorNode {
         state.chunks_accumulated = 0;
 
         Ok(Some(RuntimeData::Audio {
-            samples,
+            samples: samples.into(),
             sample_rate,
             channels,
             stream_id: None,

@@ -69,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create RuntimeData::Audio
     let audio_data = RuntimeData::Audio {
-        samples,
+        samples: samples.into(),
         sample_rate: spec.sample_rate,
         channels: spec.channels as u32,
         stream_id: None,

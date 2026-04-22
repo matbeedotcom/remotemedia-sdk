@@ -527,7 +527,7 @@ mod tests {
 
         // Silent audio
         let silent_input = RuntimeData::Audio {
-            samples: vec![0.0; 1600],
+            samples: vec![0.0; 1600].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: Some("test".to_string()),
@@ -560,7 +560,7 @@ mod tests {
             .collect();
 
         let input = RuntimeData::Audio {
-            samples,
+            samples: samples.into(),
             sample_rate: 16000,
             channels: 2,
             stream_id: Some("test".to_string()),

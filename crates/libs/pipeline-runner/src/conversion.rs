@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn test_convert_audio_passthrough() {
         let data = RuntimeData::Audio {
-            samples: vec![0.0, 0.1, 0.2],
+            samples: vec![0.0, 0.1, 0.2].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: None,

@@ -423,7 +423,7 @@ impl AudioEvidenceNode {
                 ..
             } => {
                 let ts = timestamp_us.unwrap_or_else(Self::current_timestamp_us);
-                self.process_audio(samples.clone(), *sample_rate, *channels, ts, &mut state);
+                self.process_audio(samples.to_vec(), *sample_rate, *channels, ts, &mut state);
             }
 
             // Process JSON - check for triggers
@@ -595,7 +595,7 @@ mod tests {
         // Send audio chunks
         for i in 0..10 {
             let input = RuntimeData::Audio {
-                samples: vec![0.1; 16000], // 1 second
+                samples: vec![0.1; 16000].into(), // 1 second
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: None,
@@ -618,7 +618,7 @@ mod tests {
         // First, buffer some audio
         for i in 0..3 {
             let input = RuntimeData::Audio {
-                samples: vec![0.1; 16000], // 1 second each
+                samples: vec![0.1; 16000].into(), // 1 second each
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: None,
@@ -638,7 +638,7 @@ mod tests {
         // Add post-alert audio
         for i in 3..5 {
             let input = RuntimeData::Audio {
-                samples: vec![0.1; 16000],
+                samples: vec![0.1; 16000].into(),
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: None,

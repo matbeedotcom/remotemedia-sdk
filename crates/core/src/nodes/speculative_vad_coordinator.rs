@@ -284,7 +284,7 @@ impl AsyncStreamingNode for SpeculativeVADCoordinator {
         {
             let mut sessions = self.sessions.lock();
             let state = sessions.get_mut(&session_id).unwrap();
-            for &sample in &samples {
+            for &sample in samples.iter() {
                 if state.audio_buffer.len() >= state.buffer_capacity {
                     state.audio_buffer.pop_front();
                 }
@@ -481,7 +481,7 @@ mod tests {
         let coordinator = SpeculativeVADCoordinator::new();
 
         let audio = RuntimeData::Audio {
-            samples: vec![0.1, 0.2, 0.3],
+            samples: vec![0.1, 0.2, 0.3].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: None,
@@ -533,7 +533,7 @@ mod tests {
             let session_id = format!("session_{}", session_num);
 
             let audio = RuntimeData::Audio {
-                samples: vec![session_num as f32; 100],
+                samples: vec![session_num as f32; 100].into(),
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: None,
@@ -564,7 +564,7 @@ mod tests {
 
         // Create a session by processing some audio
         let audio = RuntimeData::Audio {
-            samples: vec![0.1; 100],
+            samples: vec![0.1; 100].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: None,

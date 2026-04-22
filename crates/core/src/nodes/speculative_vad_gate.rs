@@ -229,7 +229,7 @@ impl SpeculativeVADGate {
 
         // **Step 1: Forward audio immediately (speculative)**
         let audio_output = RuntimeData::Audio {
-            samples: samples.to_vec(),
+            samples: samples.to_vec().into(),
             sample_rate,
             channels,
             stream_id: None,
@@ -379,7 +379,7 @@ mod tests {
         let gate = SpeculativeVADGate::with_default();
 
         let audio = RuntimeData::Audio {
-            samples: vec![0.1, 0.2, 0.3],
+            samples: vec![0.1, 0.2, 0.3].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: None,
@@ -421,7 +421,7 @@ mod tests {
 
         // After processing without VAD, should still be 1.0
         let audio = RuntimeData::Audio {
-            samples: vec![0.1; 100],
+            samples: vec![0.1; 100].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: None,
@@ -450,7 +450,7 @@ mod tests {
             let session_id = format!("session_{}", session_num);
 
             let audio = RuntimeData::Audio {
-                samples: vec![session_num as f32; 100],
+                samples: vec![session_num as f32; 100].into(),
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: None,

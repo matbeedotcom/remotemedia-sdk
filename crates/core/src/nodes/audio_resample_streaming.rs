@@ -69,7 +69,7 @@ impl AsyncStreamingNode for ResampleStreamingNode {
         if total_samples <= chunk_size {
             // Small enough to process directly
             let audio_data = AudioData::new(
-                crate::audio::buffer::AudioBuffer::new_f32(f32_samples),
+                crate::audio::buffer::AudioBuffer::new_f32(f32_samples.into_vec()),
                 input_sample_rate,
                 input_channels as usize,
             );
@@ -89,7 +89,7 @@ impl AsyncStreamingNode for ResampleStreamingNode {
 
             // Return resampled audio as RuntimeData
             return Ok(RuntimeData::Audio {
-                samples: f32_samples.to_vec(),
+                samples: f32_samples.to_vec().into(),
                 sample_rate: resampled.sample_rate,
                 channels: resampled.channels as u32,
                 stream_id: None,
@@ -167,7 +167,7 @@ impl AsyncStreamingNode for ResampleStreamingNode {
 
         // Return resampled audio
         Ok(RuntimeData::Audio {
-            samples: all_output_samples,
+            samples: all_output_samples.into(),
             sample_rate: target_rate,
             channels: input_channels,
             stream_id: None,
@@ -401,7 +401,7 @@ impl AsyncStreamingNode for AutoResampleStreamingNode {
         if total_samples <= chunk_size {
             // Small buffer - process directly
             let audio_data = AudioData::new(
-                crate::audio::buffer::AudioBuffer::new_f32(f32_samples),
+                crate::audio::buffer::AudioBuffer::new_f32(f32_samples.into_vec()),
                 input_sample_rate,
                 channels,
             );
@@ -413,7 +413,7 @@ impl AsyncStreamingNode for AutoResampleStreamingNode {
                 .ok_or_else(|| Error::Execution("Resampler output must be F32".into()))?;
 
             return Ok(RuntimeData::Audio {
-                samples: f32_samples.to_vec(),
+                samples: f32_samples.to_vec().into(),
                 sample_rate: resampled.sample_rate,
                 channels: resampled.channels as u32,
                 stream_id: None,
@@ -451,7 +451,7 @@ impl AsyncStreamingNode for AutoResampleStreamingNode {
         }
 
         Ok(RuntimeData::Audio {
-            samples: all_output_samples,
+            samples: all_output_samples.into(),
             sample_rate: target_rate,
             channels: channels as u32,
             stream_id: None,

@@ -94,7 +94,7 @@ enum PipelineMode {
 fn resample_to_16khz(input_chunk: &RuntimeData) -> RuntimeData {
     match input_chunk {
         RuntimeData::Audio { samples, .. } => RuntimeData::Audio {
-            samples: samples.iter().step_by(3).copied().collect(),
+            samples: samples.iter().step_by(3).copied().collect::<Vec<f32>>().into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: None,
@@ -286,7 +286,7 @@ fn create_browser_audio_chunk(chunk_idx: usize) -> RuntimeData {
         .collect();
 
     RuntimeData::Audio {
-        samples,
+        samples: samples.into(),
         sample_rate: 48000,
         channels: 1,
         stream_id: None,

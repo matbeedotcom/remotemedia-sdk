@@ -924,7 +924,7 @@ impl MultiprocessExecutor {
                     .collect();
 
                 Ok(MainRD::Audio {
-                    samples,
+                    samples: samples.into(),
                     sample_rate,
                     channels,
                     stream_id: None,

@@ -597,7 +597,17 @@ impl SessionRouter {
         self.probes.snapshot_all()
     }
 
-    /// Process a single input through the pipeline graph
+    /// Process a single input through the pipeline graph.
+    ///
+    /// # **REAL-TIME UNSAFE**
+    ///
+    /// Runs on a tokio worker, allocates `HashMap`s per packet, takes
+    /// the session `Mutex` for downstream routing, and may call
+    /// `tokio::spawn` when a node yields multiple outputs. Do not drive
+    /// this from a real-time-priority thread; use the
+    /// [`remotemedia-rt-bridge`] crate to bridge RT threads to the async
+    /// router through SPSC rings, or call
+    /// [`crate::nodes::process_sync`] directly on a sync node.
     async fn process_input(&mut self, packet: DataPacket) -> Result<()> {
         let start_time = std::time::Instant::now();
 
@@ -1236,7 +1246,7 @@ mod tests {
 
         // Record a drift sample manually by accessing internals
         let audio_data = RuntimeData::Audio {
-            samples: vec![0.1; 100],
+            samples: vec![0.1; 100].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: Some("stream_1".to_string()),
@@ -1280,7 +1290,7 @@ mod tests {
 
         // Record a sample to create stream metrics
         let audio_data = RuntimeData::Audio {
-            samples: vec![0.1; 100],
+            samples: vec![0.1; 100].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: Some("test_stream".to_string()),
@@ -1321,7 +1331,7 @@ mod tests {
 
         // Record samples from two streams
         let audio_1 = RuntimeData::Audio {
-            samples: vec![0.1; 100],
+            samples: vec![0.1; 100].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: Some("audio_1".to_string()),
@@ -1330,7 +1340,7 @@ mod tests {
             metadata: None,
         };
         let audio_2 = RuntimeData::Audio {
-            samples: vec![0.2; 100],
+            samples: vec![0.2; 100].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: Some("audio_2".to_string()),

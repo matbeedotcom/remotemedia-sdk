@@ -655,7 +655,7 @@ pub async fn rtp_to_runtime_data(
         let samples = audio_track.on_rtp_packet(payload).await?;
 
         Ok(RuntimeData::Audio {
-            samples,
+            samples: samples.into(),
             sample_rate: 48000, // Opus always decodes to 48kHz
             channels: 1,        // Assuming mono for now
             stream_id: None,

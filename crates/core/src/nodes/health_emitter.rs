@@ -732,7 +732,7 @@ mod tests {
         let node = HealthEmitterNode::new("test".to_string(), HealthEmitterConfig::default());
 
         let input = RuntimeData::Audio {
-            samples: vec![0.0; 1600], // 100ms at 16kHz
+            samples: vec![0.0; 1600].into(), // 100ms at 16kHz
             sample_rate: 16000,
             channels: 1,
             stream_id: Some("audio".to_string()),

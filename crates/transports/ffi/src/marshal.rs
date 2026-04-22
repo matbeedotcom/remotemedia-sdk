@@ -595,7 +595,7 @@ pub fn python_to_runtime_data(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResul
                         })?
                         .extract()?;
                     return Ok(RuntimeData::Audio {
-                        samples,
+                        samples: samples.into(),
                         sample_rate,
                         channels,
                         stream_id: None,

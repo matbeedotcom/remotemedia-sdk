@@ -5736,6 +5736,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "remotemedia-rt-bridge"
+version = "0.4.0"
+dependencies = [
+ "core_affinity",
+ "criterion",
+ "remotemedia-core",
+ "rtrb",
+ "thread-priority",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "remotemedia-ui"
 version = "0.4.0"
 dependencies = [
@@ -5946,6 +5959,12 @@ dependencies = [
  "thiserror 1.0.69",
  "webrtc-util",
 ]
+
+[[package]]
+name = "rtrb"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7204ed6420f698836b76d4d5c2ec5dec7585fd5c3a788fd1cde855d1de598239"
 
 [[package]]
 name = "rubato"
@@ -6935,6 +6954,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "thread-priority"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfe075d7053dae61ac5413a34ea7d4913b6e6207844fd726bdd858b37ff72bf5"
+dependencies = [
+ "bitflags 2.10.0",
+ "cfg-if",
+ "libc",
+ "log",
+ "rustversion",
+ "winapi",
 ]
 
 [[package]]

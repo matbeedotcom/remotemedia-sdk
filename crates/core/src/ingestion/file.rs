@@ -432,7 +432,7 @@ fn decode_stdin(audio_config: Option<&AudioConfig>) -> Result<(IngestMetadata, V
 
     // Create single audio chunk
     let chunk = RuntimeData::Audio {
-        samples,
+        samples: samples.into(),
         sample_rate,
         channels: channels as u32,
         stream_id: Some("audio:0".to_string()),
@@ -657,7 +657,7 @@ fn decode_with_ffmpeg(
 
     for chunk_samples in all_samples.chunks(chunk_size.max(1)) {
         let chunk = RuntimeData::Audio {
-            samples: chunk_samples.to_vec(),
+            samples: chunk_samples.to_vec().into(),
             sample_rate: output_sample_rate,
             channels: output_channels,
             stream_id: Some("audio:0".to_string()),

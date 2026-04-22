@@ -229,7 +229,7 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
                 .collect();
 
             Some(RuntimeData::Audio {
-                samples,
+                samples: samples.into(),
                 sample_rate: audio.sample_rate,
                 channels: audio.channels,
                 stream_id: None,

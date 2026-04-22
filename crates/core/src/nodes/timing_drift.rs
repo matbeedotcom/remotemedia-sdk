@@ -428,7 +428,7 @@ mod tests {
         let node = create_test_node();
 
         let input = RuntimeData::Audio {
-            samples: vec![0.0; 1600],
+            samples: vec![0.0; 1600].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: Some("test".to_string()),
@@ -458,7 +458,7 @@ mod tests {
         // Process several samples
         for i in 0..5 {
             let input = RuntimeData::Audio {
-                samples: vec![0.0; 1600],
+                samples: vec![0.0; 1600].into(),
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: Some("test".to_string()),
@@ -474,7 +474,7 @@ mod tests {
 
         // Next sample should trigger report
         let input = RuntimeData::Audio {
-            samples: vec![0.0; 1600],
+            samples: vec![0.0; 1600].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: Some("test".to_string()),

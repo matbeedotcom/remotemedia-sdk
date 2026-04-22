@@ -432,7 +432,7 @@ impl ServerPeer {
                                     // Send decoded audio to pipeline
                                     let transport_data = TransportData {
                                         data: RuntimeData::Audio {
-                                            samples,
+                                            samples: samples.into(),
                                             sample_rate: 48000, // Opus always decodes to 48kHz
                                             channels: 1,
                                             stream_id: None, // From client, uses default track
@@ -597,9 +597,12 @@ impl ServerPeer {
 
                 // Get the audio track from registry
                 if let Some(audio_track) = track_registry.get_audio_track(stream_id).await {
-                    // Send audio samples through the track with dynamic sample rate
+                    // Send audio samples through the track with dynamic sample rate.
+                    // `send_audio` takes `Arc<Vec<f32>>`; copy via `to_vec`
+                    // regardless of `AudioSamples` variant (Vec path is a
+                    // full clone, same as before this refactor).
                     audio_track
-                        .send_audio(Arc::new(samples.clone()), *sample_rate)
+                        .send_audio(Arc::new(samples.to_vec()), *sample_rate)
                         .await?;
 
                     // Record frame for activity tracking

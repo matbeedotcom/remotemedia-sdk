@@ -181,7 +181,7 @@ impl RtmpDemuxer {
                 channels,
                 timestamp_us,
             }) => Ok(Some(RuntimeData::Audio {
-                samples,
+                samples: samples.into(),
                 sample_rate: self.target_sample_rate,
                 channels: channels as u32,
                 stream_id: Some("audio:0".to_string()),

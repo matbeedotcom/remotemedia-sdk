@@ -70,7 +70,7 @@ pub(crate) mod util {
                 stream_id,
                 metadata,
                 ..
-            } => Ok((samples, sample_rate, channels, stream_id, metadata)),
+            } => Ok((samples.into_vec(), sample_rate, channels, stream_id, metadata)),
             other => Err(Error::Execution(format!(
                 "expected RuntimeData::Audio, got {other:?}"
             ))),
@@ -85,7 +85,7 @@ pub(crate) mod util {
         metadata: Option<serde_json::Value>,
     ) -> RuntimeData {
         RuntimeData::Audio {
-            samples,
+            samples: samples.into(),
             sample_rate,
             channels,
             stream_id,

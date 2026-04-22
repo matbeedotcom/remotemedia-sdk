@@ -183,7 +183,7 @@ impl AsyncStreamingNode for AudioChunkerNode {
             while state.buffer.len() >= self.chunk_size {
                 let chunk: Vec<f32> = state.buffer.drain(..self.chunk_size).collect();
                 chunks.push(RuntimeData::Audio {
-                    samples: chunk,
+                    samples: chunk.into(),
                     sample_rate: state.sample_rate,
                     channels: state.channels,
                     stream_id: None,

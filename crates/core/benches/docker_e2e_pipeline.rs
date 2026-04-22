@@ -51,7 +51,7 @@ fn generate_audio_data(duration_ms: u32, sample_rate: u32) -> RuntimeData {
     let samples: Vec<f32> = (0..num_samples).map(|i| (i as f32 * 0.001).sin()).collect();
 
     RuntimeData::Audio {
-        samples,
+        samples: samples.into(),
         sample_rate,
         channels: 1,
         stream_id: None,

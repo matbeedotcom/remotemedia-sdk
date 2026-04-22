@@ -70,7 +70,7 @@ pub fn audio_buffer_to_runtime_data(
     };
 
     Ok(RuntimeData::Audio {
-        samples,
+        samples: samples.into(),
         sample_rate: audio.sample_rate,
         channels: audio.channels,
         stream_id: None,
@@ -251,7 +251,7 @@ pub fn data_buffer_to_runtime_data_with_arrival(buffer: &DataBuffer, arrival_ts_
                 .collect();
 
             Some(RuntimeData::Audio {
-                samples,
+                samples: samples.into(),
                 sample_rate: audio.sample_rate,
                 channels: audio.channels,
                 stream_id: None,

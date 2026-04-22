@@ -90,7 +90,7 @@ impl LatencyMockPipeline {
 /// Helper function to create audio chunks
 fn create_audio_chunk(sample_count: usize) -> RuntimeData {
     RuntimeData::Audio {
-        samples: vec![0.1; sample_count],
+        samples: vec![0.1; sample_count].into(),
         sample_rate: 16000,
         channels: 1,
         stream_id: None,

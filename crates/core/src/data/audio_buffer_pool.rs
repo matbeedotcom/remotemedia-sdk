@@ -50,6 +50,7 @@ use std::sync::Arc;
 /// A bounded lock-free pool of reusable `Vec<f32>` buffers.
 ///
 /// Cheap to clone via `Arc`; all operations are non-blocking.
+#[derive(Debug)]
 pub struct AudioBufferPool {
     queue: ArrayQueue<Vec<f32>>,
     /// Minimum capacity that freshly-allocated (pool-miss) buffers use.
@@ -114,6 +115,7 @@ impl AudioBufferPool {
 /// Derefs to `Vec<f32>`; returns itself to the pool on drop. Use
 /// [`PooledAudioBuf::into_inner`] to detach the buffer (no pool return)
 /// when you need to hand ownership to a sink (e.g. into `RuntimeData::Audio`).
+#[derive(Debug)]
 pub struct PooledAudioBuf {
     inner: Option<Vec<f32>>,
     pool: Option<Arc<AudioBufferPool>>,

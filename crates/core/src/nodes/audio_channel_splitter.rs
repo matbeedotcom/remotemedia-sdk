@@ -298,7 +298,7 @@ impl AsyncStreamingNode for AudioChannelSplitterNode {
                         .map(|chunk| chunk.iter().sum::<f32>() / *channels as f32)
                         .collect()
                 } else {
-                    samples.clone()
+                    samples.to_vec()
                 };
 
                 let segments = state.segments.clone();
@@ -331,7 +331,7 @@ impl AsyncStreamingNode for AudioChannelSplitterNode {
                             let stream_id = format!("{}_{}", self.stream_id_prefix, speaker_idx);
 
                             callback(RuntimeData::Audio {
-                                samples: speaker_audio,
+                                samples: speaker_audio.into(),
                                 sample_rate: *sample_rate,
                                 channels: 1, // Mono per speaker
                                 stream_id: Some(stream_id),
@@ -356,7 +356,7 @@ impl AsyncStreamingNode for AudioChannelSplitterNode {
                         let num_channels = num_speakers.min(self.max_speakers as usize) as u32;
 
                         callback(RuntimeData::Audio {
-                            samples: multichannel,
+                            samples: multichannel.into(),
                             sample_rate: *sample_rate,
                             channels: num_channels,
                             stream_id: input_stream_id.clone(),

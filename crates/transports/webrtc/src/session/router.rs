@@ -709,10 +709,12 @@ impl SessionRouter {
                     Error::MediaTrackError("No audio track configured".to_string())
                 })?;
 
-                // Send audio directly (handles encoding + RTP transmission)
-                // Use sample rate from RuntimeData
+                // Send audio directly (handles encoding + RTP transmission).
+                // Use sample rate from RuntimeData. `send_audio` takes
+                // `Arc<Vec<f32>>`; materialize via `to_vec` — same cost
+                // as the previous `samples.clone()` on a `Vec<f32>`.
                 audio_track
-                    .send_audio(Arc::new(samples.clone()), *sample_rate)
+                    .send_audio(Arc::new(samples.to_vec()), *sample_rate)
                     .await?;
 
                 // Record outgoing audio metrics

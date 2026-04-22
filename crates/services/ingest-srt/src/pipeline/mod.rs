@@ -122,7 +122,7 @@ async fn run_pipeline_with_av(
 
                         // Create RuntimeData::Audio
                         let runtime_data = RuntimeData::Audio {
-                            samples: audio.samples,
+                            samples: audio.samples.into(),
                             sample_rate: audio.sample_rate,
                             channels: audio.channels,
                             stream_id: Some(session_id.clone()),
