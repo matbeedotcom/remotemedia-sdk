@@ -37,6 +37,11 @@ tokio = { workspace = true, features = ["full"] }
 futures = { workspace = true }
 futures-util = "0.3"
 
+# Sync locks for media track state (encoder / decoder / sender / RTP
+# counters). Phase B2: swapped from `tokio::sync::RwLock` because no
+# `.await` is held across the lock; uncontended fast path is a CAS.
+parking_lot = { workspace = true }
+
 # Serialization (JSON-RPC 2.0)
 serde = { workspace = true }
 serde_json = { workspace = true }
