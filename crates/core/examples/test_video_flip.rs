@@ -1,6 +1,6 @@
 use remotemedia_core::data::RuntimeData;
 use remotemedia_core::data::PixelFormat;
-use remotemedia_core::nodes::streaming_node::AsyncStreamingNode;
+use remotemedia_core::nodes::streaming_node::SyncStreamingNode;
 use remotemedia_core::nodes::video_flip::{FlipDirection, VideoFlipConfig, VideoFlipNode};
 
 #[tokio::main]
@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         arrival_ts_us: None,
     };
 
-    let output = node.process(input_data).await?;
+    let output = node.process(input_data)?;
 
     if let RuntimeData::Video { pixel_data, .. } = output {
         // After vertical flip:
@@ -79,7 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         arrival_ts_us: None,
     };
 
-    let output = node.process(input_data).await?;
+    let output = node.process(input_data)?;
 
     if let RuntimeData::Video { pixel_data, .. } = output {
         // After horizontal flip:
@@ -127,7 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         arrival_ts_us: None,
     };
 
-    let output = node.process(input_data).await?;
+    let output = node.process(input_data)?;
 
     if let RuntimeData::Video {
         pixel_data,

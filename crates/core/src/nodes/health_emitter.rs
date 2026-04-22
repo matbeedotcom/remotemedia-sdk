@@ -25,7 +25,9 @@
 
 use crate::data::RuntimeData;
 use crate::executor::drift_metrics::{DriftAlerts, DriftMetrics, DriftThresholds};
-use crate::nodes::streaming_node::{StreamingNode, StreamingNodeFactory};
+use crate::nodes::streaming_node::{
+    StreamingNode, StreamingNodeFactory, SyncNodeWrapper, SyncStreamingNode,
+};
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -267,23 +269,20 @@ impl HealthEmitterNode {
     }
 }
 
-#[async_trait::async_trait]
-impl StreamingNode for HealthEmitterNode {
+// Phase A-Wave 2: migrated to `SyncStreamingNode` via the new
+// `process_streaming` hook. The body has no `.await` — state uses
+// `std::sync::RwLock`. Multi-output semantics preserved: per-event
+// callback invocation in `process_streaming`; the single-output
+// `process` path returns the events as `Json(Array)` for back-compat
+// with routers that might call `process_async` directly.
+impl SyncStreamingNode for HealthEmitterNode {
     fn node_type(&self) -> &str {
         "HealthEmitterNode"
     }
 
-    fn node_id(&self) -> &str {
-        &self.node_id
-    }
-
-    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
-        // For single-output mode, just record the sample and return health JSON
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         let events = self.process_and_collect_events(&data)?;
-
-        // Return the health events as JSON
         if events.is_empty() {
-            // Return empty JSON if no events
             Ok(RuntimeData::Json(serde_json::json!(null)))
         } else if events.len() == 1 {
             Ok(RuntimeData::Json(events.into_iter().next().unwrap()))
@@ -292,12 +291,12 @@ impl StreamingNode for HealthEmitterNode {
         }
     }
 
-    async fn process_multi_async(
+    fn process_multi(
         &self,
         inputs: HashMap<String, RuntimeData>,
     ) -> Result<RuntimeData, Error> {
         if let Some((_, data)) = inputs.into_iter().next() {
-            self.process_async(data).await
+            self.process(data)
         } else {
             Err(Error::Execution("No input data provided".into()))
         }
@@ -307,21 +306,17 @@ impl StreamingNode for HealthEmitterNode {
         false
     }
 
-    async fn process_streaming_async(
+    fn process_streaming(
         &self,
         data: RuntimeData,
-        _session_id: Option<String>,
-        callback: Box<dyn FnMut(RuntimeData) -> Result<(), Error> + Send>,
+        _session_id: Option<&str>,
+        callback: &mut dyn FnMut(RuntimeData) -> Result<(), Error>,
     ) -> Result<usize, Error> {
-        let mut callback = callback;
         let events = self.process_and_collect_events(&data)?;
         let count = events.len();
-
-        // Emit each event as a separate JSON output
         for event in events {
             callback(RuntimeData::Json(event))?;
         }
-
         Ok(count)
     }
 }
@@ -630,7 +625,7 @@ impl StreamingNodeFactory for HealthEmitterNodeFactory {
     ) -> Result<Box<dyn StreamingNode>, Error> {
         let config: HealthEmitterConfig = serde_json::from_value(params.clone()).unwrap_or_default();
 
-        Ok(Box::new(HealthEmitterNode::new(node_id, config)))
+        Ok(Box::new(SyncNodeWrapper(HealthEmitterNode::new(node_id, config))))
     }
 
     fn node_type(&self) -> &str {
@@ -724,7 +719,10 @@ mod tests {
     async fn test_node_creation() {
         let node = HealthEmitterNode::new("test_health".to_string(), HealthEmitterConfig::default());
         assert_eq!(node.node_type(), "HealthEmitterNode");
-        assert_eq!(node.node_id(), "test_health");
+        // `SyncStreamingNode` drops the `node_id()` accessor
+        // (per-node concept, not a trait method); check the struct
+        // field directly.
+        assert_eq!(node.node_id, "test_health");
     }
 
     #[tokio::test]
@@ -741,8 +739,69 @@ mod tests {
             metadata: None,
         };
 
-        let result = node.process_async(input).await;
+        let result = node.process(input);
         assert!(result.is_ok());
+    }
+
+    /// Phase A-Wave 2 regression guard: migrating
+    /// `HealthEmitterNode` to `SyncStreamingNode` must preserve the
+    /// multi-output semantics — one JSON event per callback
+    /// invocation, not a single `Json(Array)` collapse. This test
+    /// drives the node through `SyncNodeWrapper::process_streaming_async`
+    /// (the same path the router takes) and asserts N callback
+    /// invocations.
+    #[tokio::test]
+    async fn test_sync_wrapper_preserves_multi_output() {
+        use std::sync::{Arc, Mutex};
+        let node = HealthEmitterNode::new(
+            "test_multi_out".to_string(),
+            HealthEmitterConfig::default(),
+        );
+        let wrapper = SyncNodeWrapper(node);
+
+        // Craft an upstream JSON event that should trigger multiple
+        // health-events (combination of clipping + silence).
+        let upstream = RuntimeData::Json(serde_json::json!({
+            "event_type": "audio_level",
+            "is_clipping": true,
+            "is_sustained_silence": true,
+        }));
+
+        let outputs = Arc::new(Mutex::new(Vec::<RuntimeData>::new()));
+        let outputs_c = outputs.clone();
+        let callback: Box<dyn FnMut(RuntimeData) -> Result<(), Error> + Send> =
+            Box::new(move |out| {
+                outputs_c.lock().unwrap().push(out);
+                Ok(())
+            });
+
+        let count = wrapper
+            .process_streaming_async(upstream, None, callback)
+            .await
+            .expect("process_streaming_async ok");
+
+        let outs = outputs.lock().unwrap();
+        assert_eq!(
+            count,
+            outs.len(),
+            "returned count must match callback invocation count"
+        );
+        // HealthEmitterNode emits a state-change event the first time
+        // any issue transitions on; with two fresh issues (clipping +
+        // silence) we expect at least one event. The key invariant is
+        // "didn't collapse into Json::Array" — i.e., each output is a
+        // standalone Json variant, not an array packing.
+        for out in outs.iter() {
+            match out {
+                RuntimeData::Json(v) => {
+                    assert!(
+                        !matches!(v, serde_json::Value::Array(_)),
+                        "multi-output emission must not pack into Json(Array); got {v:?}",
+                    );
+                }
+                _ => panic!("expected Json output, got {out:?}"),
+            }
+        }
     }
 
     #[test]

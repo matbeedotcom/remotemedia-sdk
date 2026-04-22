@@ -480,9 +480,10 @@ impl StreamingNodeFactory for TextCollectorNodeFactory {
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
         use crate::nodes::text_collector::{TextCollectorNode, TextCollectorConfig};
+        use crate::nodes::SyncNodeWrapper;
         let config: TextCollectorConfig = serde_json::from_value(params.clone()).unwrap_or_default();
         let node = TextCollectorNode::with_config(config);
-        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+        Ok(Box::new(SyncNodeWrapper(node)))
     }
 
     fn node_type(&self) -> &str {
@@ -684,9 +685,10 @@ impl StreamingNodeFactory for AudioChunkerNodeFactory {
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
         use crate::nodes::audio_chunker::{AudioChunkerNode, AudioChunkerConfig};
+        use crate::nodes::SyncNodeWrapper;
         let config: AudioChunkerConfig = serde_json::from_value(params.clone()).unwrap_or_default();
         let node = AudioChunkerNode::with_config(config);
-        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+        Ok(Box::new(SyncNodeWrapper(node)))
     }
 
     fn node_type(&self) -> &str {

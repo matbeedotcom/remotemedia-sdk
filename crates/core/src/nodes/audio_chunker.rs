@@ -13,8 +13,7 @@
 use crate::data::AudioBuffer as ProtoAudioBuffer;
 use crate::data::RuntimeData;
 use crate::error::{Error, Result};
-use crate::nodes::AsyncStreamingNode;
-use async_trait::async_trait;
+use crate::nodes::SyncStreamingNode;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use parking_lot::Mutex;
@@ -130,27 +129,30 @@ impl AudioChunkerNode {
     }
 }
 
-#[async_trait]
-impl AsyncStreamingNode for AudioChunkerNode {
+// Phase A-Wave 2: migrated to `SyncStreamingNode`. The body was already
+// sync (parking_lot::Mutex, no `.await`); only the trait wrapping
+// changes. Multi-output emission preserved via the new
+// `SyncStreamingNode::process_streaming` hook.
+impl SyncStreamingNode for AudioChunkerNode {
     fn node_type(&self) -> &str {
         "AudioChunkerNode"
     }
 
-    async fn process(&self, _data: RuntimeData) -> Result<RuntimeData> {
+    fn process(&self, _data: RuntimeData) -> std::result::Result<RuntimeData, Error> {
         Err(Error::Execution(
-            "AudioChunkerNode requires streaming mode - use process_streaming() instead".into(),
+            "AudioChunkerNode requires streaming mode - \
+             callers must use process_streaming() (the router does this \
+             automatically when the factory declares is_multi_output_streaming=true)"
+                .into(),
         ))
     }
 
-    async fn process_streaming<F>(
+    fn process_streaming(
         &self,
         data: RuntimeData,
-        session_id: Option<String>,
-        mut callback: F,
-    ) -> Result<usize>
-    where
-        F: FnMut(RuntimeData) -> Result<()> + Send,
-    {
+        session_id: Option<&str>,
+        callback: &mut dyn FnMut(RuntimeData) -> std::result::Result<(), Error>,
+    ) -> std::result::Result<usize, Error> {
         let (input_samples, input_sample_rate, input_channels) = match data {
             RuntimeData::Audio {
                 ref samples,
@@ -165,10 +167,9 @@ impl AsyncStreamingNode for AudioChunkerNode {
             }
         };
 
-        // Get or create state for this session. Collect ready chunks under
-        // the lock, release, then fire callbacks. parking_lot::Mutex is fine
-        // here because we never hold it across an `.await`.
-        let session_key = session_id.unwrap_or_else(|| "default".to_string());
+        // Collect ready chunks under the lock, release, then fire
+        // callbacks. `parking_lot::Mutex` — safe because no `.await`.
+        let session_key = session_id.unwrap_or("default").to_string();
         let (chunks, buffered_len) = {
             let mut states = self.states.lock();
             let state = states
