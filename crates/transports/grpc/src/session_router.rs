@@ -743,97 +743,81 @@ impl SessionRouter {
                 );
 
                 if is_streaming {
-                    // Streaming node - spawn processing in background for pipelined execution
-                    let node_clone = node.clone();
-                    let node_id_for_task = node_id_clone.clone();
-                    let session_id_for_task = session_id.clone();
-                    let router_tx_for_task = router_tx.clone();
+                    // Streaming node — inline dispatch.
+                    //
+                    // Phase B1: the previous implementation
+                    // `tokio::spawn`ed this call "for pipelined
+                    // execution", but the callback is already sync
+                    // (`try_send`, not `.await`), so there was nothing
+                    // genuinely async to concurrently drive. The spawn
+                    // cost ~one task allocation + one work-stealer
+                    // wakeup per packet. Removing it keeps ordering
+                    // (outputs are emitted in-sequence) and cedes the
+                    // per-packet-spawn budget back.
+                    //
+                    // Backpressure semantics unchanged: the node task
+                    // is the sole driver for this node's input ring;
+                    // if the node is slow, its input backs up, and the
+                    // router's `route_packet` stalls on
+                    // `node_input.send().await` as it did before.
                     let packet_sequence = packet.sequence;
                     let packet_data = packet.data;
-                    let probes_for_task = probes.clone();
+                    let node_id_for_cb = node_id_clone.clone();
+                    let session_id_for_cb = session_id.clone();
+                    let router_tx_for_cb = router_tx.clone();
+                    let mut output_count = 0_u64;
 
-                    // Process asynchronously - don't block the node task.
-                    //
-                    // Phase B0: count every per-packet spawn. Phase B1
-                    // removes this spawn; this counter will drop to zero
-                    // under streaming-node load after that change.
-                    probes.spawn_count.inc();
-                    tokio::spawn(async move {
-                        let mut output_count = 0;
-                        let node_id_for_cb = node_id_for_task.clone();
-                        let session_id_for_cb = session_id_for_task.clone();
-                        let router_tx_for_cb = router_tx_for_task.clone();
+                    let node_dispatch_start = std::time::Instant::now();
+                    let result = node
+                        .process_streaming_async(
+                            packet_data,
+                            Some(session_id.clone()),
+                            Box::new(move |output| {
+                                output_count += 1;
+                                let output_packet = DataPacket {
+                                    data: output,
+                                    from_node: node_id_for_cb.clone(),
+                                    to_node: None,
+                                    session_id: session_id_for_cb.clone(),
+                                    sequence: packet_sequence,
+                                    sub_sequence: output_count,
+                                };
 
-                        // Phase B0 probe: record total node dispatch time.
-                        // After B1 removes this spawn, the measurement
-                        // moves inline in the node task loop.
-                        let node_dispatch_start = std::time::Instant::now();
-                        let result = node_clone
-                            .process_streaming_async(
-                                packet_data,
-                                Some(session_id_for_task.clone()),
-                                Box::new(move |output| {
-                                    output_count += 1;
-                                    let output_packet = DataPacket {
-                                        data: output,
-                                        from_node: node_id_for_cb.clone(),
-                                        to_node: None,
-                                        session_id: session_id_for_cb.clone(),
-                                        sequence: packet_sequence,
-                                        sub_sequence: output_count,
-                                    };
-
-                                    // Send output back to router for further routing.
-                                    //
-                                    // This callback is a sync `FnMut` called from
-                                    // inside the node's streaming process fn — we
-                                    // cannot `.await` here. We `try_send` on the
-                                    // bounded loopback and log on overflow. The
-                                    // loopback is sized (256 slots, 32× client
-                                    // ingress capacity) so that in practice only a
-                                    // stalled sink — not ingress pressure — can
-                                    // fill it. If that happens the client-ingress
-                                    // channel is the correct place to apply real
-                                    // backpressure, and it will (outputs stop
-                                    // flowing → ingress fills → client stalls).
-                                    //
-                                    // Making this fully block-producer without
-                                    // drops requires changing the streaming
-                                    // callback signature to async; tracked as
-                                    // follow-up to the tokio-off-data-plane work.
-                                    match router_tx_for_cb.try_send(output_packet) {
-                                        Ok(()) => Ok(()),
-                                        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                                            warn!(
-                                                "Loopback full — dropping output from '{}' (session saturated)",
-                                                node_id_for_cb
-                                            );
-                                            Ok(())
-                                        }
-                                        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                                            error!(
-                                                "Loopback closed while sending output from '{}'",
-                                                node_id_for_cb
-                                            );
-                                            Err(remotemedia_core::Error::Execution(
-                                                "Channel closed".into(),
-                                            ))
-                                        }
+                                // Sync callback — cannot `.await`.
+                                // See comment on the loopback sizing in
+                                // `DEFAULT_GRPC_LOOPBACK_CAPACITY`.
+                                match router_tx_for_cb.try_send(output_packet) {
+                                    Ok(()) => Ok(()),
+                                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                        warn!(
+                                            "Loopback full — dropping output from '{}' (session saturated)",
+                                            node_id_for_cb
+                                        );
+                                        Ok(())
                                     }
-                                }),
-                            )
-                            .await;
-                        probes_for_task.node_out.record_since(node_dispatch_start);
+                                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                        error!(
+                                            "Loopback closed while sending output from '{}'",
+                                            node_id_for_cb
+                                        );
+                                        Err(remotemedia_core::Error::Execution(
+                                            "Channel closed".into(),
+                                        ))
+                                    }
+                                }
+                            }),
+                        )
+                        .await;
+                    probes.node_out.record_since(node_dispatch_start);
 
-                        match result {
-                            Ok(count) => {
-                                debug!("✅ Node '{}' produced {} outputs", node_id_for_task, count);
-                            }
-                            Err(e) => {
-                                error!("Streaming node '{}' failed: {}", node_id_for_task, e);
-                            }
+                    match result {
+                        Ok(count) => {
+                            debug!("✅ Node '{}' produced {} outputs", node_id_clone, count);
                         }
-                    });
+                        Err(e) => {
+                            error!("Streaming node '{}' failed: {}", node_id_clone, e);
+                        }
+                    }
                 } else {
                     // Non-streaming node - single output.
                     // Phase B0: record total dispatch latency inline (no spawn).

@@ -44,9 +44,11 @@ use crate::executor::{
 use crate::manifest::Manifest;
 use crate::nodes::{StreamingNode, StreamingNodeRegistry};
 use crate::Result;
+use parking_lot::RwLock as DriftRwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::mpsc;
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
 /// Default capacity for the router's internal input channel.
@@ -148,14 +150,15 @@ pub struct SessionRouter {
 
     /// Per-stream drift metrics for health monitoring (spec 026).
     ///
-    /// Map is `DashMap` (lock-free sharded hashmap) so the per-packet
-    /// `record_drift_sample` doesn't take a tokio `RwLock` on every
-    /// audio/video frame. The per-stream `Arc<RwLock<DriftMetrics>>`
-    /// value still exists — only one writer per stream at a time — but
-    /// lookups are wait-free.
+    /// Map is `DashMap` (lock-free sharded hashmap). Phase B1 swaps
+    /// the inner `tokio::sync::RwLock` for `parking_lot::RwLock` —
+    /// no `.await` is ever held across the lock (writes finish in
+    /// `record_sample` before any await), so the async RwLock was
+    /// pure overhead on the per-packet path. `parking_lot::RwLock`
+    /// uncontended fast path is a single CAS.
     ///
     /// Key: stream_id (from RuntimeData.stream_id or "default").
-    drift_metrics: Arc<dashmap::DashMap<String, Arc<RwLock<DriftMetrics>>>>,
+    drift_metrics: Arc<dashmap::DashMap<String, Arc<DriftRwLock<DriftMetrics>>>>,
 
     /// Real-time latency probes (Phase 0 of the tokio-off-data-plane
     /// migration). Records into `ingress` and `egress` today; `route_in`,
@@ -844,7 +847,11 @@ impl SessionRouter {
         Ok(())
     }
 
-    /// Record drift sample for timed media (spec 026)
+    /// Record drift sample for timed media (spec 026).
+    ///
+    /// Phase B1: inner lock is `parking_lot::RwLock`; no `.await` is
+    /// held across it. `async` kept on the method only so callers
+    /// that already use `.await` here don't need to change.
     async fn record_drift_sample(&self, data: &RuntimeData) {
         let (media_ts_us, arrival_ts_us) = data.timing();
 
@@ -864,15 +871,15 @@ impl SessionRouter {
             .drift_metrics
             .entry(stream_id.clone())
             .or_insert_with(|| {
-                Arc::new(RwLock::new(DriftMetrics::new(
+                Arc::new(DriftRwLock::new(DriftMetrics::new(
                     stream_id.clone(),
                     self.drift_thresholds.clone(),
                 )))
             })
             .clone();
 
-        // Record the sample
-        let mut metrics_guard = metrics.write().await;
+        // Sync write lock — parking_lot, uncontended CAS fast path.
+        let mut metrics_guard = metrics.write();
 
         // Use appropriate method based on media type
         let alert_changed = if data.is_audio() {
@@ -913,10 +920,13 @@ impl SessionRouter {
         self.scheduler.get_all_node_stats().await
     }
 
-    /// Get drift metrics for a specific stream
+    /// Get drift metrics for a specific stream.
+    ///
+    /// `async` is preserved for API stability; inner `read()` is sync
+    /// parking_lot (B1).
     pub async fn get_drift_metrics(&self, stream_id: &str) -> Option<serde_json::Value> {
         let metrics = self.drift_metrics.get(stream_id)?.clone();
-        let m = metrics.read().await;
+        let m = metrics.read();
         Some(m.to_debug_json())
     }
 
@@ -935,10 +945,10 @@ impl SessionRouter {
         // Scheduler metrics
         output.push_str(&self.scheduler.to_prometheus().await);
 
-        // Drift metrics (aggregated - per-stream detail available via debug endpoint).
-        // Snapshot via DashMap::iter (no global lock); we clone the Arcs out so we
-        // can await the per-stream read lock without holding the DashMap shard guard.
-        let stream_metrics: Vec<Arc<RwLock<DriftMetrics>>> = self
+        // Drift metrics (aggregated — per-stream detail available via debug endpoint).
+        // Snapshot via DashMap::iter (no global lock) so we don't hold
+        // the shard guard across the per-stream reads.
+        let stream_metrics: Vec<Arc<DriftRwLock<DriftMetrics>>> = self
             .drift_metrics
             .iter()
             .map(|e| e.value().clone())
@@ -950,10 +960,11 @@ impl SessionRouter {
                 stream_metrics.len()
             ));
 
-            // Aggregate health score (minimum across streams)
+            // Aggregate health score (minimum across streams). Sync
+            // reads via parking_lot.
             let mut min_health = 1.0f64;
             for metrics in &stream_metrics {
-                let m = metrics.read().await;
+                let m = metrics.read();
                 min_health = min_health.min(m.health_score());
             }
             output.push_str(&format!(
@@ -967,8 +978,10 @@ impl SessionRouter {
 
     /// Export per-stream debug metrics as JSON
     pub async fn debug_stream_metrics(&self) -> serde_json::Value {
-        // Snapshot pairs first so the per-stream awaits happen off the DashMap guard.
-        let pairs: Vec<(String, Arc<RwLock<DriftMetrics>>)> = self
+        // Snapshot pairs first so the per-stream reads happen off the
+        // DashMap shard guard (even with sync reads now, we keep the
+        // clone-and-iterate pattern).
+        let pairs: Vec<(String, Arc<DriftRwLock<DriftMetrics>>)> = self
             .drift_metrics
             .iter()
             .map(|e| (e.key().clone(), e.value().clone()))
@@ -976,7 +989,7 @@ impl SessionRouter {
         let stream_count = pairs.len();
         let mut streams = serde_json::Map::new();
         for (stream_id, metrics) in pairs {
-            let m = metrics.read().await;
+            let m = metrics.read();
             streams.insert(stream_id, m.to_debug_json());
         }
 
