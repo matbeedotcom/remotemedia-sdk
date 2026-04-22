@@ -47,9 +47,11 @@ use remotemedia_core::nodes::streaming_node::StreamingNodeRegistry;
 pub mod wdrc_node;
 pub mod cros_node;
 pub mod hrtf_node;
+pub mod limiter_node;
 
 pub use cros_node::{CrosNode, CrosNodeFactory};
 pub use hrtf_node::{HrtfNode, HrtfNodeFactory};
+pub use limiter_node::{LimiterNode, LimiterNodeFactory};
 pub use wdrc_node::{WdrcNode, WdrcNodeFactory};
 
 /// Register all hearing-aid factories into the RT-safe
@@ -67,6 +69,7 @@ pub fn register_sync_hearing_nodes(
     registry.register(Arc::new(WdrcNodeFactory));
     registry.register(Arc::new(CrosNodeFactory));
     registry.register(Arc::new(HrtfNodeFactory));
+    registry.register(Arc::new(LimiterNodeFactory));
 }
 
 /// Registers all hearing-aid nodes with the runtime.
@@ -91,6 +94,7 @@ impl NodeProvider for HearingNodesProvider {
         registry.register(Arc::new(WdrcNodeFactory));
         registry.register(Arc::new(CrosNodeFactory));
         registry.register(Arc::new(HrtfNodeFactory));
+        registry.register(Arc::new(LimiterNodeFactory));
     }
 
     fn priority(&self) -> i32 {

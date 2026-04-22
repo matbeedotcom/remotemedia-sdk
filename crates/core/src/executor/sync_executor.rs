@@ -71,6 +71,7 @@
 //! ```
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -80,6 +81,10 @@ use crate::error::{Error, Result};
 use crate::executor::PipelineGraph;
 use crate::manifest::Manifest;
 use crate::nodes::streaming_node::SyncStreamingNode;
+// Re-use the canonical NodeState definition from the tokio-side bus so
+// both control planes share the same vocabulary and a router can
+// translate between them without an impedance mismatch.
+pub use crate::transport::session_control::NodeState;
 
 // ── Factory & registry ──────────────────────────────────────────────────────
 
@@ -148,6 +153,58 @@ pub struct SyncPipelineExecutor {
 
     /// Display name for `SyncStreamingNode::node_type`.
     name: String,
+
+    /// Per-node runtime state overrides. Matches the semantics of
+    /// [`SessionControl::set_node_state`][crate::transport::session_control::SessionControl::set_node_state]
+    /// from the tokio-native bus — `Enabled` / `Bypass` / `Disabled`.
+    /// Absent entry = `Enabled`. Read on the hot path via `load()`
+    /// with `Relaxed` ordering per step.
+    ///
+    /// Each slot is stored as an `AtomicU8` (see `NodeStateAtomic` below)
+    /// so `process(&self, …)` can look up and interpret the current
+    /// state without `&mut self` / without a lock. On the audio hot path
+    /// this collapses to: one pointer deref to fetch the slot, one
+    /// relaxed atomic load, one match. Pre-built at construction time
+    /// — no allocation or map lookup on the hot path.
+    states: Vec<Arc<NodeStateAtomic>>,
+}
+
+/// Lock-free slot for a single node's `NodeState`. Encodes the enum
+/// into a `u8` so the hot path is one atomic load.
+pub(crate) struct NodeStateAtomic(AtomicU8);
+
+impl NodeStateAtomic {
+    const ENABLED: u8 = 0;
+    const BYPASS: u8 = 1;
+    const DISABLED: u8 = 2;
+
+    fn new(initial: NodeState) -> Self {
+        Self(AtomicU8::new(Self::encode(initial)))
+    }
+
+    fn encode(s: NodeState) -> u8 {
+        match s {
+            NodeState::Enabled => Self::ENABLED,
+            NodeState::Bypass => Self::BYPASS,
+            NodeState::Disabled => Self::DISABLED,
+        }
+    }
+
+    fn decode(v: u8) -> NodeState {
+        match v {
+            Self::BYPASS => NodeState::Bypass,
+            Self::DISABLED => NodeState::Disabled,
+            _ => NodeState::Enabled,
+        }
+    }
+
+    fn load(&self) -> NodeState {
+        Self::decode(self.0.load(Ordering::Relaxed))
+    }
+
+    fn store(&self, s: NodeState) {
+        self.0.store(Self::encode(s), Ordering::Relaxed);
+    }
 }
 
 impl std::fmt::Debug for SyncPipelineExecutor {
@@ -160,9 +217,13 @@ impl std::fmt::Debug for SyncPipelineExecutor {
 }
 
 struct StepNode {
-    #[allow(dead_code)]
     id: String,
     node: Box<dyn SyncStreamingNode>,
+    /// Per-step reference to the state slot. Cloned from the
+    /// `Arc<NodeStateAtomic>` in `SyncPipelineExecutor::states` so
+    /// callers holding a handle to a specific slot can mutate state
+    /// without the executor's interior state being a `Mutex`.
+    state: Arc<NodeStateAtomic>,
 }
 
 impl SyncPipelineExecutor {
@@ -237,6 +298,7 @@ impl SyncPipelineExecutor {
         // Instantiate nodes in topological order. This is the only
         // allocation-heavy phase; the hot path reuses these boxes.
         let mut order: Vec<StepNode> = Vec::with_capacity(graph.execution_order.len());
+        let mut states: Vec<Arc<NodeStateAtomic>> = Vec::with_capacity(graph.execution_order.len());
         for id in &graph.execution_order {
             let gn = graph.get_node(id).expect("topo-order node exists");
             let factory = registry.get(&gn.node_type).ok_or_else(|| {
@@ -246,16 +308,82 @@ impl SyncPipelineExecutor {
                 ))
             })?;
             let node = factory.create(gn.id.clone(), &gn.params)?;
-            order.push(StepNode { id: gn.id.clone(), node });
+            let state = Arc::new(NodeStateAtomic::new(NodeState::Enabled));
+            states.push(Arc::clone(&state));
+            order.push(StepNode {
+                id: gn.id.clone(),
+                node,
+                state,
+            });
         }
 
         let name = name.unwrap_or_else(|| "SyncPipelineExecutor".to_string());
-        Ok(Self { order, name })
+        Ok(Self {
+            order,
+            name,
+            states,
+        })
     }
 
     /// Number of nodes in the pipeline.
     pub fn node_count(&self) -> usize {
         self.order.len()
+    }
+
+    /// Look up the step index for a given `node_id` (as declared in the
+    /// manifest). `None` if the node isn't part of this pipeline.
+    fn index_of(&self, node_id: &str) -> Option<usize> {
+        self.order.iter().position(|s| s.id == node_id)
+    }
+
+    /// Set a node's runtime execution state. Mirrors
+    /// [`SessionControl::set_node_state`][crate::transport::session_control::SessionControl::set_node_state].
+    ///
+    /// - `NodeState::Enabled`: node runs normally.
+    /// - `NodeState::Bypass`:  node is skipped — its input is forwarded
+    ///   as its output. Matches the common "A/B the effect" use case.
+    /// - `NodeState::Disabled`: node is skipped. In this linear sync
+    ///   executor that's observationally identical to `Bypass` because
+    ///   there's no fan-out that could "see nothing"; the downstream
+    ///   still needs *some* data to keep the chain alive. A future
+    ///   divergent impl could zero out audio buffers on `Disabled`.
+    ///
+    /// Thread-safe — can be called from any thread at any time. Takes
+    /// effect on the next packet.
+    ///
+    /// Returns `Err` if `node_id` is not part of this pipeline.
+    pub fn set_node_state(&self, node_id: &str, state: NodeState) -> Result<()> {
+        let idx = self.index_of(node_id).ok_or_else(|| {
+            Error::Execution(format!(
+                "SyncPipelineExecutor::set_node_state: no node '{node_id}' in pipeline '{}'",
+                self.name
+            ))
+        })?;
+        self.states[idx].store(state);
+        Ok(())
+    }
+
+    /// Reset a node to the default `Enabled` state. Equivalent to
+    /// `set_node_state(node_id, NodeState::Enabled)`.
+    pub fn clear_node_state(&self, node_id: &str) -> Result<()> {
+        self.set_node_state(node_id, NodeState::Enabled)
+    }
+
+    /// Current state for a node. Enabled by default.
+    pub fn node_state(&self, node_id: &str) -> Result<NodeState> {
+        let idx = self.index_of(node_id).ok_or_else(|| {
+            Error::Execution(format!(
+                "SyncPipelineExecutor::node_state: no node '{node_id}' in pipeline '{}'",
+                self.name
+            ))
+        })?;
+        Ok(self.states[idx].load())
+    }
+
+    /// Iterate `(node_id, NodeState)` for every step. Handy for UIs
+    /// that render a checklist of nodes.
+    pub fn node_states(&self) -> impl Iterator<Item = (&str, NodeState)> {
+        self.order.iter().map(|s| (s.id.as_str(), s.state.load()))
     }
 }
 
@@ -268,13 +396,27 @@ impl SyncStreamingNode for SyncPipelineExecutor {
     ///
     /// The hot path does no heap allocation and no map lookups — we
     /// walk `self.order` in index order, passing the `RuntimeData`
-    /// through `process_sync` on each node. Each inner node is free
-    /// to mutate the audio buffer in place (the `Vec<f32>` behind
+    /// through each node. Each inner node is free to mutate the audio
+    /// buffer in place (the `Vec<f32>` behind
     /// [`AudioSamples::Vec`][crate::data::AudioSamples::Vec] is moved
     /// across the call, not cloned).
+    ///
+    /// Per-step `NodeState::Bypass` / `NodeState::Disabled` short-circuit
+    /// the inner `process` call — the data flows past the step
+    /// unchanged. One relaxed atomic load per step; negligible on top
+    /// of actual DSP work.
     fn process(&self, mut data: RuntimeData) -> std::result::Result<RuntimeData, Error> {
         for step in &self.order {
-            data = step.node.process(data)?;
+            match step.state.load() {
+                NodeState::Enabled => {
+                    data = step.node.process(data)?;
+                }
+                // In the linear sync executor, both non-Enabled states
+                // are passthrough — "no output" isn't meaningful here,
+                // downstream always needs *something*. See the docs on
+                // `set_node_state` for rationale.
+                NodeState::Bypass | NodeState::Disabled => {}
+            }
         }
         Ok(data)
     }

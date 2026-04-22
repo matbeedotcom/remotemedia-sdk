@@ -43,6 +43,7 @@ use crate::executor::{
 };
 use crate::manifest::Manifest;
 use crate::nodes::{StreamingNode, StreamingNodeRegistry};
+use crate::transport::session_control::{CloseReason, SessionControl};
 use crate::Result;
 use parking_lot::RwLock as DriftRwLock;
 use std::collections::HashMap;
@@ -171,6 +172,12 @@ pub struct SessionRouter {
 
     /// Drift thresholds for new streams
     drift_thresholds: DriftThresholds,
+
+    /// Optional per-session control bus (client-side pub/sub/intercept).
+    /// Attached via [`Self::attach_control`] after construction, before
+    /// `start()`. When `None`, the router's hot path skips the control
+    /// hook entirely — no overhead for sessions without attaches.
+    control: Option<Arc<SessionControl>>,
 }
 
 impl SessionRouter {
@@ -283,9 +290,28 @@ impl SessionRouter {
             drift_metrics: Arc::new(dashmap::DashMap::new()),
             probes: Arc::new(crate::metrics::RtProbeSet::new()),
             drift_thresholds: drift_thresholds.unwrap_or_default(),
+            control: None,
         };
 
         Ok((router, shutdown_tx_clone))
+    }
+
+    /// Attach a [`SessionControl`] bus to this router.
+    ///
+    /// After this call, the control can:
+    ///   - see every node output via `on_node_output` (tap + intercept)
+    ///   - inject inputs via `publish` (the bus forwards to the router's
+    ///     own input channel, with `to_node` set).
+    ///
+    /// Must be called before `start()` / `run()`. Safe to skip entirely —
+    /// a router with `control = None` has zero control-bus overhead.
+    pub async fn attach_control(&mut self, control: Arc<SessionControl>) {
+        let input_tx = self
+            .input_tx
+            .clone()
+            .expect("attach_control must be called before run() consumes input_tx");
+        control.attach_input_sender(input_tx).await;
+        self.control = Some(control);
     }
 
     /// Get the input sender for feeding data to the router.
@@ -585,6 +611,12 @@ impl SessionRouter {
             }
         }
 
+        // Wake every attached control client so they drain and exit.
+        // Idempotent — harmless if no control is attached.
+        if let Some(ctrl) = &self.control {
+            ctrl.signal_close(CloseReason::Normal);
+        }
+
         Ok(())
     }
 
@@ -695,6 +727,51 @@ impl SessionRouter {
                 continue;
             }
 
+            // Control-bus node-state gate. Checked once per node per packet
+            // (DashMap lookup, no async). Absent control or absent override
+            // is `Enabled` — zero overhead in the common case.
+            if let Some(ctrl) = &self.control {
+                use crate::transport::session_control::NodeState;
+                match ctrl.node_state(node_id) {
+                    NodeState::Enabled => { /* fall through to execution */ }
+                    NodeState::Bypass => {
+                        tracing::debug!(
+                            "Session {}: Node '{}' bypassed — forwarding {} input(s) as outputs",
+                            self.session_id,
+                            node_id,
+                            inputs.len()
+                        );
+                        // Forward inputs as outputs unchanged. Tap/intercept
+                        // still fire via the hook below, so observers see the
+                        // bypassed data exactly as downstream will.
+                        let forwarded = {
+                            let mut filtered = Vec::with_capacity(inputs.len());
+                            for out in inputs {
+                                if let Some(kept) = ctrl.on_node_output(node_id, None, out).await {
+                                    filtered.push(kept);
+                                }
+                            }
+                            filtered
+                        };
+                        all_node_outputs.insert(node_id.clone(), forwarded);
+                        continue;
+                    }
+                    NodeState::Disabled => {
+                        tracing::debug!(
+                            "Session {}: Node '{}' disabled — dropping {} input(s)",
+                            self.session_id,
+                            node_id,
+                            inputs.len()
+                        );
+                        // No outputs. Downstream nodes will collect no inputs
+                        // from this node and either skip (if they have no
+                        // other predecessors) or fan-in from other branches.
+                        all_node_outputs.insert(node_id.clone(), Vec::new());
+                        continue;
+                    }
+                }
+            }
+
             tracing::debug!(
                 "Session {}: Processing node '{}' with {} input(s)",
                 self.session_id,
@@ -800,6 +877,25 @@ impl SessionRouter {
                 node_id,
                 node_outputs.len()
             );
+
+            // Control-bus hook: broadcast to tap subscribers and let any
+            // intercept mutate/drop each output before it's stored for
+            // downstream routing. Skipped entirely when no control is
+            // attached (the `Option` branch is cheap).
+            //
+            // NOTE: port is always `None` until per-output-port support
+            // lands — the node API doesn't yet name its output rails.
+            let node_outputs = if let Some(ctrl) = &self.control {
+                let mut filtered = Vec::with_capacity(node_outputs.len());
+                for out in node_outputs {
+                    if let Some(kept) = ctrl.on_node_output(node_id, None, out).await {
+                        filtered.push(kept);
+                    }
+                }
+                filtered
+            } else {
+                node_outputs
+            };
 
             // Store outputs for downstream nodes (fan-out happens automatically)
             all_node_outputs.insert(node_id.clone(), node_outputs);

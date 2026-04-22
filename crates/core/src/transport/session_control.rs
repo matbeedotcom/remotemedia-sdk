@@ -145,6 +145,11 @@ pub enum ControlFrame {
     RemoveIntercept(ControlAddress),
     /// Client response to an `InterceptRequest` event.
     InterceptReply { correlation_id: u64, decision: InterceptDecision },
+    /// Flip a node's runtime execution state (Enabled / Bypass / Disabled).
+    /// Applies on the next packet the router processes.
+    SetNodeState { node_id: String, state: NodeState },
+    /// Reset a node to the default `Enabled` state.
+    ClearNodeState { node_id: String },
 }
 
 #[derive(Clone, Debug)]
@@ -191,6 +196,37 @@ struct InterceptSlot {
     pending: DashMap<u64, oneshot::Sender<InterceptDecision>>,
 }
 
+/// Reason a session closed — propagated to every attached control client
+/// via [`SessionControl::close_subscriber`].
+#[derive(Clone, Debug)]
+pub enum CloseReason {
+    Normal,
+    Error(String),
+}
+
+/// Runtime execution state for a single node, controlled via the bus.
+///
+/// - `Enabled` (default): node runs normally.
+/// - `Bypass`: node is skipped; its inputs are forwarded as its outputs.
+///   Downstream nodes see the same data the bypassed node would have
+///   received — as if the node were a passthrough.
+/// - `Disabled`: node is skipped and produces no outputs. Downstream
+///   nodes see nothing from this branch for the current input. Useful
+///   when you want to temporarily sever a subgraph without modifying
+///   the manifest.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NodeState {
+    Enabled,
+    Bypass,
+    Disabled,
+}
+
+impl Default for NodeState {
+    fn default() -> Self {
+        NodeState::Enabled
+    }
+}
+
 /// Per-session control state. Created alongside the `SessionRouter` and
 /// handed to the router via `attach_control`.
 pub struct SessionControl {
@@ -207,17 +243,65 @@ pub struct SessionControl {
     /// Monotonic sequence for injected packets (kept separate from the
     /// transport's own sequence to make out-of-band traffic identifiable).
     inject_seq: std::sync::atomic::AtomicU64,
+    /// Broadcasts session-close to every attached client. Sent once by the
+    /// router when its run-loop exits. Unbounded lag is fine — the payload
+    /// is one terminal message.
+    close_tx: broadcast::Sender<CloseReason>,
+    /// Per-node execution state, driven by the bus. Absent entry = Enabled.
+    /// Read on the router hot path once per node per packet; lock-free via
+    /// DashMap to avoid an async RwLock on every output.
+    node_states: DashMap<String, NodeState>,
 }
 
 impl SessionControl {
     pub fn new(session_id: impl Into<String>) -> Arc<Self> {
+        let (close_tx, _) = broadcast::channel(1);
         Arc::new(Self {
             session_id: session_id.into(),
             taps: DashMap::new(),
             intercepts: DashMap::new(),
             input_tx: RwLock::new(None),
             inject_seq: std::sync::atomic::AtomicU64::new(0),
+            close_tx,
+            node_states: DashMap::new(),
         })
+    }
+
+    /// Set a node's runtime execution state.
+    ///
+    /// Takes effect on the **next** packet the router processes. Callers
+    /// that need a happens-before guarantee on an in-flight packet should
+    /// coordinate with the data plane separately — this is a best-effort
+    /// toggle, not a barrier.
+    pub fn set_node_state(&self, node_id: impl Into<String>, state: NodeState) {
+        self.node_states.insert(node_id.into(), state);
+    }
+
+    /// Reset a node to the default `Enabled` state (removes the override).
+    pub fn clear_node_state(&self, node_id: &str) {
+        self.node_states.remove(node_id);
+    }
+
+    /// Current state for a node. Nodes without an explicit override are
+    /// `Enabled`. Called on the router hot path — DashMap lookup is
+    /// lock-free.
+    pub fn node_state(&self, node_id: &str) -> NodeState {
+        self.node_states
+            .get(node_id)
+            .map(|e| *e.value())
+            .unwrap_or(NodeState::Enabled)
+    }
+
+    /// Per-attach handle that fires once when the session closes.
+    /// Every attach subscribes; dropping the receiver is harmless.
+    pub fn close_subscriber(&self) -> broadcast::Receiver<CloseReason> {
+        self.close_tx.subscribe()
+    }
+
+    /// Called once from `SessionRouter` just before its run-loop returns.
+    /// Signals every attach to drain and exit. Idempotent.
+    pub fn signal_close(&self, reason: CloseReason) {
+        let _ = self.close_tx.send(reason);
     }
 
     pub fn session_id(&self) -> &str {
@@ -365,6 +449,14 @@ impl SessionControl {
             }
             ControlFrame::InterceptReply { correlation_id, decision } => {
                 self.complete_intercept(correlation_id, decision);
+                Ok(FrameOutcome::Done)
+            }
+            ControlFrame::SetNodeState { node_id, state } => {
+                self.set_node_state(node_id, state);
+                Ok(FrameOutcome::Done)
+            }
+            ControlFrame::ClearNodeState { node_id } => {
+                self.clear_node_state(&node_id);
                 Ok(FrameOutcome::Done)
             }
         }
