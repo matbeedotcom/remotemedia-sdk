@@ -73,6 +73,8 @@ pub mod builder;
 pub mod cli;
 pub mod client;
 pub mod config;
+#[cfg(feature = "grpc-signaling")]
+pub mod control;
 pub mod custom_nodes;
 pub mod error;
 pub mod plugin;

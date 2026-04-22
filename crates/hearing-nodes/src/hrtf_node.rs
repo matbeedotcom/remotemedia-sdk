@@ -42,7 +42,7 @@ use crate::util;
 
 /// JSON shape:
 /// ```json
-/// { "ir_path": "/path/to/hrtf_irs.bin", "max_frames": 480 }
+/// { "ir_path": "/path/to/hrtf_irs.bin", "max_frames": 480, "output_gain_db": 6.0 }
 /// ```
 ///
 /// `max_frames` is the largest audio frame count you expect to pass
@@ -50,11 +50,19 @@ use crate::util;
 /// pre-allocate the scratch output so the hot path never resizes.
 /// Defaults to 4096 if omitted (large enough for typical HAL buffer
 /// sizes up to ~85ms @ 48kHz, but allocates more memory than needed).
+///
+/// `output_gain_db` is a make-up gain applied after convolution.
+/// 7-speaker → 2-ear HRTF summation typically attenuates broadband
+/// sources by ~6 dB versus the input; this knob lets the caller
+/// compensate. Defaults to `0.0` (no change). The downstream
+/// LimiterNode prevents runaway clipping if this is set aggressively.
 #[derive(Debug, Deserialize)]
 struct Params {
     ir_path: String,
     #[serde(default = "default_max_frames")]
     max_frames: usize,
+    #[serde(default)]
+    output_gain_db: f32,
 }
 
 fn default_max_frames() -> usize {
@@ -70,6 +78,11 @@ struct HrtfState {
     /// hot path is a configuration bug and causes a one-time
     /// (RT-unsafe) grow.
     max_frames: usize,
+    /// Linear make-up gain multiplier applied to convolver output.
+    /// `1.0` = pass-through. Converted from `output_gain_db` at
+    /// construction; atomic-free because `HrtfState` is already behind
+    /// a `parking_lot::Mutex`.
+    output_gain: f32,
 }
 
 pub struct HrtfNode {
@@ -80,16 +93,20 @@ impl HrtfNode {
     /// Create a new HRTF node with a convolver and a pre-allocated
     /// scratch buffer sized for `max_frames` stereo frames. Call this
     /// at session-setup time, not on the RT path.
-    pub fn new(convolver: HrtfConvolver, max_frames: usize) -> Self {
+    ///
+    /// `output_gain_db` is linear-applied post-convolution; 0 dB = off.
+    pub fn new(convolver: HrtfConvolver, max_frames: usize, output_gain_db: f32) -> Self {
         // Pre-size scratch to max_frames * 2 so the hot path never
         // resizes. `vec![0.0; N]` is a one-time alloc + zero-fill at
         // construction; not on the RT path.
         let scratch_out = vec![0.0_f32; max_frames * 2];
+        let output_gain = 10.0_f32.powf(output_gain_db / 20.0);
         Self {
             state: Arc::new(Mutex::new(HrtfState {
                 convolver,
                 scratch_out,
                 max_frames,
+                output_gain,
             })),
         }
     }
@@ -132,6 +149,7 @@ impl SyncStreamingNode for HrtfNode {
         let HrtfState {
             convolver,
             scratch_out,
+            output_gain,
             ..
         } = &mut *st;
 
@@ -146,6 +164,15 @@ impl SyncStreamingNode for HrtfNode {
         let mut out = samples;
         out.truncate(frames * 2);
         out.copy_from_slice(&scratch_out[..frames * 2]);
+
+        // Apply make-up gain. Skip the scalar multiply when the gain
+        // is unity (0 dB) so the common case costs nothing extra.
+        let g = *output_gain;
+        if g != 1.0 {
+            for s in out.iter_mut() {
+                *s *= g;
+            }
+        }
 
         // Drop the lock before returning so downstream consumers
         // aren't serialized through it.
@@ -162,7 +189,7 @@ fn build_hrtf(params: &Value) -> Result<HrtfNode, Error> {
         .map_err(|e| Error::Execution(format!("HrtfNode load {}: {e}", p.ir_path)))?;
     let ir_length = ir_set.ir_length;
     let convolver = HrtfConvolver::new(ir_set.irs.into_boxed_slice(), ir_length);
-    Ok(HrtfNode::new(convolver, p.max_frames))
+    Ok(HrtfNode::new(convolver, p.max_frames, p.output_gain_db))
 }
 
 pub struct HrtfNodeFactory;

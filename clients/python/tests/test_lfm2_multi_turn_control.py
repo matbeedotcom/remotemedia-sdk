@@ -35,16 +35,26 @@ Then:
 
 Verified on transformers 5.5.4 + torch 2.11 + LFM2-350M (CPU).
 
-### Via the managed-env runtime (forthcoming, via Rust executor)
+### Relationship to the gRPC control-bus tests
 
-``LFM2TextNode`` is decorated with ``@python_requires``, so running it
-through the Rust runtime with ``PYTHON_ENV_MODE=managed`` (see
-``docs/MANAGED_PYTHON_ENVIRONMENTS.md``) automatically provisions a
-venv with the right deps. The in-process path in this file does not
-use that machinery; it assumes the current interpreter already has
-the deps. The production path via the Rust runtime / session router /
-Session Control Bus requires the gRPC control-plane RPC which is not
-yet wired — tracked in ``docs/SESSION_CONTROL.md §10``.
+This file tests the **LLM's** response to dynamic context injection in
+the same process. A separate test,
+``clients/python/tests/test_control_bus_grpc.py``, proves the same
+injection semantics travel end-to-end over the gRPC control-plane RPC
+(``PipelineControl.Attach`` → ``publish`` on ``{node}.in.{port}``).
+
+The two combine cleanly once an LFM2 pipeline can be hosted inside a
+Rust session that launches ``LFM2TextNode`` via the multiprocess
+Python executor. ``LFM2TextNode`` is already decorated with
+``@python_requires`` (see ``docs/MANAGED_PYTHON_ENVIRONMENTS.md``), so
+when a manifest is submitted to the Rust server with ``executor: multiprocess``
+on the LFM2 node, the managed-venv system provisions the right
+transformers/torch deps automatically. At that point the ``set_context``
+calls in this file become:
+
+    await ctrl.publish("lfm.in.context", Data.from_text(docs))
+
+against the same running session. No other change to the test.
 """
 
 from __future__ import annotations

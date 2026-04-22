@@ -22,7 +22,11 @@ fn compile_protos() {
         .build_client(true)
         .out_dir("src/generated")
         .compile_protos(
-            &["../../../proto/webrtc_signaling.proto", "../../../proto/common.proto"],
+            &[
+                "../../../proto/webrtc_signaling.proto",
+                "../../../proto/common.proto",
+                "../../../proto/control.proto",
+            ],
             &["../../../proto/"],
         )
         .unwrap_or_else(|e| panic!("Failed to compile protos: {}", e));

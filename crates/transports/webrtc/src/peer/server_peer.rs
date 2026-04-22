@@ -301,6 +301,10 @@ impl ServerPeer {
         let peer_id_for_dc = self.peer_id.clone();
         #[cfg(feature = "ws-signaling")]
         let event_tx_for_dc_clone = event_tx_for_dc.clone();
+        // Control-bus handler is feature-gated on `grpc-signaling` because the
+        // prost-generated ControlFrame/ControlEvent types live under that feature.
+        #[cfg(feature = "grpc-signaling")]
+        let control_bus_for_dc = self.executor.control_bus();
         self.peer_connection
             .peer_connection()
             .on_data_channel(Box::new(move |data_channel| {
@@ -309,11 +313,27 @@ impl ServerPeer {
                 let data_channel_ref = Arc::clone(&data_channel_ref_for_dc);
                 #[cfg(feature = "ws-signaling")]
                 let event_tx = event_tx_for_dc_clone.clone();
+                #[cfg(feature = "grpc-signaling")]
+                let control_bus = Arc::clone(&control_bus_for_dc);
                 let data_channel = Arc::new(data_channel);
 
                 Box::pin(async move {
                     info!("Data channel opened: label={}, id={:?} for peer {}",
                         data_channel.label(), data_channel.id(), peer_id);
+
+                    // Route the "remotemedia-control" data channel to the
+                    // Session Control Bus instead of the data plane.
+                    #[cfg(feature = "grpc-signaling")]
+                    if data_channel.label() == crate::control::CONTROL_CHANNEL_LABEL {
+                        info!("Data channel '{}' routed to Session Control Bus (peer {})",
+                            data_channel.label(), peer_id);
+                        crate::control::attach_control_channel(
+                            Arc::clone(&data_channel),
+                            control_bus,
+                        )
+                        .await;
+                        return;
+                    }
 
                     // Store data channel reference for output routing
                     {

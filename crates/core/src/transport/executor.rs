@@ -29,6 +29,7 @@ use crate::executor::streaming_scheduler::{SchedulerConfig, StreamingScheduler};
 use crate::executor::DriftThresholds;
 use crate::manifest::Manifest;
 use crate::nodes::{StreamingNodeFactory, StreamingNodeRegistry};
+use crate::transport::session_control::{SessionControl, SessionControlBus};
 use crate::transport::session_router::{DataPacket, SessionRouter};
 use crate::transport::TransportData;
 use crate::Result;
@@ -229,6 +230,13 @@ pub struct PipelineExecutor {
     scheduler: Arc<StreamingScheduler>,
     /// Session counter for ID generation
     session_counter: std::sync::atomic::AtomicU64,
+    /// Process-wide control bus for client-side pub/sub/intercept.
+    ///
+    /// Populated automatically for every session created via
+    /// [`Self::create_session`]. Transport layers (gRPC, WebRTC) look
+    /// up a session here when a client sends an `Attach(session_id)`
+    /// control frame.
+    control_bus: Arc<SessionControlBus>,
 }
 
 impl PipelineExecutor {
@@ -250,7 +258,17 @@ impl PipelineExecutor {
             registry,
             scheduler,
             session_counter: std::sync::atomic::AtomicU64::new(0),
+            control_bus: SessionControlBus::new(),
         })
+    }
+
+    /// Access the process-wide [`SessionControlBus`].
+    ///
+    /// Transport servers (gRPC `PipelineControl`, WebRTC control data
+    /// channel) use this to look up a [`SessionControl`] by `session_id`
+    /// when a client opens a control-plane attach.
+    pub fn control_bus(&self) -> Arc<SessionControlBus> {
+        self.control_bus.clone()
     }
 
     /// Get the scheduler reference
@@ -411,11 +429,24 @@ impl PipelineExecutor {
             },
         )?;
 
+        // Create and attach the per-session control bus. Must happen before
+        // `start()` consumes the router's input_tx.
+        let control = SessionControl::new(session_id.clone());
+        router.attach_control(control.clone()).await;
+        self.control_bus.register(control.clone());
+
         // Get input sender before moving router
         let input_tx = router.get_input_sender();
 
-        // Spawn router task
-        let task_handle = tokio::spawn(async move { router.run_public().await });
+        // Spawn router task. When the router exits, remove the session
+        // entry from the bus so late attaches cleanly see SessionNotFound.
+        let bus = self.control_bus.clone();
+        let unregister_sid = session_id.clone();
+        let task_handle = tokio::spawn(async move {
+            let result = router.run_public().await;
+            bus.unregister(&unregister_sid);
+            result
+        });
 
         Ok(SessionHandle {
             session_id,

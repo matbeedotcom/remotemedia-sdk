@@ -2419,3 +2419,645 @@ pub mod streaming_pipeline_service_server {
         const NAME: &'static str = SERVICE_NAME;
     }
 }
+/// A point within the session's pipeline. Mirrors `ControlAddress` in Rust.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ControlAddress {
+    #[prost(string, tag = "1")]
+    pub node_id: ::prost::alloc::string::String,
+    /// Optional named port. Empty string = the node's `main` rail.
+    #[prost(string, tag = "2")]
+    pub port: ::prost::alloc::string::String,
+    #[prost(enumeration = "ControlDirection", tag = "3")]
+    pub direction: i32,
+}
+/// Decision the client returns for an `InterceptRequest`.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct InterceptDecision {
+    #[prost(oneof = "intercept_decision::Decision", tags = "1, 2, 3")]
+    pub decision: ::core::option::Option<intercept_decision::Decision>,
+}
+/// Nested message and enum types in `InterceptDecision`.
+pub mod intercept_decision {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Decision {
+        /// Forward the frame unchanged.
+        #[prost(message, tag = "1")]
+        Pass(super::Empty),
+        /// Replace the frame with this data before forwarding.
+        #[prost(message, tag = "2")]
+        Replace(super::DataBuffer),
+        /// Drop the frame entirely (downstream nodes don't see it).
+        #[prost(message, tag = "3")]
+        Drop(super::Empty),
+    }
+}
+/// Empty placeholder (protobuf oneof can't have bare tag variants).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Empty {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ControlFrame {
+    #[prost(oneof = "control_frame::Op", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9")]
+    pub op: ::core::option::Option<control_frame::Op>,
+}
+/// Nested message and enum types in `ControlFrame`.
+pub mod control_frame {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Op {
+        #[prost(message, tag = "1")]
+        Hello(super::Hello),
+        #[prost(message, tag = "2")]
+        Subscribe(super::Subscribe),
+        #[prost(message, tag = "3")]
+        Unsubscribe(super::Unsubscribe),
+        #[prost(message, tag = "4")]
+        Publish(super::Publish),
+        #[prost(message, tag = "5")]
+        Intercept(super::Intercept),
+        #[prost(message, tag = "6")]
+        RemoveIntercept(super::RemoveIntercept),
+        #[prost(message, tag = "7")]
+        InterceptReply(super::InterceptReply),
+        #[prost(message, tag = "8")]
+        SetNodeState(super::SetNodeState),
+        #[prost(message, tag = "9")]
+        ClearNodeState(super::ClearNodeState),
+    }
+}
+/// Identifies the session this attach is scoped to. MUST be the first frame.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Hello {
+    #[prost(string, tag = "1")]
+    pub session_id: ::prost::alloc::string::String,
+    /// Optional: client-chosen identifier, echoed in every event for
+    /// multi-attach scenarios where the same client attaches more than once.
+    #[prost(string, tag = "2")]
+    pub attach_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Subscribe {
+    #[prost(message, optional, tag = "1")]
+    pub addr: ::core::option::Option<ControlAddress>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Unsubscribe {
+    #[prost(message, optional, tag = "1")]
+    pub addr: ::core::option::Option<ControlAddress>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Publish {
+    #[prost(message, optional, tag = "1")]
+    pub addr: ::core::option::Option<ControlAddress>,
+    #[prost(message, optional, tag = "2")]
+    pub data: ::core::option::Option<DataBuffer>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RemoveIntercept {
+    #[prost(message, optional, tag = "1")]
+    pub addr: ::core::option::Option<ControlAddress>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Intercept {
+    #[prost(message, optional, tag = "1")]
+    pub addr: ::core::option::Option<ControlAddress>,
+    /// Maximum time the router will wait for an `InterceptReply` before
+    /// forwarding the original frame unchanged. 0 = server default (50 ms).
+    #[prost(uint32, tag = "2")]
+    pub deadline_ms: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct InterceptReply {
+    /// Matches the `correlation_id` on the inbound `InterceptRequest` event.
+    #[prost(uint64, tag = "1")]
+    pub correlation_id: u64,
+    #[prost(message, optional, tag = "2")]
+    pub decision: ::core::option::Option<InterceptDecision>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetNodeState {
+    #[prost(string, tag = "1")]
+    pub node_id: ::prost::alloc::string::String,
+    #[prost(enumeration = "NodeState", tag = "2")]
+    pub state: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClearNodeState {
+    #[prost(string, tag = "1")]
+    pub node_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ControlEvent {
+    #[prost(oneof = "control_event::Event", tags = "1, 2, 3, 4, 5")]
+    pub event: ::core::option::Option<control_event::Event>,
+}
+/// Nested message and enum types in `ControlEvent`.
+pub mod control_event {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Event {
+        /// Attach was accepted. Sent exactly once, in response to Hello.
+        #[prost(message, tag = "1")]
+        Attached(super::Attached),
+        /// A tapped node output. `addr.direction` = OUT.
+        #[prost(message, tag = "2")]
+        Tap(super::TapEvent),
+        /// An intercept needs a decision. Client must send
+        /// `InterceptReply { correlation_id }` within the deadline.
+        #[prost(message, tag = "3")]
+        InterceptRequest(super::InterceptRequest),
+        /// A non-fatal error (bad address, unknown node, etc.) surfaced to
+        /// the client without closing the stream.
+        #[prost(message, tag = "4")]
+        Error(super::ErrorEvent),
+        /// Sent exactly once as the final frame when the session closes.
+        #[prost(message, tag = "5")]
+        SessionClosed(super::SessionClosed),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Attached {
+    #[prost(string, tag = "1")]
+    pub session_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub attach_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TapEvent {
+    #[prost(message, optional, tag = "1")]
+    pub addr: ::core::option::Option<ControlAddress>,
+    #[prost(message, optional, tag = "2")]
+    pub data: ::core::option::Option<DataBuffer>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct InterceptRequest {
+    #[prost(message, optional, tag = "1")]
+    pub addr: ::core::option::Option<ControlAddress>,
+    #[prost(uint64, tag = "2")]
+    pub correlation_id: u64,
+    #[prost(message, optional, tag = "3")]
+    pub data: ::core::option::Option<DataBuffer>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ErrorEvent {
+    #[prost(enumeration = "ControlErrorCode", tag = "1")]
+    pub code: i32,
+    #[prost(string, tag = "2")]
+    pub message: ::prost::alloc::string::String,
+    /// Optional address context if the error relates to a specific operation.
+    #[prost(message, optional, tag = "3")]
+    pub addr: ::core::option::Option<ControlAddress>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SessionClosed {
+    #[prost(enumeration = "CloseReasonCode", tag = "1")]
+    pub reason: i32,
+    /// Free-form detail (e.g. the Error string for CloseReason::Error).
+    #[prost(string, tag = "2")]
+    pub detail: ::prost::alloc::string::String,
+}
+/// Which side of a node the client is talking to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ControlDirection {
+    Unspecified = 0,
+    /// publish / inject (client -> node input)
+    In = 1,
+    /// subscribe / intercept (node output -> client)
+    Out = 2,
+}
+impl ControlDirection {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "CONTROL_DIRECTION_UNSPECIFIED",
+            Self::In => "CONTROL_DIRECTION_IN",
+            Self::Out => "CONTROL_DIRECTION_OUT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CONTROL_DIRECTION_UNSPECIFIED" => Some(Self::Unspecified),
+            "CONTROL_DIRECTION_IN" => Some(Self::In),
+            "CONTROL_DIRECTION_OUT" => Some(Self::Out),
+            _ => None,
+        }
+    }
+}
+/// Runtime execution state for a single node. Mirrors Rust `NodeState`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum NodeState {
+    Unspecified = 0,
+    Enabled = 1,
+    Bypass = 2,
+    Disabled = 3,
+}
+impl NodeState {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "NODE_STATE_UNSPECIFIED",
+            Self::Enabled => "NODE_STATE_ENABLED",
+            Self::Bypass => "NODE_STATE_BYPASS",
+            Self::Disabled => "NODE_STATE_DISABLED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "NODE_STATE_UNSPECIFIED" => Some(Self::Unspecified),
+            "NODE_STATE_ENABLED" => Some(Self::Enabled),
+            "NODE_STATE_BYPASS" => Some(Self::Bypass),
+            "NODE_STATE_DISABLED" => Some(Self::Disabled),
+            _ => None,
+        }
+    }
+}
+/// Structured error codes. Granular for client-side pattern-matching.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ControlErrorCode {
+    Unspecified = 0,
+    SessionNotFound = 1,
+    UnknownNode = 2,
+    InvalidAddress = 3,
+    /// first frame wasn't Hello, etc.
+    Protocol = 4,
+    Unauthorized = 5,
+    Internal = 6,
+}
+impl ControlErrorCode {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "CONTROL_ERROR_CODE_UNSPECIFIED",
+            Self::SessionNotFound => "CONTROL_ERROR_CODE_SESSION_NOT_FOUND",
+            Self::UnknownNode => "CONTROL_ERROR_CODE_UNKNOWN_NODE",
+            Self::InvalidAddress => "CONTROL_ERROR_CODE_INVALID_ADDRESS",
+            Self::Protocol => "CONTROL_ERROR_CODE_PROTOCOL",
+            Self::Unauthorized => "CONTROL_ERROR_CODE_UNAUTHORIZED",
+            Self::Internal => "CONTROL_ERROR_CODE_INTERNAL",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CONTROL_ERROR_CODE_UNSPECIFIED" => Some(Self::Unspecified),
+            "CONTROL_ERROR_CODE_SESSION_NOT_FOUND" => Some(Self::SessionNotFound),
+            "CONTROL_ERROR_CODE_UNKNOWN_NODE" => Some(Self::UnknownNode),
+            "CONTROL_ERROR_CODE_INVALID_ADDRESS" => Some(Self::InvalidAddress),
+            "CONTROL_ERROR_CODE_PROTOCOL" => Some(Self::Protocol),
+            "CONTROL_ERROR_CODE_UNAUTHORIZED" => Some(Self::Unauthorized),
+            "CONTROL_ERROR_CODE_INTERNAL" => Some(Self::Internal),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum CloseReasonCode {
+    Unspecified = 0,
+    Normal = 1,
+    Error = 2,
+}
+impl CloseReasonCode {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "CLOSE_REASON_CODE_UNSPECIFIED",
+            Self::Normal => "CLOSE_REASON_CODE_NORMAL",
+            Self::Error => "CLOSE_REASON_CODE_ERROR",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CLOSE_REASON_CODE_UNSPECIFIED" => Some(Self::Unspecified),
+            "CLOSE_REASON_CODE_NORMAL" => Some(Self::Normal),
+            "CLOSE_REASON_CODE_ERROR" => Some(Self::Error),
+            _ => None,
+        }
+    }
+}
+/// Generated client implementations.
+pub mod pipeline_control_client {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    #[derive(Debug, Clone)]
+    pub struct PipelineControlClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl PipelineControlClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> PipelineControlClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::Body>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> PipelineControlClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+        {
+            PipelineControlClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        /// Open a control-plane attach to an existing session. The first frame
+        /// the client sends MUST be a `Hello`. The server streams `ControlEvent`s
+        /// back until the session terminates or the client closes the stream.
+        pub async fn attach(
+            &mut self,
+            request: impl tonic::IntoStreamingRequest<Message = super::ControlFrame>,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::ControlEvent>>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/remotemedia.v1.PipelineControl/Attach",
+            );
+            let mut req = request.into_streaming_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("remotemedia.v1.PipelineControl", "Attach"));
+            self.inner.streaming(req, path, codec).await
+        }
+    }
+}
+/// Generated server implementations.
+pub mod pipeline_control_server {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with PipelineControlServer.
+    #[async_trait]
+    pub trait PipelineControl: std::marker::Send + std::marker::Sync + 'static {
+        /// Server streaming response type for the Attach method.
+        type AttachStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::ControlEvent, tonic::Status>,
+            >
+            + std::marker::Send
+            + 'static;
+        /// Open a control-plane attach to an existing session. The first frame
+        /// the client sends MUST be a `Hello`. The server streams `ControlEvent`s
+        /// back until the session terminates or the client closes the stream.
+        async fn attach(
+            &self,
+            request: tonic::Request<tonic::Streaming<super::ControlFrame>>,
+        ) -> std::result::Result<tonic::Response<Self::AttachStream>, tonic::Status>;
+    }
+    #[derive(Debug)]
+    pub struct PipelineControlServer<T> {
+        inner: Arc<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    impl<T> PipelineControlServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for PipelineControlServer<T>
+    where
+        T: PipelineControl,
+        B: Body + std::marker::Send + 'static,
+        B::Error: Into<StdError> + std::marker::Send + 'static,
+    {
+        type Response = http::Response<tonic::body::Body>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            match req.uri().path() {
+                "/remotemedia.v1.PipelineControl/Attach" => {
+                    #[allow(non_camel_case_types)]
+                    struct AttachSvc<T: PipelineControl>(pub Arc<T>);
+                    impl<
+                        T: PipelineControl,
+                    > tonic::server::StreamingService<super::ControlFrame>
+                    for AttachSvc<T> {
+                        type Response = super::ControlEvent;
+                        type ResponseStream = T::AttachStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::ControlFrame>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as PipelineControl>::attach(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AttachSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
+            }
+        }
+    }
+    impl<T> Clone for PipelineControlServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    /// Generated gRPC service name
+    pub const SERVICE_NAME: &str = "remotemedia.v1.PipelineControl";
+    impl<T> tonic::server::NamedService for PipelineControlServer<T> {
+        const NAME: &'static str = SERVICE_NAME;
+    }
+}

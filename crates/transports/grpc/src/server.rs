@@ -5,8 +5,10 @@
 
 use crate::{
     auth::AuthConfig,
+    control::ControlServiceImpl,
     execution::ExecutionServiceImpl,
     generated::{
+        pipeline_control_server::PipelineControlServer,
         pipeline_execution_service_server::PipelineExecutionServiceServer,
         streaming_pipeline_service_server::StreamingPipelineServiceServer,
     },
@@ -86,6 +88,9 @@ impl GrpcServer {
             Arc::clone(&self.executor),
         );
 
+        // Session Control Bus — per-session pub/sub/intercept/node-state.
+        let control_service = ControlServiceImpl::new(self.executor.control_bus());
+
         // Wrap services with gRPC-Web and CORS support using tower ServiceBuilder
         let execution_service = tower::ServiceBuilder::new()
             .layer(tower_http::cors::CorsLayer::permissive())
@@ -107,6 +112,12 @@ impl GrpcServer {
                     .max_encoding_message_size(10 * 1024 * 1024), // 10MB
             );
 
+        let control_service = tower::ServiceBuilder::new()
+            .layer(tower_http::cors::CorsLayer::permissive())
+            .layer(tonic_web::GrpcWebLayer::new())
+            .into_inner()
+            .named_layer(PipelineControlServer::new(control_service));
+
         // T037: Configure connection pooling and HTTP/2 keepalive for concurrent clients
         let server = Server::builder()
             // Allow many concurrent requests per connection
@@ -124,7 +135,8 @@ impl GrpcServer {
             // Tracing
             .trace_fn(|_| tracing::info_span!("grpc_request"))
             .add_service(execution_service)
-            .add_service(streaming_service);
+            .add_service(streaming_service)
+            .add_service(control_service);
 
         // TODO: Add graceful shutdown on Ctrl+C
         // Requires tokio signal feature which may not be available on all platforms
@@ -164,6 +176,9 @@ impl GrpcServer {
             Arc::clone(&self.executor),
         );
 
+        // Session Control Bus — per-session pub/sub/intercept/node-state.
+        let control_service = ControlServiceImpl::new(self.executor.control_bus());
+
         // Wrap services with gRPC-Web and CORS support using tower ServiceBuilder
         let execution_service = tower::ServiceBuilder::new()
             .layer(tower_http::cors::CorsLayer::permissive())
@@ -185,6 +200,12 @@ impl GrpcServer {
                     .max_encoding_message_size(10 * 1024 * 1024), // 10MB
             );
 
+        let control_service = tower::ServiceBuilder::new()
+            .layer(tower_http::cors::CorsLayer::permissive())
+            .layer(tonic_web::GrpcWebLayer::new())
+            .into_inner()
+            .named_layer(PipelineControlServer::new(control_service));
+
         // T037: Configure connection pooling and HTTP/2 keepalive for concurrent clients
         let server = Server::builder()
             // Allow many concurrent requests per connection
@@ -202,7 +223,8 @@ impl GrpcServer {
             // Tracing
             .trace_fn(|_| tracing::info_span!("grpc_request"))
             .add_service(execution_service)
-            .add_service(streaming_service);
+            .add_service(streaming_service)
+            .add_service(control_service);
 
         info!("gRPC server listening on {}", addr);
 
