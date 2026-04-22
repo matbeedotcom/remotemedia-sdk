@@ -458,8 +458,9 @@ impl StreamingNodeFactory for AudioBufferAccumulatorNodeFactory {
             .and_then(|v| v.as_u64())
             .map(|v| v as u32);
 
+        use crate::nodes::SyncNodeWrapper;
         let node = AudioBufferAccumulatorNode::new(min_duration_ms, max_duration_ms);
-        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+        Ok(Box::new(SyncNodeWrapper(node)))
     }
 
     fn node_type(&self) -> &str {

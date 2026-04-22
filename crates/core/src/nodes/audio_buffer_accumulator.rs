@@ -16,10 +16,9 @@ use crate::data::AudioBuffer as ProtoAudioBuffer;
 /// When speech ends (is_speech_end=true), it outputs the accumulated audio buffer.
 use crate::data::RuntimeData;
 use crate::error::{Error, Result};
-use crate::nodes::AsyncStreamingNode;
-use async_trait::async_trait;
+use crate::nodes::SyncStreamingNode;
+use parking_lot::Mutex;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Buffer state for a single session
 #[derive(Debug, Clone)]
@@ -124,7 +123,7 @@ impl AudioBufferAccumulatorNode {
         bytes
     }
 
-    async fn handle_audio_chunk(
+    fn handle_audio_chunk(
         &self,
         audio_buf: &ProtoAudioBuffer,
         session_id: &str,
@@ -192,7 +191,7 @@ impl AudioBufferAccumulatorNode {
         }
     }
 
-    async fn handle_vad_event(
+    fn handle_vad_event(
         &self,
         vad_json: &serde_json::Value,
         session_id: &str,
@@ -338,68 +337,73 @@ impl AudioBufferAccumulatorNode {
     }
 }
 
-#[async_trait]
-impl AsyncStreamingNode for AudioBufferAccumulatorNode {
+// Phase A-Wave 3: migrated to `SyncStreamingNode`. Previously held two
+// `tokio::sync::Mutex` locks across `handle_audio_chunk(...).await` /
+// `handle_vad_event(...).await` — but those helpers never actually
+// awaited anything internally, so the async annotations and `.await`s
+// were vestigial. The lock-across-await hazard is gone with
+// `parking_lot::Mutex` + sync helpers. The collect-then-fire
+// discipline is preserved: all state mutation happens under the two
+// locks, which are dropped before the callback fires.
+impl SyncStreamingNode for AudioBufferAccumulatorNode {
     fn node_type(&self) -> &str {
         "AudioBufferAccumulatorNode"
     }
 
-    async fn process(&self, _data: RuntimeData) -> Result<RuntimeData> {
-        // Simplified non-streaming version - not recommended
-        // Use process_streaming for full buffering functionality
+    fn process(&self, _data: RuntimeData) -> Result<RuntimeData> {
         Err(Error::Execution(
-            "AudioBufferAccumulatorNode requires streaming mode - use process_streaming() instead"
+            "AudioBufferAccumulatorNode requires streaming mode - \
+             callers must use process_streaming() (the router does this \
+             automatically when the factory declares is_multi_output_streaming=true)"
                 .into(),
         ))
     }
 
-    async fn process_streaming<F>(
+    fn process_streaming(
         &self,
         data: RuntimeData,
-        session_id: Option<String>,
-        mut callback: F,
-    ) -> Result<usize>
-    where
-        F: FnMut(RuntimeData) -> Result<()> + Send,
-    {
-        let session_key = session_id.clone().unwrap_or_else(|| "default".to_string());
+        session_id: Option<&str>,
+        callback: &mut dyn FnMut(RuntimeData) -> Result<()>,
+    ) -> Result<usize> {
+        let session_key = session_id.unwrap_or("default").to_string();
 
-        let mut states = self.states.lock().await;
-        let mut pending = self.pending_audio.lock().await;
+        // Collect output under the lock, release, then fire callback.
+        // Both locks are `parking_lot::Mutex`; uncontended fast path
+        // is a single CAS. No `.await` anywhere in this method; the
+        // old async annotations were pure overhead.
+        let output: Option<RuntimeData> = {
+            let mut states = self.states.lock();
+            let mut pending = self.pending_audio.lock();
 
-        let output = match &data {
-            RuntimeData::Audio {
-                samples,
-                sample_rate,
-                channels,
-                ..
-            } => {
-                // Handle audio chunk - convert to buffer format expected by handler
-                let audio_buf = crate::data::AudioBuffer {
-                    samples: samples.iter().flat_map(|f| f.to_le_bytes()).collect(),
-                    sample_rate: *sample_rate,
-                    channels: *channels,
-                    format: 1, // F32
-                    num_samples: samples.len() as u64,
-                };
-                self.handle_audio_chunk(&audio_buf, &session_key, &mut states, &mut pending)
-                    .await?
-            }
-            RuntimeData::Json(json_value) => {
-                // Handle VAD event
-                self.handle_vad_event(json_value, &session_key, &mut states, &mut pending)
-                    .await?
-            }
-            _ => {
-                tracing::warn!("[AudioBuffer] Received unexpected data type");
-                None
+            match &data {
+                RuntimeData::Audio {
+                    samples,
+                    sample_rate,
+                    channels,
+                    ..
+                } => {
+                    // Convert to the legacy ProtoAudioBuffer shape the
+                    // helpers expect. One heap op per call — unchanged
+                    // from the previous implementation.
+                    let audio_buf = crate::data::AudioBuffer {
+                        samples: samples.iter().flat_map(|f| f.to_le_bytes()).collect(),
+                        sample_rate: *sample_rate,
+                        channels: *channels,
+                        format: 1, // F32
+                        num_samples: samples.len() as u64,
+                    };
+                    self.handle_audio_chunk(&audio_buf, &session_key, &mut states, &mut pending)?
+                }
+                RuntimeData::Json(json_value) => {
+                    self.handle_vad_event(json_value, &session_key, &mut states, &mut pending)?
+                }
+                _ => {
+                    tracing::warn!("[AudioBuffer] Received unexpected data type");
+                    None
+                }
             }
         };
 
-        drop(states);
-        drop(pending);
-
-        // Output accumulated buffer if speech ended
         if let Some(output_data) = output {
             callback(output_data)?;
             Ok(1)
@@ -425,14 +429,16 @@ impl AudioBufferAccumulatorNode {
         true
     }
 
-    /// Reset the buffer state
+    /// Reset the buffer state.
+    ///
+    /// Previously required `tokio::task::block_in_place` +
+    /// `blocking_lock` because the state was behind a
+    /// `tokio::sync::Mutex`. After A-Wave 3 those are
+    /// `parking_lot::Mutex` — plain sync `.lock()` works from any
+    /// thread.
     pub fn reset_state(&mut self) {
-        tokio::task::block_in_place(|| {
-            let mut states = self.states.blocking_lock();
-            states.clear();
-            let mut pending = self.pending_audio.blocking_lock();
-            pending.clear();
-        });
+        self.states.lock().clear();
+        self.pending_audio.lock().clear();
         tracing::info!("[AudioBufferAccumulator] States reset");
     }
 }
