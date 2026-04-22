@@ -123,42 +123,65 @@ def _auto_register_builtin_nodes():
 
     _BUILTIN_REGISTERED = True
 
-    # Register built-in AI nodes
-    try:
-        from remotemedia.nodes.tts import KokoroTTSNode
-        _NODE_REGISTRY["KokoroTTSNode"] = KokoroTTSNode
-    except ImportError:
-        pass  # Kokoro not installed
+    import logging as _logging
+    _logger = _logging.getLogger(__name__)
 
-    try:
-        from remotemedia.nodes.tts_vibevoice import VibeVoiceTTSNode
-        _NODE_REGISTRY["VibeVoiceTTSNode"] = VibeVoiceTTSNode
-        _NODE_REGISTRY["VibeVoiceNode"] = VibeVoiceTTSNode  # Alias
-    except ImportError:
-        pass  # VibeVoice not installed
+    # Per-venv auto-registration: any ML / TTS module may raise on
+    # import for reasons other than ImportError (API rename →
+    # AttributeError, native-lib ABI skew → OSError, transformers
+    # version mismatch → RuntimeError, ...). Catching ONLY ImportError
+    # made these failures silent — the caller ended up with an empty
+    # registry and a bare KeyError. Catch everything, log what
+    # happened, keep going.
+    def _try_register(module_path, aliases):
+        """Import `module_path.name` as `_NODE_REGISTRY[name]` for each alias.
+        `aliases` is a list of (symbol_name, registry_key) pairs."""
+        try:
+            mod = __import__(module_path, fromlist=[a[0] for a in aliases])
+        except BaseException as exc:  # noqa: BLE001
+            _logger.warning(
+                "auto-register skipped %s (%s): %s",
+                module_path, type(exc).__name__, exc,
+            )
+            return
+        for symbol, key in aliases:
+            cls = getattr(mod, symbol, None)
+            if cls is not None:
+                _NODE_REGISTRY[key] = cls
 
-    try:
-        from remotemedia.nodes.ml.lfm2_audio import LFM2AudioNode
-        _NODE_REGISTRY["LFM2AudioNode"] = LFM2AudioNode
-        _NODE_REGISTRY["LFM2Node"] = LFM2AudioNode  # Alias
-    except (ImportError, OSError):
-        pass  # LFM2 audio or torchaudio ABI missing
+    _try_register("remotemedia.nodes.tts", [("KokoroTTSNode", "KokoroTTSNode")])
+    _try_register(
+        "remotemedia.nodes.tts_vibevoice",
+        [("VibeVoiceTTSNode", "VibeVoiceTTSNode"), ("VibeVoiceTTSNode", "VibeVoiceNode")],
+    )
+    _try_register(
+        "remotemedia.nodes.ml.lfm2_audio",
+        [("LFM2AudioNode", "LFM2AudioNode"), ("LFM2AudioNode", "LFM2Node")],
+    )
+    _try_register(
+        "remotemedia.nodes.ml.lfm2_audio_mlx",
+        [
+            ("LFM2AudioMlxNode", "LFM2AudioMlxNode"),
+            ("LFM2AudioMlxNode", "LFM2AudioMLX"),
+        ],
+    )
+    _try_register(
+        "remotemedia.nodes.ml.lfm2_text",
+        [("LFM2TextNode", "LFM2TextNode")],
+    )
+    _try_register(
+        "remotemedia.nodes.ml.whisper_stt",
+        [("WhisperSTTNode", "WhisperSTTNode")],
+    )
+    _try_register("remotemedia.nodes.test_echo", [("EchoNode", "EchoNode")])
 
-    try:
-        from remotemedia.nodes.ml.lfm2_text import LFM2TextNode
-        _NODE_REGISTRY["LFM2TextNode"] = LFM2TextNode
-    except (ImportError, OSError):
-        pass  # torch / transformers missing
-
-    # Register test nodes
-    try:
-        from remotemedia.nodes.test_echo import EchoNode
-        _NODE_REGISTRY["EchoNode"] = EchoNode
-    except ImportError:
-        pass  # Test node not available
-
-    # Log registered nodes
     if _NODE_REGISTRY:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"Auto-registered {len(_NODE_REGISTRY)} built-in nodes: {list(_NODE_REGISTRY.keys())}")
+        _logger.info(
+            "Auto-registered %d built-in nodes: %s",
+            len(_NODE_REGISTRY), list(_NODE_REGISTRY.keys()),
+        )
+    else:
+        _logger.warning(
+            "Auto-register produced an empty _NODE_REGISTRY; every builtin "
+            "module failed to import. See the WARN lines above for why."
+        )

@@ -74,6 +74,11 @@ default = []
 # Forward executor features from runtime-core
 multiprocess = ["remotemedia-core/multiprocess"]
 
+# Per-node managed venvs backed by uv. When enabled, PythonEnvMode=Managed
+# uses the UvBackend (looks up `uv` on PATH) for much faster provisioning
+# than the SystemBackend's `python -m venv + pip install` fallback.
+bundled-uv = ["remotemedia-core/bundled-uv"]
+
 # CLI integration (clap argument parsing)
 cli = ["dep:clap"]
 

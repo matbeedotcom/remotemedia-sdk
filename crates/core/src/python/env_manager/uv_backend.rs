@@ -91,7 +91,15 @@ impl UvBackend {
     }
 
     /// Run a uv command and return its stdout on success.
+    ///
+    /// On success OR failure, surfaces uv's stderr via tracing so that
+    /// silent "install succeeded but nothing was installed" cases
+    /// become visible. Progress / resolution errors from uv's pub-grub
+    /// are written to stderr even when the overall exit code is 0
+    /// (for example, a `uv pip install` on a no-op resolved set), and
+    /// we were previously swallowing them.
     async fn run_uv(&self, args: &[&str]) -> Result<String> {
+        tracing::info!(argv = ?args, "Invoking uv");
         let output = Command::new(&self.uv_path)
             .args(args)
             .output()
@@ -104,17 +112,27 @@ impl UvBackend {
                 ))
             })?;
 
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(Error::Execution(format!(
-                "uv {} failed (exit {}): {}",
+                "uv {} failed (exit {}):\n--- stdout ---\n{}\n--- stderr ---\n{}",
                 args.join(" "),
                 output.status,
+                stdout.trim(),
                 stderr.trim()
             )));
         }
 
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        // Log uv's own progress output so cached / no-op installs can
+        // be distinguished from real ones. uv writes resolution and
+        // install progress to stderr even on success.
+        if !stderr.trim().is_empty() {
+            tracing::info!(uv_stderr = %stderr.trim(), "uv finished");
+        }
+
+        Ok(stdout.to_string())
     }
 }
 

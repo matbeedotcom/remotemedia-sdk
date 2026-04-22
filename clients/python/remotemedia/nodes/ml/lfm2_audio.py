@@ -1,61 +1,80 @@
 """
-LFM2-Audio-1.5B Node using RuntimeData API and MultiprocessNode base
+LFM2-Audio speech-to-speech node — multiprocess-capable, control-bus-aware.
 
-Speech-to-speech conversational AI node that uses Liquid AI's LFM2-Audio model
-for interleaved text and audio generation, with multiprocess execution support.
+Speech-to-speech conversational AI built on Liquid AI's LFM2-Audio-1.5B.
+Accepts audio on the main input, generates interleaved text and audio on
+the output. The same aux-port control surface as :mod:`lfm2_text` is
+wired up here so a gRPC/WebRTC client can steer a live voice agent
+between turns without tearing the session down.
 
-Inherits from MultiprocessNode to enable concurrent execution in separate processes.
+## Control-bus surface
 
-Key features:
-- Multiprocess execution support (concurrent with other AI models)
-- Direct audio-to-audio conversation without intermediate text transcription
-- Maintains conversation history across multiple turns
-- Supports both text and audio outputs
-- Uses RuntimeData API for efficient communication with Rust runtime
-- Session-based conversation management
+Publishes to these aux ports arrive here as
+``RuntimeData.Json({"__aux_port__": <port>, "payload": {...}})``:
+
+    audio.in.context        → store RAG / retrieval text used on the
+                              next turn; invalidates cached chat state so
+                              the new system turn includes the context.
+    audio.in.system_prompt  → replace the persona / behaviour prompt;
+                              cached chat states are dropped.
+    audio.in.reset          → drop conversation history for all sessions.
+    audio.in.barge_in       → request immediate cancellation of the
+                              currently-generating turn (if any). The
+                              generator loop checks the flag on every
+                              token batch and bails out cleanly.
+    audio.in                → main channel: one audio utterance, treated
+                              as the user turn.
+
+The main audio channel is still validated as ``RuntimeData.Audio`` — the
+aux-port envelope always arrives as text-wrapped JSON, so it's peeled
+off BEFORE audio validation runs.
 """
 
-import logging
+from __future__ import annotations
+
 import asyncio
-from typing import AsyncGenerator, Optional, Dict, List, Any, TYPE_CHECKING, Union
+import json
+import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any, AsyncGenerator, Dict, List, Optional, TYPE_CHECKING, Union
 
-# Defer heavy ML imports to initialization time so the node can be registered
-# even when liquid_audio / torch aren't installed
+# Heavy ML deps are optional so the module can be imported for node
+# registration even when liquid_audio / torch aren't installed. Capture
+# the actual failure reason — the previous blanket `except ImportError`
+# silently masked "liquid_audio is installed but import ChatState
+# failed" cases, producing misleading "please pip install liquid-audio"
+# errors even when the venv had the package.
+_ML_IMPORT_ERROR: Optional[BaseException] = None
 try:
     import numpy as np
     import torch
-    import torchaudio
+    import torchaudio  # noqa: F401
     from liquid_audio import ChatState, LFMModality
     from liquid_audio import LFM2AudioModel, LFM2AudioProcessor
     _ML_DEPS_AVAILABLE = True
-except ImportError:
+except BaseException as _exc:
     _ML_DEPS_AVAILABLE = False
+    _ML_IMPORT_ERROR = _exc
     np = None  # type: ignore
     torch = None  # type: ignore
-    torchaudio = None  # type: ignore
     ChatState = None  # type: ignore
     LFMModality = None  # type: ignore
     LFM2AudioModel = None  # type: ignore
     LFM2AudioProcessor = None  # type: ignore
+    logging.getLogger(__name__).warning(
+        "LFM2AudioNode ML imports failed (%s): %s",
+        type(_exc).__name__, _exc,
+    )
 
-try:
-    import resampy
-except ImportError:
-    resampy = None
-    if _ML_DEPS_AVAILABLE:
-        logging.warning("resampy not installed. Audio resampling will use torchaudio instead.")
-
-# Suppress torch dynamo compilation errors (fall back to eager mode)
 if _ML_DEPS_AVAILABLE:
-    try:
+    try:  # torch dynamo is opportunistic — don't let it break inference
         import torch._dynamo
         torch._dynamo.config.suppress_errors = True
     except (ImportError, AttributeError):
         pass
 
-# Import RuntimeData bindings
 if TYPE_CHECKING:
     from remotemedia.core.multiprocessing.data import RuntimeData
 
@@ -63,7 +82,7 @@ try:
     from remotemedia.core.multiprocessing.data import (
         RuntimeData,
         numpy_to_audio,
-        audio_to_numpy,
+        audio_to_numpy,  # noqa: F401  (exported for downstream users)
     )
     RUNTIME_DATA_AVAILABLE = True
 except ImportError:
@@ -71,54 +90,76 @@ except ImportError:
     RuntimeData = None  # type: ignore
     numpy_to_audio = None  # type: ignore
     audio_to_numpy = None  # type: ignore
-    logging.warning("[LFM2AudioNode] RuntimeData bindings not available. Using fallback implementation.")
+    logging.warning(
+        "[LFM2AudioNode] RuntimeData bindings not available. "
+        "Using fallback implementation."
+    )
 
-# Import MultiprocessNode base class from core
-from remotemedia.core import MultiprocessNode, NodeConfig
+from remotemedia.core.multiprocessing import (
+    MultiprocessNode,
+    NodeConfig,
+    python_requires,
+    register_node,
+)
 
 logger = logging.getLogger(__name__)
 
-# Configure logger to output to console
-if not logger.handlers:
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-    logger.setLevel(logging.INFO)
+
+DEFAULT_SYSTEM_PROMPT = "Respond with interleaved text and audio."
+AUX_PORT_KEY = "__aux_port__"
 
 
 @dataclass
 class ConversationState:
-    """Manages conversation history for a session."""
+    """One live ``liquid_audio.ChatState`` plus session bookkeeping."""
+
     session_id: str
-    chat_state: Any  # ChatState from liquid_audio
+    chat_state: Any  # liquid_audio.ChatState
     created_at: datetime = field(default_factory=datetime.now)
     last_accessed: datetime = field(default_factory=datetime.now)
     turn_count: int = 0
 
-    def update_access(self):
-        """Update last accessed timestamp."""
+    def touch(self) -> None:
         self.last_accessed = datetime.now()
 
 
+@register_node("LFM2AudioNode")
+@python_requires(
+    [
+        # LFM2-Audio pulls ChatState/LFM2AudioModel/LFM2AudioProcessor from
+        # the liquid_audio SDK, which itself has torch/torchaudio/transformers
+        # as transitive deps. We pin transformers to the LFM2-compatible
+        # release line used by the text sibling.
+        "liquid-audio>=0.1",
+        # See control_bus_test_server.rs for the full reasoning. In short:
+        # liquid_audio 1.1.0 imports a transformers-4.54-era private
+        # symbol (`Lfm2HybridConvCache`) that 5.x removed.
+        "transformers>=4.54.0,<5.0",
+        "torch>=2.1",
+        "torchaudio>=2.1",
+        "accelerate>=0.33",
+    ]
+)
 class LFM2AudioNode(MultiprocessNode):
     """
-    Speech-to-speech conversation node using LFM2-Audio-1.5B with multiprocess support.
+    Multi-turn speech-to-speech node with control-bus aux ports.
 
-    Inherits from MultiprocessNode to enable concurrent execution in separate processes.
-    This node accepts audio via RuntimeData.Audio and yields both text and audio
-    responses, enabling natural conversational AI without intermediate transcription.
-
-    The model generates interleaved text and audio tokens, providing both textual
-    responses and corresponding speech audio.
+    Main channel consumes ``RuntimeData.Audio`` (24 kHz mono float32)
+    and yields interleaved ``RuntimeData.Text`` and ``RuntimeData.Audio``.
+    Aux ports (context / system_prompt / reset / barge_in) are handled
+    out-of-band — aux messages produce no outputs of their own.
     """
+
+    # ────── Construction (dual-mode: in-process kwargs OR NodeConfig) ──
 
     def __init__(
         self,
-        node_id: str = None,
+        config: Union[NodeConfig, Dict[str, Any], None] = None,
+        *,
+        node_id: Optional[str] = None,
+        name: Optional[str] = None,
         hf_repo: str = "LiquidAI/LFM2-Audio-1.5B",
-        system_prompt: str = "Respond with interleaved text and audio.",
+        system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         device: Optional[str] = None,
         audio_temperature: float = 1.0,
         audio_top_k: int = 4,
@@ -126,697 +167,556 @@ class LFM2AudioNode(MultiprocessNode):
         sample_rate: int = 24000,
         session_timeout_minutes: int = 30,
         text_only: bool = False,
-        config: Union[NodeConfig, Dict[str, Any]] = None,
-        **kwargs
-    ):
-        """
-        Initialize LFM2-Audio node with RuntimeData and multiprocess support.
-
-        Args:
-            node_id: Unique identifier for this node instance
-            hf_repo: HuggingFace repository for the model
-            system_prompt: System prompt for the conversation
-            device: Device to run the model on (cuda/cpu, auto-detected if None)
-            audio_temperature: Temperature for audio generation
-            audio_top_k: Top-k sampling for audio tokens
-            max_new_tokens: Maximum number of tokens to generate
-            sample_rate: Output sample rate
-            session_timeout_minutes: Minutes before session expires
-            text_only: If True, only output text (no audio synthesis)
-            config: NodeConfig for multiprocess mode (if available)
-            **kwargs: Additional parameters
-        """
-        # Initialize MultiprocessNode base if config provided
-        if config is not None:
-            super().__init__(config, **kwargs)
-            # Extract params from config
-            if isinstance(config, NodeConfig):
-                params = config.params
-            else:
-                params = config.get('params', {})
-
-            # Override with params from config
-            hf_repo = params.get('hf_repo', hf_repo)
-            system_prompt = params.get('system_prompt', system_prompt)
-            device = params.get('device', device)
-            audio_temperature = params.get('audio_temperature', audio_temperature)
-            audio_top_k = params.get('audio_top_k', audio_top_k)
-            max_new_tokens = params.get('max_new_tokens', max_new_tokens)
-            sample_rate = params.get('sample_rate', sample_rate)
-            session_timeout_minutes = params.get('session_timeout_minutes', session_timeout_minutes)
-            text_only = params.get('text_only', text_only)
-        else:
-            # Standalone mode without multiprocess
-            # Still need to initialize base class to set up _status and other attributes
-            from remotemedia.core.multiprocessing.node import NodeConfig
-            minimal_config = NodeConfig(
-                node_id=node_id or "lfm2_audio",
-                node_type="LFM2AudioNode",
-                params={}
+        **kwargs: Any,
+    ) -> None:
+        # Multiprocess runner's 3-attempt construction: str → TypeError → config=...
+        # Reject the bare string form so we land on the config path where
+        # manifest params actually reach us.
+        if isinstance(config, str):
+            raise TypeError(
+                "LFM2AudioNode requires NodeConfig or keyword-only params; "
+                "bare positional node_id not supported"
             )
-            super().__init__(minimal_config, **kwargs)
-            self.logger = logging.getLogger(__name__)
+        if config is None:
+            config = NodeConfig(
+                node_id=node_id or name or "lfm2_audio",
+                node_type="LFM2AudioNode",
+                params={},
+            )
+        elif isinstance(config, dict):
+            config = NodeConfig(
+                node_id=config.get("node_id", node_id or "lfm2_audio"),
+                node_type=config.get("node_type", "LFM2AudioNode"),
+                params=config.get("params", {}),
+            )
 
-        # LFM2-specific configuration
-        self.hf_repo = hf_repo
-        self.system_prompt = system_prompt
-        self.audio_temperature = audio_temperature
-        self.audio_top_k = audio_top_k
-        self.max_new_tokens = max_new_tokens
-        self.sample_rate = sample_rate
-        self.session_timeout_minutes = session_timeout_minutes
-        self.text_only = text_only
-        self.is_streaming = True
+        super().__init__(config, **kwargs)
 
-        logger.info(f"LFM2AudioNode initialized: text_only={self.text_only}, system_prompt='{self.system_prompt}'")
+        params = config.params or {}
+        self.hf_repo = params.get("hf_repo", hf_repo)
+        self._system_prompt = params.get("system_prompt", system_prompt)
+        self.audio_temperature = float(params.get("audio_temperature", audio_temperature))
+        self.audio_top_k = int(params.get("audio_top_k", audio_top_k))
+        self.max_new_tokens = int(params.get("max_new_tokens", max_new_tokens))
+        self.sample_rate = int(params.get("sample_rate", sample_rate))
+        self.session_timeout_minutes = int(
+            params.get("session_timeout_minutes", session_timeout_minutes)
+        )
+        self.text_only = bool(params.get("text_only", text_only))
 
-        # Auto-detect device if not specified
-        if device is None:
-            if _ML_DEPS_AVAILABLE and torch.cuda.is_available():
-                self.device = "cuda"
-            else:
-                self.device = device or "cpu"
+        req_device = params.get("device", device)
+        if req_device is None:
+            self.device = (
+                "cuda" if _ML_DEPS_AVAILABLE and torch.cuda.is_available() else "cpu"
+            )
         else:
-            self.device = device
+            self.device = req_device
 
-        self._processor = None
-        self._model = None
+        self._processor: Any = None
+        self._model: Any = None
         self._initialized = False
 
-        # Session management
+        # Per-session chat state. Keyed by logical session id (which is
+        # the IPC session id in the multiprocess runner).
         self._sessions: Dict[str, ConversationState] = {}
-        self._cleanup_task = None
+        self._cleanup_task: Optional[asyncio.Task] = None
+
+        # Aux-port state.
+        self._context: str = ""          # retrieval/RAG block
+        self._interrupt: bool = False    # barge-in latch (consumed by token loop)
+
+        # Friendly name used by Pipeline.get_node(name) for in-process use.
+        self.name = name or config.node_id
+
+        self.is_streaming = True
+        logger.info(
+            "LFM2AudioNode initialized: device=%s text_only=%s",
+            self.device, self.text_only,
+        )
+
+    # ────── In-process control-plane-analog API ───────────────────────
+    #
+    # These setters are used by in-process tests (`pl.get_node("lfm").set_context(...)`)
+    # and by `_handle_aux_port` when the same node runs in a multiprocess
+    # worker driven by the Session Control Bus. Keeping a single surface
+    # ensures both paths behave identically.
+
+    def set_context(self, docs: str) -> None:
+        """Replace the retrieval/RAG context applied to the system turn."""
+        self._context = docs or ""
+        self._invalidate_sessions("context")
+
+    def clear_context(self) -> None:
+        self._context = ""
+        self._invalidate_sessions("context-clear")
+
+    def set_system_prompt(self, prompt: str) -> None:
+        """Replace the persona/system prompt. Drops cached chat states."""
+        self._system_prompt = prompt or DEFAULT_SYSTEM_PROMPT
+        self._invalidate_sessions("system-prompt")
+
+    def reset_history(self) -> None:
+        """Drop conversation history. Next turn starts from the system prompt."""
+        self._invalidate_sessions("reset")
+
+    def request_barge_in(self) -> None:
+        """Signal the active generation loop to stop ASAP. Cleared next turn."""
+        self._interrupt = True
+        logger.info("[%s] barge-in requested", self.node_id)
+
+    def _invalidate_sessions(self, reason: str) -> None:
+        if self._sessions:
+            logger.info(
+                "[%s] dropping %d cached chat state(s) (%s)",
+                self.node_id, len(self._sessions), reason,
+            )
+            self._sessions.clear()
+
+    # ────── MultiprocessNode contract ─────────────────────────────────
 
     async def initialize(self) -> None:
-        """Initialize the LFM2-Audio model and processor."""
         if not _ML_DEPS_AVAILABLE:
-            raise RuntimeError(
-                "LFM2AudioNode requires 'liquid_audio', 'torch', and 'torchaudio' packages. "
-                "Install with: pip install liquid-audio torch torchaudio"
+            # Surface the actual import failure instead of the
+            # misleading "please pip install" error. Common cases:
+            # - `from liquid_audio import ChatState` fails because the
+            #   API moved between versions.
+            # - torchaudio is imported but the native ffmpeg backend
+            #   isn't available on the host (OSError from dlopen).
+            cause = _ML_IMPORT_ERROR
+            detail = (
+                f"{type(cause).__name__}: {cause}" if cause is not None
+                else "unknown import failure"
             )
+            raise RuntimeError(
+                f"LFM2AudioNode ML stack failed to import — {detail}. "
+                "Required packages: liquid_audio, torch, torchaudio."
+            ) from cause
         if self._initialized:
             return
 
+        logger.info(
+            "Initializing LFM2-Audio from %r on %s", self.hf_repo, self.device
+        )
+        if self.device == "cpu" and not torch.cuda.is_available():
+            os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
         try:
-            logger.info(f"Initializing LFM2-Audio from '{self.hf_repo}' on device '{self.device}'")
+            self._processor = LFM2AudioProcessor.from_pretrained(
+                self.hf_repo, device=self.device
+            )
+        except TypeError:
+            self._processor = LFM2AudioProcessor.from_pretrained(self.hf_repo)
+            if self.device == "cpu":
+                self._processor = self._processor.to("cpu")
+        self._processor = self._processor.eval()
 
-            # Load processor directly (no thread isolation)
-            import os
-            if self.device == "cpu" and not torch.cuda.is_available():
-                os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        # liquid_audio 1.1.0 changed `LFM2AudioModel.from_pretrained`:
+        #   - dropped the `attn_implementation=` kwarg.
+        #   - defaults to device="cuda", dtype=torch.bfloat16 regardless
+        #     of host capability; we must pass our own device down so
+        #     the inner model isn't constructed on CUDA on a CPU-only
+        #     box (which aborts with "Torch not compiled with CUDA
+        #     enabled" the moment any tensor is allocated).
+        #
+        # Pass `device=` / `dtype=` explicitly when the API accepts them
+        # and fall back to post-construct `.to(device)` otherwise — old
+        # 0.x liquid_audio didn't accept device/dtype on from_pretrained.
+        model_kwargs: Dict[str, Any] = {}
+        if self.device == "cuda":
+            model_kwargs["device"] = "cuda"
+            model_kwargs["dtype"] = torch.bfloat16
+        else:
+            model_kwargs["device"] = "cpu"
+            model_kwargs["dtype"] = torch.float32
 
-            try:
-                self._processor = LFM2AudioProcessor.from_pretrained(
-                    self.hf_repo,
-                    device=self.device
-                )
-            except TypeError:
-                self._processor = LFM2AudioProcessor.from_pretrained(self.hf_repo)
-                if self.device == "cpu":
-                    self._processor = self._processor.to("cpu")
+        try:
+            self._model = LFM2AudioModel.from_pretrained(self.hf_repo, **model_kwargs)
+        except TypeError:
+            # Older liquid_audio that doesn't accept device / dtype —
+            # load on CPU and move afterwards.
+            self._model = LFM2AudioModel.from_pretrained(self.hf_repo)
+            self._model = (
+                self._model.cuda() if self.device == "cuda" else self._model.to("cpu")
+            )
+        self._model = self._model.eval()
 
-            self._processor = self._processor.eval()
-
-            # Load model directly
-            try:
-                self._model = LFM2AudioModel.from_pretrained(
-                    self.hf_repo,
-                    attn_implementation="flash_attn"
-                )
-            except (TypeError, ValueError):
-                self._model = LFM2AudioModel.from_pretrained(self.hf_repo)
-
-            self._model = self._model.eval()
-
-            # Move to device
-            if self.device == "cuda":
-                self._model = self._model.cuda()
-            else:
-                self._model = self._model.to("cpu")
-
-            self._initialized = True
-            logger.info("LFM2-Audio model initialized successfully")
-
-            # Start session cleanup task
-            self._cleanup_task = asyncio.create_task(self._cleanup_expired_sessions())
-
-        except ImportError as e:
-            raise ImportError(
-                "liquid_audio is not installed. Install with: pip install liquid-audio"
-            ) from e
-        except Exception as e:
-            logger.error(f"Failed to initialize LFM2-Audio: {e}")
-            raise
+        self._initialized = True
+        logger.info("LFM2-Audio model loaded")
+        self._cleanup_task = asyncio.create_task(self._cleanup_expired_sessions())
 
     async def cleanup(self) -> None:
-        """Clean up the model and sessions."""
-        if self._cleanup_task:
+        if self._cleanup_task is not None:
             self._cleanup_task.cancel()
             try:
                 await self._cleanup_task
             except asyncio.CancelledError:
                 pass
+        self._model = None
+        self._processor = None
+        self._initialized = False
+        self._sessions.clear()
+        logger.info("LFM2-Audio model cleaned up")
 
-        if self._model is not None:
-            self._model = None
-            self._processor = None
-            self._initialized = False
-            self._sessions.clear()
-            logger.info("LFM2-Audio model cleaned up")
-
-    async def _cleanup_expired_sessions(self):
-        """Background task to clean up expired sessions."""
+    async def _cleanup_expired_sessions(self) -> None:
         while True:
             try:
-                await asyncio.sleep(60)  # Check every minute
+                await asyncio.sleep(60)
                 now = datetime.now()
-                expired_sessions = []
-
-                for session_id, state in self._sessions.items():
-                    elapsed = (now - state.last_accessed).total_seconds() / 60
-                    if elapsed > self.session_timeout_minutes:
-                        expired_sessions.append(session_id)
-
-                for session_id in expired_sessions:
-                    logger.info(f"Removing expired session: {session_id}")
-                    del self._sessions[session_id]
-
+                expired = [
+                    sid for sid, s in self._sessions.items()
+                    if (now - s.last_accessed).total_seconds() / 60 > self.session_timeout_minutes
+                ]
+                for sid in expired:
+                    logger.info("Removing expired session: %s", sid)
+                    self._sessions.pop(sid, None)
             except asyncio.CancelledError:
                 break
-            except Exception as e:
-                logger.error(f"Error in session cleanup: {e}")
+            except Exception as exc:  # noqa: BLE001 — keep the cleaner alive
+                logger.error("Session cleanup error: %s", exc)
+
+    def _build_system_turn_text(self) -> str:
+        if not self._context:
+            return self._system_prompt
+        return (
+            f"{self._system_prompt}\n\n"
+            f"Known facts you must use when relevant:\n{self._context}"
+        )
 
     async def _get_or_create_session(self, session_id: str) -> ConversationState:
-        """Get existing session or create a new one."""
-        if session_id not in self._sessions:
-            logger.info(f"Creating new conversation session: {session_id}")
+        if session_id in self._sessions:
+            self._sessions[session_id].touch()
+            return self._sessions[session_id]
 
-            if self._processor is None:
-                logger.error("ERROR: Processor not initialized. Call initialize() first.")
-                raise RuntimeError("Processor not initialized")
+        if self._processor is None:
+            raise RuntimeError("LFM2AudioNode: initialize() must be called first")
 
-            # Create ChatState directly (no thread isolation)
-            chat = ChatState(self._processor)
+        logger.info("Creating new conversation session: %s", session_id)
+        chat = ChatState(self._processor)
+        chat.new_turn("system")
+        chat.add_text(self._build_system_turn_text())
+        chat.end_turn()
 
-            # Add system prompt
-            chat.new_turn("system")
-            chat.add_text(self.system_prompt)
-            chat.end_turn()
-
-            self._sessions[session_id] = ConversationState(
-                session_id=session_id,
-                chat_state=chat
-            )
-            logger.info(f"Session {session_id} created and stored successfully")
-        else:
-            logger.debug(f"Using existing session: {session_id}")
-            self._sessions[session_id].update_access()
-
+        self._sessions[session_id] = ConversationState(
+            session_id=session_id, chat_state=chat
+        )
         return self._sessions[session_id]
 
-    async def process(
-        self,
-        data: RuntimeData
-    ) -> Union[RuntimeData, AsyncGenerator[RuntimeData, None], None]:
+    # ────── Aux-port envelope handling ────────────────────────────────
+
+    def _extract_envelope(self, data: Any) -> Optional[tuple]:
         """
-        Process audio input and generate speech+text response.
+        Return ``(port_name, payload_dict)`` if ``data`` is an aux-port
+        envelope, else ``None``.
 
-        Args:
-            data: RuntimeData containing audio to process (RuntimeData.Audio)
-                  Metadata can include:
-                  - "session_id": str - Session identifier for conversation history (default: "default")
-                  - "reset": bool - If True, resets the conversation session
-
-        Yields:
-            RuntimeData.Text for text responses
-            RuntimeData.Audio for audio responses
-
-        Raises:
-            ValueError: If input is not RuntimeData.Audio
-            RuntimeError: If generation fails
+        Accepts dict / JSON string / RuntimeData.Text-of-JSON.
         """
-        try:
-            # CRITICAL: Extract all data from RuntimeData BEFORE any await/yield
-            # PyO3 RuntimeData objects can't be accessed after async suspension points
-            logger.info("LFM2-Audio Node processing input data")
-            # Validate input type
-            if not data.is_audio():
-                logger.error(f"Invalid input type: expected RuntimeData.Audio, got {data.data_type()}")
-                # Yield an error message instead of raising
-                yield RuntimeData.text(f"ERROR: Expected audio input, got {data.data_type()}")
-                return
-            logger.debug("Input is valid RuntimeData.Audio")
+        blob = self._to_dict(data)
+        if not isinstance(blob, dict):
+            return None
+        port = blob.get(AUX_PORT_KEY)
+        if not isinstance(port, str) or not port:
+            return None
+        payload = blob.get("payload")
+        if not isinstance(payload, dict):
+            payload = {"text": str(payload)} if payload is not None else {}
+        return port, payload
 
-            # Extract audio from RuntimeData using as_audio() method instead of audio_to_numpy()
-            # to avoid PyO3 FFI issues in async context
-            samples_bytes, input_sample_rate, channels, format_str, num_samples = data.as_audio()
-            
-            audio_array_echo = np.frombuffer(samples_bytes, dtype=np.float32)
-            audio_runtime_data_echo = numpy_to_audio(audio_array_echo, self.sample_rate, channels=1)
-            yield audio_runtime_data_echo
-            # Convert bytes to numpy array
-            audio_array = np.frombuffer(samples_bytes, dtype=np.float32)
-
-            logger.debug(f"Received audio: {len(audio_array)} samples, {input_sample_rate}Hz, {channels} channels")
-
-            # Resample audio if necessary (model expects 24kHz)
-            if input_sample_rate != self.sample_rate:
-                raise ValueError(f"Input audio sample rate {input_sample_rate} does not match expected {self.sample_rate}")
-
-            # Extract session_id from RuntimeData
-            session_id = data.session_id if hasattr(data, 'session_id') and data.session_id else "default"
-            logger.debug(f"Using session_id from RuntimeData: {session_id}")
-            metadata = {}  # Reserved for future use
-
-            # Handle metadata commands
-            if metadata:
-                if metadata.get("reset"):
-                    if session_id in self._sessions:
-                        logger.info(f"Resetting session: {session_id}")
-                        del self._sessions[session_id]
-
-                    logger.info(f"Session {session_id} has been reset.")
-                    return
-            logger.debug(f"Using session ID: {session_id}")
-
-            # Get or create session
-            logger.debug(f"Retrieving or creating session: {session_id}")
-            session_state = await self._get_or_create_session(session_id)
-            logger.debug(f"Retrieved session state for session_id: {session_id}")
-            logger.debug(f"Session turn count: {session_state.turn_count}")
-
-            logger.debug("Getting chat_state from session...")
-            chat = session_state.chat_state
-            logger.debug("Successfully got chat_state")
-
-            # Start new user turn directly (no thread isolation)
-            logger.debug("Starting new user turn...")
-            chat.new_turn("user")
-
-            # Convert numpy array to torch tensor and add to chat
-            # LFM2-Audio expects audio as (channels, samples) tensor at 24kHz
-            wav = torch.from_numpy(audio_array).float()
-            if wav.dim() == 1:
-                wav = wav.unsqueeze(0)  # Add channel dimension
-
-            chat.add_audio(wav, self.sample_rate)
-            chat.end_turn()
-
-            # Start assistant turn
-            chat.new_turn("assistant")
-            session_state.turn_count += 1
-            logger.debug("User and assistant turns added successfully")
-
-            logger.info(f"Starting streaming generation for session {session_id}, turn {session_state.turn_count}")
-
-            # Stream tokens as they are generated - simplified
-            from liquid_audio import LFMModality
-            text_tokens_for_history = []
-            audio_tokens_for_history = []
-            modality_flags_for_history = []
-
-            # Create generator directly (no thread isolation)
-            logger.debug("Creating token generator...")
-            if self.text_only:
-                logger.debug("Generating in text-only mode")
-                token_generator = self._model.generate_sequential(
-                    **chat,
-                    max_new_tokens=self.max_new_tokens,
-                    text_temperature=None,
-                    text_top_k=None
-                )
-            else:
-                logger.debug(f"Generating in full S2S mode with max_new_tokens={self.max_new_tokens}")
-                token_generator = self._model.generate_interleaved(
-                    **chat,
-                    max_new_tokens=self.max_new_tokens,
-                    audio_temperature=self.audio_temperature,
-                    audio_top_k=self.audio_top_k
-                )
-
-            # Process and yield tokens as they're generated
-            logger.debug("Starting to stream tokens...")
-            token_idx = 0
-            audio_token_batch = []  # Batch audio tokens for decoding
-            audio_batch_size = 5  # Decode 5 audio tokens at once for stability
-
-            while True:
-                # Get next token from generator directly
+    def _to_dict(self, data: Any) -> Any:
+        if isinstance(data, dict):
+            return data
+        if isinstance(data, str):
+            stripped = data.strip()
+            if stripped.startswith("{"):
                 try:
-                    token = next(token_generator)
-                except StopIteration:
-                    logger.info(f"Token generation complete: {token_idx} tokens processed")
-                    break
-
-                token_idx += 1
-
-                # Yield control to event loop periodically
-                if token_idx % 10 == 0:
-                    await asyncio.sleep(0)
-
-                # Get token info for logging (safe to do on CPU-side metadata)
-                token_numel = token.numel()
-                logger.debug(f"Processing token {token_idx}, numel: {token_numel}")
-
-                if token_numel == 1:
-                    # Text token - flush any pending audio tokens FIRST before yielding text
-                    # This ensures audio tokens are always consecutive in time
-                    if audio_token_batch and len(audio_token_batch) >= 1:
-                        try:
-                            logger.debug(f"Flushing {len(audio_token_batch)} pending audio tokens before text token")
-
-                            # Decode audio batch directly (no thread isolation)
-                            cloned_tokens = [t.clone().detach() for t in audio_token_batch]
-
-                            # Stack tokens: first stack creates [batch_size, codebook_size]
-                            # Then transpose to get [codebook_size, batch_size]
-                            batch_tensor = torch.stack(cloned_tokens, dim=0).T
-                            # Reshape for Mimi: [1, codebook_size, batch_size]
-                            mimi_codes = batch_tensor.unsqueeze(0)
-
-                            with torch.no_grad():
-                                waveform = self._processor.mimi.decode(mimi_codes)[0]
-
-                            audio_np = waveform.cpu().numpy()
-                            logger.debug(f"Decoded audio batch: shape={audio_np.shape}, dtype={audio_np.dtype}")
-
-                            if audio_np.ndim == 2:
-                                audio_np = audio_np[0]
-
-                            logger.debug(f"Yielding audio batch: {len(audio_np)} samples")
-                            audio_runtime_data = numpy_to_audio(audio_np, self.sample_rate, channels=1)
-                            yield audio_runtime_data
-                            logger.debug(f"Successfully yielded audio batch")
-
-                            audio_token_batch.clear()
-
-                        except RuntimeError as e:
-                            if "CUDA error" in str(e) or "CUBLAS" in str(e):
-                                logger.warning(f"CUDA error decoding audio batch, skipping: {str(e)[:100]}")
-                                audio_token_batch.clear()
-                            else:
-                                logger.error(f"Failed to decode audio batch: {e}", exc_info=True)
-                                raise
-                        except Exception as e:
-                            logger.error(f"Unexpected error decoding audio batch: {e}", exc_info=True)
-                            audio_token_batch.clear()
-
-                    # Now yield the text token
-                    text_tokens_for_history.append(token)
-                    modality_flags_for_history.append(LFMModality.TEXT)
-
-                    decoded_text = self._processor.text.decode(token)
-                    if decoded_text:  # Only yield non-empty text
-                        logger.debug(f"Yielding text token {token_idx}: '{decoded_text}'")
-                        yield RuntimeData.text(decoded_text)
-                        logger.debug(f"Successfully yielded text token {token_idx}, continuing to next token...")
-                        await asyncio.sleep(0)  # Ensure proper async behavior
-                    else:
-                        logger.debug(f"Skipping empty text token {token_idx}")
-                else:
-                    # Audio token - batch for decoding
-                    audio_tokens_for_history.append(token)
-                    modality_flags_for_history.append(LFMModality.AUDIO_OUT)
-                    audio_token_batch.append(token)
-
-                    # Decode batch when we reach batch_size
-                    should_decode_batch = len(audio_token_batch) >= audio_batch_size
-
-                    if should_decode_batch and audio_token_batch:
-                        try:
-                            # Decode regular batch (not final) directly (no thread isolation)
-                            tokens_to_decode = audio_token_batch
-                            logger.debug(f"Decoding audio batch: {len(tokens_to_decode)} tokens")
-
-                            if len(tokens_to_decode) < 1:
-                                raise ValueError(f"Cannot decode empty token list")
-
-                            # Clone tokens
-                            cloned_tokens = [t.clone().detach() for t in tokens_to_decode]
-
-                            # Stack tokens: first stack creates [batch_size, codebook_size]
-                            # Then transpose to get [codebook_size, batch_size]
-                            batch_tensor = torch.stack(cloned_tokens, dim=0).T
-                            # Reshape for Mimi: [1, codebook_size, batch_size]
-                            mimi_codes = batch_tensor.unsqueeze(0)
-
-                            with torch.no_grad():
-                                waveform = self._processor.mimi.decode(mimi_codes)[0]
-
-                            audio_np = waveform.cpu().numpy()
-                            logger.debug(f"Decoded audio batch: shape={audio_np.shape}, dtype={audio_np.dtype}")
-
-                            if audio_np.ndim == 2:
-                                audio_np = audio_np[0]
-
-                            logger.info(f"Yielding audio batch: {len(audio_np)} samples")
-                            audio_runtime_data = numpy_to_audio(audio_np, self.sample_rate, channels=1)
-                            yield audio_runtime_data
-                            logger.debug(f"Successfully yielded audio batch")
-
-                            audio_token_batch.clear()
-
-                        except RuntimeError as e:
-                            if "CUDA error" in str(e) or "CUBLAS" in str(e):
-                                logger.warning(f"CUDA error decoding audio batch, skipping: {str(e)[:100]}")
-                                audio_token_batch.clear()
-                                continue
-                            else:
-                                logger.error(f"Failed to decode audio batch: {e}", exc_info=True)
-                                raise
-                        except Exception as e:
-                            logger.error(f"Unexpected error decoding audio batch: {e}", exc_info=True)
-                            audio_token_batch.clear()
-
-            # Handle final audio batch (if any remaining tokens)
-            if audio_token_batch:
-                try:
-                    # The last audio token is an end-of-audio marker and should not be decoded
-                    # According to LiquidAI docs: "Detokenize audio, removing the last 'end-of-audio' codes"
-                    if len(audio_token_batch) == 1:
-                        logger.debug(f"Final batch: Skipping decode - only end-of-audio marker")
-                    else:
-                        tokens_to_decode = audio_token_batch[:-1]
-                        logger.debug(f"Final batch: Decoding {len(tokens_to_decode)} tokens (removing end-of-audio marker)")
-
-                        # Decode directly (no thread isolation)
-                        cloned_tokens = [t.clone().detach() for t in tokens_to_decode]
-
-                        batch_tensor = torch.stack(cloned_tokens, dim=0).T
-                        mimi_codes = batch_tensor.unsqueeze(0)
-                        with torch.no_grad():
-                            waveform = self._processor.mimi.decode(mimi_codes)[0]
-
-                        audio_np = waveform.cpu().numpy()
-                        logger.debug(f"Decoded final audio batch: shape={audio_np.shape}, dtype={audio_np.dtype}")
-
-                        if audio_np.ndim == 2:
-                            audio_np = audio_np[0]
-
-                        logger.debug(f"Yielding final audio batch: {len(audio_np)} samples")
-                        audio_runtime_data = numpy_to_audio(audio_np, self.sample_rate, channels=1)
-                        yield audio_runtime_data
-                        logger.debug(f"Successfully yielded final audio batch")
-
-                    audio_token_batch.clear()
-
-                except RuntimeError as e:
-                    if "CUDA error" in str(e) or "CUBLAS" in str(e):
-                        logger.warning(f"CUDA error decoding final audio batch: {str(e)[:100]}")
-                    else:
-                        logger.error(f"Failed to decode final audio batch: {e}", exc_info=True)
-                        raise
-                except Exception as e:
-                    logger.error(f"Unexpected error decoding final audio batch: {e}", exc_info=True)
-
-            logger.info(f"Generation completed: {len(text_tokens_for_history)} text tokens, {len(audio_tokens_for_history)} audio tokens")
-
-            # Emit completion markers
-            logger.debug("Generation complete, yielding <|text_end|> and <|audio_end|>")
-            yield RuntimeData.text("<|text_end|>")
-            yield RuntimeData.text("<|audio_end|>")
-
-            # Append to chat history for context
+                    return json.loads(stripped)
+                except json.JSONDecodeError:
+                    return None
+            return None
+        if RUNTIME_DATA_AVAILABLE and RuntimeData is not None and isinstance(data, RuntimeData):
             try:
-                if text_tokens_for_history or audio_tokens_for_history:
-                    # Update chat history directly (no thread isolation)
-                    logger.debug(f"Preparing {len(text_tokens_for_history)} text tokens and {len(audio_tokens_for_history)} audio tokens for history")
+                if data.is_text():
+                    return self._to_dict(data.as_text())
+            except Exception:  # noqa: BLE001
+                return None
+        return None
 
-                    # Stack tokens
-                    text_stack = None
-                    if text_tokens_for_history:
-                        logger.debug(f"Stacking text tokens...")
-                        text_stack = torch.stack(text_tokens_for_history, 1)
-                        logger.debug(f"Stacked text tokens: {text_stack.shape}")
+    def _handle_aux_port(self, port: str, payload: Dict[str, Any]) -> None:
+        if port == "context":
+            text = payload.get("text")
+            if isinstance(text, str):
+                self.set_context(text)
+        elif port == "system_prompt":
+            text = payload.get("text")
+            if isinstance(text, str):
+                self.set_system_prompt(text)
+        elif port == "reset":
+            self.reset_history()
+        elif port == "barge_in":
+            self.request_barge_in()
+        else:
+            logger.warning(
+                "[%s] unknown aux port %r on LFM2AudioNode; payload ignored",
+                self.node_id, port,
+            )
 
-                    audio_stack = None
-                    if audio_tokens_for_history:
-                        logger.debug(f"Stacking audio tokens...")
-                        audio_stack = torch.stack(audio_tokens_for_history, 1)
-                        logger.debug(f"Stacked audio tokens: {audio_stack.shape}")
+    # ────── Main processing ───────────────────────────────────────────
 
-                    # Convert modality flags
-                    modality_tensor = None
-                    if modality_flags_for_history:
-                        modality_values = [int(flag.value) for flag in modality_flags_for_history]
-                        modality_tensor = torch.tensor(modality_values, dtype=torch.long).unsqueeze(0)
+    async def process(
+        self, data: Any
+    ) -> AsyncGenerator[Any, None]:
+        """
+        Route between aux-port control messages and audio user turns.
 
-                    logger.debug("Calling chat.append()...")
-                    if self.text_only:
-                        # In text-only mode, `ChatState.append` still requires `audio_out` with
-                        # length equal to the number of codebooks. Provide an empty sequence
-                        # with shape [codebooks, 0] to represent no audio tokens.
-                        codebooks = (
-                            getattr(self._processor, "codebooks", None)
-                            or getattr(getattr(self._processor, "mimi", None), "codebooks", None)
-                        )
-                        if codebooks is None:
-                            # Fallback: infer from audio_stack if available, else default to 8
-                            codebooks = int(audio_stack.size(0)) if isinstance(audio_stack, torch.Tensor) else 8
+        Aux-port messages produce no outputs (they only update state).
+        Audio user turns stream interleaved text + audio back.
+        """
+        # ── Unwrap the aux-port envelope (control-bus publishes) ──
+        envelope = self._extract_envelope(data)
+        if envelope is not None:
+            port, payload = envelope
+            logger.info(
+                "[%s] aux-port envelope detected: port=%s payload=%r",
+                self.node_id, port, payload,
+            )
+            self._handle_aux_port(port, payload)
+            return  # no yielded output for control-plane frames
 
-                        # Use a LongTensor to match token id dtype expectations
-                        audio_empty = torch.empty((codebooks, 0), dtype=torch.long)
+        # ── Otherwise, treat the input as an audio user turn ──
+        async for item in self._process_audio_turn(data):
+            yield item
 
-                        chat.append(
-                            text=text_stack,
-                            audio_out=audio_empty,
-                            modality_flag=modality_tensor,
-                        )
-                    else:
-                        chat.append(
-                            text=text_stack,
-                            audio_out=audio_stack,
-                            modality_flag=modality_tensor,
-                        )
-                    chat.end_turn()
-                    logger.debug("Chat history updated successfully")
+    async def _process_audio_turn(
+        self, data: Any
+    ) -> AsyncGenerator[Any, None]:
+        if not RUNTIME_DATA_AVAILABLE or RuntimeData is None:
+            yield RuntimeData.text("ERROR: RuntimeData bindings unavailable")  # type: ignore[attr-defined]
+            return
+
+        if not hasattr(data, "is_audio") or not data.is_audio():
+            kind = getattr(data, "data_type", lambda: type(data).__name__)()
+            logger.error("Expected audio input, got %s", kind)
+            yield RuntimeData.text(f"ERROR: expected audio input, got {kind}")
+            return
+
+        # Pull audio out of RuntimeData up front — the PyO3 handle is
+        # not safe to touch after an async suspension point. `as_audio()`
+        # is PyO3-only; fall back to the pure-Python `payload` / metadata
+        # shape when the Rust bindings aren't loaded (see the
+        # `RuntimeData bindings not available` warning on import).
+        if hasattr(data, "as_audio"):
+            samples_bytes, input_sample_rate, _channels, _fmt, _n = data.as_audio()
+            audio_array = np.frombuffer(samples_bytes, dtype=np.float32)
+        else:
+            payload = getattr(data, "payload", None)
+            meta = getattr(data, "metadata", None)
+            input_sample_rate = int(getattr(meta, "sample_rate", 0) or 0)
+            if isinstance(payload, np.ndarray):
+                audio_array = payload.astype(np.float32, copy=False).reshape(-1)
+            elif isinstance(payload, (bytes, bytearray, memoryview)):
+                audio_array = np.frombuffer(bytes(payload), dtype=np.float32)
+            else:
+                yield RuntimeData.text(
+                    f"ERROR: unsupported RuntimeData payload type "
+                    f"{type(payload).__name__}"
+                )
+                return
+
+        if input_sample_rate != self.sample_rate:
+            yield RuntimeData.text(
+                f"ERROR: input sample rate {input_sample_rate}Hz "
+                f"does not match model rate {self.sample_rate}Hz"
+            )
+            return
+
+        session_id = (
+            data.session_id if hasattr(data, "session_id") and data.session_id else "default"
+        )
+        session_state = await self._get_or_create_session(session_id)
+        chat = session_state.chat_state
+
+        # Reset barge-in at the start of every new turn — it's a latch,
+        # not a continuous flag.
+        self._interrupt = False
+
+        # Add the user audio turn.
+        chat.new_turn("user")
+        wav = torch.from_numpy(audio_array).float()
+        if wav.dim() == 1:
+            wav = wav.unsqueeze(0)
+        chat.add_audio(wav, self.sample_rate)
+        chat.end_turn()
+
+        chat.new_turn("assistant")
+        session_state.turn_count += 1
+        logger.info(
+            "[%s] starting generation for session=%s turn=%d",
+            self.node_id, session_id, session_state.turn_count,
+        )
+
+        text_tokens_for_history: List[Any] = []
+        audio_tokens_for_history: List[Any] = []
+        modality_flags_for_history: List[Any] = []
+
+        if self.text_only:
+            token_generator = self._model.generate_sequential(
+                **chat,
+                max_new_tokens=self.max_new_tokens,
+                text_temperature=None,
+                text_top_k=None,
+            )
+        else:
+            token_generator = self._model.generate_interleaved(
+                **chat,
+                max_new_tokens=self.max_new_tokens,
+                audio_temperature=self.audio_temperature,
+                audio_top_k=self.audio_top_k,
+            )
+
+        audio_batch: List[Any] = []
+        audio_batch_size = 5
+        token_idx = 0
+
+        def _decode_and_emit(batch: List[Any]) -> Optional[Any]:
+            if not batch:
+                return None
+            try:
+                cloned = [t.clone().detach() for t in batch]
+                stacked = torch.stack(cloned, dim=0).T.unsqueeze(0)
+                with torch.no_grad():
+                    waveform = self._processor.mimi.decode(stacked)[0]
+                arr = waveform.cpu().numpy()
+                if arr.ndim == 2:
+                    arr = arr[0]
+                return numpy_to_audio(arr, self.sample_rate, channels=1)
+            except RuntimeError as e:
+                if "CUDA error" in str(e) or "CUBLAS" in str(e):
+                    logger.warning("CUDA error decoding audio batch, skipping: %s", str(e)[:100])
+                    return None
+                raise
+
+        while True:
+            if self._interrupt:
+                logger.info("[%s] barge-in latched — halting generation", self.node_id)
+                self._interrupt = False
+                break
+
+            try:
+                token = next(token_generator)
+            except StopIteration:
+                break
+
+            token_idx += 1
+            if token_idx % 10 == 0:
+                await asyncio.sleep(0)
+
+            if token.numel() == 1:
+                # Text token. Flush any pending audio batch first so
+                # audio stays contiguous in the output stream.
+                if audio_batch:
+                    audio_rd = _decode_and_emit(audio_batch)
+                    audio_batch.clear()
+                    if audio_rd is not None:
+                        yield audio_rd
+
+                text_tokens_for_history.append(token)
+                modality_flags_for_history.append(LFMModality.TEXT)
+
+                decoded = self._processor.text.decode(token)
+                if decoded:
+                    yield RuntimeData.text(decoded)
+                    await asyncio.sleep(0)
+            else:
+                audio_tokens_for_history.append(token)
+                modality_flags_for_history.append(LFMModality.AUDIO_OUT)
+                audio_batch.append(token)
+
+                if len(audio_batch) >= audio_batch_size:
+                    audio_rd = _decode_and_emit(audio_batch)
+                    audio_batch.clear()
+                    if audio_rd is not None:
+                        yield audio_rd
+
+        # Drain remaining audio tokens (drop the final end-of-audio marker).
+        if len(audio_batch) > 1:
+            audio_rd = _decode_and_emit(audio_batch[:-1])
+            audio_batch.clear()
+            if audio_rd is not None:
+                yield audio_rd
+
+        # Terminal markers so the client can cut over between turns.
+        yield RuntimeData.text("<|text_end|>")
+        yield RuntimeData.text("<|audio_end|>")
+
+        # Append this turn's tokens to chat history so the next turn has context.
+        try:
+            if text_tokens_for_history or audio_tokens_for_history:
+                text_stack = (
+                    torch.stack(text_tokens_for_history, 1)
+                    if text_tokens_for_history else None
+                )
+                audio_stack = (
+                    torch.stack(audio_tokens_for_history, 1)
+                    if audio_tokens_for_history else None
+                )
+                modality_tensor = None
+                if modality_flags_for_history:
+                    modality_values = [int(f.value) for f in modality_flags_for_history]
+                    modality_tensor = torch.tensor(modality_values, dtype=torch.long).unsqueeze(0)
+
+                if self.text_only:
+                    codebooks = (
+                        getattr(self._processor, "codebooks", None)
+                        or getattr(getattr(self._processor, "mimi", None), "codebooks", None)
+                        or (int(audio_stack.size(0)) if isinstance(audio_stack, torch.Tensor) else 8)
+                    )
+                    chat.append(
+                        text=text_stack,
+                        audio_out=torch.empty((codebooks, 0), dtype=torch.long),
+                        modality_flag=modality_tensor,
+                    )
                 else:
-                    logger.debug("No tokens to append, ending turn...")
-                    chat.end_turn()
-            except Exception as e:
-                logger.error(f"Failed to append to chat history: {e}", exc_info=True)
-                # Even if history append fails, we've already yielded all the data
-                try:
-                    chat.end_turn()
-                except:
-                    pass
+                    chat.append(
+                        text=text_stack,
+                        audio_out=audio_stack,
+                        modality_flag=modality_tensor,
+                    )
+            chat.end_turn()
+        except Exception as e:  # noqa: BLE001
+            logger.error("Failed to append to chat history: %s", e)
+            try:
+                chat.end_turn()
+            except Exception:  # noqa: BLE001
+                pass
 
-            # If we haven't yielded anything yet, yield an empty audio response to prevent "No output" error
-            # This ensures the async generator always yields at least one value
-            logger.debug("Process method completed successfully")
-
-        except Exception as e:
-            logger.error(f"Error during LFM2-Audio generation: {e}", exc_info=True)
-            # Yield an error message instead of raising to prevent "No output" error
-            yield RuntimeData.text(f"ERROR: Speech-to-speech generation failed: {str(e)}")
+    # ────── Introspection ─────────────────────────────────────────────
 
     def get_config(self) -> dict:
-        """Get node configuration."""
         return {
             "node_id": self.node_id,
             "node_type": "LFM2AudioNode",
             "hf_repo": self.hf_repo,
-            "system_prompt": self.system_prompt,
+            "system_prompt": self._system_prompt,
             "device": self.device,
             "audio_temperature": self.audio_temperature,
             "audio_top_k": self.audio_top_k,
             "max_new_tokens": self.max_new_tokens,
             "sample_rate": self.sample_rate,
             "session_timeout_minutes": self.session_timeout_minutes,
+            "text_only": self.text_only,
+            "context_len": len(self._context),
             "active_sessions": len(self._sessions),
         }
 
     def get_session_info(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Get information about a specific session."""
         if session_id not in self._sessions:
             return None
-
-        state = self._sessions[session_id]
+        s = self._sessions[session_id]
         return {
-            "session_id": state.session_id,
-            "turn_count": state.turn_count,
-            "created_at": state.created_at.isoformat(),
-            "last_accessed": state.last_accessed.isoformat(),
+            "session_id": s.session_id,
+            "turn_count": s.turn_count,
+            "created_at": s.created_at.isoformat(),
+            "last_accessed": s.last_accessed.isoformat(),
         }
 
     def list_sessions(self) -> List[Dict[str, Any]]:
-        """List all active sessions."""
         return [self.get_session_info(sid) for sid in self._sessions.keys()]
-
-
-# Example usage
-async def main():
-    """
-    Example demonstrating LFM2AudioNode with RuntimeData API
-    """
-    if not RUNTIME_DATA_AVAILABLE:
-        print("RuntimeData bindings not available. Please build the Rust extension.")
-        print("Run: cargo build --release")
-        return
-
-    print("=" * 60)
-    print("LFM2-Audio Node with RuntimeData API")
-    print("=" * 60)
-
-    # Create speech-to-speech node
-    s2s_node = LFM2AudioNode(
-        node_id="lfm2_audio_1",
-        system_prompt="Respond with interleaved text and audio.",
-        device="cpu",  # Use "cuda" if available
-        audio_temperature=1.0,
-        audio_top_k=4,
-        max_new_tokens=4096,
-        sample_rate=24000,
-    )
-
-    # Initialize
-    await s2s_node.initialize()
-
-    # Load test audio
-    # You would need to provide your own test audio file
-    test_audio_path = "examples/transcribe_demo.wav"
-    if not os.path.exists(test_audio_path):
-        print(f"Test audio file not found: {test_audio_path}")
-        print("Please provide a test audio file with a question.")
-        await s2s_node.cleanup()
-        return
-
-    import soundfile as sf
-    audio_data, sr = sf.read(test_audio_path)
-
-    # Resample if necessary
-    if sr != s2s_node.sample_rate:
-        import resampy
-        audio_data = resampy.resample(audio_data, sr, s2s_node.sample_rate)
-
-    # Create RuntimeData input
-    input_audio = numpy_to_audio(audio_data.astype(np.float32), s2s_node.sample_rate, channels=1)
-
-    # Process
-    print("\nProcessing audio question...")
-    session_id = "test_session_1"
-
-    async for response in s2s_node.process(input_audio):
-        if response.is_text():
-            text = response.as_text()
-            print(f"\nText response: {text}")
-        elif response.is_audio():
-            audio = audio_to_numpy(response)
-            print(f"Audio response: {len(audio)} samples ({len(audio) / 24000:.2f}s)")
-            # Save audio
-            sf.write(f"response_{session_id}.wav", audio, 24000)
-            print(f"Saved to response_{session_id}.wav")
-
-    # Show session info
-    print("\nSession info:")
-    print(s2s_node.get_session_info(session_id))
-
-    # Cleanup
-    await s2s_node.cleanup()
-
-    print("\n" + "=" * 60)
-
-
-if __name__ == "__main__":
-    import os
-    asyncio.run(main())

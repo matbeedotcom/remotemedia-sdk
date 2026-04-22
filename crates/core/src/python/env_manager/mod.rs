@@ -440,6 +440,21 @@ pub struct PythonEnvConfig {
     /// Override the cache directory (default: ~/.config/remotemedia/envs/).
     #[serde(default)]
     pub cache_dir: Option<PathBuf>,
+
+    /// Dependencies always installed into every provisioned venv.
+    ///
+    /// Used for the `remotemedia` client itself — without it, the
+    /// multiprocess runner inside the venv can't `import remotemedia.*`
+    /// and every node fails with `Node type '...' not registered`.
+    /// Each entry is passed verbatim to the backend's install step, so
+    /// PEP 440 specs (`remotemedia-client==0.2.0`) and editable paths
+    /// (`-e /path/to/clients/python`) both work.
+    ///
+    /// Populated automatically by [`PythonEnvManager::new`] from the
+    /// `REMOTEMEDIA_PYTHON_SRC` env var when empty. Set explicitly to
+    /// override.
+    #[serde(default)]
+    pub base_deps: Vec<String>,
 }
 
 fn default_python_version() -> String {
@@ -458,6 +473,7 @@ impl Default for PythonEnvConfig {
             python_version: default_python_version(),
             max_cached_envs: default_max_cached_envs(),
             cache_dir: None,
+            base_deps: Vec::new(),
         }
     }
 }
@@ -483,7 +499,36 @@ impl PythonEnvManager {
     /// - `System`: always uses `SystemBackend`
     /// - `Managed` / `ManagedWithPython`: tries `UvBackend`, falls back to
     ///   `SystemBackend` if uv is not available
-    pub fn new(config: PythonEnvConfig) -> Result<Self> {
+    pub fn new(mut config: PythonEnvConfig) -> Result<Self> {
+        // Ensure every provisioned venv can `import remotemedia`. If the
+        // caller didn't set `base_deps` explicitly, fall back to the
+        // `REMOTEMEDIA_PYTHON_SRC` env var — pointed at a checkout of
+        // `clients/python/`, it becomes an editable install so the
+        // venv tracks source edits automatically. Without this, every
+        // multiprocess node would crash with
+        // `Node type '...' not registered` because the runner inside
+        // the venv can't import the package that defines them.
+        if config.base_deps.is_empty() {
+            if let Ok(src) = std::env::var("REMOTEMEDIA_PYTHON_SRC") {
+                let trimmed = src.trim();
+                if !trimmed.is_empty() {
+                    // Single requirements.txt line — the `-e <path>` form
+                    // must not be split across lines or `pip` rejects it.
+                    config.base_deps = vec![format!("-e {}", trimmed)];
+                    tracing::info!(
+                        src = trimmed,
+                        "Managed venvs will editable-install remotemedia from REMOTEMEDIA_PYTHON_SRC"
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    "REMOTEMEDIA_PYTHON_SRC not set and PythonEnvConfig.base_deps is empty; \
+                     managed venvs will lack the `remotemedia` client and multiprocess nodes \
+                     will fail to register. Set REMOTEMEDIA_PYTHON_SRC=/path/to/clients/python."
+                );
+            }
+        }
+
         let cache_dir = config
             .cache_dir
             .clone()
@@ -532,8 +577,22 @@ impl PythonEnvManager {
     /// 2. Return a cached environment if one matches
     /// 3. Otherwise create a new venv, install deps, and cache it
     pub async fn ensure_env(&self, deps: &[String]) -> Result<VenvInfo> {
+        // Prepend `base_deps` — e.g. the `remotemedia` client itself —
+        // so every provisioned venv can import the package that defines
+        // the multiprocess nodes. Different `base_deps` values produce
+        // different cache keys naturally (via the sorted-dep hash),
+        // so a dev machine that swaps `REMOTEMEDIA_PYTHON_SRC` doesn't
+        // get a stale cached venv.
+        let merged: Vec<String> = if self.config.base_deps.is_empty() {
+            deps.to_vec()
+        } else {
+            let mut v = Vec::with_capacity(self.config.base_deps.len() + deps.len());
+            v.extend(self.config.base_deps.iter().cloned());
+            v.extend(deps.iter().cloned());
+            v
+        };
         self.cache
-            .get_or_create(deps, &self.config.python_version, self.backend.as_ref())
+            .get_or_create(&merged, &self.config.python_version, self.backend.as_ref())
             .await
     }
 

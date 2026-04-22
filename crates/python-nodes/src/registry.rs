@@ -230,6 +230,17 @@ pub fn register_default_python_nodes() {
             .produces(["json"]),
     );
 
+    register_python_node(
+        PythonNodeConfig::new("WhisperSTTNode")
+            .with_description(
+                "Minimal multiprocess-capable Whisper STT: audio in, plain-text \
+                 transcript out. For observability / hookpoints on audio pipelines.",
+            )
+            .with_category("ml")
+            .accepts(["audio"])
+            .produces(["text"]),
+    );
+
     // TTS nodes
     register_python_node(
         PythonNodeConfig::new("KokoroTTSNode")
@@ -253,7 +264,19 @@ pub fn register_default_python_nodes() {
     register_python_node(
         PythonNodeConfig::new("LFM2AudioNode")
             .with_multi_output(true)
-            .with_description("Speech-to-speech generation using LFM2")
+            .with_description("Speech-to-speech generation using LFM2 (torch / liquid-audio)")
+            .with_category("ml")
+            .accepts(["audio"])
+            .produces(["audio", "text"]),
+    );
+
+    register_python_node(
+        PythonNodeConfig::new("LFM2AudioMlxNode")
+            .with_multi_output(true)
+            .with_description(
+                "Speech-to-speech LFM2 via Apple MLX (mlx-audio). \
+                 Apple Silicon / macOS only; no CUDA, no torch.",
+            )
             .with_category("ml")
             .accepts(["audio"])
             .produces(["audio", "text"]),

@@ -4,8 +4,19 @@ Audio processing nodes for the RemoteMedia SDK.
 
 from typing import Any, AsyncGenerator, Union, TypedDict, Tuple, Optional
 import logging
-import librosa
 import numpy as np
+
+# librosa is a heavy optional dep (pulls numba / llvmlite). Most of this
+# file uses it, but leaner venvs (Whisper-only, text-only) shouldn't
+# crash the whole `remotemedia.nodes` package just because librosa is
+# absent. Functions that actually need librosa should check `HAS_LIBROSA`
+# and raise a clear error themselves.
+try:
+    import librosa
+    HAS_LIBROSA = True
+except ImportError:
+    librosa = None  # type: ignore[assignment]
+    HAS_LIBROSA = False
 
 from ..core.node import Node
 from ..core.types import _SENTINEL

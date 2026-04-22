@@ -14,7 +14,9 @@
 //!
 //! Intended to be spawned by `clients/python/tests/test_control_bus_grpc.py`.
 
-use remotemedia_core::manifest::{Connection, Manifest, ManifestMetadata, NodeManifest};
+use remotemedia_core::manifest::{
+    Connection, Manifest, ManifestMetadata, ManifestPythonEnv, NodeManifest,
+};
 use remotemedia_core::transport::PipelineExecutor;
 use remotemedia_grpc::control::ControlServiceImpl;
 use remotemedia_grpc::generated::{
@@ -55,8 +57,8 @@ fn calc_manifest() -> Manifest {
     }
 }
 
-/// LFM2 pipeline. Node runs in a Python multiprocess worker that the
-/// Rust server spawns automatically when the session initializes.
+/// LFM2 text pipeline. Node runs in a Python multiprocess worker that
+/// the Rust server spawns automatically when the session initializes.
 fn lfm2_manifest() -> Manifest {
     Manifest {
         version: "v1".to_string(),
@@ -79,9 +81,139 @@ fn lfm2_manifest() -> Manifest {
     }
 }
 
+/// LFM2-Audio pipeline with server-side Whisper transcription taps.
+///
+/// Topology:
+///
+///     ┌───────────┐          ┌─────────┐          ┌──────────┐
+///     │ stt_in.in │   (pub)  │  audio  │  audio   │ stt_out  │   text
+///     │ (client)  │ ──────►  │ (LFM2)  │ ───────► │ (Whisper)│ ────►
+///     └───────────┘          └─────────┘          └──────────┘
+///           │                      ▲                    │
+///           │ audio                │ audio              │
+///           ▼                      │ (same bytes,       ▼
+///     ┌──────────┐                 │  second publish)   text
+///     │ stt_in   │                 │
+///     │(Whisper) │ ──► text        │
+///     └──────────┘                 │
+///
+/// Clients publish user audio twice — once to `audio.in` (which the
+/// LFM2 node consumes) and once to `stt_in.in` (which the input
+/// Whisper node consumes). The LFM2 output fans out server-side to
+/// `stt_out`. All three sinks are subscribable via the control bus:
+///
+///     subscribe("audio.out")    → interleaved text + audio reply
+///     subscribe("stt_in.out")   → transcript of what the user said
+///     subscribe("stt_out.out")  → transcript of what LFM2 spoke back
+fn lfm2_audio_manifest() -> Manifest {
+    let whisper_params = serde_json::json!({
+        "model_id": "openai/whisper-tiny.en",
+        "language": "en",
+    });
+
+    // Backend selector. Set `LFM2_AUDIO_BACKEND=mlx` to run the
+    // Apple-Silicon-native MLX build (mlx-community/LFM2.5-Audio-1.5B-5bit),
+    // which runs on Metal without torch or CUDA. Default is "torch"
+    // (liquid-audio + torch/torchaudio).
+    let use_mlx = matches!(
+        std::env::var("LFM2_AUDIO_BACKEND").as_deref(),
+        Ok("mlx") | Ok("MLX") | Ok("apple"),
+    );
+
+    let (audio_node_type, audio_params, audio_deps) = if use_mlx {
+        (
+            "LFM2AudioMlxNode".to_string(),
+            serde_json::json!({
+                "hf_repo": "mlx-community/LFM2.5-Audio-1.5B-5bit",
+                "max_new_tokens": 512,
+                "sample_rate": 24000,
+                "text_only": false,
+            }),
+            vec![
+                // MLX port — pulls mlx, mlx-lm, mimi detokenizer.
+                "mlx-audio>=0.1".to_string(),
+                "numpy>=1.24".to_string(),
+            ],
+        )
+    } else {
+        (
+            "LFM2AudioNode".to_string(),
+            serde_json::json!({
+                "hf_repo": "LiquidAI/LFM2-Audio-1.5B",
+                "max_new_tokens": 512,
+                "sample_rate": 24000,
+                "text_only": false,
+            }),
+            vec![
+                "liquid-audio>=0.1".to_string(),
+                // liquid_audio 1.1.0 imports a transformers-4.54-era
+                // private symbol (`Lfm2HybridConvCache`) that 5.x
+                // removed — keep on the 4.x line.
+                "transformers>=4.54.0,<5.0".to_string(),
+                "torch>=2.1".to_string(),
+                "torchaudio>=2.1".to_string(),
+                "accelerate>=0.33".to_string(),
+            ],
+        )
+    };
+
+    let whisper_deps = vec![
+        "transformers>=4.40.0".to_string(),
+        "torch>=2.1".to_string(),
+        "accelerate>=0.33".to_string(),
+    ];
+
+    Manifest {
+        version: "v1".to_string(),
+        metadata: ManifestMetadata {
+            name: "lfm2-audio-control-bus-test-pipeline".to_string(),
+            ..Default::default()
+        },
+        nodes: vec![
+            NodeManifest {
+                id: "audio".to_string(),
+                node_type: audio_node_type,
+                params: audio_params,
+                python_deps: Some(audio_deps),
+                ..Default::default()
+            },
+            NodeManifest {
+                id: "stt_in".to_string(),
+                node_type: "WhisperSTTNode".to_string(),
+                params: whisper_params.clone(),
+                python_deps: Some(whisper_deps.clone()),
+                ..Default::default()
+            },
+            NodeManifest {
+                id: "stt_out".to_string(),
+                node_type: "WhisperSTTNode".to_string(),
+                params: whisper_params,
+                python_deps: Some(whisper_deps),
+                ..Default::default()
+            },
+        ],
+        connections: vec![Connection {
+            from: "audio".to_string(),
+            to: "stt_out".to_string(),
+        }],
+        // LFM2-Audio (via `liquid-audio`) requires Python >= 3.12. Pin
+        // the managed-venv interpreter so `uv` provisions a 3.12 venv
+        // instead of defaulting to whatever `python3` happens to be on
+        // PATH (3.11 on this host). `uv` auto-downloads the interpreter
+        // if it's missing. This is a manifest-scope setting so all three
+        // nodes use the same Python; pick the max of everyone's floors.
+        python_env: Some(ManifestPythonEnv {
+            python_version: Some("3.12".to_string()),
+            scope: None,
+            extra_deps: Vec::new(),
+        }),
+    }
+}
+
 fn select_manifest() -> Manifest {
     match std::env::var("TEST_SESSION_KIND").as_deref() {
         Ok("lfm2") => lfm2_manifest(),
+        Ok("lfm2audio") | Ok("lfm2_audio") => lfm2_audio_manifest(),
         _ => calc_manifest(),
     }
 }

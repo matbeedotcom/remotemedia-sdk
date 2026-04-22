@@ -59,7 +59,11 @@ setup(
         "protobuf>=4.21.0",
         "numpy>=1.21.0,<2.0",
         "av>=14.0.0",
-        "cloudpickle>=2.2.0"
+        "cloudpickle>=2.2.0",
+        # Required by remotemedia.core.multiprocessing.runner for IPC with
+        # the Rust server. Not optional — every venv provisioned by the
+        # managed-env system runs this runner, so iceoryx2 must be present.
+        "iceoryx2>=0.5",
     ],
     extras_require={
         "dev": read_requirements("requirements-dev.txt"),
