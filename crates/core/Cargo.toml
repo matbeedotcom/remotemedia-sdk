@@ -292,3 +292,10 @@ harness = false
 name = "bench_rt_backpressure"
 path = "benches/bench_rt_backpressure.rs"
 harness = false
+
+# End-to-end router probe harness: drives an N-node sync pipeline through
+# the SessionRouter and prints probe distributions after each run.
+[[bench]]
+name = "bench_router_probes"
+path = "benches/bench_router_probes.rs"
+harness = false

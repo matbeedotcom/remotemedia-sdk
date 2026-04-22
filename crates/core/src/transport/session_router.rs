@@ -640,6 +640,17 @@ impl SessionRouter {
         self.probes.operational_snapshot()
     }
 
+    /// Clone the router's probe handle.
+    ///
+    /// [`Self::start`] consumes the router, so anything that wants to
+    /// read probe state *after* the router is running (benches, admin
+    /// endpoints, test harnesses) needs the `Arc` before the `start`
+    /// call. `probes().snapshot_all()` / `probes().operational_snapshot()`
+    /// is the out-of-band equivalent of the `&self` accessors above.
+    pub fn probes(&self) -> Arc<crate::metrics::RtProbeSet> {
+        Arc::clone(&self.probes)
+    }
+
     /// Process a single input through the pipeline graph.
     ///
     /// # **REAL-TIME UNSAFE**
