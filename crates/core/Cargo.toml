@@ -178,6 +178,11 @@ path = "tests/integration/test_speculative_vad_coordinator.rs"
 name = "test_control_messages"
 path = "tests/integration/test_control_messages.rs"
 
+# Phase 0 + 1 real-time backpressure / probe / buffer-pool integration
+[[test]]
+name = "test_rt_backpressure"
+path = "tests/integration/test_rt_backpressure.rs"
+
 # Old Docker executor tests removed - use test_docker_multiprocess instead
 
 # Integration test for basic Docker multiprocess execution (T021)
@@ -275,4 +280,10 @@ harness = false
 [[bench]]
 name = "bench_streaming_scheduler"
 path = "benches/bench_streaming_scheduler.rs"
+harness = false
+
+# Phase 0 / 1 real-time backpressure benchmarks
+[[bench]]
+name = "bench_rt_backpressure"
+path = "benches/bench_rt_backpressure.rs"
 harness = false

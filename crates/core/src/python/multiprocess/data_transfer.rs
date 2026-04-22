@@ -621,7 +621,31 @@ mod tests {
 
         assert_eq!(recovered.data_type, DataType::Audio);
         assert_eq!(recovered.session_id, "test_session");
-        assert_eq!(recovered.payload.len(), 16); // 4 f32s = 16 bytes
+
+        // Audio payload format (see `RuntimeData::audio`):
+        //   sample_rate  (4) | channels (2) | metadata_len (4) | metadata (N) | samples (4·S)
+        // With metadata = None and 4 f32 samples: 4 + 2 + 4 + 0 + 16 = 26 bytes.
+        const HEADER_LEN: usize = 4 + 2 + 4;
+        let expected_len = HEADER_LEN + samples.len() * std::mem::size_of::<f32>();
+        assert_eq!(recovered.payload.len(), expected_len);
+
+        // Verify the header round-trips intact.
+        let sr = u32::from_le_bytes(recovered.payload[0..4].try_into().unwrap());
+        let ch = u16::from_le_bytes(recovered.payload[4..6].try_into().unwrap());
+        let meta_len = u32::from_le_bytes(recovered.payload[6..10].try_into().unwrap());
+        assert_eq!(sr, 24000);
+        assert_eq!(ch, 1);
+        assert_eq!(meta_len, 0);
+
+        // Verify sample bytes survive the round-trip (stronger than the
+        // length-only check that was here before).
+        let sample_bytes = &recovered.payload[HEADER_LEN + meta_len as usize..];
+        assert_eq!(sample_bytes.len(), samples.len() * 4);
+        let recovered_samples: Vec<f32> = sample_bytes
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        assert_eq!(recovered_samples, samples);
     }
 
     #[test]

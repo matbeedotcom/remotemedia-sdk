@@ -18,6 +18,36 @@ use std::time::{Instant, SystemTime};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, trace, warn};
 
+/// Default capacity of each per-peer input channel (client → router).
+///
+/// Small by design: this is the transport-level backpressure surface
+/// toward the WebRTC peer. Override via
+/// `REMOTEMEDIA_WEBRTC_PEER_INPUT_CAPACITY`.
+pub const DEFAULT_WEBRTC_PEER_INPUT_CAPACITY: usize = 8;
+
+/// Default capacity of the shared router output channel (nodes → peers).
+///
+/// Larger than peer-input because outputs are fanned to multiple peers
+/// in broadcast mode. Override via
+/// `REMOTEMEDIA_WEBRTC_OUTPUT_CAPACITY`.
+pub const DEFAULT_WEBRTC_OUTPUT_CAPACITY: usize = 64;
+
+fn webrtc_peer_input_capacity() -> usize {
+    std::env::var("REMOTEMEDIA_WEBRTC_PEER_INPUT_CAPACITY")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_WEBRTC_PEER_INPUT_CAPACITY)
+}
+
+fn webrtc_output_capacity() -> usize {
+    std::env::var("REMOTEMEDIA_WEBRTC_OUTPUT_CAPACITY")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_WEBRTC_OUTPUT_CAPACITY)
+}
+
 // ============================================================================
 // Phase 6 (US3) Routing Types (T148-T151)
 // ============================================================================
@@ -448,14 +478,20 @@ pub struct SessionRouter {
     /// Peer manager for WebRTC connections
     peer_manager: Arc<PeerManager>,
 
-    /// Per-peer input channels (peer_id -> sender)
-    peer_inputs: Arc<RwLock<HashMap<String, mpsc::UnboundedSender<RuntimeData>>>>,
+    /// Per-peer bounded input channels (peer_id -> sender).
+    ///
+    /// Bounded at [`DEFAULT_WEBRTC_PEER_INPUT_CAPACITY`]. Sends `.await`
+    /// so the peer ingest path applies real backpressure to the
+    /// WebRTC stream when the session router is behind.
+    peer_inputs: Arc<RwLock<HashMap<String, mpsc::Sender<RuntimeData>>>>,
 
-    /// Shared output channel for all nodes
-    output_tx: mpsc::UnboundedSender<RuntimeData>,
+    /// Shared bounded output channel for all nodes. Sized larger than a
+    /// single peer's input because it fans out to multiple peers in
+    /// broadcast mode. See [`DEFAULT_WEBRTC_OUTPUT_CAPACITY`].
+    output_tx: mpsc::Sender<RuntimeData>,
 
     /// Shared output receiver
-    output_rx: Arc<RwLock<mpsc::UnboundedReceiver<RuntimeData>>>,
+    output_rx: Arc<RwLock<mpsc::Receiver<RuntimeData>>>,
 
     /// Shutdown signal
     shutdown_tx: mpsc::Sender<()>,
@@ -497,7 +533,7 @@ impl SessionRouter {
     ) -> Result<Self> {
         info!("Creating session router for session: {}", session_id);
 
-        let (output_tx, output_rx) = mpsc::unbounded_channel();
+        let (output_tx, output_rx) = mpsc::channel(webrtc_output_capacity());
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
         Ok(Self {
@@ -739,14 +775,16 @@ impl SessionRouter {
         }
     }
 
-    /// Send data to output channel (T128)
+    /// Send data to output channel (T128).
     ///
-    /// This is used by the application to send processed data back to peers.
+    /// Bounded `.await` applies real backpressure when peers are slow
+    /// to consume their outgoing frames.
     pub async fn send_output(&self, data: RuntimeData) -> Result<()> {
         debug!("Sending output to router (session: {})", self.session_id);
 
         self.output_tx
             .send(data)
+            .await
             .map_err(|e| Error::SessionError(format!("Failed to send output: {}", e)))?;
 
         Ok(())
@@ -758,28 +796,30 @@ impl SessionRouter {
         output_rx.recv().await
     }
 
-    /// Get a per-peer input channel (T129)
+    /// Get a per-peer bounded input channel (T129).
     ///
     /// Creates a new input channel for the peer if one doesn't exist.
+    /// Callers should `.await` the send — the channel applies real
+    /// backpressure to the WebRTC ingest path when saturated.
     pub async fn get_peer_input_channel(
         &self,
         peer_id: &str,
-    ) -> Result<mpsc::UnboundedSender<RuntimeData>> {
+    ) -> Result<mpsc::Sender<RuntimeData>> {
         let mut peer_inputs = self.peer_inputs.write().await;
 
         if let Some(tx) = peer_inputs.get(peer_id) {
             return Ok(tx.clone());
         }
 
-        // Create new channel for this peer
-        let (tx, _rx) = mpsc::unbounded_channel();
+        // Create a new bounded channel for this peer.
+        let (tx, _rx) = mpsc::channel(webrtc_peer_input_capacity());
         peer_inputs.insert(peer_id.to_string(), tx.clone());
 
         Ok(tx)
     }
 
-    /// Get shared output channel (T130)
-    pub fn get_output_channel(&self) -> mpsc::UnboundedSender<RuntimeData> {
+    /// Get shared bounded output channel (T130).
+    pub fn get_output_channel(&self) -> mpsc::Sender<RuntimeData> {
         self.output_tx.clone()
     }
 

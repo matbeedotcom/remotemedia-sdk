@@ -77,11 +77,13 @@ pub mod data {
     use serde::{Deserialize, Serialize};
 
     // Low-latency streaming data structures (spec 007)
+    pub mod audio_buffer_pool;
     pub mod buffering_policy;
     pub mod control_message;
     pub mod ring_buffer;
     pub mod speculative_segment;
 
+    pub use audio_buffer_pool::{AudioBufferPool, PooledAudioBuf};
     pub use buffering_policy::{BufferingPolicy, MergeStrategy};
     pub use control_message::{ControlMessage, ControlMessageType};
     pub use ring_buffer::RingBuffer;

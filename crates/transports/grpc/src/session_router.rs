@@ -67,6 +67,26 @@ fn grpc_loopback_capacity() -> usize {
         .unwrap_or(DEFAULT_GRPC_LOOPBACK_CAPACITY)
 }
 
+/// Capacity of each per-node input channel.
+///
+/// Deadlock-safety relationship: `loopback_capacity ≥ node_input_capacity ×
+/// max_expected_fanout`. With the defaults (loopback 256, node-input 32)
+/// the router tolerates up to ~8× fan-out per node without the router
+/// task blocking on `node_input.send().await` while a node is blocked on
+/// `loopback_tx.send().await`. If your pipeline has bigger fan-out, raise
+/// `REMOTEMEDIA_GRPC_ROUTER_LOOPBACK_CAPACITY` accordingly.
+///
+/// Override via `REMOTEMEDIA_GRPC_NODE_INPUT_CAPACITY`.
+pub const DEFAULT_GRPC_NODE_INPUT_CAPACITY: usize = 32;
+
+fn grpc_node_input_capacity() -> usize {
+    std::env::var("REMOTEMEDIA_GRPC_NODE_INPUT_CAPACITY")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_GRPC_NODE_INPUT_CAPACITY)
+}
+
 #[cfg(feature = "multiprocess")]
 use remotemedia_core::python::multiprocess::MultiprocessExecutor;
 
@@ -133,7 +153,11 @@ pub struct SessionRouter {
     node_tasks: HashMap<String, JoinHandle<()>>,
 
     /// Node input channels
-    node_inputs: HashMap<String, mpsc::UnboundedSender<DataPacket>>,
+    /// Per-node bounded input channels. Capacity set from
+    /// [`DEFAULT_GRPC_NODE_INPUT_CAPACITY`] — see the constant's doc for
+    /// the loopback-capacity relationship that keeps `route_packet` from
+    /// deadlocking with a node task that's blocked on `loopback_tx.send`.
+    node_inputs: HashMap<String, mpsc::Sender<DataPacket>>,
 
     /// Whether the router is running
     running: bool,
@@ -555,7 +579,12 @@ impl SessionRouter {
             // Multiprocess nodes will internally use the IPC thread via process_streaming_async()
             if let Some(node_input) = self.node_inputs.get(&next_node_id) {
                 let packet_clone = packet.clone();
-                if let Err(e) = node_input.send(packet_clone) {
+                // Bounded per-node input: `.await` stalls the router task
+                // when a node is saturated. Loopback capacity is sized
+                // (32× node-input) so the node task can drain onto the
+                // loopback even when its input is full — preventing the
+                // mutual-await deadlock a naive bounding would create.
+                if let Err(e) = node_input.send(packet_clone).await {
                     error!("Failed to send packet to node '{}': {}", next_node_id, e);
                 }
             } else {
@@ -574,8 +603,11 @@ impl SessionRouter {
         let node = self.get_or_create_node(&node_id).await?;
         let is_streaming = self.registry.is_multi_output_streaming(&node.node_type());
 
-        // Create input channel for this node
-        let (input_tx, mut input_rx) = mpsc::unbounded_channel::<DataPacket>();
+        // Create bounded input channel for this node. See
+        // DEFAULT_GRPC_NODE_INPUT_CAPACITY for deadlock-safety sizing
+        // (loopback must be ≥ node_input × max_fanout).
+        let (input_tx, mut input_rx) =
+            mpsc::channel::<DataPacket>(grpc_node_input_capacity());
         self.node_inputs.insert(node_id.clone(), input_tx);
 
         // Clone what we need for the task
