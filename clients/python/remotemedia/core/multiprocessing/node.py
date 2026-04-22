@@ -382,37 +382,45 @@ class MultiprocessNode(BaseNode):
         self.status = NodeStatus.PROCESSING
         start_time = asyncio.get_event_loop().time()
 
-        # Call process() - it may return a single value, an async generator, or None
-        result = self.process(data)
+        try:
+            # Call process() - it may return a single value, an async generator, or None
+            result = self.process(data)
 
-        # Check if it's an async generator (streaming node)
-        import inspect
-        if inspect.isasyncgen(result):
-            # Streaming: iterate over async generator and send each output
-            self.logger.debug(f"Node {self.node_id} returned async generator (streaming)")
-            output_count = 0
-            async for output in result:
+            # Check if it's an async generator (streaming node)
+            import inspect
+            if inspect.isasyncgen(result):
+                # Streaming: iterate over async generator and send each output
+                self.logger.debug(f"Node {self.node_id} returned async generator (streaming)")
+                output_count = 0
+                async for output in result:
+                    if output is not None:
+                        await self._send_output(output)
+                        output_count += 1
+
+                # Track statistics (count one "message processed" per input, regardless of N outputs)
+                self.messages_processed += 1
+                self.processing_time_total += asyncio.get_event_loop().time() - start_time
+                self.logger.debug(f"Streaming node produced {output_count} outputs")
+            else:
+                # Non-streaming: await the result and send if not None
+                output = await result
+
+                # Track statistics
+                self.messages_processed += 1
+                self.processing_time_total += asyncio.get_event_loop().time() - start_time
+
+                # Send output if produced
                 if output is not None:
                     await self._send_output(output)
-                    output_count += 1
+        finally:
+            # Signal end-of-input to Rust side so it stops waiting for more
+            # outputs from this input. Without this, Rust falls back to a
+            # timeout-based "done" heuristic that adds ~30 s per turn for
+            # nodes that return None (aux-port messages) and ~2 s per turn
+            # for single-output nodes.
+            await self._send_end_of_input()
 
-            # Track statistics (count one "message processed" per input, regardless of N outputs)
-            self.messages_processed += 1
-            self.processing_time_total += asyncio.get_event_loop().time() - start_time
-            self.logger.debug(f"Streaming node produced {output_count} outputs")
-        else:
-            # Non-streaming: await the result and send if not None
-            output = await result
-
-            # Track statistics
-            self.messages_processed += 1
-            self.processing_time_total += asyncio.get_event_loop().time() - start_time
-
-            # Send output if produced
-            if output is not None:
-                await self._send_output(output)
-
-        self.status = NodeStatus.READY
+            self.status = NodeStatus.READY
 
     async def _handle_control_message(self, data: RuntimeData) -> None:
         """
@@ -710,6 +718,43 @@ class MultiprocessNode(BaseNode):
 
         except Exception as e:
             self.logger.error(f"Error sending to IPC: {e}", exc_info=True)
+
+    async def _send_end_of_input(self) -> None:
+        """
+        Emit the EndOfInput sentinel on the output channel.
+
+        This is the "I'm done processing this input" signal that lets the
+        Rust side return immediately instead of waiting for a polling
+        timeout. The sentinel has data_type=8 and an empty payload —
+        matching `RuntimeData::end_of_input` on the Rust side.
+        """
+        if not hasattr(self, '_output_publisher'):
+            return
+
+        try:
+            import time
+            session_id = getattr(self, '_current_session_id', None) or self.session_id or 'default'
+            session_bytes = session_id.encode('utf-8')
+            timestamp = int(time.time() * 1_000_000)
+
+            # Format matches data_transfer.rs::to_bytes:
+            # type (1) | session_len (2) | session | timestamp (8) | payload_len (4) | payload
+            message = bytearray()
+            message.append(8)  # DataType::EndOfInput
+            message.extend(len(session_bytes).to_bytes(2, 'little'))
+            message.extend(session_bytes)
+            message.extend(timestamp.to_bytes(8, 'little'))
+            message.extend((0).to_bytes(4, 'little'))  # payload_len = 0
+
+            import ctypes
+            sample = self._output_publisher.loan_slice_uninit(len(message))
+            sample_payload = sample.payload()
+            for i, byte_val in enumerate(message):
+                sample_payload[i] = ctypes.c_uint8(byte_val)
+            sample = sample.assume_init()
+            sample.send()
+        except Exception as e:
+            self.logger.warning(f"Failed to send EndOfInput sentinel: {e}")
 
     def _is_critical_error(self, error: Exception) -> bool:
         """

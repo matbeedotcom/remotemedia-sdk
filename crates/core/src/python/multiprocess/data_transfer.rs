@@ -79,6 +79,24 @@ impl RuntimeData {
         }
     }
 
+    /// Create an "end-of-input" sentinel. Python nodes emit this after
+    /// `process()` completes for one input — it tells the Rust side to stop
+    /// waiting for further outputs from that input and return immediately.
+    /// Without this, Rust falls back to the `subsequent_timeout` / `initial_timeout`
+    /// polling windows in `process_runtime_data_streaming`, which adds 30s+
+    /// of latency per turn for nodes that return None or produce a single output.
+    pub fn end_of_input(session_id: &str) -> Self {
+        Self {
+            data_type: DataType::EndOfInput,
+            session_id: session_id.to_string(),
+            timestamp: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_micros() as u64,
+            payload: Vec::new(),
+        }
+    }
+
     /// Create video runtime data (Spec 012: Video Codec Support)
     ///
     /// Serializes video frame with metadata for zero-copy IPC transfer.
@@ -543,6 +561,7 @@ impl RuntimeData {
             5 => DataType::ControlMessage,
             6 => DataType::Numpy,
             7 => DataType::File,
+            8 => DataType::EndOfInput,
             _ => return Err(format!("Invalid data type: {}", bytes[pos])),
         };
         pos += 1;
@@ -605,6 +624,11 @@ pub enum DataType {
     ControlMessage = 5, // Spec 007: Control messages for low-latency streaming
     Numpy = 6,          // Numpy arrays with metadata for zero-copy passthrough
     File = 7,           // Spec 001: File reference with metadata
+    /// Sentinel: Python signals "I'm done with this input". Rust's
+    /// `process_runtime_data_streaming` treats this as an immediate
+    /// return so it doesn't have to fall back to timeout-based "done"
+    /// detection. Not a real payload — payload bytes are empty.
+    EndOfInput = 8,
 }
 
 #[cfg(test)]

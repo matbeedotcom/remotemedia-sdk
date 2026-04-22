@@ -141,8 +141,14 @@ def _auto_register_builtin_nodes():
         from remotemedia.nodes.ml.lfm2_audio import LFM2AudioNode
         _NODE_REGISTRY["LFM2AudioNode"] = LFM2AudioNode
         _NODE_REGISTRY["LFM2Node"] = LFM2AudioNode  # Alias
-    except ImportError:
-        pass  # LFM2 not installed
+    except (ImportError, OSError):
+        pass  # LFM2 audio or torchaudio ABI missing
+
+    try:
+        from remotemedia.nodes.ml.lfm2_text import LFM2TextNode
+        _NODE_REGISTRY["LFM2TextNode"] = LFM2TextNode
+    except (ImportError, OSError):
+        pass  # torch / transformers missing
 
     # Register test nodes
     try:

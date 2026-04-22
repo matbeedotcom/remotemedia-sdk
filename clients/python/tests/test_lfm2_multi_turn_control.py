@@ -68,6 +68,25 @@ import yaml
 
 from remotemedia.core.pipeline import Pipeline
 
+
+def _reply_text(reply: Any) -> str:
+    """
+    Normalize a reply to a string.
+
+    LFM2TextNode now returns a ``RuntimeData`` (to support the
+    multiprocess IPC path); in-process tests want plain strings for
+    substring assertions.
+    """
+    if isinstance(reply, str):
+        return reply
+    # Duck-type RuntimeData.as_text() to avoid importing it here.
+    if hasattr(reply, "as_text"):
+        try:
+            return reply.as_text()
+        except Exception:
+            pass
+    return str(reply)
+
 pytestmark = pytest.mark.skipif(
     os.environ.get("REMOTEMEDIA_RUN_LFM2_TESTS") != "1",
     reason="Set REMOTEMEDIA_RUN_LFM2_TESTS=1 to run the LFM2 multi-turn test",
@@ -218,7 +237,7 @@ async def test_pipeline_driven_multi_turn_with_context_injection():
         )
 
     assert len(replies) == 4
-    t1, t2, t3, t4 = [r.lower() for r in replies]
+    t1, t2, t3, t4 = [_reply_text(r).lower() for r in replies]
 
     assert "cerulean" not in t1, (
         f"baseline (no context yet) unexpectedly contains injected fact: {t1!r}"
@@ -286,7 +305,7 @@ async def test_manifest_definition_round_trip_drives_same_behavior():
             label="YAML-loaded pipeline, context injection",
         )
 
-    t1, t2 = [r.lower() for r in replies]
+    t1, t2 = [_reply_text(r).lower() for r in replies]
     assert "cerulean" not in t1, f"baseline unexpectedly contains fact: {t1!r}"
     assert "cerulean" in t2, f"after injection, reply must reflect fact: {t2!r}"
 
@@ -324,7 +343,7 @@ async def test_pipeline_driven_system_prompt_swap():
             label="persona swap (one-word answers -> pirate)",
         )
 
-    _, second = [r.lower() for r in replies]
+    _, second = [_reply_text(r).lower() for r in replies]
     assert "arr" in second, (
         f"system-prompt swap via pipeline did not take effect: {second!r}"
     )

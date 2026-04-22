@@ -204,6 +204,38 @@ pub enum CloseReason {
     Error(String),
 }
 
+/// Envelope field name for aux-port publishes. Nodes inspect the payload
+/// for this key to distinguish aux-channel input from the main input.
+pub const AUX_PORT_ENVELOPE_KEY: &str = "__aux_port__";
+
+/// Wrap a `RuntimeData` payload in the aux-port envelope described in
+/// [`SessionControl::publish`]. Pulled out so `python_streaming_node.rs`
+/// and test code can construct the same shape.
+pub fn wrap_aux_port(port: &str, data: RuntimeData) -> RuntimeData {
+    let inner = match data {
+        RuntimeData::Json(v) => v,
+        RuntimeData::Text(t) => serde_json::json!({ "text": t }),
+        RuntimeData::Binary(b) => {
+            use base64::Engine as _;
+            serde_json::json!({
+                "binary_b64": base64::engine::general_purpose::STANDARD.encode(&b),
+            })
+        }
+        // For richer types (Audio, Video, Tensor, Numpy), the envelope
+        // carries a type tag; the node is expected to consult the
+        // original payload via another code path if needed. For the
+        // common aux-port use cases (text context, JSON facts, tool
+        // results) the cases above cover the traffic.
+        other => serde_json::json!({
+            "_unsupported_for_envelope": format!("{:?}", std::mem::discriminant(&other)),
+        }),
+    };
+    RuntimeData::Json(serde_json::json!({
+        AUX_PORT_ENVELOPE_KEY: port,
+        "payload": inner,
+    }))
+}
+
 /// Runtime execution state for a single node, controlled via the bus.
 ///
 /// - `Enabled` (default): node runs normally.
@@ -334,6 +366,26 @@ impl SessionControl {
     }
 
     /// Inject data into a node's input port.
+    ///
+    /// When `addr.port` is `Some(port_name)` — i.e. the client is writing
+    /// to an auxiliary input rail, not the node's main input — the payload
+    /// is wrapped in an envelope so the node can distinguish aux-channel
+    /// input from main-channel input:
+    ///
+    /// ```json
+    /// {
+    ///   "__aux_port__": "context",
+    ///   "payload": <original payload, recursive>
+    /// }
+    /// ```
+    ///
+    /// Nodes that care about aux ports (e.g. an LLM reading a `context`
+    /// rail) inspect the envelope in their `.process()`. Nodes that don't
+    /// care can treat the envelope as opaque and ignore it, or unwrap
+    /// `payload` to get the original shape.
+    ///
+    /// `addr.port == None` means the main rail — payload is forwarded
+    /// unchanged, preserving the existing wire behavior.
     pub async fn publish(&self, addr: &ControlAddress, data: RuntimeData) -> Result<()> {
         if addr.direction != Direction::In {
             return Err(crate::Error::Execution(
@@ -345,18 +397,15 @@ impl SessionControl {
             crate::Error::Execution("session control not yet attached to router".into())
         })?;
 
-        // Auxiliary port is threaded to the node via the packet. The node
-        // reads `port` from its process_streaming input to decide whether
-        // this is a main-channel frame or an aux-channel frame.
-        //
-        // NOTE: DataPacket has no `port` field today — this is the one
-        // field the prototype adds. See `DataPacket` extension below.
+        let payload = match &addr.port {
+            None => data,
+            Some(port) => wrap_aux_port(port, data),
+        };
+
         let packet = DataPacket {
-            data,
+            data: payload,
             from_node: format!("__control__:{}", self.session_id),
             to_node: Some(addr.node_id.clone()),
-            // TODO(port): add `port: Option<String>` to DataPacket so nodes
-            // can distinguish main vs. aux inputs without sniffing metadata.
             session_id: self.session_id.clone(),
             sequence: self
                 .inject_seq

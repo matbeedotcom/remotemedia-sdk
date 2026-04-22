@@ -260,6 +260,18 @@ pub fn register_default_python_nodes() {
     );
 
     register_python_node(
+        PythonNodeConfig::new("LFM2TextNode")
+            .with_description(
+                "Multi-turn text chat using LFM2 (e.g. LiquidAI/LFM2-350M). \
+                 Consumes user turns on the main input and control-bus aux-port \
+                 envelopes on 'context' / 'system_prompt' / 'reset'.",
+            )
+            .with_category("ml")
+            .accepts(["text"])
+            .produces(["text"]),
+    );
+
+    register_python_node(
         PythonNodeConfig::new("SimplePyTorchNode")
             .with_description("Simple PyTorch inference node for testing")
             .with_category("ml"),

@@ -700,6 +700,14 @@ impl SessionRouter {
                         tokio::spawn(async move {
                             let mut sub_sequence = 0;
                             while let Some(ipc_output) = output_rx.recv().await {
+                                // Skip EndOfInput sentinels — they carry no
+                                // payload; only `process_runtime_data_streaming`
+                                // uses them to shortcut its wait loop.
+                                if ipc_output.data_type
+                                    == remotemedia_core::python::multiprocess::DataType::EndOfInput
+                                {
+                                    continue;
+                                }
                                 sub_sequence += 1;
 
                                 // Convert IPC data to RuntimeData

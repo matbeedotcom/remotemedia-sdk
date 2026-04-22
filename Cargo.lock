@@ -5491,6 +5491,7 @@ dependencies = [
  "protobuf-src",
  "regex",
  "remotemedia-core",
+ "remotemedia-python-nodes",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
