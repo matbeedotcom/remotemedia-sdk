@@ -25,6 +25,7 @@ use crate::generated::{
 use crate::streaming::StreamSession;
 use remotemedia_core::data::RuntimeData;
 use remotemedia_core::executor::PipelineGraph;
+use remotemedia_core::metrics::RtProbeSet;
 use remotemedia_core::nodes::{StreamingNode, StreamingNodeRegistry};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -165,6 +166,12 @@ pub struct SessionRouter {
     /// Multiprocess executor for IPC communication (optional)
     #[cfg(feature = "multiprocess")]
     multiprocess_executor: Option<Arc<MultiprocessExecutor>>,
+
+    /// Phase B0 instrumentation: per-session latency histograms plus
+    /// `spawn_count` and `loopback_depth`. Shared via `Arc` with each
+    /// spawned node task so they can record samples without
+    /// needing a handle back to the router.
+    probes: Arc<RtProbeSet>,
 }
 
 impl SessionRouter {
@@ -232,6 +239,7 @@ impl SessionRouter {
             running: false,
             #[cfg(feature = "multiprocess")]
             multiprocess_executor: None,
+            probes: Arc::new(RtProbeSet::new()),
         };
 
         Ok((router, shutdown_tx_clone))
@@ -243,6 +251,21 @@ impl SessionRouter {
     /// backpressure when the pipeline is behind.
     pub fn get_input_sender(&self) -> mpsc::Sender<DataPacket> {
         self.client_input_tx.clone()
+    }
+
+    /// Snapshot every RT latency probe in declaration order:
+    /// `ingress, route_in, node_in, node_out, egress`.
+    pub fn probe_snapshots(
+        &self,
+    ) -> [(&'static str, remotemedia_core::metrics::ProbeSnapshot); 5] {
+        self.probes.snapshot_all()
+    }
+
+    /// Snapshot the router's operational counters. `spawn_count`
+    /// climbs once per per-packet streaming-node spawn (B0 state);
+    /// `loopback_depth` is the current fill of the loopback channel.
+    pub fn operational_snapshot(&self) -> remotemedia_core::metrics::OperationalSnapshot {
+        self.probes.operational_snapshot()
     }
 
     /// Get the pipeline graph
@@ -502,6 +525,13 @@ impl SessionRouter {
         // (small ingress capacity) without risking deadlock on the node →
         // router loopback (generous capacity).
         loop {
+            // Phase B0 probe: sample the current loopback depth before
+            // we suspend on `select!`. If B1 (spawn removal) works, this
+            // should flatten — a slow node no longer backs packets up in
+            // the loopback queue because the router drains directly.
+            self.probes
+                .loopback_depth
+                .set(self.loopback_rx.len() as i64);
             tokio::select! {
                 packet = self.client_input_rx.recv() => {
                     match packet {
@@ -614,6 +644,7 @@ impl SessionRouter {
         let node_id_clone = node_id.clone();
         let session_id = self.session_id.clone();
         let router_tx = self.loopback_tx.clone(); // Bounded loopback: node → router
+        let probes = self.probes.clone(); // Phase B0 instrumentation
 
         // Check if this is a multiprocess node and set up continuous output draining
         #[cfg(feature = "multiprocess")]
@@ -719,14 +750,24 @@ impl SessionRouter {
                     let router_tx_for_task = router_tx.clone();
                     let packet_sequence = packet.sequence;
                     let packet_data = packet.data;
+                    let probes_for_task = probes.clone();
 
-                    // Process asynchronously - don't block the node task
+                    // Process asynchronously - don't block the node task.
+                    //
+                    // Phase B0: count every per-packet spawn. Phase B1
+                    // removes this spawn; this counter will drop to zero
+                    // under streaming-node load after that change.
+                    probes.spawn_count.inc();
                     tokio::spawn(async move {
                         let mut output_count = 0;
                         let node_id_for_cb = node_id_for_task.clone();
                         let session_id_for_cb = session_id_for_task.clone();
                         let router_tx_for_cb = router_tx_for_task.clone();
 
+                        // Phase B0 probe: record total node dispatch time.
+                        // After B1 removes this spawn, the measurement
+                        // moves inline in the node task loop.
+                        let node_dispatch_start = std::time::Instant::now();
                         let result = node_clone
                             .process_streaming_async(
                                 packet_data,
@@ -782,6 +823,7 @@ impl SessionRouter {
                                 }),
                             )
                             .await;
+                        probes_for_task.node_out.record_since(node_dispatch_start);
 
                         match result {
                             Ok(count) => {
@@ -793,8 +835,12 @@ impl SessionRouter {
                         }
                     });
                 } else {
-                    // Non-streaming node - single output
-                    match node.process_async(packet.data).await {
+                    // Non-streaming node - single output.
+                    // Phase B0: record total dispatch latency inline (no spawn).
+                    let node_dispatch_start = std::time::Instant::now();
+                    let process_result = node.process_async(packet.data).await;
+                    probes.node_out.record_since(node_dispatch_start);
+                    match process_result {
                         Ok(output) => {
                             let output_packet = DataPacket {
                                 data: output,

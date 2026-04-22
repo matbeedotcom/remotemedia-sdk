@@ -412,8 +412,9 @@ mod tests {
             python_env: None,
         };
         let reg = SyncStreamingNodeRegistry::new();
-        let err = SyncPipelineExecutor::from_manifest(&manifest, &reg)
-            .expect_err("unregistered type should fail");
+        let Err(err) = SyncPipelineExecutor::from_manifest(&manifest, &reg) else {
+            panic!("unregistered type should fail");
+        };
         assert!(format!("{err}").contains("Unknown"));
     }
 
@@ -448,8 +449,9 @@ mod tests {
         };
         let mut reg = SyncStreamingNodeRegistry::new();
         reg.register(Arc::new(GainFactory));
-        let err = SyncPipelineExecutor::from_manifest(&manifest, &reg)
-            .expect_err("fan-out should be rejected");
+        let Err(err) = SyncPipelineExecutor::from_manifest(&manifest, &reg) else {
+            panic!("fan-out should be rejected");
+        };
         // Either "exactly 1 sink" (g1 and g2 both sinks) or
         // "exactly 1 output" (g0 has 2 outputs) — both are valid linear-chain
         // violations that must be rejected.

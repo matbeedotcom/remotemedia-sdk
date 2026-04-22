@@ -11,4 +11,6 @@
 
 pub mod rt_probe;
 
-pub use rt_probe::{LatencyProbe, ProbeSnapshot, RtProbeSet};
+pub use rt_probe::{
+    CounterProbe, GaugeProbe, LatencyProbe, OperationalSnapshot, ProbeSnapshot, RtProbeSet,
+};

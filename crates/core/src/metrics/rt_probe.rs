@@ -29,6 +29,7 @@
 //! the router. The others slot in as the router is decomposed.
 
 use hdrhistogram::Histogram;
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -118,10 +119,118 @@ impl LatencyProbe {
     }
 }
 
-/// The five canonical probe points for a streaming session.
+/// A monotonic counter — increments only. Relaxed atomic (ordering
+/// between probes is not guaranteed, but individual reads / writes are).
 ///
-/// Only `ingress` and `egress` are wired in Phase 0. The others are
-/// defined here so follow-up work doesn't have to edit this type.
+/// Use for "how many X happened since session start" events: packets
+/// processed, tasks spawned, drops, etc. `GaugeProbe` is the right
+/// primitive for "current value" signals instead.
+pub struct CounterProbe {
+    value: AtomicU64,
+    label: &'static str,
+}
+
+impl CounterProbe {
+    /// Create a new counter, starting at 0.
+    pub fn new(label: &'static str) -> Self {
+        Self {
+            value: AtomicU64::new(0),
+            label,
+        }
+    }
+
+    /// Increment by 1. Wait-free, lock-free.
+    #[inline]
+    pub fn inc(&self) {
+        self.value.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increment by `n`.
+    #[inline]
+    pub fn add(&self, n: u64) {
+        self.value.fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// Read the current count.
+    #[inline]
+    pub fn get(&self) -> u64 {
+        self.value.load(Ordering::Relaxed)
+    }
+
+    /// Reset to 0. Useful between test cases.
+    pub fn reset(&self) {
+        self.value.store(0, Ordering::Relaxed);
+    }
+
+    /// Label for this counter.
+    pub fn label(&self) -> &'static str {
+        self.label
+    }
+}
+
+/// A running signed gauge — can be both incremented and decremented.
+///
+/// Use for "current depth / queue size" style signals where the value
+/// rises and falls. Relaxed atomic; callers that need a consistent
+/// paired increment/decrement across threads should rely on their own
+/// synchronization (not the gauge).
+pub struct GaugeProbe {
+    value: AtomicI64,
+    label: &'static str,
+}
+
+impl GaugeProbe {
+    /// Create a new gauge, starting at 0.
+    pub fn new(label: &'static str) -> Self {
+        Self {
+            value: AtomicI64::new(0),
+            label,
+        }
+    }
+
+    /// Increment by 1. Wait-free.
+    #[inline]
+    pub fn inc(&self) {
+        self.value.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Decrement by 1. Wait-free.
+    #[inline]
+    pub fn dec(&self) {
+        self.value.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    /// Set absolute value.
+    #[inline]
+    pub fn set(&self, v: i64) {
+        self.value.store(v, Ordering::Relaxed);
+    }
+
+    /// Read the current value.
+    #[inline]
+    pub fn get(&self) -> i64 {
+        self.value.load(Ordering::Relaxed)
+    }
+
+    /// Reset to 0.
+    pub fn reset(&self) {
+        self.value.store(0, Ordering::Relaxed);
+    }
+
+    /// Label.
+    pub fn label(&self) -> &'static str {
+        self.label
+    }
+}
+
+/// Router-scoped probe set: latency histograms + operational counters/gauges.
+///
+/// The five canonical latency points are wired around the router's
+/// per-packet path. `spawn_count` (incremented at every
+/// `tokio::spawn` the router does on the per-packet path) and
+/// `loopback_depth` (sampled from the bounded loopback channel length
+/// before each router receive) are operational probes used to validate
+/// that spawn-removal / backpressure changes land as expected.
 pub struct RtProbeSet {
     /// Arrival at the session router (transport → router).
     pub ingress: LatencyProbe,
@@ -133,6 +242,14 @@ pub struct RtProbeSet {
     pub node_out: LatencyProbe,
     /// Node output → client output channel.
     pub egress: LatencyProbe,
+    /// Number of `tokio::spawn` calls on the per-packet path. Phase B1
+    /// removes the gRPC router's per-packet spawn; this counter should
+    /// drop to zero under streaming-node load after that change.
+    pub spawn_count: CounterProbe,
+    /// Current depth of the router's bounded loopback channel (samples
+    /// recorded at the top of the router run loop). Used to catch
+    /// Phase B1 regressions where a slow node starves the router.
+    pub loopback_depth: GaugeProbe,
 }
 
 impl RtProbeSet {
@@ -144,10 +261,12 @@ impl RtProbeSet {
             node_in: LatencyProbe::new("node_in"),
             node_out: LatencyProbe::new("node_out"),
             egress: LatencyProbe::new("egress"),
+            spawn_count: CounterProbe::new("spawn_count"),
+            loopback_depth: GaugeProbe::new("loopback_depth"),
         }
     }
 
-    /// Snapshot every probe in declaration order.
+    /// Snapshot every latency probe in declaration order.
     pub fn snapshot_all(&self) -> [(&'static str, ProbeSnapshot); 5] {
         [
             (self.ingress.label(), self.ingress.snapshot()),
@@ -157,6 +276,23 @@ impl RtProbeSet {
             (self.egress.label(), self.egress.snapshot()),
         ]
     }
+
+    /// Snapshot the operational counters/gauges.
+    pub fn operational_snapshot(&self) -> OperationalSnapshot {
+        OperationalSnapshot {
+            spawn_count: self.spawn_count.get(),
+            loopback_depth: self.loopback_depth.get(),
+        }
+    }
+}
+
+/// Point-in-time snapshot of the router's operational counters.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OperationalSnapshot {
+    /// Cumulative per-packet `tokio::spawn` calls since session start.
+    pub spawn_count: u64,
+    /// Current depth of the loopback channel.
+    pub loopback_depth: i64,
 }
 
 impl Default for RtProbeSet {
@@ -212,5 +348,44 @@ mod tests {
         assert_eq!(p.snapshot().count, 1);
         p.reset();
         assert_eq!(p.snapshot().count, 0);
+    }
+
+    #[test]
+    fn counter_probe_increments_and_reads() {
+        let c = CounterProbe::new("spawn_count");
+        assert_eq!(c.get(), 0);
+        c.inc();
+        c.inc();
+        c.add(5);
+        assert_eq!(c.get(), 7);
+        assert_eq!(c.label(), "spawn_count");
+        c.reset();
+        assert_eq!(c.get(), 0);
+    }
+
+    #[test]
+    fn gauge_probe_tracks_current_value() {
+        let g = GaugeProbe::new("loopback_depth");
+        assert_eq!(g.get(), 0);
+        g.inc();
+        g.inc();
+        g.inc();
+        g.dec();
+        assert_eq!(g.get(), 2);
+        g.set(42);
+        assert_eq!(g.get(), 42);
+        g.reset();
+        assert_eq!(g.get(), 0);
+    }
+
+    #[test]
+    fn rt_probe_set_exposes_operational_snapshot() {
+        let set = RtProbeSet::new();
+        set.spawn_count.inc();
+        set.spawn_count.inc();
+        set.loopback_depth.set(3);
+        let op = set.operational_snapshot();
+        assert_eq!(op.spawn_count, 2);
+        assert_eq!(op.loopback_depth, 3);
     }
 }

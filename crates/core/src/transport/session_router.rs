@@ -588,13 +588,21 @@ impl SessionRouter {
     /// Snapshot all RT latency probes in declaration order:
     /// `ingress, route_in, node_in, node_out, egress`.
     ///
-    /// Only `ingress` and `egress` are actively recorded today; the
-    /// others will be populated as Phase 2 instruments the node
-    /// dispatch path.
+    /// `ingress`, `egress`, and `node_out` are actively recorded;
+    /// `route_in` and `node_in` will be wired as A-wave migrations
+    /// land and the dispatch path gets more inspectable.
     pub fn probe_snapshots(
         &self,
     ) -> [(&'static str, crate::metrics::ProbeSnapshot); 5] {
         self.probes.snapshot_all()
+    }
+
+    /// Snapshot the router's operational counters (`spawn_count`,
+    /// `loopback_depth`). Core router doesn't currently spawn per
+    /// packet, so `spawn_count` stays at 0 — useful as a baseline and
+    /// to flag regressions if any future code adds a per-packet spawn.
+    pub fn operational_snapshot(&self) -> crate::metrics::OperationalSnapshot {
+        self.probes.operational_snapshot()
     }
 
     /// Process a single input through the pipeline graph.
@@ -710,6 +718,10 @@ impl SessionRouter {
                 let scheduler = self.scheduler.clone();
                 let use_fast_path = scheduler.config.is_fast_path(&node_id_owned);
 
+                // Record total node-dispatch latency (includes scheduler
+                // overhead + node process work). Phase B0 probe; A-wave
+                // migrations should land as a measurable p99 drop here.
+                let node_dispatch_start = std::time::Instant::now();
                 let result = if use_fast_path {
                     // Fast path: lock-free, no timeout, no HDR metrics
                     let node_ref = node;
@@ -753,6 +765,7 @@ impl SessionRouter {
                         })
                         .await
                 };
+                self.probes.node_out.record_since(node_dispatch_start);
 
                 match result {
                     Ok(scheduler_result) => {
