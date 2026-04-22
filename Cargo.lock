@@ -5788,6 +5788,7 @@ dependencies = [
  "media-codec-vpx",
  "openh264",
  "opus",
+ "parking_lot",
  "prost",
  "protobuf-src",
  "remotemedia-core",

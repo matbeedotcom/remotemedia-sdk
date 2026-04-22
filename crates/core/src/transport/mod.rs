@@ -30,6 +30,7 @@ pub mod client;
 pub mod data;
 pub mod plugin_registry;
 pub mod session;
+pub mod session_control;
 pub mod session_router;
 
 // PipelineExecutor facade (spec 026)
