@@ -9,7 +9,14 @@ repository.workspace = true
 description = "Hearing aid DSP nodes (WDRC, CROS, HRTF) for RemoteMedia pipelines"
 
 [dependencies]
-remotemedia-core = { path = "../core" }
+# Minimal feature set on core: hearing-nodes only needs the trait/
+# registry/data types. `multiprocess` stays enabled because core's own
+# code currently references multiprocess types outside feature gates
+# (an SDK TODO to tighten). The heavy defaults we drop are `silero-vad`
+# (ort), `docker` (bollard + SystemConfiguration), and `video` (ffmpeg)
+# — they bloat a HAL plugin bundle and break linking into coreaudiod.
+# Embedders that want them can enable at the binary leaf (e.g. `spike`).
+remotemedia-core = { path = "../core", default-features = false, features = ["multiprocess"] }
 
 async-trait.workspace = true
 parking_lot.workspace = true

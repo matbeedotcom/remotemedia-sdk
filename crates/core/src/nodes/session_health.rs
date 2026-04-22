@@ -4,7 +4,7 @@
 //! Designed as a multi-input node that consumes events from various analysis nodes.
 
 use crate::data::RuntimeData;
-use crate::nodes::StreamingNode;
+use crate::nodes::{StreamingNode, SyncNodeWrapper, SyncStreamingNode};
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -443,26 +443,18 @@ impl SessionHealthNode {
     }
 }
 
-#[async_trait::async_trait]
-impl StreamingNode for SessionHealthNode {
+// Phase A-Wave 1: `SyncStreamingNode` — state uses `std::sync::RwLock`.
+// Multi-input aggregation preserved.
+impl SyncStreamingNode for SessionHealthNode {
     fn node_type(&self) -> &str {
         "SessionHealthNode"
     }
 
-    fn node_id(&self) -> &str {
-        &self.node_id
-    }
-
-    async fn initialize(&self) -> Result<(), Error> {
-        tracing::debug!("SessionHealthNode {} initialized", self.node_id);
-        Ok(())
-    }
-
-    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         self.process_input(data)
     }
 
-    async fn process_multi_async(
+    fn process_multi(
         &self,
         inputs: HashMap<String, RuntimeData>,
     ) -> Result<RuntimeData, Error> {
@@ -526,7 +518,7 @@ impl crate::nodes::StreamingNodeFactory for SessionHealthNodeFactory {
             serde_json::from_value(params.clone()).unwrap_or_default()
         };
 
-        Ok(Box::new(SessionHealthNode::new(node_id, config)))
+        Ok(Box::new(SyncNodeWrapper(SessionHealthNode::new(node_id, config))))
     }
 
     fn node_type(&self) -> &str {
@@ -573,14 +565,13 @@ mod tests {
             "is_sustained_silence": true
         });
 
-        let result = node.process_async(RuntimeData::Json(event)).await.unwrap();
+        let result = node.process(RuntimeData::Json(event)).unwrap();
 
         // Force an emit by waiting and processing another event
         tokio::time::sleep(tokio::time::Duration::from_millis(1100)).await;
 
         let result = node
-            .process_async(RuntimeData::Json(serde_json::json!({})))
-            .await
+            .process(RuntimeData::Json(serde_json::json!({})))
             .unwrap();
 
         if let RuntimeData::Json(json) = result {
@@ -599,14 +590,13 @@ mod tests {
             "is_clipping": true
         });
 
-        node.process_async(RuntimeData::Json(event)).await.unwrap();
+        node.process(RuntimeData::Json(event)).unwrap();
 
         // Force emit
         tokio::time::sleep(tokio::time::Duration::from_millis(1100)).await;
 
         let result = node
-            .process_async(RuntimeData::Json(serde_json::json!({})))
-            .await
+            .process(RuntimeData::Json(serde_json::json!({})))
             .unwrap();
 
         if let RuntimeData::Json(json) = result {

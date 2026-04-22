@@ -755,7 +755,7 @@ fn decode_wav_file(
 
     // Note: No resampling in fallback mode
     let chunk = RuntimeData::Audio {
-        samples,
+        samples: crate::data::audio_samples::AudioSamples::Vec(samples),
         sample_rate: target_sample_rate,
         channels: target_channels,
         stream_id: Some("audio:0".to_string()),

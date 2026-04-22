@@ -7,7 +7,7 @@
 //! Mono: Emits aggregate talk vs silence percentage
 
 use crate::data::RuntimeData;
-use crate::nodes::StreamingNode;
+use crate::nodes::{StreamingNode, SyncNodeWrapper, SyncStreamingNode};
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -369,26 +369,17 @@ impl ConversationFlowNode {
     }
 }
 
-#[async_trait::async_trait]
-impl StreamingNode for ConversationFlowNode {
+// Phase A-Wave 1: `SyncStreamingNode` — state uses `std::sync::RwLock`.
+impl SyncStreamingNode for ConversationFlowNode {
     fn node_type(&self) -> &str {
         "ConversationFlowNode"
     }
 
-    fn node_id(&self) -> &str {
-        &self.node_id
-    }
-
-    async fn initialize(&self) -> Result<(), Error> {
-        tracing::debug!("ConversationFlowNode {} initialized", self.node_id);
-        Ok(())
-    }
-
-    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         self.process_input(data)
     }
 
-    async fn process_multi_async(
+    fn process_multi(
         &self,
         inputs: HashMap<String, RuntimeData>,
     ) -> Result<RuntimeData, Error> {
@@ -422,7 +413,7 @@ impl crate::nodes::StreamingNodeFactory for ConversationFlowNodeFactory {
             serde_json::from_value(params.clone()).unwrap_or_default()
         };
 
-        Ok(Box::new(ConversationFlowNode::new(node_id, config)))
+        Ok(Box::new(SyncNodeWrapper(ConversationFlowNode::new(node_id, config))))
     }
 
     fn node_type(&self) -> &str {
@@ -510,19 +501,18 @@ mod tests {
         ];
 
         for event in events {
-            node.process_async(RuntimeData::Json(event)).await.unwrap();
+            node.process(RuntimeData::Json(event)).unwrap();
         }
 
         // Wait for emit interval
         tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
         let result = node
-            .process_async(RuntimeData::Json(serde_json::json!({
+            .process(RuntimeData::Json(serde_json::json!({
                 "event_type": "speech.presence",
                 "state": "speaking",
                 "timestamp_us": 3000000
             })))
-            .await
             .unwrap();
 
         if let RuntimeData::Json(json) = result {
@@ -557,19 +547,18 @@ mod tests {
         ];
 
         for event in events {
-            node.process_async(RuntimeData::Json(event)).await.unwrap();
+            node.process(RuntimeData::Json(event)).unwrap();
         }
 
         // Wait for emit interval
         tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
         let result = node
-            .process_async(RuntimeData::Json(serde_json::json!({
+            .process(RuntimeData::Json(serde_json::json!({
                 "event_type": "speech.presence",
                 "state": "silent",
                 "timestamp_us": 3000000
             })))
-            .await
             .unwrap();
 
         if let RuntimeData::Json(json) = result {

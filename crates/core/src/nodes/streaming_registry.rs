@@ -73,9 +73,10 @@ impl StreamingNodeFactory for VideoFlipNodeFactory {
         _session_id: Option<String>,
     ) -> Result<Box<dyn StreamingNode>, Error> {
         use crate::nodes::video_flip::VideoFlipConfig;
+        use crate::nodes::SyncNodeWrapper;
         let config: VideoFlipConfig = serde_json::from_value(params.clone()).unwrap_or_default();
         let node = VideoFlipNode::new(config);
-        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+        Ok(Box::new(SyncNodeWrapper(node)))
     }
 
     fn node_type(&self) -> &str {

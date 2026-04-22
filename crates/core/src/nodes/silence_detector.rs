@@ -3,7 +3,7 @@
 //! Detects silence periods and intermittent audio dropouts.
 
 use crate::data::RuntimeData;
-use crate::nodes::StreamingNode;
+use crate::nodes::{StreamingNode, SyncNodeWrapper, SyncStreamingNode};
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -211,26 +211,19 @@ impl SilenceDetectorNode {
     }
 }
 
-#[async_trait::async_trait]
-impl StreamingNode for SilenceDetectorNode {
+// Phase A-Wave 1: `SyncStreamingNode` — body is sync; internal state
+// already uses `std::sync::Mutex` / `AtomicU64` (no `.await`). Wrapped
+// through `SyncNodeWrapper` at the registry boundary.
+impl SyncStreamingNode for SilenceDetectorNode {
     fn node_type(&self) -> &str {
         "SilenceDetectorNode"
     }
 
-    fn node_id(&self) -> &str {
-        &self.node_id
-    }
-
-    async fn initialize(&self) -> Result<(), Error> {
-        tracing::debug!("SilenceDetectorNode {} initialized", self.node_id);
-        Ok(())
-    }
-
-    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         self.process_audio(data)
     }
 
-    async fn process_multi_async(
+    fn process_multi(
         &self,
         inputs: HashMap<String, RuntimeData>,
     ) -> Result<RuntimeData, Error> {
@@ -262,7 +255,7 @@ impl crate::nodes::StreamingNodeFactory for SilenceDetectorNodeFactory {
             serde_json::from_value(params.clone()).unwrap_or_default()
         };
 
-        Ok(Box::new(SilenceDetectorNode::new(node_id, config)))
+        Ok(Box::new(SyncNodeWrapper(SilenceDetectorNode::new(node_id, config))))
     }
 
     fn node_type(&self) -> &str {

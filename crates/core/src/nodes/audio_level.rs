@@ -3,7 +3,7 @@
 //! Calculates RMS energy and detects low volume conditions.
 
 use crate::data::RuntimeData;
-use crate::nodes::StreamingNode;
+use crate::nodes::{StreamingNode, SyncNodeWrapper, SyncStreamingNode};
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -150,30 +150,23 @@ impl AudioLevelNode {
     }
 }
 
-#[async_trait::async_trait]
-impl StreamingNode for AudioLevelNode {
+// Migrated to `SyncStreamingNode` in Phase A-Wave 1: body has no
+// `.await`, state is read-only (`config`, `node_id`). Runs through
+// `SyncNodeWrapper` at the registry boundary, removing the
+// `#[async_trait]`-induced `Box<dyn Future>` allocation per call.
+impl SyncStreamingNode for AudioLevelNode {
     fn node_type(&self) -> &str {
         "AudioLevelNode"
     }
 
-    fn node_id(&self) -> &str {
-        &self.node_id
-    }
-
-    async fn initialize(&self) -> Result<(), Error> {
-        tracing::debug!("AudioLevelNode {} initialized", self.node_id);
-        Ok(())
-    }
-
-    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         self.process_audio(data)
     }
 
-    async fn process_multi_async(
+    fn process_multi(
         &self,
         inputs: HashMap<String, RuntimeData>,
     ) -> Result<RuntimeData, Error> {
-        // Take first input
         if let Some((_key, data)) = inputs.into_iter().next() {
             self.process_audio(data)
         } else {
@@ -202,7 +195,7 @@ impl crate::nodes::StreamingNodeFactory for AudioLevelNodeFactory {
             serde_json::from_value(params.clone()).unwrap_or_default()
         };
 
-        Ok(Box::new(AudioLevelNode::new(node_id, config)))
+        Ok(Box::new(SyncNodeWrapper(AudioLevelNode::new(node_id, config))))
     }
 
     fn node_type(&self) -> &str {
