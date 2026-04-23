@@ -23,9 +23,20 @@ use tokio::sync::{Mutex, OnceCell};
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
 pub struct SileroVADConfig {
-    /// Speech probability threshold (0.0-1.0)
+    /// Speech probability threshold to **enter** the triggered
+    /// (speech) state. A prob >= this starts a new utterance.
     #[schemars(range(min = 0.0, max = 1.0))]
     pub threshold: f32,
+
+    /// Probability floor to **remain** in the triggered state.
+    /// A prob >= this keeps an in-flight utterance alive; only
+    /// when it drops below this does silence accumulation begin.
+    /// Must be <= `threshold`; if left unset the trigger logic
+    /// collapses to single-threshold Silero (prone to mid-word
+    /// cutoffs on soft phonemes). Typical: `threshold - 0.15`.
+    #[serde(alias = "negThreshold", default)]
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub neg_threshold: Option<f32>,
 
     /// Expected sample rate (8000 or 16000)
     #[serde(alias = "samplingRate")]
@@ -52,6 +63,7 @@ impl Default for SileroVADConfig {
     fn default() -> Self {
         Self {
             threshold: 0.5,
+            neg_threshold: None,
             sampling_rate: 16000,
             min_speech_duration_ms: 250,
             min_silence_duration_ms: 100,
@@ -94,8 +106,13 @@ impl Default for VADState {
 
 /// Silero VAD Streaming Node
 pub struct SileroVADNode {
-    /// Speech probability threshold (0.0-1.0)
+    /// Speech probability threshold to ENTER speech (0.0-1.0)
     threshold: f32,
+    /// Probability floor to REMAIN in speech (0.0..=threshold).
+    /// A brief dip below `threshold` but above `neg_threshold` does
+    /// NOT start silence accumulation — this prevents mid-word
+    /// cutoffs on soft phonemes / quiet syllables.
+    neg_threshold: f32,
     /// Expected sample rate (8000 or 16000)
     sampling_rate: u32,
     /// Minimum speech duration in ms to trigger
@@ -118,8 +135,16 @@ pub struct SileroVADNode {
 impl SileroVADNode {
     /// Create a new SileroVADNode with the given configuration
     pub fn with_config(config: SileroVADConfig) -> Self {
+        // Default release threshold sits 0.15 below the trigger
+        // threshold and can't go above it (that would be inverted
+        // hysteresis — immediate cutoffs).
+        let neg_threshold = config
+            .neg_threshold
+            .unwrap_or((config.threshold - 0.15).max(0.0))
+            .min(config.threshold);
         Self {
             threshold: config.threshold,
+            neg_threshold,
             sampling_rate: config.sampling_rate,
             min_speech_duration_ms: config.min_speech_duration_ms,
             min_silence_duration_ms: config.min_silence_duration_ms,
@@ -140,6 +165,7 @@ impl SileroVADNode {
     ) -> Self {
         Self::with_config(SileroVADConfig {
             threshold: threshold.unwrap_or(0.5),
+            neg_threshold: None,
             sampling_rate: sampling_rate.unwrap_or(16000),
             min_speech_duration_ms: min_speech_duration_ms.unwrap_or(250),
             min_silence_duration_ms: min_silence_duration_ms.unwrap_or(100),
@@ -357,6 +383,26 @@ impl AsyncStreamingNode for SileroVADNode {
                 .entry(session_key.clone())
                 .or_insert_with(VADState::default);
 
+            // Raw-signal stats (computed before VAD runs). These go out
+            // on the vad.out JSON so operators can see whether the
+            // input is actually silent, near-silent, or loud — useful
+            // when VAD fires unexpectedly and the user wants to
+            // confirm "is my mic sending audio at all?".
+            let (rms, peak) = if mono.is_empty() {
+                (0.0_f32, 0.0_f32)
+            } else {
+                let mut sum_sq = 0.0_f64;
+                let mut pk = 0.0_f32;
+                for &s in &mono {
+                    sum_sq += (s as f64) * (s as f64);
+                    let a = s.abs();
+                    if a > pk {
+                        pk = a;
+                    }
+                }
+                ((sum_sq / mono.len() as f64).sqrt() as f32, pk)
+            };
+
             // Run VAD
             let speech_prob = self.run_vad(&mono, state).await?;
 
@@ -364,6 +410,14 @@ impl AsyncStreamingNode for SileroVADNode {
             let mut is_speech_start = false;
             let mut is_speech_end = false;
 
+            // Hysteresis: use `threshold` to enter speech and the
+            // lower `neg_threshold` as the floor for staying in
+            // speech. This is how every production Silero wrapper
+            // (pyannote, silero-vad-lite, livekit) runs the model.
+            // Without it, a 32 ms dip to e.g. 0.55 on a soft /s/ or
+            // /f/ is enough to start silence accumulation, and the
+            // next frame that drops to 0.4 finishes the cut-off
+            // mid-word.
             if speech_prob >= self.threshold {
                 if !state.triggered {
                     is_speech_start = true;
@@ -372,15 +426,23 @@ impl AsyncStreamingNode for SileroVADNode {
                 }
                 state.temp_end_samples = 0;
             } else if state.triggered {
-                state.temp_end_samples += mono.len();
-                let silence_duration_ms =
-                    (state.temp_end_samples as f32 / self.sampling_rate as f32 * 1000.0) as u32;
-
-                if silence_duration_ms >= self.min_silence_duration_ms {
-                    is_speech_end = true;
-                    state.triggered = false;
+                if speech_prob >= self.neg_threshold {
+                    // Still speaking — soft-phoneme dip. Hold the
+                    // triggered state, reset any pending silence
+                    // accumulation so a short dip doesn't bleed
+                    // into the next "real" silence window.
                     state.temp_end_samples = 0;
-                    tracing::info!("Speech ended (silence={}ms)", silence_duration_ms);
+                } else {
+                    state.temp_end_samples += mono.len();
+                    let silence_duration_ms =
+                        (state.temp_end_samples as f32 / self.sampling_rate as f32 * 1000.0) as u32;
+
+                    if silence_duration_ms >= self.min_silence_duration_ms {
+                        is_speech_end = true;
+                        state.triggered = false;
+                        state.temp_end_samples = 0;
+                        tracing::info!("Speech ended (silence={}ms)", silence_duration_ms);
+                    }
                 }
             }
 
@@ -393,6 +455,14 @@ impl AsyncStreamingNode for SileroVADNode {
                 "is_speech_start": is_speech_start,
                 "is_speech_end": is_speech_end,
                 "timestamp_ms": (state.current_sample as f32 / self.sampling_rate as f32 * 1000.0) as u64,
+                // Raw-input stats (post-resample, post-mono-downmix).
+                // Exposed on the control-bus tap so UIs can plot
+                // "what the pipeline is actually hearing" alongside
+                // the speech-probability.
+                "rms": rms,
+                "peak": peak,
+                "samples": mono.len(),
+                "sample_rate": self.sampling_rate,
             });
 
             drop(states); // Release lock

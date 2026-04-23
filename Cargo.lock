@@ -5793,6 +5793,7 @@ dependencies = [
  "prost",
  "protobuf-src",
  "remotemedia-core",
+ "remotemedia-python-nodes",
  "remotemedia-webrtc",
  "serde",
  "serde_json",

@@ -152,6 +152,7 @@ impl SpeculativeVADCoordinator {
         #[cfg(feature = "silero-vad")]
         let vad_node = SileroVADNode::with_config(SileroVADConfig {
             threshold: config.vad_threshold,
+            neg_threshold: None,
             sampling_rate: config.sample_rate,
             min_speech_duration_ms: config.min_speech_duration_ms,
             min_silence_duration_ms: config.min_silence_duration_ms,

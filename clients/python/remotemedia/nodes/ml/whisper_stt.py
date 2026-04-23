@@ -50,6 +50,49 @@ logger = logging.getLogger(__name__)
 WHISPER_SAMPLE_RATE = 16000
 
 
+# Whisper's well-documented "silence hallucinations" — phrases it emits
+# on near-silent / ambient clips because they're high-probability
+# completions in its training distribution. Passing these through as
+# user turns to LFM2 causes the model to reply to nobody, which looks
+# like the assistant "going crazy on its own". These are compared
+# case-insensitive against the stripped, punctuation-trimmed transcript;
+# any match is dropped.
+#
+# List is drawn from the failure modes reported against whisper-tiny
+# on empty audio; extend here if you see others recur in the log.
+_SILENCE_HALLUCINATIONS = frozenset(
+    s.lower()
+    for s in (
+        "",
+        ".",
+        "you",
+        "thank you",
+        "thanks",
+        "thanks for watching",
+        "thanks for watching!",
+        "thank you for watching",
+        "bye",
+        "bye.",
+        "goodbye",
+        "goodbye.",
+        "okay",
+        "ok",
+        "hmm",
+        "mhm",
+        "uh",
+        "um",
+        "...",
+        ". .",
+        ". . .",
+    )
+)
+
+
+def _is_likely_hallucination(text: str) -> bool:
+    norm = text.strip().strip(".!? ").lower()
+    return norm in _SILENCE_HALLUCINATIONS
+
+
 def _extract_audio_fields(data: Any) -> "tuple[Any, int, int]":
     """
     Pull ``(samples_f32, sample_rate, channels)`` out of a RuntimeData.
@@ -252,5 +295,12 @@ class WhisperSTTNode(MultiprocessNode):
             "[%s] transcript (%d samples @ %dHz): %r",
             self.node_id, audio.size, WHISPER_SAMPLE_RATE, text[:120],
         )
-        if text:
-            yield RuntimeData.text(text)
+        if not text:
+            return
+        if _is_likely_hallucination(text):
+            logger.info(
+                "[%s] dropping likely silence-hallucination: %r",
+                self.node_id, text[:120],
+            )
+            return
+        yield RuntimeData.text(text)

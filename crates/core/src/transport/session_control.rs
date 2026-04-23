@@ -77,8 +77,10 @@ use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
 
 // Capacity of the per-(node,port) output broadcast channel.
 // Slow subscribers get `RecvError::Lagged` and skip ahead — never block the
-// hot path. Sized for ~200 ms at 48kHz/20ms frames.
-const DEFAULT_TAP_CAPACITY: usize = 16;
+// hot path. Sized for bursty multi-output nodes (e.g. LFM2-Audio emitting
+// 20+ text tokens + 60+ audio-liveness envelopes per turn). 16 was enough
+// for 20ms mic frames but truncated every model reply.
+const DEFAULT_TAP_CAPACITY: usize = 1024;
 
 // Deadline a node's output will wait on an intercept reply before the
 // original frame is passed through unchanged (and a warning is logged).

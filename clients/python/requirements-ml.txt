@@ -1,5 +1,5 @@
 # Machine Learning dependencies (optional)
-numpy>=1.26.0,<2.0
+numpy>=1.26.0,<3.0
 torch>=2.0.0
 transformers>=4.30.0
 torchvision>=0.15.0

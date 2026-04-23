@@ -17,10 +17,49 @@ import sys
 import signal
 import os
 import pathlib
+import threading
+import time
 from typing import Optional, Dict, Any
 
 from remotemedia.core import MultiprocessNode, NodeConfig, NodeStatus
 from remotemedia.core.multiprocessing import get_node_class
+
+
+def _install_parent_death_watcher() -> None:
+    """Self-terminate when the parent Rust process dies.
+
+    macOS has no ``PR_SET_PDEATHSIG`` equivalent — if the Rust server is
+    SIGKILL'd or the controlling terminal closes, our parent becomes
+    ``launchd`` (pid 1) and we keep running forever, each worker
+    spinning ~25% CPU in its poll loop. This daemon thread polls
+    ``os.getppid()`` every 2s and calls ``os._exit(0)`` as soon as the
+    parent disappears. Linux already gets the same via
+    ``prctl(PR_SET_PDEATHSIG, SIGTERM)`` in the Rust spawner, so this
+    is belt-and-suspenders on Linux but load-bearing on macOS.
+    """
+    initial_ppid = os.getppid()
+    if initial_ppid in (0, 1):
+        # We were already orphaned before we could install the watcher.
+        # Exit immediately rather than accumulating another runaway.
+        os._exit(0)
+
+    def _watch() -> None:
+        while True:
+            time.sleep(2.0)
+            ppid = os.getppid()
+            if ppid == 1 or ppid != initial_ppid:
+                # Parent died (reparented to init/launchd) or got
+                # swapped in a way we can't reason about. Bail out
+                # without trying to run async cleanup — by now the
+                # iceoryx2 shared memory is already gone on the other
+                # side, so there's nothing to flush.
+                os._exit(0)
+
+    threading.Thread(
+        target=_watch,
+        name="parent-death-watcher",
+        daemon=True,
+    ).start()
 
 
 def detect_container_environment() -> tuple[bool, dict[str, str]]:
@@ -422,6 +461,10 @@ def parse_arguments() -> argparse.Namespace:
 
 async def main() -> None:
     """Main entry point for the node runner."""
+    # Install before anything else so slow startup (model loads) can
+    # still be aborted if the parent dies during initialization.
+    _install_parent_death_watcher()
+
     # Parse arguments
     args = parse_arguments()
 

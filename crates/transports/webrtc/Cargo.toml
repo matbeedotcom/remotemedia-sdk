@@ -13,8 +13,12 @@ name = "remotemedia_webrtc"
 crate-type = ["rlib"]
 
 [dependencies]
-# Core runtime (with default features: multiprocess, silero-vad, docker)
-remotemedia-core = { path = "../../core", default-features = true }
+# Core runtime (with default features: multiprocess, silero-vad, docker).
+# `bundled-uv` enables the uv binary downloader so managed venvs can
+# provision their own Python 3.12 regardless of what's on PATH — needed
+# by the mlx-vlm / mlx-audio demo servers where the system interpreter
+# (e.g. miniconda 3.10) is too old to host the wheels.
+remotemedia-core = { path = "../../core", default-features = true, features = ["bundled-uv"] }
 
 # WebRTC peer connections, ICE, DTLS, SRTP
 webrtc = "0.14.0"
@@ -83,8 +87,26 @@ tokio-test = "0.4"
 criterion = "0.5"
 tracing-subscriber = { workspace = true }
 
+# Pull Python node factories (LFM2AudioNode, WhisperSTTNode, …) into
+# the default streaming registry for example binaries. They register
+# themselves via `inventory::submit!` so the crate just needs to be
+# linked in — the `_python_nodes_link` alias in the example forces that.
+remotemedia-python-nodes = { path = "../../python-nodes" }
+
 # Enable grpc-signaling for E2E tests
 remotemedia-webrtc = { path = ".", features = ["grpc-signaling"] }
+
+[[example]]
+name = "lfm2_audio_webrtc_server"
+required-features = ["ws-signaling"]
+
+[[example]]
+name = "qwen_s2s_webrtc_server"
+required-features = ["ws-signaling"]
+
+[[example]]
+name = "webrtc_test_server"
+required-features = ["ws-signaling"]
 
 [build-dependencies]
 tonic-prost-build = { workspace = true }

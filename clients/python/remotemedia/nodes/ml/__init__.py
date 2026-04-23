@@ -55,6 +55,9 @@ for _mod, _attrs in [
     ("lfm2_audio", ["LFM2AudioNode"]),
     ("lfm2_audio_mlx", ["LFM2AudioMlxNode"]),
     ("lfm2_text", ["LFM2TextNode"]),
+    ("personaplex_audio_mlx", ["PersonaPlexAudioMlxNode"]),
+    ("qwen_text_mlx", ["QwenTextMlxNode"]),
+    ("qwen_tts_mlx", ["QwenTTSMlxNode"]),
     ("whisper_stt", ["WhisperSTTNode"]),
 ]:
     _loaded.update(_try_import(_mod, _attrs))

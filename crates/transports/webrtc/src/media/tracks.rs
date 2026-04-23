@@ -96,7 +96,7 @@ impl AudioTrack {
     /// - Transmission (dedicated thread): Dequeue frames and send at real-time pace (20ms intervals)
     /// - This decouples TTS generation speed from playback speed, preventing interruptions
     pub async fn send_audio(&self, samples: Arc<Vec<f32>>, sample_rate: u32) -> Result<()> {
-        use tracing::info;
+        use tracing::{info, trace};
 
         // Phase B2: encoder / decoder / sender / timestamp locks
         // swapped from `tokio::sync::RwLock` to `parking_lot::RwLock`.
@@ -133,7 +133,7 @@ impl AudioTrack {
         let frame_size = (sample_rate as usize * 20) / 1000; // 20ms frame
         let frame_duration = Duration::from_millis(20);
 
-        info!(
+        trace!(
             "AudioTrack: Enqueuing {} samples as {}sample frames @ {}Hz (duration: {:.2}s)",
             samples.len(),
             frame_size,
@@ -174,7 +174,7 @@ impl AudioTrack {
             frames_enqueued += 1;
         }
 
-        info!(
+        trace!(
             "AudioTrack: Enqueued {} frames into ring buffer (buffer size: {})",
             frames_enqueued,
             sender.buffer_len()
@@ -214,6 +214,22 @@ impl AudioTrack {
         debug!("Decoded {} samples from RTP packet", samples.len());
 
         Ok(samples)
+    }
+
+    /// Drain any queued TTS audio from the sender ring buffer
+    /// without stopping the sender thread.
+    ///
+    /// Used on barge-in: the user started speaking while the
+    /// assistant still had ~10 s of generated audio queued for
+    /// playback. Without this the assistant keeps talking over
+    /// the user until the ring buffer drains. Returns the number
+    /// of frames that were dropped.
+    pub async fn flush_send_buffer(&self) -> usize {
+        if let Some(sender) = self.sender.read().await.as_ref() {
+            sender.flush_buffer()
+        } else {
+            0
+        }
     }
 
     /// Get current RTP timestamp

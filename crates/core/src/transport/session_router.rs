@@ -67,7 +67,7 @@ pub const DEFAULT_ROUTER_INPUT_CAPACITY: usize = 8;
 /// Callers (`PipelineExecutor::create_session`, transport streaming handlers)
 /// create the output channel and pass the sender in; this constant is the
 /// recommended default. Same sizing rationale as the input capacity.
-pub const DEFAULT_ROUTER_OUTPUT_CAPACITY: usize = 8;
+pub const DEFAULT_ROUTER_OUTPUT_CAPACITY: usize = 256;
 
 /// Read the input-channel capacity from the environment, falling back to
 /// [`DEFAULT_ROUTER_INPUT_CAPACITY`].
@@ -131,13 +131,20 @@ pub struct SessionRouter {
     /// Channel to receive inputs from client.
     ///
     /// Bounded — see [`DEFAULT_ROUTER_INPUT_CAPACITY`].
-    input_rx: Option<mpsc::Receiver<DataPacket>>,
+    ///
+    /// Wrapped in `std::sync::Mutex` so the router struct stays `Sync`
+    /// once it is shared across per-packet spawn tasks (`tokio::spawn`
+    /// requires `Arc<Self>: Send`, which requires `Self: Sync`). The
+    /// receiver is `take()`-n once at the top of `run()` and used
+    /// locally from then on, so lock contention is irrelevant.
+    input_rx: std::sync::Mutex<Option<mpsc::Receiver<DataPacket>>>,
 
     /// Channel to send inputs to router (held by external code, dropped in run()).
     input_tx: Option<mpsc::Sender<DataPacket>>,
 
-    /// Shutdown signal receiver
-    shutdown_rx: Option<mpsc::Receiver<()>>,
+    /// Shutdown signal receiver. See [`Self::input_rx`] for why the
+    /// receiver is wrapped in a `std::sync::Mutex`.
+    shutdown_rx: std::sync::Mutex<Option<mpsc::Receiver<()>>>,
 
     /// Shutdown signal sender (held externally)
     _shutdown_tx: mpsc::Sender<()>,
@@ -281,9 +288,9 @@ impl SessionRouter {
             registry,
             cached_nodes: HashMap::new(),
             output_tx,
-            input_rx: Some(input_rx),
+            input_rx: std::sync::Mutex::new(Some(input_rx)),
             input_tx: Some(input_tx),
-            shutdown_rx: Some(shutdown_rx),
+            shutdown_rx: std::sync::Mutex::new(Some(shutdown_rx)),
             _shutdown_tx: shutdown_tx,
             resolution_ctx: None,
             scheduler,
@@ -529,7 +536,7 @@ impl SessionRouter {
     }
 
     /// Start the router - runs until shutdown signal
-    pub fn start(mut self) -> JoinHandle<()> {
+    pub fn start(self) -> JoinHandle<()> {
         let session_id = self.session_id.clone();
         tracing::info!("Session {}: Starting session router", session_id);
 
@@ -547,11 +554,22 @@ impl SessionRouter {
     /// This is the public entry point for starting the session router.
     /// It takes ownership of the input/shutdown channels and processes
     /// data through the pipeline graph.
-    pub async fn run_public(&mut self) -> Result<()> {
+    pub async fn run_public(self) -> Result<()> {
         self.run().await
     }
 
-    async fn run(&mut self) -> Result<()> {
+    /// Max concurrent in-flight `process_input` tasks per session.
+    ///
+    /// Each received packet is dispatched on its own tokio task so a
+    /// slow downstream node (e.g. a multi-second TTS/LLM generation)
+    /// does NOT starve upstream nodes (VAD, STT) on subsequent packets.
+    /// The semaphore caps fan-out so a pathologically slow sink can't
+    /// accumulate unbounded tasks — when full, the loop awaits a permit
+    /// at `acquire_owned`, which naturally propagates back through
+    /// `input_rx.recv()` as transport-level backpressure.
+    const MAX_INFLIGHT_PROCESS_INPUT: usize = 16;
+
+    async fn run(mut self) -> Result<()> {
         // Initialize all nodes before processing starts
         self.initialize_nodes().await?;
 
@@ -561,11 +579,15 @@ impl SessionRouter {
 
         let mut input_rx = self
             .input_rx
+            .lock()
+            .unwrap()
             .take()
             .ok_or_else(|| crate::Error::Execution("Input channel already taken".to_string()))?;
 
         let mut shutdown_rx = self
             .shutdown_rx
+            .lock()
+            .unwrap()
             .take()
             .ok_or_else(|| crate::Error::Execution("Shutdown channel already taken".to_string()))?;
 
@@ -573,6 +595,15 @@ impl SessionRouter {
             "Session {}: Router running, waiting for input...",
             self.session_id
         );
+
+        // Share `self` across per-packet spawn tasks. `process_input`
+        // only reads from `self` — node instances use interior
+        // mutability to serialize their own state — so `Arc<Self>` is
+        // safe. See `MAX_INFLIGHT_PROCESS_INPUT` for the concurrency cap.
+        let core = Arc::new(self);
+        let concurrency = Arc::new(tokio::sync::Semaphore::new(
+            Self::MAX_INFLIGHT_PROCESS_INPUT,
+        ));
 
         loop {
             // Start of the `recv` wait — used as the `ingress` probe sample.
@@ -584,28 +615,48 @@ impl SessionRouter {
                     match result {
                         Some(packet) => {
                             // ingress: wall time from loop-top to packet delivery.
-                            self.probes.ingress.record_since(ingress_start);
+                            core.probes.ingress.record_since(ingress_start);
 
                             tracing::debug!(
                                 "Session {}: Received input packet (seq: {}, from: {})",
-                                self.session_id,
+                                core.session_id,
                                 packet.sequence,
                                 packet.from_node
                             );
 
-                            if let Err(e) = self.process_input(packet).await {
-                                tracing::error!("Session {}: Processing error: {}", self.session_id, e);
-                                // Continue processing other inputs
-                            }
+                            // Acquire a concurrency slot. Awaits when full
+                            // so backpressure reaches input_rx naturally.
+                            let permit = match Arc::clone(&concurrency).acquire_owned().await {
+                                Ok(p) => p,
+                                Err(_) => break, // semaphore closed — shutdown
+                            };
+
+                            let core_for_task = Arc::clone(&core);
+                            tokio::spawn(async move {
+                                let _permit = permit;
+                                if let Err(e) = core_for_task.process_input(packet).await {
+                                    tracing::error!(
+                                        "Session {}: Processing error: {}",
+                                        core_for_task.session_id,
+                                        e
+                                    );
+                                }
+                            });
                         }
                         None => {
-                            tracing::info!("Session {}: Input channel closed, shutting down", self.session_id);
+                            tracing::info!(
+                                "Session {}: Input channel closed, shutting down",
+                                core.session_id
+                            );
                             break;
                         }
                     }
                 }
                 _ = shutdown_rx.recv() => {
-                    tracing::info!("Session {}: Shutdown signal received", self.session_id);
+                    tracing::info!(
+                        "Session {}: Shutdown signal received",
+                        core.session_id
+                    );
                     break;
                 }
             }
@@ -613,7 +664,7 @@ impl SessionRouter {
 
         // Wake every attached control client so they drain and exit.
         // Idempotent — harmless if no control is attached.
-        if let Some(ctrl) = &self.control {
+        if let Some(ctrl) = &core.control {
             ctrl.signal_close(CloseReason::Normal);
         }
 
@@ -662,7 +713,7 @@ impl SessionRouter {
     /// [`remotemedia-rt-bridge`] crate to bridge RT threads to the async
     /// router through SPSC rings, or call
     /// [`crate::nodes::process_sync`] directly on a sync node.
-    async fn process_input(&mut self, packet: DataPacket) -> Result<()> {
+    async fn process_input(&self, packet: DataPacket) -> Result<()> {
         let start_time = std::time::Instant::now();
 
         // Stamp arrival timestamp on incoming data (spec 026)
@@ -730,7 +781,7 @@ impl SessionRouter {
             };
 
             if inputs.is_empty() {
-                tracing::warn!(
+                tracing::trace!(
                     "Session {}: Node '{}' has no inputs, skipping",
                     self.session_id,
                     node_id
@@ -793,14 +844,26 @@ impl SessionRouter {
             // Collect outputs from this node using a shared buffer
             let node_outputs_ref = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
 
+            // Real-time sink streaming: if this node is a sink, each
+            // callback invocation forwards the yield directly to the
+            // client `output_tx` via `try_send`. Without this the
+            // router would collect ALL of a node's yields into the Vec
+            // above and only forward them after `process_streaming_async`
+            // returned — which batches TTS audio chunks for the full
+            // synthesis duration and destroys real-time playback.
+            //
+            // For non-sink nodes we still batch; downstream nodes run
+            // after their predecessor completes so we need the full
+            // output set available when their turn arrives.
+            let is_sink = self.graph.sinks.contains(node_id);
+            let sink_tx = if is_sink {
+                Some(self.output_tx.clone())
+            } else {
+                None
+            };
+
             // Process each input through the node via scheduler (spec 026)
             for input in inputs {
-                let node_outputs_clone = node_outputs_ref.clone();
-                let _callback = Box::new(move |output: RuntimeData| -> crate::Result<()> {
-                    node_outputs_clone.lock().unwrap().push(output);
-                    Ok(())
-                });
-
                 let session_id = self.session_id.clone();
                 let node_id_owned = node_id.clone();
 
@@ -818,12 +881,27 @@ impl SessionRouter {
                     let node_ref = node;
                     let input_clone = input.clone();
                     let session_clone = session_id.clone();
-                    let cb = Box::new({
-                        let outputs = node_outputs_ref.clone();
-                        move |output: RuntimeData| {
+                    let outputs = node_outputs_ref.clone();
+                    let sink_tx_clone = sink_tx.clone();
+                    let node_id_log = node_id_owned.clone();
+                    let cb = Box::new(move |output: RuntimeData| {
+                        if let Some(ref tx) = sink_tx_clone {
+                            // Stream sink yields straight to the client.
+                            // try_send is non-blocking; on failure (full
+                            // or closed) we fall back to the batched Vec
+                            // so the end-of-input drain still picks
+                            // them up.
+                            if let Err(e) = tx.try_send(output.clone()) {
+                                tracing::warn!(
+                                    "sink '{}' try_send fell back to batch: {}",
+                                    node_id_log, e,
+                                );
+                                outputs.lock().unwrap().push(output);
+                            }
+                        } else {
                             outputs.lock().unwrap().push(output);
-                            Ok(())
                         }
+                        Ok(())
                     });
                     scheduler
                         .execute_streaming_node_fast(&node_id_owned, || async move {
@@ -840,12 +918,22 @@ impl SessionRouter {
                             let node_ref = node;
                             let input_clone = input.clone();
                             let session_clone = session_id.clone();
-                            let cb = Box::new({
-                                let outputs = node_outputs_ref.clone();
-                                move |output: RuntimeData| {
+                            let outputs = node_outputs_ref.clone();
+                            let sink_tx_clone = sink_tx.clone();
+                            let node_id_log = node_id_owned.clone();
+                            let cb = Box::new(move |output: RuntimeData| {
+                                if let Some(ref tx) = sink_tx_clone {
+                                    if let Err(e) = tx.try_send(output.clone()) {
+                                        tracing::warn!(
+                                            "sink '{}' try_send fell back to batch: {}",
+                                            node_id_log, e,
+                                        );
+                                        outputs.lock().unwrap().push(output);
+                                    }
+                                } else {
                                     outputs.lock().unwrap().push(output);
-                                    Ok(())
                                 }
+                                Ok(())
                             });
                             async move {
                                 node_ref
@@ -944,7 +1032,7 @@ impl SessionRouter {
         }
 
         let elapsed = start_time.elapsed();
-        tracing::info!(
+        tracing::trace!(
             "Session {}: Processed input through {} nodes in {:?}",
             self.session_id,
             self.graph.execution_order.len(),

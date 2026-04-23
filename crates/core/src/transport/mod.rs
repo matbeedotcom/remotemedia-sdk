@@ -40,7 +40,7 @@ pub mod executor;
 // Re-export key types for convenience
 pub use client::{ClientStreamSession, PipelineClient, TransportType};
 pub use data::TransportData;
-pub use executor::{ExecutorConfig, PipelineExecutor, SessionHandle};
+pub use executor::{ExecutorConfig, PipelineExecutor, SessionHandle, SessionInputSender};
 pub use plugin_registry::TransportPluginRegistry;
 pub use session::{StreamSession, StreamSessionHandle};
 pub use session_router::{

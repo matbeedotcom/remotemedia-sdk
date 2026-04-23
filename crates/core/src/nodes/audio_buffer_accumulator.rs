@@ -58,10 +58,32 @@ pub struct AudioBufferAccumulatorNode {
     /// Buffer states per session
     states: Arc<Mutex<std::collections::HashMap<String, BufferState>>>,
 
-    /// Pending audio chunks waiting for VAD event (per session)
-    /// When we receive audio before VAD, we store it here
-    pending_audio: Arc<Mutex<std::collections::HashMap<String, Vec<(Vec<f32>, u32, u32)>>>>,
+    /// Pending audio chunks waiting for VAD event (per session).
+    /// Each entry carries an arrival-time `Instant` so old chunks can
+    /// be age-evicted: without that, a partial utterance whose tail
+    /// never triggered `speech_end` (the user stopped mid-sentence,
+    /// or the assistant's own output drowned out their trailing
+    /// words) leaves 640 ms of stale speech in pending — which later
+    /// gets glued onto a brand-new utterance as a phantom prefix the
+    /// STT transcribes as if it were part of the current turn.
+    pending_audio: Arc<
+        Mutex<
+            std::collections::HashMap<
+                String,
+                Vec<(Vec<f32>, u32, u32, std::time::Instant)>,
+            >,
+        >,
+    >,
 }
+
+/// Hard cap on how old a chunk sitting in `pending_audio` may be before
+/// it is discarded. The prefix-padding we glue onto a new utterance at
+/// `speech_start` is only useful when it actually precedes the current
+/// speech — anything older than this window is guaranteed stale and
+/// only serves to contaminate the next transcript. 500 ms sits just
+/// beyond the 20-chunk count cap (~640 ms) so normal continuous
+/// capture still gets its pre-roll.
+const MAX_PENDING_AGE_MS: u128 = 500;
 
 impl AudioBufferAccumulatorNode {
     pub fn new(
@@ -128,7 +150,10 @@ impl AudioBufferAccumulatorNode {
         audio_buf: &ProtoAudioBuffer,
         session_id: &str,
         states: &mut std::collections::HashMap<String, BufferState>,
-        pending: &mut std::collections::HashMap<String, Vec<(Vec<f32>, u32, u32)>>,
+        pending: &mut std::collections::HashMap<
+            String,
+            Vec<(Vec<f32>, u32, u32, std::time::Instant)>,
+        >,
     ) -> Result<Option<RuntimeData>> {
         let samples = self.convert_audio_to_f32(audio_buf)?;
 
@@ -178,7 +203,23 @@ impl AudioBufferAccumulatorNode {
                 .entry(session_id.to_string())
                 .or_insert_with(Vec::new);
 
-            pending_vec.push((samples, audio_buf.sample_rate, audio_buf.channels));
+            let now = std::time::Instant::now();
+            pending_vec.push((
+                samples,
+                audio_buf.sample_rate,
+                audio_buf.channels,
+                now,
+            ));
+
+            // Age-based eviction: drop anything older than the
+            // pre-roll window. This is the primary defence against
+            // stale audio leaking into a later utterance when the
+            // chunk arrival rate drops (mic muted, network hiccup,
+            // client paused). Count-based cap below still runs as a
+            // belt-and-braces size limit.
+            pending_vec.retain(|(_, _, _, t)| {
+                now.duration_since(*t).as_millis() <= MAX_PENDING_AGE_MS
+            });
 
             // Keep only last 20 chunks for speech padding (~640ms at 16kHz/512 samples)
             // This prevents accumulating minutes of silence between utterances
@@ -196,7 +237,10 @@ impl AudioBufferAccumulatorNode {
         vad_json: &serde_json::Value,
         session_id: &str,
         states: &mut std::collections::HashMap<String, BufferState>,
-        pending: &mut std::collections::HashMap<String, Vec<(Vec<f32>, u32, u32)>>,
+        pending: &mut std::collections::HashMap<
+            String,
+            Vec<(Vec<f32>, u32, u32, std::time::Instant)>,
+        >,
     ) -> Result<Option<RuntimeData>> {
         let is_speech_start = vad_json
             .get("is_speech_start")
@@ -223,15 +267,34 @@ impl AudioBufferAccumulatorNode {
             state.accumulated_samples.clear();
             state.chunks_accumulated = 0;
 
-            // Add pending chunks that contain the beginning of speech
-            if let Some(pending_chunks) = pending.remove(session_id) {
+            // Add pending chunks that contain the beginning of
+            // speech, but FIRST drop any chunk older than the pre-roll
+            // window — the count-based cap alone lets a partial prior
+            // utterance linger here when chunk arrival stalls, and
+            // that stale audio would otherwise be glued onto this
+            // brand-new utterance as a phantom prefix that Whisper
+            // transcribes as if it were part of the current turn.
+            if let Some(mut pending_chunks) = pending.remove(session_id) {
+                let now = std::time::Instant::now();
+                let before = pending_chunks.len();
+                pending_chunks.retain(|(_, _, _, t)| {
+                    now.duration_since(*t).as_millis() <= MAX_PENDING_AGE_MS
+                });
+                let evicted = before - pending_chunks.len();
+                if evicted > 0 {
+                    tracing::info!(
+                        "[AudioBuffer] Session {}: dropped {} stale pending chunk(s) (> {} ms old)",
+                        session_id, evicted, MAX_PENDING_AGE_MS,
+                    );
+                }
+
                 tracing::info!(
                     "[AudioBuffer] Session {}: Speech started, adding {} pending chunks to buffer",
                     session_id,
                     pending_chunks.len()
                 );
 
-                for (samples, sr, ch) in pending_chunks {
+                for (samples, sr, ch, _t) in pending_chunks {
                     state.accumulated_samples.extend_from_slice(&samples);
                     state.sample_rate = sr;
                     state.channels = ch;
@@ -246,7 +309,25 @@ impl AudioBufferAccumulatorNode {
 
             Ok(None)
         } else if is_speech_end {
-            // Output accumulated buffer
+            // Always clear pending on speech_end, whether or not
+            // `state.is_speaking` happens to be true. If the two go
+            // out of sync (VAD re-emits end without a preceding
+            // start, state was reset by barge-in, etc.), leaving
+            // pending populated means stale audio gets glued onto
+            // the NEXT utterance as a phantom prefix. This is the
+            // failure mode behind "I said that a minute ago" —
+            // the user's untriggered tail was parked in pending and
+            // re-emerged when the next speech_start fired.
+            if let Some(old_pending) = pending.remove(session_id) {
+                if !old_pending.is_empty() {
+                    tracing::info!(
+                        "[AudioBuffer] Session {}: Cleared {} pending chunks on speech_end",
+                        session_id,
+                        old_pending.len()
+                    );
+                }
+            }
+
             if let Some(state) = states.get_mut(session_id) {
                 if state.is_speaking {
                     tracing::info!(
@@ -256,18 +337,7 @@ impl AudioBufferAccumulatorNode {
                         state.chunks_accumulated
                     );
 
-                    let result = self.flush_buffer(state, session_id);
-
-                    // Clear any pending buffer to start fresh for next utterance
-                    if let Some(old_pending) = pending.remove(session_id) {
-                        tracing::info!(
-                            "[AudioBuffer] Session {}: Cleared {} pending chunks after speech end",
-                            session_id,
-                            old_pending.len()
-                        );
-                    }
-
-                    return result;
+                    return self.flush_buffer(state, session_id);
                 }
             }
 
@@ -305,15 +375,45 @@ impl AudioBufferAccumulatorNode {
             return Ok(None);
         }
 
+        // Energy gate — reject silent / near-silent utterances. Silero
+        // occasionally reports high speech-probability on ambient
+        // self-noise from the mic capture layer (condenser hiss,
+        // codec residue, etc.); the resulting near-silent flush
+        // then feeds Whisper, which is famous for hallucinating
+        // "Thank you." / "Bye." / "you." on silence. Kill both
+        // failure modes at the source by dropping the flush if peak
+        // amplitude is below a threshold. 0.02 ≈ -34 dBFS — well
+        // below any real speech level, but above codec dither.
+        const MIN_PEAK_AMPLITUDE: f32 = 0.02;
+        let peak = state
+            .accumulated_samples
+            .iter()
+            .fold(0.0_f32, |acc, &s| acc.max(s.abs()));
+        if peak < MIN_PEAK_AMPLITUDE {
+            tracing::info!(
+                "[AudioBuffer] Session {}: Dropping {}ms / {} samples — peak {:.4} < {:.4} (silence)",
+                session_id,
+                duration_ms,
+                state.accumulated_samples.len(),
+                peak,
+                MIN_PEAK_AMPLITUDE
+            );
+            state.accumulated_samples.clear();
+            state.is_speaking = false;
+            state.chunks_accumulated = 0;
+            return Ok(None);
+        }
+
         // Get accumulated samples
         let samples = state.accumulated_samples.clone();
         let num_samples = samples.len();
 
         tracing::info!(
-            "[AudioBuffer] Session {}: Flushing buffer - {}ms, {} samples",
+            "[AudioBuffer] Session {}: Flushing buffer - {}ms, {} samples (peak {:.4})",
             session_id,
             duration_ms,
-            num_samples
+            num_samples,
+            peak
         );
 
         // Save format info before clearing

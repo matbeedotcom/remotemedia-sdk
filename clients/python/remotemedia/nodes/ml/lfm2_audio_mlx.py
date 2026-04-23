@@ -293,12 +293,18 @@ class LFM2AudioMlxNode(MultiprocessNode):
                 logger.error("Session cleanup error: %s", exc)
 
     def _build_system_turn_text(self) -> str:
-        if not self._context:
-            return self._system_prompt
-        return (
-            f"{self._system_prompt}\n\n"
-            f"Known facts you must use when relevant:\n{self._context}"
-        )
+        # Persona / style only. Injected knowledge ("context") is NOT
+        # stitched into the system prompt anymore — LFM2-Audio tends
+        # to under-attend to facts buried in the system message when
+        # the prompt is spoken. The context is re-injected as a text
+        # span inside each user turn alongside the audio; see
+        # `add_audio`/`add_text` in `process()`. This mirrors the
+        # model-card pattern:
+        #     chat.new_turn("user")
+        #     chat.add_audio(audio, sample_rate=sr)
+        #     chat.add_text("Transcribe the audio.")
+        #     chat.end_turn()
+        return self._system_prompt
 
     async def _get_or_create_session(self, session_id: str) -> ConversationState:
         if session_id in self._sessions:
@@ -442,9 +448,19 @@ class LFM2AudioMlxNode(MultiprocessNode):
         self._interrupt = False
 
         # Feed the user turn. MLX-audio expects mx.array input at the
-        # native sample rate.
+        # native sample rate. If knowledge has been injected via the
+        # `context` aux port, append it as a text span inside the
+        # same user turn — the model attends to this span alongside
+        # the audio (per the model card's `add_audio` + `add_text`
+        # pattern). System-prompt-only placement wasn't reliably
+        # used by the model for factual questions.
         chat.new_turn("user")
         chat.add_audio(mx.array(audio_np, dtype=mx.float32), sample_rate=self.sample_rate)
+        if self._context:
+            chat.add_text(
+                f"\n\nRelevant knowledge you must use when answering the "
+                f"audio above:\n{self._context}"
+            )
         chat.end_turn()
 
         chat.new_turn("assistant")

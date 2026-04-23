@@ -163,6 +163,26 @@ impl SessionHandle {
         self.input_tx = None;
     }
 
+    /// Clone-able, send-only handle onto this session's input.
+    ///
+    /// Transport adapters (WebRTC, gRPC) need to forward inputs on one
+    /// task while draining outputs on another — without this split, a
+    /// full router input channel blocks the same task that's supposed
+    /// to be pulling outputs, which can deadlock if the router's
+    /// output channel is also full (classic bounded-channel ring
+    /// deadlock). This returns a lightweight handle that owns a clone
+    /// of the input `Sender` and can be moved into its own task.
+    ///
+    /// Returns `None` after `signal_input_complete()` has been called.
+    pub fn input_sender(&self) -> Option<SessionInputSender> {
+        self.input_tx
+            .as_ref()
+            .map(|tx| SessionInputSender {
+                tx: tx.clone(),
+                session_id: self.session_id.clone(),
+            })
+    }
+
     /// Close the session gracefully
     pub async fn close(&mut self) -> Result<()> {
         if !self.is_active {
@@ -182,6 +202,38 @@ impl SessionHandle {
         self.task_handle.await.map_err(|e| {
             crate::Error::Execution(format!("Session task panicked: {}", e))
         })?
+    }
+}
+
+/// Clone-able, send-only side of a [`SessionHandle`].
+///
+/// See [`SessionHandle::input_sender`] for why this exists.
+#[derive(Clone)]
+pub struct SessionInputSender {
+    tx: mpsc::Sender<DataPacket>,
+    session_id: String,
+}
+
+impl SessionInputSender {
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Send input data. Blocks when the router input channel is full
+    /// — call from a dedicated task so a full queue doesn't wedge
+    /// the output-drain loop.
+    pub async fn send(&self, data: TransportData) -> Result<()> {
+        let packet = DataPacket {
+            data: data.data,
+            from_node: "client".to_string(),
+            to_node: None,
+            session_id: self.session_id.clone(),
+            sequence: data.sequence.unwrap_or(0),
+            sub_sequence: data.sequence.unwrap_or(0),
+        };
+        self.tx.send(packet).await.map_err(|e| {
+            crate::Error::Execution(format!("Failed to send input: {}", e))
+        })
     }
 }
 
