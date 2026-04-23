@@ -11,7 +11,7 @@
 /// - Special tokens like <|text_end|>
 ///
 /// When a sentence boundary is detected (. ! ? , ; :), it outputs the accumulated text.
-use crate::data::RuntimeData;
+use crate::data::{split_text_str, tag_text_str, RuntimeData, TEXT_CHANNEL_DEFAULT};
 use crate::error::Error;
 use crate::nodes::SyncStreamingNode;
 use serde::{Deserialize, Serialize};
@@ -187,7 +187,7 @@ impl SyncStreamingNode for TextCollectorNode {
         let session_key = session_id.unwrap_or("default").to_string();
 
         // Only process text data
-        let text_chunk = match &data {
+        let raw_text_chunk = match &data {
             RuntimeData::Text(text_string) => text_string.clone(),
             _ => {
                 // Pass through non-text data unchanged
@@ -199,6 +199,26 @@ impl SyncStreamingNode for TextCollectorNode {
                 return Ok(1);
             }
         };
+
+        // Channel-aware routing. Only the default (`"tts"`) channel
+        // gets sentence-split — UI/display channels are passthrough so
+        // their markdown / code blocks reach downstream consumers
+        // verbatim and don't get carved up mid-line by the sentence
+        // boundary regex.
+        let (channel, content) = split_text_str(&raw_text_chunk);
+        if channel != TEXT_CHANNEL_DEFAULT {
+            tracing::debug!(
+                "[TextCollector] Session {}: passthrough channel={} ({} chars)",
+                session_key,
+                channel,
+                content.len(),
+            );
+            // Re-attach the channel prefix so downstream nodes continue
+            // to see the same tagged payload shape.
+            callback(RuntimeData::Text(tag_text_str(content, channel)))?;
+            return Ok(1);
+        }
+        let text_chunk = content.to_string();
 
         tracing::debug!(
             "[TextCollector] Session {}: Received text chunk: '{}'",

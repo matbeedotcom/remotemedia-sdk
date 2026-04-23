@@ -134,7 +134,14 @@ fn build_manifest() -> Manifest {
             "PersonaPlexAudioMlxNode".to_string(),
             serde_json::json!({
                 "hf_repo": "nvidia/personaplex-7b-v1",
-                "quantized": 8,
+                // 4-bit default fits on 16 GB Macs without swap; 8-bit
+                // swaps hard and makes the first-frame MLX JIT take
+                // minutes instead of seconds. Override via
+                // PERSONAPLEX_QUANT=8 if you have the unified memory.
+                "quantized": std::env::var("PERSONAPLEX_QUANT")
+                    .ok()
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or(4),
                 "voice": "NATF2",
                 "sample_rate": 24000,
                 "system_prompt":

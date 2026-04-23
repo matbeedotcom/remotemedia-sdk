@@ -2,6 +2,7 @@
 
 from .node import MultiprocessNode, NodeConfig, NodeStatus
 from .data import RuntimeData, DataType, AudioMetadata, VideoMetadata
+from .audio_pressure import AudioPressureMixin
 
 __all__ = [
     "MultiprocessNode",
@@ -11,6 +12,7 @@ __all__ = [
     "DataType",
     "AudioMetadata",
     "VideoMetadata",
+    "AudioPressureMixin",
     "register_node",
     "get_node_class",
     "list_registered_nodes",

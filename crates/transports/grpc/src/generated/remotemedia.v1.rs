@@ -242,6 +242,14 @@ pub struct TextBuffer {
     /// Used for NLP, tokenization, etc.
     #[prost(string, tag = "3")]
     pub language: ::prost::alloc::string::String,
+    /// Routing channel for downstream consumers. Defaults to "tts" when
+    /// empty (legacy producers / speakable content). Other in-tree values:
+    /// "ui"  — text meant for visual/markdown rendering; downstream TTS
+    /// nodes MUST skip synthesis and pass it through.
+    /// Producers can set any string — unknown values should be treated as
+    /// "tts" for conservative fallback.
+    #[prost(string, tag = "4")]
+    pub channel: ::prost::alloc::string::String,
 }
 /// Raw binary data with mime type hint
 ///

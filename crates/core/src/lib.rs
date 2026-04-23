@@ -83,6 +83,7 @@ pub mod data {
     pub mod control_message;
     pub mod ring_buffer;
     pub mod speculative_segment;
+    pub mod text_channel;
 
     pub use audio_buffer_pool::{AudioBufferPool, PooledAudioBuf};
     pub use audio_samples::AudioSamples;
@@ -90,6 +91,7 @@ pub mod data {
     pub use control_message::{ControlMessage, ControlMessageType};
     pub use ring_buffer::RingBuffer;
     pub use speculative_segment::{SegmentStatus, SpeculativeSegment};
+    pub use text_channel::{split_text_str, tag_text_str, TEXT_CHANNEL_DEFAULT};
 
     // Video codec support (spec 012)
     pub mod video;

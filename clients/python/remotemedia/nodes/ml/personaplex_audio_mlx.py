@@ -219,6 +219,13 @@ class PersonaPlexAudioMlxNode(MultiprocessNode):
         voice: str = DEFAULT_VOICE,
         voice_prompt: Optional[str] = None,
         voice_prompt_dir: Optional[str] = None,
+        # Default 8-bit (9 GB weights). The model-card explicitly
+        # warns that 4-bit degrades PersonaPlex output to garbled
+        # speech AND is 30 % slower per step (158 ms vs 112 ms on
+        # M-series), so real-time full-duplex use requires 8-bit.
+        # On 16 GB Macs expect some swap pressure during the first
+        # run while MLX builds its shader cache; steady-state stays
+        # resident. 24 GB+ is the recommended floor.
         quantized: Optional[int] = 8,
         text_temperature: float = 0.7,
         audio_temperature: float = 0.8,
@@ -229,6 +236,7 @@ class PersonaPlexAudioMlxNode(MultiprocessNode):
         seed: int = DEFAULT_SEED,
         session_timeout_minutes: int = 30,
         warmup_session_id: Optional[str] = "default",
+        warmup_audio_step: bool = False,
         **kwargs: Any,
     ) -> None:
         if isinstance(config, str):
@@ -283,6 +291,22 @@ class PersonaPlexAudioMlxNode(MultiprocessNode):
         # first frame).
         self.warmup_session_id: Optional[str] = params.get(
             "warmup_session_id", warmup_session_id
+        )
+        # Whether to also run one dummy audio frame through the
+        # streaming path during `initialize()` to force Metal-shader
+        # JIT to happen inside the init budget instead of on the first
+        # real frame. Default False: on memory-pressured machines this
+        # compilation can take several minutes and makes the whole
+        # init appear hung. With the Rust scheduler's per-node
+        # execution timeout bumped to 180 s (see
+        # lfm2_audio_webrtc_server.rs), the JIT cost can safely land
+        # on the first frame instead — same total cost, but visible
+        # progress and no scary "stuck at initialize()" symptom. Set
+        # to True in an in-process test context (where there's no
+        # 30 s execution budget) if you want to amortize the cost up
+        # front and measure per-frame latency cleanly.
+        self.warmup_audio_step: bool = bool(
+            params.get("warmup_audio_step", warmup_audio_step)
         )
 
         # Resolved once during initialize(); shared across sessions.
@@ -386,16 +410,16 @@ class PersonaPlexAudioMlxNode(MultiprocessNode):
         )
         self._cleanup_task = asyncio.create_task(self._cleanup_expired_sessions())
 
-        # Pre-warm one session so the *two* expensive first-call paths
-        # land inside the 5-minute init budget instead of on the first
-        # audio chunk under the 30 s per-node execution timeout:
-        #   1. `step_system_prompts` — MLX kernel JIT + KV-cache prime
-        #      for the system-prompt shape.
-        #   2. `encode_step` + `gen.step` on an audio frame — the
-        #      per-frame MLX kernels used during streaming. System
-        #      prompts alone don't warm these; empirically the first
-        #      audio step still took ~30-40 s on a cold MLX graph.
-        # After both run once, steady-state step time is ~80 ms/frame.
+        # Pre-warm one session so `step_system_prompts` (MLX kernel
+        # JIT + KV-cache prime for the system-prompt shape) lands
+        # inside the 5-minute init budget. This step is fast once
+        # shaders are cached (~1 s); cold it's ~30 s. The audio-step
+        # warmup (another 30-60 s of Metal JIT for the streaming
+        # path) is gated on `warmup_audio_step` because on
+        # memory-pressured machines it can take several minutes and
+        # looks like a hang. With the Rust per-node timeout at 180 s,
+        # letting that cost land on the first real frame is safer
+        # than making init appear stuck.
         if self.warmup_session_id:
             try:
                 import time as _time
@@ -408,6 +432,16 @@ class PersonaPlexAudioMlxNode(MultiprocessNode):
                     self.warmup_session_id
                 )
                 t_sysprompt = _time.time()
+                if not self.warmup_audio_step:
+                    logger.info(
+                        "[%s] system-prompt warm in %.2fs; "
+                        "skipping audio-step warmup "
+                        "(warmup_audio_step=False — first real frame "
+                        "will pay ~30-60 s MLX JIT; Rust per-node "
+                        "timeout must cover this)",
+                        self.node_id, t_sysprompt - _t0,
+                    )
+                    return
                 logger.info(
                     "[%s] system-prompt warm in %.2fs; warming audio step",
                     self.node_id, t_sysprompt - _t0,
@@ -417,20 +451,70 @@ class PersonaPlexAudioMlxNode(MultiprocessNode):
                 # Silence works — we only need to trigger kernel
                 # compilation, not produce anything listenable. The
                 # warmup output is discarded.
+                #
+                # MLX is lazy, so `encode_step` + `gen.step` are fast
+                # (graph construction only, ~10 ms each). The actual
+                # Metal-shader JIT happens inside `mx.eval` on the
+                # step outputs — that's the 30-60 s phase and we log
+                # around it explicitly so the user can see which call
+                # is blocking.
                 dummy = np.zeros(FRAME_SIZE, dtype=np.float32)
+
+                _t_encode = _time.time()
+                logger.info("[%s]   …mimi encode_step (dummy frame)", self.node_id)
                 encoded = warm_state.audio_tokenizer.encode_step(
                     dummy[None, None, :]
                 )
+                logger.info(
+                    "[%s]   …mimi encode_step ok in %.2fs (returned=%s)",
+                    self.node_id, _time.time() - _t_encode,
+                    "None" if encoded is None else "tokens",
+                )
+
                 if encoded is not None:
                     model_input = _reshape_input_tokens(
                         encoded, warm_state.gen.user_codebooks
                     )
-                    _ = warm_state.gen.step(input_tokens=model_input)
-                    # Force the MLX graph to materialize now rather
-                    # than deferring eval until the first real step.
+                    _t_step = _time.time()
+                    logger.info(
+                        "[%s]   …gen.step (LM forward, graph construction only — "
+                        "MLX is lazy so the heavy compute comes at eval time)",
+                        self.node_id,
+                    )
+                    text_token = warm_state.gen.step(input_tokens=model_input)
+                    logger.info(
+                        "[%s]   …gen.step ok in %.2fs (returned=%s)",
+                        self.node_id, _time.time() - _t_step,
+                        "None" if text_token is None else "token",
+                    )
+
+                    # Force MLX to materialize the graph NOW. This is
+                    # where the 30-60 s of Metal-shader compilation
+                    # actually runs — `gen.step()` above just built the
+                    # computation graph without touching the GPU. If we
+                    # defer this, the cost reappears on the first real
+                    # frame (inside a 30 s per-node execution budget)
+                    # and the Rust scheduler times out. Eval both the
+                    # text token and the audio tokens so kernels for
+                    # both output heads compile here.
+                    _t_eval = _time.time()
+                    logger.info(
+                        "[%s]   …mx.eval on step outputs (this is where "
+                        "Metal-shader JIT runs; expect 30-60 s cold)",
+                        self.node_id,
+                    )
+                    to_eval = []
+                    if text_token is not None:
+                        to_eval.append(text_token)
                     tok = warm_state.gen.last_audio_tokens()
                     if tok is not None:
-                        mx.eval(tok)
+                        to_eval.append(tok)
+                    if to_eval:
+                        mx.eval(*to_eval)
+                    logger.info(
+                        "[%s]   …mx.eval ok in %.2fs (evaluated=%d tensors)",
+                        self.node_id, _time.time() - _t_eval, len(to_eval),
+                    )
 
                 logger.info(
                     "[%s] audio-step warm in %.2fs; total warmup %.2fs",
@@ -643,6 +727,11 @@ class PersonaPlexAudioMlxNode(MultiprocessNode):
                 return
 
         if input_sample_rate != self.sample_rate:
+            logger.error(
+                "[%s] input sample rate %dHz != model rate %dHz — "
+                "upstream resampler misconfigured?",
+                self.node_id, input_sample_rate, self.sample_rate,
+            )
             yield RuntimeData.text(
                 f"ERROR: input sample rate {input_sample_rate}Hz "
                 f"does not match model rate {self.sample_rate}Hz"
@@ -651,6 +740,16 @@ class PersonaPlexAudioMlxNode(MultiprocessNode):
 
         session_id = (
             data.session_id if hasattr(data, "session_id") and data.session_id else "default"
+        )
+        # Log per-chunk arrival so we can tell from the WebRTC server
+        # log whether the node is actually receiving anything and how
+        # big each chunk is. Essential for diagnosing "node is silent"
+        # symptoms where the problem is upstream, not inside the node.
+        logger.info(
+            "[%s] chunk received: session=%s samples=%d (%.1fms @ %dHz)",
+            self.node_id, session_id, audio_np.shape[0],
+            1000.0 * audio_np.shape[0] / max(1, self.sample_rate),
+            input_sample_rate,
         )
         session_state = await self._get_or_create_session(session_id)
 
@@ -680,18 +779,32 @@ class PersonaPlexAudioMlxNode(MultiprocessNode):
         session_state.turn_count += 1
         text_pieces_emitted = 0
         audio_frames_emitted = 0
+        # Diagnostic counters: Mimi's `encode_step` returns None while
+        # the streaming encoder is still buffering context (usually
+        # the first 1-2 frames of a fresh tokenizer). If we see a
+        # non-trivial count here, Mimi is starving the LM of input.
+        mimi_buffering_skips = 0
+        # Count frames where `gen.step` had no text AND
+        # `last_audio_tokens` returned None — means the model chose to
+        # stay silent. Healthy steady-state has many of these (PersonaPlex
+        # stays quiet when there's no reason to speak); pathological is
+        # when EVERY frame is silent — indicates a broken KV cache or
+        # truncated system prompt.
+        silent_steps = 0
 
         for frame_idx in range(n_frames):
             pcm = samples[frame_idx * FRAME_SIZE : (frame_idx + 1) * FRAME_SIZE]
             # Mimi expects (batch, channels, samples) = (1, 1, 1920).
             encoded = session_state.audio_tokenizer.encode_step(pcm[None, None, :])
             if encoded is None:
+                mimi_buffering_skips += 1
                 continue
             model_input = _reshape_input_tokens(
                 encoded, session_state.gen.user_codebooks
             )
 
             text_token = session_state.gen.step(input_tokens=model_input)
+            had_text = False
             if text_token is not None:
                 token_id = int(text_token[0].item())
                 if token_id not in _RESERVED_TEXT_TOKENS:
@@ -708,7 +821,9 @@ class PersonaPlexAudioMlxNode(MultiprocessNode):
                     if piece:
                         yield RuntimeData.text(piece)
                         text_pieces_emitted += 1
+                        had_text = True
 
+            had_audio = False
             audio_tokens = session_state.gen.last_audio_tokens()
             if audio_tokens is not None:
                 decode_tokens = np.array(audio_tokens[:, :, None]).astype(np.uint32)
@@ -724,6 +839,10 @@ class PersonaPlexAudioMlxNode(MultiprocessNode):
                 if out_flat.size > 0:
                     yield RuntimeData.audio(out_flat, self.sample_rate, channels=1)
                     audio_frames_emitted += 1
+                    had_audio = True
+
+            if not had_text and not had_audio:
+                silent_steps += 1
 
             # Yield to the event loop periodically so the runner can
             # interleave input draining. Frames are ~80 ms apart, so
@@ -734,11 +853,23 @@ class PersonaPlexAudioMlxNode(MultiprocessNode):
         # Stash the unprocessed tail for the next chunk.
         session_state.pending = samples[n_frames * FRAME_SIZE :].copy()
 
-        logger.debug(
-            "[%s] chunk processed: session=%s frames=%d text=%d audio=%d pending=%d",
+        # INFO-level so it shows in the Rust server log output
+        # (Python stdout/stderr surfaces as WARN-level proxy lines).
+        # This is the single best signal for "did my audio chunk do
+        # anything useful": a healthy chunk emits audio > 0 and some
+        # mix of text + silent steps. A broken chunk has
+        # audio=0 + mimi_buffer_skips==n_frames (Mimi starved) OR
+        # audio=0 + silent==n_frames (model refused to speak, bad
+        # system prompt / KV cache / voice-prompt mismatch).
+        logger.info(
+            "[%s] chunk processed: session=%s frames=%d "
+            "text_pieces=%d audio_frames=%d silent_steps=%d "
+            "mimi_buffer_skips=%d pending=%d turn=%d",
             self.node_id, session_id, n_frames,
             text_pieces_emitted, audio_frames_emitted,
+            silent_steps, mimi_buffering_skips,
             session_state.pending.shape[0],
+            session_state.turn_count,
         )
 
     # ────── Introspection ─────────────────────────────────────────────

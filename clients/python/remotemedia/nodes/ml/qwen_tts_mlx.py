@@ -537,6 +537,22 @@ class QwenTTSMlxNode(MultiprocessNode):
         if text is None:
             return
 
+        # Channel-aware routing. `channel == "ui"` means the producer
+        # wants this chunk shown visually but NOT spoken. We forward it
+        # on our output so a downstream display sink can see it, but we
+        # skip synthesis and all pressure bookkeeping for it.
+        channel = "tts"
+        if _HAS_RUNTIME_DATA and RuntimeData is not None and isinstance(data, RuntimeData):
+            md = getattr(data, "metadata", None)
+            channel = getattr(md, "channel", "tts") if md is not None else "tts"
+        if channel == "ui":
+            logger.debug(
+                "[%s] ui-channel text (%d chars) — passthrough, no synth",
+                self.node_id, len(text),
+            )
+            yield RuntimeData.text(text, channel="ui")
+            return
+
         # End-of-reply marker. Detected before passthrough so we can
         # strip it from the transcript and emit `<|audio_end|>` exactly
         # once at the tail of the reply.
@@ -548,12 +564,14 @@ class QwenTTSMlxNode(MultiprocessNode):
             # `<|...|>` markers before rendering.
             yield RuntimeData.text(text)
 
-        # Per-sentence streaming. Upstream TextCollectorNode flushes
-        # on `.`/`?`/`!`/`;`/newline so each frame reaching us is
-        # effectively one sentence. Synthesise it NOW — don't buffer
-        # — and yield each waveform chunk as the model produces it,
-        # so the WebRTC sink starts playing the first sentence while
-        # the LLM is still generating the second.
+        # Synthesise every fragment immediately and predictably. Because
+        # the MultiprocessNode dispatch loop processes one message at a
+        # time, sentences naturally serialise: while this synth runs, the
+        # next sentence queues on the input side and starts as soon as we
+        # return. Pressure-aware coalescing sat on top of this serial
+        # ordering to try to group sentences, but added perceptible jitter
+        # (defer-or-flush timing depended on a rolling runway estimate) —
+        # the reliable behaviour is "one sentence in, one synth out".
         clean = _SENTINEL_RE.sub("", text).strip()
         if clean:
             async for audio_frame in self._synthesize_streaming(clean):

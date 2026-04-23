@@ -638,13 +638,34 @@ class MultiprocessNode(BaseNode):
                         rd.metadata.annotations = annotations
                     return rd
                 elif data_type == 3:  # Text
-                    text = payload.decode('utf-8')
+                    # Text wire format:
+                    #   Legacy: raw UTF-8 bytes.
+                    #   Tagged: [0x00][channel_len: u8][channel: utf8][text: utf8]
+                    # 0x00 is not a valid UTF-8 lead byte for any printable
+                    # text, so the discriminator has no false positives
+                    # against legacy producers.
+                    channel = "tts"
+                    text_bytes = payload
+                    if len(payload) >= 2 and payload[0] == 0x00:
+                        channel_len = payload[1]
+                        if 2 + channel_len <= len(payload):
+                            try:
+                                channel = payload[2:2 + channel_len].decode('utf-8') or "tts"
+                            except UnicodeDecodeError:
+                                self.logger.warning(
+                                    "Malformed channel header in IPC text payload; defaulting to 'tts'"
+                                )
+                                channel = "tts"
+                            text_bytes = payload[2 + channel_len:]
+                    text = text_bytes.decode('utf-8', errors='replace')
                     # Check for ping test message
                     if text == "PING_TEST":
                         self.logger.info(f"✅ 🎯 RECEIVED PING TEST MESSAGE! IPC communication is working! ✅")
                         return RuntimeData.text(text)
-                    self.logger.info(f"Received text via IPC: '{text[:50]}...'")
-                    return RuntimeData.text(text)
+                    self.logger.info(
+                        f"Received text via IPC (channel={channel}): '{text[:50]}...'"
+                    )
+                    return RuntimeData.text(text, channel=channel)
                 else:
                     self.logger.warning(f"Unsupported IPC data type: {data_type}")
                     return None
@@ -676,7 +697,19 @@ class MultiprocessNode(BaseNode):
             # Determine data type and extract payload
             if data.is_text():
                 data_type = 3  # Text
-                payload = data.as_text().encode('utf-8')
+                text_bytes = data.as_text().encode('utf-8')
+                channel = getattr(data.metadata, "channel", "tts") if data.metadata else "tts"
+                if channel and channel != "tts":
+                    # Tagged wire format — see the matching receiver for the layout.
+                    channel_bytes = channel.encode('utf-8')
+                    if len(channel_bytes) > 255:
+                        self.logger.warning(
+                            f"Channel name too long ({len(channel_bytes)} bytes); truncating"
+                        )
+                        channel_bytes = channel_bytes[:255]
+                    payload = bytes([0x00, len(channel_bytes)]) + channel_bytes + text_bytes
+                else:
+                    payload = text_bytes
             elif data.is_audio():
                 data_type = 1  # Audio
                 # New format: sample_rate(4) | channels(2) | metadata_len(4) | metadata | samples

@@ -251,6 +251,20 @@ class KokoroTTSNode(MultiprocessNode):
             yield data
             return
 
+        # Channel-aware routing. `channel == "ui"` means the producer
+        # wants this chunk shown visually but NOT spoken. Forward it on
+        # our output so a downstream display sink can see it, but skip
+        # all synthesis. Matches QwenTTSMlxNode behaviour.
+        md = getattr(data, "metadata", None)
+        channel = getattr(md, "channel", "tts") if md is not None else "tts"
+        if channel == "ui":
+            logger.debug(
+                f"KokoroTTSNode: ui-channel text ({len(data.as_text())} chars) — "
+                f"passthrough, no synth"
+            )
+            yield RuntimeData.text(data.as_text(), channel="ui")
+            return
+
         # Extract text from RuntimeData
         text = data.as_text()
         logger.info(f"KokoroTTSNode: extracted text: '{text}'")

@@ -187,6 +187,33 @@ pub struct SessionRouter {
     control: Option<Arc<SessionControl>>,
 }
 
+/// Bounded capacity of each node's input channel.
+///
+/// Sized the same as the router's own ingress: enough to absorb a small burst
+/// without drops, not so large that a stalled node hides backpressure. If a
+/// node is a bottleneck, we want the upstream producer to block at `send`
+/// rather than silently queuing megabytes of buffered audio.
+const NODE_INPUT_CAPACITY: usize = 16;
+
+/// Bounded capacity of each node's internal fan-out (callback → drain task).
+///
+/// Larger than the input because one input packet can produce many output
+/// chunks (e.g. a TTS sentence → ~20 audio frames). `try_send` overflow
+/// drops a chunk with a warning; sizing this generously avoids drops under
+/// normal TTS/VAD burst patterns while still bounding memory growth.
+const NODE_FANOUT_CAPACITY: usize = 1024;
+
+/// Per-node task handles + input sender map, owned by the router for the
+/// lifetime of the session. Built in [`SessionRouter::spawn_pipeline_tasks`]
+/// and torn down in [`SessionRouter::teardown_pipeline_tasks`].
+struct PipelineTasks {
+    /// Input sender for each node (keyed by node id). The router pushes
+    /// source-bound and `to_node`-addressed packets through these.
+    input_txs: HashMap<String, mpsc::Sender<RuntimeData>>,
+    /// All spawned tasks (main + fan-out per node). Awaited on shutdown.
+    handles: Vec<JoinHandle<()>>,
+}
+
 impl SessionRouter {
     /// Create a new session router
     ///
@@ -558,23 +585,20 @@ impl SessionRouter {
         self.run().await
     }
 
-    /// Max concurrent in-flight `process_input` tasks per session.
-    ///
-    /// Each received packet is dispatched on its own tokio task so a
-    /// slow downstream node (e.g. a multi-second TTS/LLM generation)
-    /// does NOT starve upstream nodes (VAD, STT) on subsequent packets.
-    /// The semaphore caps fan-out so a pathologically slow sink can't
-    /// accumulate unbounded tasks — when full, the loop awaits a permit
-    /// at `acquire_owned`, which naturally propagates back through
-    /// `input_rx.recv()` as transport-level backpressure.
-    const MAX_INFLIGHT_PROCESS_INPUT: usize = 16;
-
     async fn run(mut self) -> Result<()> {
         // Initialize all nodes before processing starts
         self.initialize_nodes().await?;
 
-        // Drop router's own input_tx so the channel closes when
-        // all external senders (SessionHandle) are dropped
+        // Spawn one task per node, wired through mpsc channels along the
+        // manifest connections. From here on, every node runs concurrently:
+        // an audio chunk yielded by node A reaches node B's input_rx on the
+        // same scheduler tick, instead of being batched into a `Vec` until
+        // A's `process_streaming_async` returns. Sink yields go straight to
+        // the client `output_tx`. See `spawn_pipeline_tasks` for the wiring.
+        let pipeline = self.spawn_pipeline_tasks();
+
+        // Drop router's own input_tx so the transport channel closes when
+        // all external senders (SessionHandle) are dropped.
         self.input_tx.take();
 
         let mut input_rx = self
@@ -596,57 +620,24 @@ impl SessionRouter {
             self.session_id
         );
 
-        // Share `self` across per-packet spawn tasks. `process_input`
-        // only reads from `self` — node instances use interior
-        // mutability to serialize their own state — so `Arc<Self>` is
-        // safe. See `MAX_INFLIGHT_PROCESS_INPUT` for the concurrency cap.
-        let core = Arc::new(self);
-        let concurrency = Arc::new(tokio::sync::Semaphore::new(
-            Self::MAX_INFLIGHT_PROCESS_INPUT,
-        ));
-
+        // Single-threaded ingress loop. We no longer spawn per-packet tasks
+        // because work is performed by per-node tasks; the router's only
+        // job here is to shovel input packets into the right source node's
+        // input channel. Each node's bounded input mpsc provides natural
+        // backpressure back through `input_rx`.
         loop {
-            // Start of the `recv` wait — used as the `ingress` probe sample.
-            // Measures how long the router sits idle between packets, i.e.
-            // the inverse of how hard the transport is pushing.
             let ingress_start = std::time::Instant::now();
             tokio::select! {
                 result = input_rx.recv() => {
                     match result {
                         Some(packet) => {
-                            // ingress: wall time from loop-top to packet delivery.
-                            core.probes.ingress.record_since(ingress_start);
-
-                            tracing::debug!(
-                                "Session {}: Received input packet (seq: {}, from: {})",
-                                core.session_id,
-                                packet.sequence,
-                                packet.from_node
-                            );
-
-                            // Acquire a concurrency slot. Awaits when full
-                            // so backpressure reaches input_rx naturally.
-                            let permit = match Arc::clone(&concurrency).acquire_owned().await {
-                                Ok(p) => p,
-                                Err(_) => break, // semaphore closed — shutdown
-                            };
-
-                            let core_for_task = Arc::clone(&core);
-                            tokio::spawn(async move {
-                                let _permit = permit;
-                                if let Err(e) = core_for_task.process_input(packet).await {
-                                    tracing::error!(
-                                        "Session {}: Processing error: {}",
-                                        core_for_task.session_id,
-                                        e
-                                    );
-                                }
-                            });
+                            self.probes.ingress.record_since(ingress_start);
+                            self.route_input(packet, &pipeline.input_txs).await;
                         }
                         None => {
                             tracing::info!(
                                 "Session {}: Input channel closed, shutting down",
-                                core.session_id
+                                self.session_id
                             );
                             break;
                         }
@@ -655,20 +646,369 @@ impl SessionRouter {
                 _ = shutdown_rx.recv() => {
                     tracing::info!(
                         "Session {}: Shutdown signal received",
-                        core.session_id
+                        self.session_id
                     );
                     break;
                 }
             }
         }
 
+        // Graceful teardown. Dropping every source input_tx cascades through
+        // the pipeline: each node's main task exits when its input_rx
+        // closes, which drops its fan_tx, which closes the next hop.
+        Self::teardown_pipeline_tasks(pipeline).await;
+
         // Wake every attached control client so they drain and exit.
         // Idempotent — harmless if no control is attached.
-        if let Some(ctrl) = &core.control {
+        if let Some(ctrl) = &self.control {
             ctrl.signal_close(CloseReason::Normal);
         }
 
         Ok(())
+    }
+
+    /// Build the per-node task pipeline.
+    ///
+    /// For every node in the graph we create a bounded input mpsc. We then
+    /// walk the manifest connections to decide each node's successor set.
+    /// Sinks additionally get a send-to-client hop.
+    ///
+    /// Drains `self.cached_nodes` — the node instances are moved into their
+    /// owning tasks, so we can no longer borrow them from `self`. That's
+    /// fine; after this call the router's only remaining role is shovelling
+    /// packets into the source nodes' input channels.
+    fn spawn_pipeline_tasks(&mut self) -> PipelineTasks {
+        let mut input_txs: HashMap<String, mpsc::Sender<RuntimeData>> = HashMap::new();
+        let mut input_rxs: HashMap<String, mpsc::Receiver<RuntimeData>> = HashMap::new();
+
+        // Pass 1: create an input channel for every node we have cached.
+        for node_id in self.cached_nodes.keys() {
+            let (tx, rx) = mpsc::channel::<RuntimeData>(NODE_INPUT_CAPACITY);
+            input_txs.insert(node_id.clone(), tx);
+            input_rxs.insert(node_id.clone(), rx);
+        }
+
+        // Pass 2: compute each node's successor set from the graph. Fan-out
+        // is native — one output gets cloned to every successor's input
+        // channel. `successors[from]` yields a list of `input_txs[to]`
+        // clones.
+        let mut successors: HashMap<String, Vec<mpsc::Sender<RuntimeData>>> = HashMap::new();
+        for node_id in self.cached_nodes.keys() {
+            let sends = self
+                .graph
+                .nodes
+                .get(node_id)
+                .map(|gn| {
+                    gn.outputs
+                        .iter()
+                        .filter_map(|succ| input_txs.get(succ).cloned())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            successors.insert(node_id.clone(), sends);
+        }
+
+        let sinks: std::collections::HashSet<String> =
+            self.graph.sinks.iter().cloned().collect();
+
+        // Drain node instances out of the cache. Each task owns its node.
+        let nodes = std::mem::take(&mut self.cached_nodes);
+
+        let mut handles = Vec::with_capacity(nodes.len() * 2);
+
+        for (node_id, node) in nodes {
+            let input_rx = match input_rxs.remove(&node_id) {
+                Some(rx) => rx,
+                None => {
+                    tracing::error!(
+                        "Session {}: node '{}' has no input channel (bug)",
+                        self.session_id,
+                        node_id
+                    );
+                    continue;
+                }
+            };
+            let succ_txs = successors.remove(&node_id).unwrap_or_default();
+            let is_sink = sinks.contains(&node_id);
+
+            let (main_handle, fan_handle) = Self::spawn_node_pipeline(
+                node_id,
+                node,
+                input_rx,
+                succ_txs,
+                if is_sink {
+                    Some(self.output_tx.clone())
+                } else {
+                    None
+                },
+                self.session_id.clone(),
+                self.scheduler.clone(),
+                self.control.clone(),
+                self.probes.clone(),
+            );
+
+            handles.push(main_handle);
+            handles.push(fan_handle);
+        }
+
+        PipelineTasks { input_txs, handles }
+    }
+
+    /// Spawn the two tasks that drive a single node:
+    ///
+    /// 1. **main**: owns the node instance, consumes `input_rx`, and calls
+    ///    `process_streaming_async` once per input. The scheduler wraps the
+    ///    call so timeouts, retries, circuit breakers, and metrics still
+    ///    apply. The sync callback passed into the node `try_send`s each
+    ///    yield into an internal fan-out channel (`fan_tx`).
+    ///
+    /// 2. **fan_out**: drains `fan_rx`, applies the control-bus hook (tap +
+    ///    intercept), and forwards surviving outputs to every successor's
+    ///    input channel AND — for sinks — to the client `output_tx`. The
+    ///    hook must run async, so it cannot live inside the sync callback;
+    ///    that's why we need the second task.
+    ///
+    /// Returns both `JoinHandle`s so the router can await clean shutdown.
+    fn spawn_node_pipeline(
+        node_id: String,
+        node: Box<dyn StreamingNode>,
+        mut input_rx: mpsc::Receiver<RuntimeData>,
+        successor_txs: Vec<mpsc::Sender<RuntimeData>>,
+        client_tx: Option<mpsc::Sender<RuntimeData>>,
+        session_id: String,
+        scheduler: Arc<StreamingScheduler>,
+        control: Option<Arc<SessionControl>>,
+        probes: Arc<crate::metrics::RtProbeSet>,
+    ) -> (JoinHandle<()>, JoinHandle<()>) {
+        let (fan_tx, mut fan_rx) = mpsc::channel::<RuntimeData>(NODE_FANOUT_CAPACITY);
+
+        // ── Fan-out drain task ─────────────────────────────────────────
+        let fan_node_id = node_id.clone();
+        let fan_session_id = session_id.clone();
+        let fan_control = control.clone();
+        let fan_probes = probes.clone();
+        let fan_handle = tokio::spawn(async move {
+            while let Some(out) = fan_rx.recv().await {
+                let kept = match &fan_control {
+                    Some(ctrl) => ctrl.on_node_output(&fan_node_id, None, out).await,
+                    None => Some(out),
+                };
+                let Some(kept) = kept else { continue };
+
+                // Fan out to successors first. Bounded `send` awaits on
+                // full, providing real backpressure all the way back to
+                // the node's callback (via `fan_tx` filling up).
+                for tx in &successor_txs {
+                    if tx.send(kept.clone()).await.is_err() {
+                        tracing::debug!(
+                            "Session {}: node '{}' successor closed; drop",
+                            fan_session_id, fan_node_id
+                        );
+                    }
+                }
+
+                // Sinks: also forward to the client.
+                if let Some(ref out_tx) = client_tx {
+                    let egress_start = std::time::Instant::now();
+                    let res = out_tx.send(kept).await;
+                    fan_probes.egress.record_since(egress_start);
+                    if res.is_err() {
+                        tracing::warn!(
+                            "Session {}: sink '{}' client channel closed",
+                            fan_session_id, fan_node_id
+                        );
+                    }
+                }
+            }
+        });
+
+        // ── Main node task ─────────────────────────────────────────────
+        let main_node_id = node_id.clone();
+        let main_session_id = session_id.clone();
+        let main_handle = tokio::spawn(async move {
+            // Move the node into a raw pointer so we can hand out `&`
+            // references to scheduler closures without fighting the
+            // borrow checker. Safety: we never drop or share this Box
+            // across tasks. The single owning task uses it through `&*`.
+            let node = node; // bind
+            let node_ref: &dyn StreamingNode = &*node;
+
+            while let Some(input) = input_rx.recv().await {
+                // Node-state gate (Bypass / Disabled). Per-input, so a
+                // runtime control-bus toggle takes effect on the next
+                // packet.
+                if let Some(ctrl) = &control {
+                    use crate::transport::session_control::NodeState;
+                    match ctrl.node_state(&main_node_id) {
+                        NodeState::Enabled => {}
+                        NodeState::Bypass => {
+                            if fan_tx.send(input).await.is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                        NodeState::Disabled => {
+                            continue;
+                        }
+                    }
+                }
+
+                // Per-input sync callback: try_send into the fan-out
+                // channel. A full `fan_tx` means the drain task is
+                // behind — we warn and drop. In practice this only
+                // happens under catastrophic downstream stalls; the
+                // 1024-slot buffer covers normal burst patterns.
+                let cb_fan_tx = fan_tx.clone();
+                let cb_node_id = main_node_id.clone();
+                let cb = Box::new(move |out: RuntimeData| {
+                    if let Err(e) = cb_fan_tx.try_send(out) {
+                        tracing::warn!(
+                            "node '{}' fan_tx backpressure drop: {}",
+                            cb_node_id, e
+                        );
+                    }
+                    Ok(())
+                });
+
+                let use_fast = scheduler.config.is_fast_path(&main_node_id);
+                let node_dispatch_start = std::time::Instant::now();
+
+                let result = if use_fast {
+                    let input_clone = input.clone();
+                    let session_clone = main_session_id.clone();
+                    scheduler
+                        .execute_streaming_node_fast(&main_node_id, || async move {
+                            node_ref
+                                .process_streaming_async(
+                                    input_clone,
+                                    Some(session_clone),
+                                    cb,
+                                )
+                                .await
+                                .map(|_| ())
+                        })
+                        .await
+                } else {
+                    // Full path retries the closure on transient failures,
+                    // so each retry rebuilds the callback + input clone.
+                    let input_outer = input.clone();
+                    let session_outer = main_session_id.clone();
+                    let cb_outer = std::sync::Mutex::new(Some(cb));
+                    scheduler
+                        .execute_streaming_node(&main_node_id, || {
+                            let input_clone = input_outer.clone();
+                            let session_clone = session_outer.clone();
+                            // Take the callback for the first attempt;
+                            // subsequent retries rebuild a fresh one
+                            // against the same fan_tx so yields from a
+                            // retry still reach the drain task.
+                            let cb_taken = cb_outer.lock().unwrap().take();
+                            let cb_for_attempt: Box<
+                                dyn FnMut(RuntimeData) -> Result<()> + Send,
+                            > = match cb_taken {
+                                Some(c) => c,
+                                None => {
+                                    let fan_tx = fan_tx.clone();
+                                    let id = main_node_id.clone();
+                                    Box::new(move |out| {
+                                        if let Err(e) = fan_tx.try_send(out) {
+                                            tracing::warn!(
+                                                "node '{}' fan_tx backpressure drop: {}",
+                                                id, e
+                                            );
+                                        }
+                                        Ok(())
+                                    })
+                                }
+                            };
+                            async move {
+                                node_ref
+                                    .process_streaming_async(
+                                        input_clone,
+                                        Some(session_clone),
+                                        cb_for_attempt,
+                                    )
+                                    .await
+                                    .map(|_| ())
+                            }
+                        })
+                        .await
+                };
+
+                probes.node_out.record_since(node_dispatch_start);
+
+                if let Err(e) = result {
+                    tracing::error!(
+                        "Session {}: node '{}' execution error: {}",
+                        main_session_id,
+                        main_node_id,
+                        e
+                    );
+                }
+            }
+            // input_rx closed: drop fan_tx so the drain task exits once
+            // it finishes forwarding any already-queued outputs.
+            drop(fan_tx);
+        });
+
+        (main_handle, fan_handle)
+    }
+
+    /// Dispatch an incoming [`DataPacket`] to the right source/target
+    /// node's input channel. Stamps the arrival timestamp and records a
+    /// drift sample if the payload is timed media.
+    async fn route_input(
+        &self,
+        packet: DataPacket,
+        input_txs: &HashMap<String, mpsc::Sender<RuntimeData>>,
+    ) {
+        let arrival_ts_us = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+
+        let mut input_data = packet.data.clone();
+        input_data.set_arrival_timestamp(arrival_ts_us);
+
+        if input_data.is_timed_media() {
+            self.record_drift_sample(&input_data).await;
+        }
+
+        let targets: Vec<&str> = if let Some(ref target) = packet.to_node {
+            vec![target.as_str()]
+        } else {
+            self.graph.sources.iter().map(|s| s.as_str()).collect()
+        };
+
+        for target in targets {
+            let Some(tx) = input_txs.get(target) else {
+                tracing::warn!(
+                    "Session {}: input routed to unknown node '{}'",
+                    self.session_id,
+                    target
+                );
+                continue;
+            };
+            if tx.send(input_data.clone()).await.is_err() {
+                tracing::warn!(
+                    "Session {}: node '{}' input channel closed; drop packet",
+                    self.session_id,
+                    target
+                );
+            }
+        }
+    }
+
+    /// Await every spawned task after dropping the router's own input_txs.
+    async fn teardown_pipeline_tasks(pipeline: PipelineTasks) {
+        let PipelineTasks { input_txs, handles } = pipeline;
+        // Drop the router's copies of every node's input sender; each source
+        // node sees `input_rx.recv()` return `None` and exits, cascading
+        // through the graph.
+        drop(input_txs);
+        for h in handles {
+            let _ = h.await;
+        }
     }
 
     /// Snapshot all RT latency probes in declaration order:
@@ -702,345 +1042,11 @@ impl SessionRouter {
         Arc::clone(&self.probes)
     }
 
-    /// Process a single input through the pipeline graph.
-    ///
-    /// # **REAL-TIME UNSAFE**
-    ///
-    /// Runs on a tokio worker, allocates `HashMap`s per packet, takes
-    /// the session `Mutex` for downstream routing, and may call
-    /// `tokio::spawn` when a node yields multiple outputs. Do not drive
-    /// this from a real-time-priority thread; use the
-    /// [`remotemedia-rt-bridge`] crate to bridge RT threads to the async
-    /// router through SPSC rings, or call
-    /// [`crate::nodes::process_sync`] directly on a sync node.
-    async fn process_input(&self, packet: DataPacket) -> Result<()> {
-        let start_time = std::time::Instant::now();
+    // The old `process_input` (topological per-packet loop with per-node
+    // Vec batching) has been deleted. Per-node concurrent execution now
+    // lives in `spawn_pipeline_tasks` + `spawn_node_pipeline`; ingress
+    // routing is `route_input`.
 
-        // Stamp arrival timestamp on incoming data (spec 026)
-        let arrival_ts_us = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros() as u64;
-
-        let mut input_data = packet.data.clone();
-        input_data.set_arrival_timestamp(arrival_ts_us);
-
-        // Record drift metrics for timed media (spec 026)
-        if input_data.is_timed_media() {
-            self.record_drift_sample(&input_data).await;
-        }
-
-        // Track outputs from each node for routing to dependents
-        let mut all_node_outputs: HashMap<String, Vec<RuntimeData>> = HashMap::new();
-
-        // Determine which nodes receive the initial input
-        if let Some(ref target_node) = packet.to_node {
-            // Direct routing: send to specific node
-            all_node_outputs.insert(target_node.clone(), vec![input_data.clone()]);
-        } else {
-            // Default: send to all source nodes (nodes with no inputs)
-            for source_id in &self.graph.sources {
-                all_node_outputs.insert(source_id.clone(), vec![input_data.clone()]);
-            }
-        }
-
-        // Process nodes in topological order
-        // Clone execution_order to avoid borrow issues
-        let execution_order: Vec<String> = self.graph.execution_order.clone();
-        for node_id in &execution_order {
-            let node = match self.cached_nodes.get(node_id) {
-                Some(n) => n,
-                None => {
-                    tracing::error!(
-                        "Session {}: Node '{}' not found in cache",
-                        self.session_id,
-                        node_id
-                    );
-                    continue;
-                }
-            };
-
-            // Collect inputs for this node
-            let inputs: Vec<RuntimeData> = if all_node_outputs.contains_key(node_id) {
-                // Source node or directly targeted - already has input
-                all_node_outputs.get(node_id).cloned().unwrap_or_default()
-            } else {
-                // Collect inputs from predecessor nodes via connections (fan-in)
-                let mut collected_inputs = Vec::new();
-                for conn in self
-                    .manifest
-                    .connections
-                    .iter()
-                    .filter(|c| c.to == *node_id)
-                {
-                    if let Some(predecessor_outputs) = all_node_outputs.get(&conn.from) {
-                        collected_inputs.extend(predecessor_outputs.clone());
-                    }
-                }
-                collected_inputs
-            };
-
-            if inputs.is_empty() {
-                tracing::trace!(
-                    "Session {}: Node '{}' has no inputs, skipping",
-                    self.session_id,
-                    node_id
-                );
-                continue;
-            }
-
-            // Control-bus node-state gate. Checked once per node per packet
-            // (DashMap lookup, no async). Absent control or absent override
-            // is `Enabled` — zero overhead in the common case.
-            if let Some(ctrl) = &self.control {
-                use crate::transport::session_control::NodeState;
-                match ctrl.node_state(node_id) {
-                    NodeState::Enabled => { /* fall through to execution */ }
-                    NodeState::Bypass => {
-                        tracing::debug!(
-                            "Session {}: Node '{}' bypassed — forwarding {} input(s) as outputs",
-                            self.session_id,
-                            node_id,
-                            inputs.len()
-                        );
-                        // Forward inputs as outputs unchanged. Tap/intercept
-                        // still fire via the hook below, so observers see the
-                        // bypassed data exactly as downstream will.
-                        let forwarded = {
-                            let mut filtered = Vec::with_capacity(inputs.len());
-                            for out in inputs {
-                                if let Some(kept) = ctrl.on_node_output(node_id, None, out).await {
-                                    filtered.push(kept);
-                                }
-                            }
-                            filtered
-                        };
-                        all_node_outputs.insert(node_id.clone(), forwarded);
-                        continue;
-                    }
-                    NodeState::Disabled => {
-                        tracing::debug!(
-                            "Session {}: Node '{}' disabled — dropping {} input(s)",
-                            self.session_id,
-                            node_id,
-                            inputs.len()
-                        );
-                        // No outputs. Downstream nodes will collect no inputs
-                        // from this node and either skip (if they have no
-                        // other predecessors) or fan-in from other branches.
-                        all_node_outputs.insert(node_id.clone(), Vec::new());
-                        continue;
-                    }
-                }
-            }
-
-            tracing::debug!(
-                "Session {}: Processing node '{}' with {} input(s)",
-                self.session_id,
-                node_id,
-                inputs.len()
-            );
-
-            // Collect outputs from this node using a shared buffer
-            let node_outputs_ref = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-
-            // Real-time sink streaming: if this node is a sink, each
-            // callback invocation forwards the yield directly to the
-            // client `output_tx` via `try_send`. Without this the
-            // router would collect ALL of a node's yields into the Vec
-            // above and only forward them after `process_streaming_async`
-            // returned — which batches TTS audio chunks for the full
-            // synthesis duration and destroys real-time playback.
-            //
-            // For non-sink nodes we still batch; downstream nodes run
-            // after their predecessor completes so we need the full
-            // output set available when their turn arrives.
-            let is_sink = self.graph.sinks.contains(node_id);
-            let sink_tx = if is_sink {
-                Some(self.output_tx.clone())
-            } else {
-                None
-            };
-
-            // Process each input through the node via scheduler (spec 026)
-            for input in inputs {
-                let session_id = self.session_id.clone();
-                let node_id_owned = node_id.clone();
-
-                // Use scheduler for execution with timeout, retry, and circuit breaker
-                // Choose fast path or full path based on node configuration
-                let scheduler = self.scheduler.clone();
-                let use_fast_path = scheduler.config.is_fast_path(&node_id_owned);
-
-                // Record total node-dispatch latency (includes scheduler
-                // overhead + node process work). Phase B0 probe; A-wave
-                // migrations should land as a measurable p99 drop here.
-                let node_dispatch_start = std::time::Instant::now();
-                let result = if use_fast_path {
-                    // Fast path: lock-free, no timeout, no HDR metrics
-                    let node_ref = node;
-                    let input_clone = input.clone();
-                    let session_clone = session_id.clone();
-                    let outputs = node_outputs_ref.clone();
-                    let sink_tx_clone = sink_tx.clone();
-                    let node_id_log = node_id_owned.clone();
-                    let cb = Box::new(move |output: RuntimeData| {
-                        if let Some(ref tx) = sink_tx_clone {
-                            // Stream sink yields straight to the client.
-                            // try_send is non-blocking; on failure (full
-                            // or closed) we fall back to the batched Vec
-                            // so the end-of-input drain still picks
-                            // them up.
-                            if let Err(e) = tx.try_send(output.clone()) {
-                                tracing::warn!(
-                                    "sink '{}' try_send fell back to batch: {}",
-                                    node_id_log, e,
-                                );
-                                outputs.lock().unwrap().push(output);
-                            }
-                        } else {
-                            outputs.lock().unwrap().push(output);
-                        }
-                        Ok(())
-                    });
-                    scheduler
-                        .execute_streaming_node_fast(&node_id_owned, || async move {
-                            node_ref
-                                .process_streaming_async(input_clone, Some(session_clone), cb)
-                                .await
-                                .map(|_| ())
-                        })
-                        .await
-                } else {
-                    // Full path: timeout, retry, HDR histogram metrics
-                    scheduler
-                        .execute_streaming_node(&node_id_owned, || {
-                            let node_ref = node;
-                            let input_clone = input.clone();
-                            let session_clone = session_id.clone();
-                            let outputs = node_outputs_ref.clone();
-                            let sink_tx_clone = sink_tx.clone();
-                            let node_id_log = node_id_owned.clone();
-                            let cb = Box::new(move |output: RuntimeData| {
-                                if let Some(ref tx) = sink_tx_clone {
-                                    if let Err(e) = tx.try_send(output.clone()) {
-                                        tracing::warn!(
-                                            "sink '{}' try_send fell back to batch: {}",
-                                            node_id_log, e,
-                                        );
-                                        outputs.lock().unwrap().push(output);
-                                    }
-                                } else {
-                                    outputs.lock().unwrap().push(output);
-                                }
-                                Ok(())
-                            });
-                            async move {
-                                node_ref
-                                    .process_streaming_async(input_clone, Some(session_clone), cb)
-                                    .await
-                                    .map(|_| ())
-                            }
-                        })
-                        .await
-                };
-                self.probes.node_out.record_since(node_dispatch_start);
-
-                match result {
-                    Ok(scheduler_result) => {
-                        tracing::debug!(
-                            "Session {}: Node '{}' executed in {}μs (retries: {})",
-                            self.session_id,
-                            node_id,
-                            scheduler_result.duration_us,
-                            scheduler_result.retry_count
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "Session {}: Node '{}' execution error: {}",
-                            self.session_id,
-                            node_id,
-                            e
-                        );
-                        // Continue with other nodes - don't fail entire pipeline
-                    }
-                }
-            }
-
-            // Get collected outputs
-            let node_outputs = node_outputs_ref.lock().unwrap().clone();
-            tracing::debug!(
-                "Session {}: Node '{}' produced {} output(s)",
-                self.session_id,
-                node_id,
-                node_outputs.len()
-            );
-
-            // Control-bus hook: broadcast to tap subscribers and let any
-            // intercept mutate/drop each output before it's stored for
-            // downstream routing. Skipped entirely when no control is
-            // attached (the `Option` branch is cheap).
-            //
-            // NOTE: port is always `None` until per-output-port support
-            // lands — the node API doesn't yet name its output rails.
-            let node_outputs = if let Some(ctrl) = &self.control {
-                let mut filtered = Vec::with_capacity(node_outputs.len());
-                for out in node_outputs {
-                    if let Some(kept) = ctrl.on_node_output(node_id, None, out).await {
-                        filtered.push(kept);
-                    }
-                }
-                filtered
-            } else {
-                node_outputs
-            };
-
-            // Store outputs for downstream nodes (fan-out happens automatically)
-            all_node_outputs.insert(node_id.clone(), node_outputs);
-        }
-
-        // Send outputs from sink nodes (terminal nodes) to client
-        for sink_id in &self.graph.sinks {
-            if let Some(outputs) = all_node_outputs.get(sink_id) {
-                for output in outputs {
-                    tracing::debug!(
-                        "Session {}: Sending output from sink '{}' to client",
-                        self.session_id,
-                        sink_id
-                    );
-                    // Bounded channel: await applies backpressure when the
-                    // client consumer is slow. An Err here means the receiver
-                    // has been dropped (client disconnected).
-                    //
-                    // `egress` probe: wall time from the moment we try to
-                    // enqueue this output to when the send completes. Spikes
-                    // here directly indicate a slow client consumer.
-                    let egress_start = std::time::Instant::now();
-                    let send_result = self.output_tx.send(output.clone()).await;
-                    self.probes.egress.record_since(egress_start);
-                    if let Err(e) = send_result {
-                        tracing::warn!(
-                            "Session {}: Failed to send output from sink '{}': {}",
-                            self.session_id,
-                            sink_id,
-                            e
-                        );
-                    }
-                }
-            }
-        }
-
-        let elapsed = start_time.elapsed();
-        tracing::trace!(
-            "Session {}: Processed input through {} nodes in {:?}",
-            self.session_id,
-            self.graph.execution_order.len(),
-            elapsed
-        );
-
-        Ok(())
-    }
 
     /// Record drift sample for timed media (spec 026).
     ///

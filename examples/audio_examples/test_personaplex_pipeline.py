@@ -79,6 +79,16 @@ logging.basicConfig(
     format="%(asctime)s %(levelname).1s %(name)s | %(message)s",
     datefmt="%H:%M:%S",
 )
+# Force unbuffered stdout/stderr so per-step progress logs flush as
+# they fire — without this, Python batches log output when stdout is
+# piped (e.g. through `tail`), and the 50 s warmup phases all appear
+# at the end making the process look hung.
+try:
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+    sys.stderr.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+except (AttributeError, ValueError):
+    pass
+
 logger = logging.getLogger("personaplex.smoke")
 
 
@@ -353,7 +363,11 @@ def main() -> int:
         ),
     )
     parser.add_argument("--context", default=None, help="Knowledge text to inject")
-    parser.add_argument("--quantized", type=int, choices=[4, 8], default=8)
+    parser.add_argument(
+        "--quantized", type=int, choices=[4, 8], default=4,
+        help="Model quant bits. 4 (default, 4.9 GB) fits on 16 GB Macs; "
+             "8 (9 GB) needs 24+ GB or hits swap.",
+    )
     parser.add_argument(
         "--input-wav", type=Path, default=None,
         help="Path to a wav file. If omitted, a sine wave is synthesized.",
@@ -386,7 +400,14 @@ def main() -> int:
             )
         )
     except KeyboardInterrupt:
-        print("\ninterrupted", file=sys.stderr)
+        # Full traceback so we can see exactly which C call was blocking
+        # at the moment of Ctrl-C. Usually this is `mx.eval` on cold
+        # MLX, but an OOM / Metal-unavailable / tokenizer-hang would
+        # all print from distinct stack frames here.
+        import traceback
+        print("\n─── interrupted — stack at Ctrl-C ───", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        print("──────────────────────────────────────", file=sys.stderr)
         return 3
     except Exception as e:  # noqa: BLE001
         logger.exception("unexpected failure: %s", e)

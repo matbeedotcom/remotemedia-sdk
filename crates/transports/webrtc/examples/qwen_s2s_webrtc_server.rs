@@ -73,11 +73,8 @@ fn build_manifest() -> Manifest {
     let llm_repo = std::env::var("QWEN_LLM_REPO")
         .unwrap_or_else(|_| "mlx-community/Qwen3.5-9B-MLX-4bit".to_string());
     let tts_repo = std::env::var("QWEN_TTS_REPO")
-        .unwrap_or_else(|_| {
-            "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-6bit".to_string()
-        });
-    let tts_voice =
-        std::env::var("QWEN_TTS_VOICE").unwrap_or_else(|_| "serena".to_string());
+        .unwrap_or_else(|_| "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-6bit".to_string());
+    let tts_voice = std::env::var("QWEN_TTS_VOICE").unwrap_or_else(|_| "serena".to_string());
 
     let whisper_params = serde_json::json!({
         "model_id": "openai/whisper-tiny.en",
@@ -89,32 +86,140 @@ fn build_manifest() -> Manifest {
         "accelerate>=0.33".to_string(),
     ];
 
+    // Tool-call-driven output split:
+    //   - ``say(text=...)`` tool calls → plain text frames to TTS
+    //     (what the user HEARS).
+    //   - Everything else the model emits is markdown intended for a
+    //     written/display UI. That stream is currently suppressed here
+    //     (`emit_display_text: false`) because this pipeline has no
+    //     display-aux-port consumer wired; without suppression the
+    //     envelope JSON would flow into `sentencer` → TTS and get
+    //     spoken. Flip back to ``true`` once a UI client subscribes to
+    //     the ``llm.out`` display envelopes.
+    //
+    // Tool-only output contract:
+    //   - `say(text=...)`    → `channel="tts"` → sentencer → TTS → audio
+    //   - `show(content=...)` → `channel="ui"` → sentencer passthrough →
+    //                           TTS passthrough → WebRTC audio.out
+    //   - Any free text outside a tool call is treated as `channel="ui"`
+    //     fallback too, but the prompt below instructs the model to
+    //     always use the tools so this path should stay empty in
+    //     practice.
+    //
+    // Why two tools instead of "say + free-form markdown"? Qwen is trained
+    // to STOP generation after a `<tool_call>` waiting for a tool-result
+    // turn. If we only have `say`, any markdown the model meant to write
+    // AFTER saying something gets cut off. With `show` as its own tool,
+    // the model can emit BOTH tool calls in a single assistant turn (Qwen
+    // does support multiple tool_calls in one generation), and we dispatch
+    // each to its own routing channel without any prompt gymnastics about
+    // "write the markdown first, then say".
+    let llm_system_prompt = std::env::var("QWEN_LLM_SYSTEM_PROMPT").unwrap_or_else(|_| {
+        "You reply to the user ONLY through tools. Every tool call MUST \
+         carry its required argument — an empty call produces no output \
+         and the user gets nothing.\n\n\
+         Tools:\n\
+         - `say(text=\"<spoken prose>\")`     → spoken aloud\n\
+         - `show(content=\"<markdown>\")`     → shown on screen\n\n\
+         Reply structure (emit tools in this order, include only the slots \
+         your reply needs):\n\
+         1. Opening `say` — short spoken lead-in. Optional.\n\
+         2. `show` — the written deliverable (code, table, long text). Optional.\n\
+         3. Closing `say` — short spoken wrap-up. Optional.\n\n\
+         Concrete examples of well-formed replies:\n\n\
+         Example — conversational answer:\n\
+         User: \"How are your Python skills?\"\n\
+         Assistant calls: say(text=\"Pretty solid — I can help with \
+         scripts, debugging, and explanations. What did you have in mind?\")\n\n\
+         Example — code request:\n\
+         User: \"Write me a hello-world Python script.\"\n\
+         Assistant calls, in order:\n\
+           1. say(text=\"Here's a simple hello-world script.\")\n\
+           2. show(content=\"```python\\ndef hello():\\n    print('Hello, \
+         world!')\\n\\nhello()\\n```\")\n\
+           3. say(text=\"Let me know if you'd like it tweaked.\")\n\n\
+         Hard rules:\n\
+         - Both tools REQUIRE their argument. Never call `say()` or \
+         `show()` with no text/content — that emits silence.\n\
+         - At most one opening and one closing `say`; at most one `show`.\n\
+         - Never dictate code aloud in `say`. Never duplicate between the \
+         spoken and written channels.\n\
+         - Emit the entire reply as tool calls in a single turn. Stop \
+         when done. Do not pad."
+            .to_string()
+    });
+
     let llm_params = serde_json::json!({
         "hf_repo": llm_repo,
-        "max_new_tokens": 256,
+        "max_new_tokens": 60000,
         "temperature": 0.7,
         "top_p": 0.9,
+        "system_prompt": llm_system_prompt,
+        "enable_say_tool": true,
+        "enable_show_tool": true,
+        "active_tools": ["say", "show"],
+        // With dedicated tools the model shouldn't emit free text outside a
+        // call, but leave the escape hatch open: if it slips and writes
+        // some stray prose, it still flows through the ui channel rather
+        // than hitting the TTS and getting spoken.
+        "emit_display_text": true,
+        // Two passes.
+        //
+        // Qwen can emit multiple tool calls (e.g. `say` → `show` → `say`)
+        // in one assistant turn when the template includes them — that's
+        // the happy path and stays single-pass. But some turns end after
+        // just the opening `say`, in which case pass 2 gives the model a
+        // chance to continue with `show` + closing `say`. Tool results
+        // for the emitted calls are injected as empty `{role:"tool"}`
+        // turns before pass 2 starts (see `max_tool_passes` docs in
+        // qwen_text_mlx.py).
+        //
+        // Kept at 2 (not higher) because each extra pass is ~6 s of
+        // latency AND adds audible gaps between fragments; the 30 s
+        // per-node scheduler budget also caps us somewhere around 4.
+        "max_tool_passes": 2,
     });
-    let llm_deps = vec![
-        "mlx-lm==0.31.3".to_string(),
-        "numpy>=1.24".to_string(),
-    ];
+    let llm_deps = vec!["mlx-lm==0.31.3".to_string(), "numpy>=1.24".to_string()];
 
+    // KokoroTTS experiment — swapping QwenTTS to see if the Kokoro
+    // 82 M model produces audio with lower first-audio latency than
+    // Qwen3-TTS. Kokoro is a 24 kHz mono synth; we add a downstream
+    // FastResampleNode (renamed to `audio` to keep the `audio.out`
+    // control-bus topic contract) to reach the Opus track's 48 kHz.
+    //
+    // Trade-offs versus Qwen3-TTS:
+    //   - Kokoro doesn't emit `<|audio_end|>` or pass text through;
+    //     half-duplex mic-gating and the live transcript tap on
+    //     `audio.out` will be degraded until we wire those back in.
+    //   - Kokoro doesn't honour the `audio.in.barge_in` aux port.
+    //   - Voice set is Kokoro's (`af_heart`, `am_*`, etc.), not
+    //     Qwen3-TTS's (`serena` et al.).
+    let _ = tts_repo; // unused by Kokoro; kept for easy swap-back.
+    let _ = tts_voice;
     let tts_params = serde_json::json!({
-        "hf_repo": tts_repo,
-        "voice": tts_voice,
-        // Qwen3-TTS native rate. The node upsamples to
-        // `output_sample_rate` (48 kHz, matching the Opus track) before
-        // yielding, so no downstream resampler is needed.
-        "sample_rate": 24000,
-        "output_sample_rate": 48000,
-        "streaming_interval": 0.32,
+        "lang_code": std::env::var("KOKORO_LANG").unwrap_or_else(|_| "a".to_string()),
+        "voice": std::env::var("KOKORO_VOICE").unwrap_or_else(|_| "af_heart".to_string()),
         "speed": 1.0,
-        "passthrough_text": true,
+        "sample_rate": 24000,
+        "stream_chunks": true,
+        // Sentinels from the LLM/TextCollector stream that should not be
+        // read aloud.
+        "skip_tokens": [
+            "<|text_end|>", "<|audio_end|>",
+            "<|im_end|>", "<|im_start|>",
+        ],
     });
+    // Kokoro's misaki G2P pulls spaCy and needs the `en_core_web_sm`
+    // model present inside the SAME managed venv. Declaring it as a
+    // PEP-508 URL dep forces the runtime's venv provisioner to install
+    // it into the node's interpreter; the default `spacy download`
+    // command lands in whatever interpreter `sys.executable` points at
+    // (often the user's global 3.10.9) and Kokoro's 3.12 venv stays
+    // empty — which is what the E050 crash was.
     let tts_deps = vec![
-        "mlx-audio>=0.1".to_string(),
-        "numpy>=1.24".to_string(),
+        "kokoro>=0.9.4".to_string(),
+        "soundfile".to_string(),
+        "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl".to_string(),
     ];
 
     Manifest {
@@ -187,8 +292,15 @@ fn build_manifest() -> Manifest {
                 python_deps: Some(whisper_deps),
                 ..Default::default()
             },
-            // Qwen text chat. Emits streamed text tokens + a
-            // `<|text_end|>` sentinel at end-of-reply.
+            // Qwen text chat with tool calling. The `say` tool is
+            // active — the model is instructed (via system_prompt) to
+            // emit its spoken reply as a `say(text=...)` call and keep
+            // non-spoken commentary out of the call. Only the `text`
+            // argument of a `say` call flows downstream as plain
+            // `RuntimeData.text`, which the sentencer collapses into
+            // sentences before TTS. Display-channel text is suppressed
+            // here (`emit_display_text: false` in `llm_params`) until a
+            // UI subscriber for the display envelopes exists.
             NodeManifest {
                 id: "llm".to_string(),
                 node_type: "QwenTextMlxNode".to_string(),
@@ -213,14 +325,31 @@ fn build_manifest() -> Manifest {
                 }),
                 ..Default::default()
             },
-            // Qwen3-TTS. Named `audio` so its output stream is
-            // published on the `audio.out` topic, preserving the
-            // same contract as LFM2AudioMlxNode for the web UI.
+            // KokoroTTS synthesises at 24 kHz mono. A downstream
+            // resampler (named `audio`) upsamples to 48 kHz so the
+            // `audio.out` topic contract and the Opus track both see
+            // the expected rate. If the session router ends up
+            // batching the Kokoro per-chunk yields into the resampler
+            // (the concern documented against Qwen3-TTS's internal
+            // upsampler) this topology will reveal it as all-chunks-
+            // at-end timing — worth measuring before reaching back for
+            // an in-node upsampler.
             NodeManifest {
-                id: "audio".to_string(),
-                node_type: "QwenTTSMlxNode".to_string(),
+                id: "kokoro_tts".to_string(),
+                node_type: "KokoroTTSNode".to_string(),
                 params: tts_params,
                 python_deps: Some(tts_deps),
+                ..Default::default()
+            },
+            NodeManifest {
+                id: "audio".to_string(),
+                node_type: "FastResampleNode".to_string(),
+                params: serde_json::json!({
+                    "source_rate": 24000,
+                    "target_rate": 48000,
+                    "quality": "Medium",
+                    "channels": 1,
+                }),
                 ..Default::default()
             },
         ],
@@ -251,6 +380,10 @@ fn build_manifest() -> Manifest {
             },
             Connection {
                 from: "sentencer".to_string(),
+                to: "kokoro_tts".to_string(),
+            },
+            Connection {
+                from: "kokoro_tts".to_string(),
                 to: "audio".to_string(),
             },
         ],
@@ -345,8 +478,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let executor = Arc::new(PipelineExecutor::with_config(exec_cfg)?);
 
     let config = Arc::new(WebRtcTransportConfig::default());
-    let server =
-        WebSocketSignalingServer::new(port, config, executor, manifest);
+    let server = WebSocketSignalingServer::new(port, config, executor, manifest);
     let handle = server.start().await?;
 
     println!("READY ws://127.0.0.1:{port}/ws");
@@ -376,8 +508,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!(
         "REMOTEMEDIA_PYTHON_SRC={}",
-        std::env::var("REMOTEMEDIA_PYTHON_SRC")
-            .unwrap_or_else(|_| "(unset)".to_string())
+        std::env::var("REMOTEMEDIA_PYTHON_SRC").unwrap_or_else(|_| "(unset)".to_string())
     );
     println!("Press Ctrl-C to stop.");
 

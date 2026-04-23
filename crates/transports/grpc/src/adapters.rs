@@ -8,7 +8,7 @@ use crate::generated::{
     AudioBuffer, AudioFormat, BatchHint, BinaryBuffer, CancelSpeculation, ControlMessage,
     DataBuffer, DeadlineWarning, FileBuffer, JsonData, NumpyBuffer, TensorBuffer, TextBuffer, VideoFrame,
 };
-use remotemedia_core::data::RuntimeData;
+use remotemedia_core::data::{split_text_str, tag_text_str, RuntimeData};
 use remotemedia_core::transport::TransportData;
 
 /// Get current timestamp in microseconds for arrival time stamping (spec 026)
@@ -150,11 +150,18 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             json_payload: serde_json::to_string(value).unwrap_or_default(),
             schema_type: String::new(),
         }),
-        RuntimeData::Text(s) => DataType::Text(TextBuffer {
-            text_data: s.as_bytes().to_vec(),
-            encoding: "utf-8".to_string(),
-            language: String::new(),
-        }),
+        RuntimeData::Text(s) => {
+            // Outbound: peel the routing channel out of the tagged
+            // payload and ship it as a structured field; the wire
+            // carries clean UTF-8 content.
+            let (channel, content) = split_text_str(s);
+            DataType::Text(TextBuffer {
+                text_data: content.as_bytes().to_vec(),
+                encoding: "utf-8".to_string(),
+                language: String::new(),
+                channel: channel.to_string(),
+            })
+        }
         RuntimeData::Binary(bytes) => DataType::Binary(BinaryBuffer {
             data: bytes.clone(),
             mime_type: "application/octet-stream".to_string(),
@@ -310,7 +317,7 @@ pub fn data_buffer_to_runtime_data_with_arrival(buffer: &DataBuffer, arrival_ts_
             .map(RuntimeData::Json),
         Some(DataType::Text(text)) => String::from_utf8(text.text_data.clone())
             .ok()
-            .map(RuntimeData::Text),
+            .map(|content| RuntimeData::Text(tag_text_str(&content, &text.channel))),
         Some(DataType::Binary(bin)) => Some(RuntimeData::Binary(bin.data.clone())),
         Some(DataType::Numpy(numpy)) => Some(RuntimeData::Numpy {
             data: numpy.data.clone(),

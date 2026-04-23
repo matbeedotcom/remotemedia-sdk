@@ -48,7 +48,7 @@
 //! - `vad.out`               — main output of node `vad`
 
 use super::handler::SharedState;
-use remotemedia_core::data::RuntimeData;
+use remotemedia_core::data::{split_text_str, RuntimeData};
 use remotemedia_core::transport::session_control::{
     ControlAddress, Direction, NodeState, SessionControl,
 };
@@ -434,12 +434,20 @@ fn runtime_data_to_event_params(topic: &str, data: &RuntimeData, include_audio: 
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     match data {
-        RuntimeData::Text(s) => json!({
-            "topic": topic,
-            "kind": "text",
-            "payload": s,
-            "ts": ts,
-        }),
+        RuntimeData::Text(s) => {
+            // Strip the `\x00<len><channel>` routing header. The
+            // browser sees only clean content, plus an explicit
+            // `channel` field so it can decide where to render
+            // (transcript line, markdown pane, etc).
+            let (channel, content) = split_text_str(s);
+            json!({
+                "topic": topic,
+                "kind": "text",
+                "payload": content,
+                "channel": channel,
+                "ts": ts,
+            })
+        }
         RuntimeData::Json(v) => json!({
             "topic": topic,
             "kind": "json",
