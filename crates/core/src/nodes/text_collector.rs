@@ -86,17 +86,7 @@ pub struct TextCollectorNode {
 impl TextCollectorNode {
     /// Create a new TextCollectorNode with the given configuration
     pub fn with_config(config: TextCollectorConfig) -> Self {
-        // Parse split pattern to extract boundary characters
-        // Default: [.!?;\n]+ (no commas - we want to keep them in sentences)
-        let boundary_chars = if let Some(pattern) = config.split_pattern {
-            // Simple parsing: extract characters from pattern like [.!?;\n]+
-            pattern
-                .chars()
-                .filter(|c| !['[', ']', '+', '\\', 'n', 'r', 't'].contains(c))
-                .collect()
-        } else {
-            vec!['.', '!', '?', ';', '\n']
-        };
+        let boundary_chars = parse_boundary_chars(config.split_pattern.as_deref());
 
         Self {
             boundary_chars,
@@ -119,44 +109,67 @@ impl TextCollectorNode {
         }))
     }
 
-    fn is_boundary_char(&self, c: char) -> bool {
-        self.boundary_chars.contains(&c)
-    }
-
     fn extract_complete_sentences(&self, buffer: &str) -> (Vec<String>, String) {
-        let mut sentences = Vec::new();
-        let mut current_sentence = String::new();
-        let chars: Vec<char> = buffer.chars().collect();
+        extract_sentences(buffer, &self.boundary_chars, self.min_sentence_length)
+    }
+}
 
-        let mut i = 0;
-        while i < chars.len() {
-            let c = chars[i];
-            current_sentence.push(c);
+/// Extract complete sentences from a buffer using the given boundary chars.
+///
+/// Walks the buffer character by character; when a boundary char is seen,
+/// consumes any run of further boundary chars and emits the accumulated
+/// slice as one sentence (trimmed of leading whitespace only). Returns
+/// `(sentences, remainder)` — callers keep `remainder` in their own
+/// buffer and re-feed it on the next call.
+///
+/// Shared between `TextCollectorNode` and `ConversationCoordinatorNode`
+/// so the sentence-boundary semantics stay in lockstep across both.
+pub(crate) fn extract_sentences(
+    buffer: &str,
+    boundary_chars: &[char],
+    min_sentence_length: usize,
+) -> (Vec<String>, String) {
+    let mut sentences = Vec::new();
+    let mut current_sentence = String::new();
+    let chars: Vec<char> = buffer.chars().collect();
+    let is_boundary = |c: char| boundary_chars.contains(&c);
 
-            // Check if this is a boundary character
-            if self.is_boundary_char(c) {
-                // Include consecutive boundary chars in the sentence
-                while i + 1 < chars.len() && self.is_boundary_char(chars[i + 1]) {
-                    i += 1;
-                    current_sentence.push(chars[i]);
-                }
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        current_sentence.push(c);
 
-                // We've found a complete sentence
-                // Only trim leading whitespace, preserve trailing punctuation spacing
-                let sentence = current_sentence.trim_start().to_string();
-                if sentence.len() >= self.min_sentence_length {
-                    sentences.push(sentence);
-                }
-                current_sentence.clear();
+        if is_boundary(c) {
+            while i + 1 < chars.len() && is_boundary(chars[i + 1]) {
+                i += 1;
+                current_sentence.push(chars[i]);
             }
 
-            i += 1;
+            let sentence = current_sentence.trim_start().to_string();
+            if sentence.len() >= min_sentence_length {
+                sentences.push(sentence);
+            }
+            current_sentence.clear();
         }
 
-        // Remainder (incomplete sentence) - don't trim to preserve spacing
-        let remainder = current_sentence;
+        i += 1;
+    }
 
-        (sentences, remainder)
+    let remainder = current_sentence;
+    (sentences, remainder)
+}
+
+/// Parse a split-pattern string like `"[.!?;\\n]+"` into the set of
+/// boundary characters. Used by both `TextCollectorNode` and
+/// `ConversationCoordinatorNode` so configs stay compatible.
+pub(crate) fn parse_boundary_chars(pattern: Option<&str>) -> Vec<char> {
+    if let Some(pattern) = pattern {
+        pattern
+            .chars()
+            .filter(|c| !['[', ']', '+', '\\', 'n', 'r', 't'].contains(c))
+            .collect()
+    } else {
+        vec!['.', '!', '?', ';', '\n']
     }
 }
 

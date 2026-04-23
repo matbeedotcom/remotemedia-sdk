@@ -349,10 +349,13 @@ class QwenTTSMlxNode(MultiprocessNode):
         if not text:
             return
 
-        # Clear any stale barge-in latch on each new sentence. If the
-        # user speaks over this sentence, `_handle_aux_port` will set
-        # the flag again and we'll drop the remaining chunks on the
-        # next iteration.
+        # Clear any stale barge-in latch on each new sentence. In this
+        # pipeline's architecture the VAD publishes ``barge_in`` on
+        # every user ``speech_start``; by the time the LLM has
+        # transcribed and emitted a new sentence, the barge-in's
+        # intent (cancel the previous response) has already been
+        # satisfied. Mid-synthesis barge-ins are still caught by the
+        # consumer-loop check below.
         self._interrupt = False
 
         logger.info(

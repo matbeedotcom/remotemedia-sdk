@@ -2,13 +2,25 @@
 // together, subscribes to the right control-bus topics, and feeds events
 // into the Zustand store.
 //
-// The heuristic for turn lifecycle is:
-//   vad.is_speech_start      -> begin a turn (if none open). Fire barge_in
-//                               if the assistant is still generating and
-//                               autoBargeIn is on.
+// Turn lifecycle is driven by the SERVER-AUTHORITATIVE
+// `coordinator.out` stream published by the
+// `ConversationCoordinatorNode` in the pipeline:
+//
+//   coordinator.out phase=USER_SPEAKING      -> beginTurn (new user turn)
+//                                              + markBargedIn on previous
+//                                                turn if cancelled_turn_id
+//                                                is set
+//   coordinator.out phase=AGENT_SPEAKING     -> setGenerating(true)
+//   coordinator.out phase=IDLE               -> finalizeTurn
+//
+// The `vad.out` subscription is now used only to publish the existing
+// barge-in aux-port fanout (`llm.in.barge_in`, `audio.in.barge_in`,
+// `flush_audio`) and to populate the VAD UI indicators. A future
+// iteration will move the aux-port fanout server-side into the
+// coordinator and retire those publishes.
+//
 //   stt_in.out                -> set user transcript on the current turn
-//   audio.out (kind=text)     -> append to liveReply, mark generating
-//   stt_out.out               -> set assistant transcript + finalize turn
+//   audio.out (kind=text)     -> append to liveReply
 //
 // Server-side audio flows over the WebRTC peer's remote track, not the
 // control bus — the `audio.out` tap carries only the text-token stream
@@ -26,20 +38,14 @@ export class Session {
   private unsubscribers: Array<() => void> = []
   private localStream: MediaStream | null = null
 
-  // Half-duplex echo suppression. Browser AEC can't scrub the
-  // room-reflected signal of the assistant's reply when it comes
-  // back through external speakers, so the mic otherwise picks up
-  // the model's own voice and Whisper transcribes it as a new user
-  // turn. We mute the mic when the first audio chunk of a reply
-  // arrives and release it once we estimate the reply has finished
-  // playing out locally.
-  private micOriginallyEnabled = true
+  // Playback duration tracking — used to surface a "playing back"
+  // indicator in the UI. Echo suppression itself is handled by the
+  // browser's ``echoCancellation`` constraint on the mic track (see
+  // ``getUserMedia`` below), not by muting the mic during replies —
+  // muting would kill VAD and make voice barge-in impossible.
   private replyStartedAtMs: number | null = null
   private replyEstimatedDurationMs = 0
   private replyReleaseTimer: ReturnType<typeof setTimeout> | null = null
-  // Extra grace on top of the computed playback duration. Accounts
-  // for WebRTC jitter-buffer delay and speaker→mic reverb tail.
-  private readonly REPLY_GRACE_MS = 1200
 
   constructor(wsUrl: string, peerId: string) {
     this.ws = new SignalingClient(wsUrl)
@@ -70,22 +76,31 @@ export class Session {
 
       // Mic capture — mono to match the pipeline's expected channel layout.
       //
-      // AEC / noiseSuppression are DISABLED on purpose. With AEC on,
-      // Chrome subtracts any mic audio that resembles currently-playing
-      // audio (the assistant's reply), which means when the user
-      // tries to barge in while the bot is talking, their voice is
-      // classified as echo and removed before it's transmitted —
-      // the server-side VAD never fires and interruptions are
-      // impossible. noiseSuppression is similarly aggressive and can
-      // gate out short/quiet speech.
+      // ``echoCancellation`` is ON by default: on laptops the
+      // assistant's voice reflects off the room back into the mic,
+      // the server VAD then fires and Whisper transcribes the
+      // assistant's own reply as a new user turn ("echo loop"). AEC
+      // uses the remote playback signal as a reference and subtracts
+      // only the echoed component, so real user speech still carries
+      // through loud enough for barge-in to work — the earlier worry
+      // that AEC nukes barge-in is overstated for modern Chrome.
       //
-      // Trade-off: on open speakers the assistant's voice now echoes
-      // back through the mic and the server will transcribe some of
-      // its own output. USE HEADPHONES.
+      // ``noiseSuppression`` stays OFF: it's aggressive enough to gate
+      // short/quiet user speech (single-word answers, quick "yes") and
+      // the echo-loop problem is already handled by AEC.
+      //
+      // Users with external speakers who prefer the old no-AEC
+      // behaviour (e.g. because their AEC implementation is poor) can
+      // set ``window.__DISABLE_AEC = true`` before the session starts;
+      // we read that override here.
+      const disableAec = !!(
+        typeof window !== 'undefined' &&
+        (window as unknown as { __DISABLE_AEC?: boolean }).__DISABLE_AEC
+      )
       this.localStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
-          echoCancellation: false,
+          echoCancellation: !disableAec,
           noiseSuppression: false,
           autoGainControl: true,
         },
@@ -180,42 +195,13 @@ export class Session {
           sampleRate: p.sample_rate ?? 16000,
         })
         if (p.is_speech_start) {
-          // UNCONDITIONAL barge-in. Any speech_start from VAD halts
-          // in-flight generation on every node in the pipeline. No
-          // client-side gate (no `active.generating`, no
-          // `autoBargeIn` toggle) — by the time VAD says the user is
-          // speaking, the assistant MUST shut up and a new turn
-          // starts. If nothing was generating the barge-in is a
-          // harmless no-op on the server (request_barge_in just
-          // raises a flag that's cleared at the start of the next
-          // real synthesis).
-          console.log('[session] VAD speech_start → barge-in')
-          control
-            .publishText('audio.in.barge_in', 'barge')
-            .catch((e) => console.warn('barge_in (audio) publish failed:', e))
-          control
-            .publishText('llm.in.barge_in', 'barge')
-            .catch((e) => console.warn('barge_in (llm) publish failed:', e))
-          control
-            .flushAudio()
-            .catch((e) => console.warn('flushAudio failed:', e))
-
-          const { currentTurnId, turns } = s()
-          const active = currentTurnId
-            ? turns.find((t) => t.id === currentTurnId)
-            : null
-          if (active && !active.endedAt) {
-            // Only claim "barged-in" if we actually observed the
-            // assistant producing output. Tagging an open turn that
-            // never got a token as barged-in is misleading — the user
-            // just spoke again before any reply arrived. The barge
-            // publishes above are still unconditional (harmless no-op
-            // server-side if nothing was generating).
-            if (active.generating || active.liveReply.length > 0) {
-              s().markBargedIn()
-            }
-            s().finalizeTurn()
-          }
+          // Barge-in is fully server-side now. The
+          // `ConversationCoordinatorNode` observes this same VAD
+          // event on its wired input and (a) publishes to
+          // `llm.in.barge_in` + `audio.in.barge_in` via
+          // SessionControl, and (b) pings a flush-audio hook
+          // installed by the WebRTC `ServerPeer` which drains the
+          // outbound ring buffer. No client round-trip required.
           if (this.replyReleaseTimer !== null) {
             clearTimeout(this.replyReleaseTimer)
             this.replyReleaseTimer = null
@@ -223,7 +209,6 @@ export class Session {
           this.replyStartedAtMs = null
           this.replyEstimatedDurationMs = 0
           this.setMicEnabled(true)
-          s().beginTurn()
         }
       }),
     )
@@ -239,23 +224,130 @@ export class Session {
       }),
     )
 
+    // Server-authoritative turn lifecycle. The
+    // `ConversationCoordinatorNode` emits two envelope kinds on
+    // `coordinator.out`:
+    //   `turn_state`    — phase transitions + turn ids
+    //   `display_text`  — UI-channel text from `show(content=...)`
+    // This handler dispatches both.
+    this.unsubscribers.push(
+      await control.subscribe('coordinator.out', (ev) => {
+        if (ev.kind !== 'json') return
+        const p = ev.payload as {
+          kind?: string
+          turn_id?: number
+          phase?: string
+          cancelled_turn_id?: number | null
+          error?: string | null
+          ts_ms?: number
+          channel?: string
+          text?: string
+        }
+        if (p.kind === 'display_text') {
+          // UI text never touched TTS — it arrives here as the only
+          // delivery path. Append to the current turn's liveReply so
+          // it renders next to the spoken response.
+          const text = p.text ?? ''
+          if (text.length > 0) {
+            if (s().currentTurnId === null) s().beginTurn()
+            s().appendLiveReply(text)
+          }
+          return
+        }
+        if (p.kind !== 'turn_state') return
+        console.log(
+          '[coordinator]',
+          p.phase,
+          'turn',
+          p.turn_id,
+          p.cancelled_turn_id != null
+            ? `(cancelled ${p.cancelled_turn_id})`
+            : '',
+          p.error ? `error=${p.error}` : '',
+        )
+
+        switch (p.phase) {
+          case 'USER_SPEAKING': {
+            // If a prior turn was open (either actively generating or
+            // just waiting on a transcript), close it. Tag as
+            // barged-in ONLY when there was in-flight assistant
+            // output to cut — a fresh speech_start that lands on an
+            // empty open turn just means the user kept talking.
+            const { currentTurnId, turns } = s()
+            if (currentTurnId !== null) {
+              const active = turns.find((t) => t.id === currentTurnId)
+              if (active && !active.endedAt) {
+                const cancelled = p.cancelled_turn_id != null
+                if (
+                  cancelled &&
+                  (active.generating || active.liveReply.length > 0)
+                ) {
+                  s().markBargedIn()
+                }
+                s().finalizeTurn()
+              }
+            }
+            s().beginTurn()
+            break
+          }
+          case 'AGENT_THINKING':
+            // User turn closed; we're waiting on the LLM. No store
+            // change — the stt_in.out handler will fill in the user
+            // transcript on the already-open turn.
+            break
+          case 'AGENT_SPEAKING':
+            s().setGenerating(true)
+            break
+          case 'IDLE': {
+            const { currentTurnId, turns } = s()
+            if (currentTurnId !== null) {
+              const active = turns.find((t) => t.id === currentTurnId)
+              if (active && !active.endedAt) {
+                // The LLM has emitted <|text_end|> by now, so
+                // liveReply holds the final assistant text. Copy it
+                // to assistantTranscript before finalising — the
+                // audio.out <|audio_end|> path is a redundant
+                // safety net (fires after TTS finishes synthesising
+                // the last sentence, by which point this turn is
+                // already closed).
+                if (active.liveReply.length > 0) {
+                  s().setAssistantTranscript(active.liveReply)
+                }
+                if (p.error === 'llm_silence_timeout') {
+                  // Timed-out turn — surface it, but don't tag
+                  // barged-in (that's for user-initiated cut-offs).
+                  s().setError('LLM silence timeout')
+                }
+                s().finalizeTurn()
+              }
+            }
+            // Reset reply playback bookkeeping so the next turn
+            // starts cleanly.
+            if (this.replyReleaseTimer !== null) {
+              clearTimeout(this.replyReleaseTimer)
+              this.replyReleaseTimer = null
+            }
+            this.replyStartedAtMs = null
+            this.replyEstimatedDurationMs = 0
+            break
+          }
+          default:
+            break
+        }
+      }),
+    )
+
     this.unsubscribers.push(
       await control.subscribe('audio.out', (ev) => {
-        // Audio envelopes (kind=audio): optionally gate the mic so
-        // we don't re-transcribe our own reply. Only do the mute
-        // when the user has disabled autoBargeIn — the mute makes
-        // voice barge-in impossible (no mic upload = no server VAD
-        // = no audio.in.barge_in), so the two modes trade off:
-        //   autoBargeIn ON  → mic stays live, voice barge-in works,
-        //                     only safe with headphones (no speaker
-        //                     echo to re-prime the pipeline).
-        //   autoBargeIn OFF → mic is muted during replies, no voice
-        //                     barge-in but safe on open speakers.
+        // Audio envelopes: track chunk durations for the UI playback
+        // indicator. We do NOT mute the mic — muting kills VAD so the
+        // server can't detect the user starting to speak during
+        // assistant playback (barge-in). Echo suppression is handled
+        // by the browser's ``echoCancellation`` constraint on the mic
+        // track, which subtracts the remote playback signal from the
+        // captured mic audio so the assistant's voice doesn't loop
+        // back through the room.
         if (ev.kind === 'audio') {
-          // Track chunk durations for the UI playback indicator but
-          // NEVER mute the mic. Muting kills VAD so the server can't
-          // detect the user starting to speak during assistant
-          // playback — which is exactly when barge-in is needed.
           const p = ev.payload as {
             size?: number
             sample_rate?: number
@@ -284,14 +376,22 @@ export class Session {
           s().appendLiveReply(chunk)
         }
         if (isEndOfReply) {
+          // Safety net. Coordinator.out IDLE has already closed the
+          // turn and copied liveReply → assistantTranscript; this
+          // branch fires later when TTS finishes its final sentence
+          // and only matters if coordinator.out failed to deliver
+          // (e.g. subscription dropped). In the normal case
+          // currentTurnId is null here and the calls no-op.
           const { turns, currentTurnId } = s()
-          const t = currentTurnId
-            ? turns.find((x) => x.id === currentTurnId)
-            : null
-          if (t) s().setAssistantTranscript(t.liveReply)
-          s().finalizeTurn()
-          // Reset playback tracking for the next reply. No mic-unmute
-          // timer — we never muted the mic in the first place.
+          if (currentTurnId !== null) {
+            const t = turns.find((x) => x.id === currentTurnId)
+            if (t && !t.endedAt) {
+              if (t.liveReply.length > 0) {
+                s().setAssistantTranscript(t.liveReply)
+              }
+              s().finalizeTurn()
+            }
+          }
           this.replyStartedAtMs = null
           this.replyEstimatedDurationMs = 0
         }
@@ -326,19 +426,22 @@ export class Session {
     await Promise.all([
       this.control.publishText('audio.in.reset', ''),
       this.control.publishText('llm.in.reset', ''),
+      // coordinator's reset wipes its turn state + text buffer,
+      // publishes a turn_state envelope with error="reset" so the
+      // UI can trace the cause if it subscribes to it.
+      this.control.publishText('coordinator.in.reset', ''),
     ])
     useStore.getState().reset()
   }
 
-  // Barge-in fires on BOTH nodes: the LLM should stop generating the
-  // next token and the TTS should drop any remaining synthesis +
-  // already-queued audio frames. For LFM2 only `audio.in.barge_in`
-  // reaches a real node; the `llm.in` publish is a no-op there.
+  // Manual barge-in (user clicked a UI button without speaking).
+  // Routes through `coordinator.in.barge_in` so the server-side
+  // ConversationCoordinatorNode advances its turn_id, fans barge-in
+  // to `llm` + `audio`, and pings its flush-audio hook to drain the
+  // WebRTC outbound ring buffer — same state-machine path as the
+  // VAD-driven barge.
   async bargeIn(): Promise<void> {
-    await Promise.all([
-      this.control.publishText('audio.in.barge_in', 'barge'),
-      this.control.publishText('llm.in.barge_in', 'barge'),
-    ])
+    await this.control.publishText('coordinator.in.barge_in', 'barge')
     useStore.getState().markBargedIn()
   }
 

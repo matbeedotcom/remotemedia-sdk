@@ -82,6 +82,11 @@ pub struct SessionHandle {
     task_handle: JoinHandle<Result<()>>,
     /// Whether the session is still active
     is_active: bool,
+    /// Active trace recorder, if `REMOTEMEDIA_RECORD_DIR` was set when
+    /// the session was created. Held here so its tap subscriptions +
+    /// writer task live exactly as long as the session does; on drop
+    /// the writer finishes the JSONL file and the tap relays exit.
+    _recorder: Option<crate::transport::session_recorder::SessionRecorder>,
 }
 
 impl SessionHandle {
@@ -305,12 +310,19 @@ impl PipelineExecutor {
             crate::nodes::streaming_registry::create_default_streaming_registry(),
         ));
 
+        let control_bus = SessionControlBus::new();
+        // Install as the process-wide singleton so Rust nodes can reach
+        // their session's control handle for cross-node aux publishes
+        // (e.g. ConversationCoordinatorNode → llm.in.barge_in). Safe to
+        // call repeatedly: first-writer-wins, later calls no-op.
+        SessionControlBus::install_global(control_bus.clone());
+
         Ok(Self {
             config,
             registry,
             scheduler,
             session_counter: std::sync::atomic::AtomicU64::new(0),
-            control_bus: SessionControlBus::new(),
+            control_bus,
         })
     }
 
@@ -470,7 +482,7 @@ impl PipelineExecutor {
         // Create session router with scheduler config and drift thresholds
         let (mut router, shutdown_tx) = SessionRouter::with_config(
             session_id.clone(),
-            manifest,
+            manifest.clone(),
             registry_snapshot,
             output_tx,
             Some(self.config.scheduler_config.clone()),
@@ -486,6 +498,19 @@ impl PipelineExecutor {
         let control = SessionControl::new(session_id.clone());
         router.attach_control(control.clone()).await;
         self.control_bus.register(control.clone());
+
+        // Trace recorder: if `REMOTEMEDIA_RECORD_DIR` is set, attach
+        // now so the taps are in place BEFORE the router starts —
+        // otherwise we'd miss the first few frames. Failures log and
+        // degrade to "no recording" (they must never take the
+        // session out). The recorder handle is moved into
+        // SessionHandle below so its lifetime matches the session.
+        let recorder = crate::transport::session_recorder::SessionRecorder::maybe_attach_from_env(
+            session_id.clone(),
+            control.clone(),
+            &manifest,
+        )
+        .await;
 
         // Get input sender before moving router
         let input_tx = router.get_input_sender();
@@ -507,6 +532,7 @@ impl PipelineExecutor {
             shutdown_tx,
             task_handle,
             is_active: true,
+            _recorder: recorder,
         })
     }
 

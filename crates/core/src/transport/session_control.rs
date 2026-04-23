@@ -285,6 +285,15 @@ pub struct SessionControl {
     /// Read on the router hot path once per node per packet; lock-free via
     /// DashMap to avoid an async RwLock on every output.
     node_states: DashMap<String, NodeState>,
+    /// Optional fire-and-forget channel installed by the transport layer
+    /// (e.g. WebRTC `ServerPeer`) so Rust nodes can request a drain of
+    /// the transport's outbound audio buffer without depending on the
+    /// transport crate directly. The transport sets the hook once at
+    /// session setup; nodes call `request_flush_audio()` to send a
+    /// ping. Absent on transports that don't have a flushable audio
+    /// queue (gRPC, etc.) — callers should treat its absence as a
+    /// no-op.
+    flush_audio_tx: RwLock<Option<mpsc::Sender<()>>>,
 }
 
 impl SessionControl {
@@ -298,7 +307,28 @@ impl SessionControl {
             inject_seq: std::sync::atomic::AtomicU64::new(0),
             close_tx,
             node_states: DashMap::new(),
+            flush_audio_tx: RwLock::new(None),
         })
+    }
+
+    /// Install the flush-audio hook. Called by the transport layer at
+    /// session setup; later calls overwrite the previous hook (last-
+    /// writer-wins, rare in practice since each session has one
+    /// transport).
+    pub async fn install_flush_audio_hook(&self, tx: mpsc::Sender<()>) {
+        *self.flush_audio_tx.write().await = Some(tx);
+    }
+
+    /// Request an audio-buffer flush on the transport attached to this
+    /// session. Fire-and-forget: returns `true` if a hook was installed
+    /// and the ping was accepted (or the channel is just slow),
+    /// `false` if no transport registered a hook. Never blocks.
+    pub async fn request_flush_audio(&self) -> bool {
+        let tx = self.flush_audio_tx.read().await.clone();
+        match tx {
+            Some(tx) => tx.try_send(()).is_ok(),
+            None => false,
+        }
     }
 
     /// Set a node's runtime execution state.
@@ -513,6 +543,28 @@ impl SessionControl {
         }
     }
 
+    /// Publish a frame to a node's tap WITHOUT sending it through the
+    /// data-path. This is the side channel nodes use to emit
+    /// control-plane events (e.g. `turn_state` envelopes from the
+    /// `ConversationCoordinatorNode`) that clients subscribed to
+    /// `<node>.out` should see but that must NOT reach the
+    /// downstream consumer. `broadcast::Sender::send` is sync so the
+    /// method stays sync; callers can invoke from any context
+    /// including the middle of a sync `process_streaming`.
+    ///
+    /// Ensures the tap sender exists so the broadcast ring captures
+    /// the event even if no subscriber has attached yet — the first
+    /// late subscriber then sees whatever's still in the buffer.
+    pub fn publish_tap(&self, node_id: &str, port: Option<&str>, data: RuntimeData) {
+        let key: TapKey = (node_id.to_string(), port.map(|s| s.to_string()));
+        let sender = self
+            .taps
+            .entry(key)
+            .or_insert_with(|| broadcast::channel(DEFAULT_TAP_CAPACITY).0)
+            .clone();
+        let _ = sender.send(data);
+    }
+
     // ─── Router-facing API (called from SessionRouter::process_input) ──────
 
     /// Called by the router after a node produces an output, before the
@@ -644,6 +696,32 @@ impl SessionControlBus {
     pub fn get(&self, session_id: &str) -> Option<Arc<SessionControl>> {
         self.sessions.get(session_id).map(|e| e.value().clone())
     }
+
+    /// Install `bus` as the process-wide singleton if none is set yet.
+    /// First-writer-wins: later calls from secondary executors (typical
+    /// only in multi-executor tests) silently no-op. Regular single-
+    /// executor deployments install their bus here once.
+    pub fn install_global(bus: Arc<Self>) {
+        let _ = GLOBAL_BUS.set(bus);
+    }
+}
+
+static GLOBAL_BUS: std::sync::OnceLock<Arc<SessionControlBus>> = std::sync::OnceLock::new();
+
+/// Get the process-wide [`SessionControlBus`] if one has been installed.
+///
+/// Returns `None` until `PipelineExecutor::new` / `with_config` has run
+/// once in this process. Rust nodes that need to publish to another
+/// node's aux port (e.g. `ConversationCoordinatorNode` firing
+/// `llm.in.barge_in` on a user-barge) look themselves up via
+/// `global_bus()?.get(session_id)?.publish(...)`.
+///
+/// Intentionally permissive about missing state — nodes that reach for
+/// the bus before an executor exists just degrade to a no-op (the
+/// client-side barge-in fanout is the fallback), so a wrong test setup
+/// doesn't panic the data plane.
+pub fn global_bus() -> Option<Arc<SessionControlBus>> {
+    GLOBAL_BUS.get().cloned()
 }
 
 // ────────────────────────────────────────────────────────────────────────────

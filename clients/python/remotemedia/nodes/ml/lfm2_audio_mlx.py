@@ -445,6 +445,11 @@ class LFM2AudioMlxNode(MultiprocessNode):
         session_state = await self._get_or_create_session(session_id)
         chat = session_state.chat_state
 
+        # Reset barge-in at the start of every new turn. In this
+        # pipeline the VAD publishes barge_in on every speech_start,
+        # including the first turn where nothing is in flight; by the
+        # time this audio reaches us, the barge-in's intent has
+        # already been satisfied.
         self._interrupt = False
 
         # Feed the user turn. MLX-audio expects mx.array input at the

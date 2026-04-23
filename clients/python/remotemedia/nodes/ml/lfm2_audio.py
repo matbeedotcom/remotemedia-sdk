@@ -535,7 +535,10 @@ class LFM2AudioNode(MultiprocessNode):
         chat = session_state.chat_state
 
         # Reset barge-in at the start of every new turn — it's a latch,
-        # not a continuous flag.
+        # not a continuous flag. In this pipeline the VAD fires
+        # barge_in on every speech_start, including the first turn
+        # where nothing is in flight; by the time we receive this
+        # audio, the barge-in's intent has already been satisfied.
         self._interrupt = False
 
         # Add the user audio turn.

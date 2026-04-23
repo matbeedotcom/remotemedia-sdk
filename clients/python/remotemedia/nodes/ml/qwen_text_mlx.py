@@ -68,6 +68,16 @@ try:
     except Exception:  # noqa: BLE001
         _mlxlm_make_sampler = None  # type: ignore
     try:
+        # Repetition / presence / frequency penalties and logit bias.
+        # Available in mlx-lm 0.19+ (we pin 0.31.3). Optional so older
+        # envs still load the module — but any of the `*_penalty` knobs
+        # will silently become no-ops if this import fails.
+        from mlx_lm.sample_utils import (
+            make_logits_processors as _mlxlm_make_logits_processors,
+        )
+    except Exception:  # noqa: BLE001
+        _mlxlm_make_logits_processors = None  # type: ignore
+    try:
         # KV-cache reuse across turns. Without this, every reply re-prefills
         # the full chat template (system + context + history + user), which
         # dominates first-token latency on long conversations.
@@ -82,6 +92,7 @@ except BaseException as _exc:  # noqa: BLE001 — broken installs raise everythi
     _mlxlm_load = None  # type: ignore
     _mlxlm_stream_generate = None  # type: ignore
     _mlxlm_make_sampler = None  # type: ignore
+    _mlxlm_make_logits_processors = None  # type: ignore
     _mlxlm_make_prompt_cache = None  # type: ignore
     logging.getLogger(__name__).warning(
         "QwenTextMlxNode mlx-lm imports failed (%s): %s",
@@ -217,38 +228,212 @@ def _default_show_tool() -> ToolSpec:
     )
 
 
+def _strip_unclosed_tool_call_suffix(
+    raw: str,
+    start_tag: str = _DEFAULT_TOOL_CALL_START,
+    end_tag: str = _DEFAULT_TOOL_CALL_END,
+) -> str:
+    """Remove a trailing unclosed ``<tool_call>...`` from ``raw``.
+
+    If the last ``<tool_call>`` in ``raw`` has no matching
+    ``</tool_call>`` after it, everything from that opening tag to the
+    end of the string is dropped — otherwise committing the partial
+    content to history leaves the next prompt with a half-open tool
+    call that Qwen will try to complete instead of answering the new
+    user turn.
+    """
+    if not raw:
+        return raw
+    last_open = raw.rfind(start_tag)
+    if last_open == -1:
+        return raw
+    last_close = raw.rfind(end_tag)
+    if last_close > last_open:
+        return raw  # well-formed: every open has a close after it
+    return raw[:last_open]
+
+
 class _ToolCallStreamParser:
-    """Splits a streaming text feed into display text and tool-call bodies.
+    """Splits a streaming text feed into display text, streamed tool-arg
+    content, and complete tool-call bodies.
+
+    Qwen emits tool calls as a fixed JSON shape:
+        <tool_call>{"name":"say","arguments":{"text":"<value>"}}</tool_call>
+
+    The model streams tokens, so waiting for the full ``</tool_call>``
+    before dispatching delays the first audible word by the time it
+    takes to generate the entire wrapper (seconds on a 9B MLX model
+    with a long system prompt). This parser recognises the ``"text":"``
+    / ``"content":"`` markers inline and emits the argument value
+    chunk-by-chunk as the model produces it, decoding JSON string
+    escapes (``\\"`` ``\\\\`` ``\\n`` ``\\t`` ``\\r`` ``\\/`` ``\\uXXXX``)
+    in the stream. A downstream ``TextCollectorNode`` then aggregates
+    those chars into sentences for the TTS.
 
     State machine:
-        OUTSIDE: accumulating user-facing text; watching for ``start_tag``
-        INSIDE:  accumulating tool-call body; watching for ``end_tag``
+        OUTSIDE:  watching for ``start_tag`` (free display text)
+        INSIDE/seeking:  scanning body for ``"text":"`` or ``"content":"``
+        INSIDE/streaming: emitting decoded arg chars until unescaped ``"``
+        INSIDE/post:      waiting for ``end_tag`` to close the body
 
-    While OUTSIDE we hold back ``len(start_tag) - 1`` tail chars in the
-    buffer so a tag split across streaming chunks is still detected.
-    Over-conservative (may hold a few extra safe chars) but never emits
-    a partial tag. For ``<tool_call>`` (11 chars) the worst-case
-    extra-latency is ~10 chars of display text — a few tokens.
+    Pass through the constructor:
+        streaming_enabled=True  — emit arg chars incrementally (default).
+        streaming_enabled=False — buffer everything and only emit the
+            completed tool body at ``end_tag``. Used on passes > 0 so
+            the duplicate-detection loop can dedupe against prior
+            dispatched sigs before committing to audio.
     """
 
-    def __init__(self, start_tag: str, end_tag: str) -> None:
+    _ARG_MARKERS = (
+        ('"text":"', "say"),
+        ('"content":"', "show"),
+    )
+    _MAX_MARKER_LEN = max(len(m) for m, _ in _ARG_MARKERS)
+
+    def __init__(
+        self,
+        start_tag: str,
+        end_tag: str,
+        streaming_enabled: bool = True,
+    ) -> None:
         self.start_tag = start_tag or _DEFAULT_TOOL_CALL_START
         self.end_tag = end_tag or _DEFAULT_TOOL_CALL_END
         self.inside = False
         self.buffer = ""
+        self._streaming_enabled = streaming_enabled
+        # Per-tool-call state (reset at every start_tag).
+        self._arg_state = "seeking"  # "seeking" | "streaming" | "post"
+        self._current_tool_name: Optional[str] = None
+        self._pending_escape = False
+        self._current_arg_emitted_any = False
+        self._full_body = ""
 
-    def feed(self, chunk: str) -> Tuple[str, List[str]]:
-        """Consume a chunk. Returns (safe_display_text, completed_tool_bodies)."""
+    def _begin_tool_call(self) -> None:
+        self._arg_state = "seeking"
+        self._current_tool_name = None
+        self._pending_escape = False
+        self._current_arg_emitted_any = False
+        self._full_body = ""
+
+    def _find_first_arg_marker(
+        self, buf: str
+    ) -> Optional[Tuple[int, str]]:
+        """Return (position-after-marker, tool_name) for the earliest
+        arg-key match, or None if no marker is present yet."""
+        best: Optional[Tuple[int, str, str]] = None
+        for marker, tool_name in self._ARG_MARKERS:
+            idx = buf.find(marker)
+            if idx == -1:
+                continue
+            if best is None or idx < best[0]:
+                best = (idx, marker, tool_name)
+        if best is None:
+            return None
+        idx, marker, tool_name = best
+        return (idx + len(marker), tool_name)
+
+    def _consume_arg_value(self, buf: str) -> Tuple[str, int, bool]:
+        """Decode chars of a JSON string until the closing unescaped ``"``.
+
+        Returns ``(decoded_text, consumed, ended)``:
+            decoded_text — chars safe to emit right now
+            consumed     — how many bytes of ``buf`` we advanced past
+            ended        — True iff we saw the closing quote
+
+        Stops early when a multi-char escape (e.g. ``\\uXXXX``) straddles
+        the chunk boundary, so the next ``feed()`` call can complete it.
+        """
+        out: List[str] = []
+        i = 0
+        n = len(buf)
+        while i < n:
+            c = buf[i]
+            if self._pending_escape:
+                self._pending_escape = False
+                if c == 'n':
+                    out.append('\n')
+                    i += 1
+                elif c == 't':
+                    out.append('\t')
+                    i += 1
+                elif c == 'r':
+                    out.append('\r')
+                    i += 1
+                elif c == 'b':
+                    out.append('\b')
+                    i += 1
+                elif c == 'f':
+                    out.append('\f')
+                    i += 1
+                elif c == '"':
+                    out.append('"')
+                    i += 1
+                elif c == '\\':
+                    out.append('\\')
+                    i += 1
+                elif c == '/':
+                    out.append('/')
+                    i += 1
+                elif c == 'u':
+                    # ``\\uXXXX`` — need 4 more hex chars. Rewind the
+                    # escape if the chunk ended before them so the next
+                    # feed() can decode it cleanly.
+                    if i + 5 > n:
+                        self._pending_escape = True
+                        return "".join(out), i - 1, False
+                    hex_part = buf[i + 1:i + 5]
+                    try:
+                        out.append(chr(int(hex_part, 16)))
+                    except ValueError:
+                        out.append('?')
+                    i += 5
+                else:
+                    # Unknown escape — pass through the char, discard
+                    # the backslash. Lenient.
+                    out.append(c)
+                    i += 1
+                continue
+            if c == '\\':
+                self._pending_escape = True
+                i += 1
+                continue
+            if c == '"':
+                # End of arg string — consume the closing quote.
+                return "".join(out), i + 1, True
+            out.append(c)
+            i += 1
+        return "".join(out), i, False
+
+    def feed(
+        self, chunk: str
+    ) -> Tuple[str, List[Tuple[str, str, bool]], List[Tuple[str, bool]]]:
+        """Consume a chunk.
+
+        Returns ``(display_text, arg_chunks, tool_bodies)``:
+
+        display_text
+            Free-form text outside any tool_call, safe to emit now.
+        arg_chunks
+            List of ``(tool_name, text, is_final)`` for streamed tool-arg
+            content. ``is_final=True`` marks the chunk that closes the
+            argument — the caller should yield a flush newline after it.
+        tool_bodies
+            List of ``(body, was_streamed)`` for completed tool_calls.
+            ``body`` is the raw JSON between the tags (for history +
+            dedup). ``was_streamed=True`` means the caller already
+            emitted the arg via ``arg_chunks`` and must NOT dispatch
+            again — just record it for dedup / tool-result accounting.
+        """
         if not chunk:
-            return "", []
+            return "", [], []
         self.buffer += chunk
         display_parts: List[str] = []
-        tool_bodies: List[str] = []
+        arg_chunks: List[Tuple[str, str, bool]] = []
+        tool_bodies: List[Tuple[str, bool]] = []
         while True:
             if not self.inside:
                 idx = self.buffer.find(self.start_tag)
                 if idx == -1:
-                    # Hold back potential partial-start-tag suffix.
                     hold = len(self.start_tag) - 1
                     safe_len = len(self.buffer) - hold
                     if safe_len > 0:
@@ -259,23 +444,112 @@ class _ToolCallStreamParser:
                     display_parts.append(self.buffer[:idx])
                 self.buffer = self.buffer[idx + len(self.start_tag):]
                 self.inside = True
-            else:
-                idx = self.buffer.find(self.end_tag)
-                if idx == -1:
-                    # Keep buffering; the body may arrive across many chunks.
-                    break
-                tool_bodies.append(self.buffer[:idx])
-                self.buffer = self.buffer[idx + len(self.end_tag):]
-                self.inside = False
-        return "".join(display_parts), tool_bodies
+                self._begin_tool_call()
+                continue
 
-    def flush(self) -> Tuple[str, List[str]]:
+            if not self._streaming_enabled:
+                # Legacy buffer-and-dispatch path: no partial emission,
+                # just wait for end_tag and hand the full body up.
+                end_idx = self.buffer.find(self.end_tag)
+                if end_idx == -1:
+                    hold = len(self.end_tag) - 1
+                    safe_len = len(self.buffer) - hold
+                    if safe_len > 0:
+                        self._full_body += self.buffer[:safe_len]
+                        self.buffer = self.buffer[safe_len:]
+                    break
+                self._full_body += self.buffer[:end_idx]
+                tool_bodies.append((self._full_body, False))
+                self.buffer = self.buffer[end_idx + len(self.end_tag):]
+                self.inside = False
+                continue
+
+            if self._arg_state == "seeking":
+                marker_hit = self._find_first_arg_marker(self.buffer)
+                end_idx = self.buffer.find(self.end_tag)
+                if marker_hit is not None and (
+                    end_idx == -1 or marker_hit[0] <= end_idx
+                ):
+                    arg_start, tool_name = marker_hit
+                    self._full_body += self.buffer[:arg_start]
+                    self.buffer = self.buffer[arg_start:]
+                    self._current_tool_name = tool_name
+                    self._arg_state = "streaming"
+                    self._pending_escape = False
+                    self._current_arg_emitted_any = False
+                    continue
+                if end_idx != -1:
+                    # tool_call closed before any recognised arg appeared
+                    # — fall back to dispatch-at-end for this body.
+                    self._full_body += self.buffer[:end_idx]
+                    tool_bodies.append((self._full_body, False))
+                    self.buffer = self.buffer[end_idx + len(self.end_tag):]
+                    self.inside = False
+                    continue
+                # Nothing to act on yet. Hold back enough chars to cover
+                # a partial marker or end_tag that might straddle the
+                # next chunk; flush the rest into the full-body record.
+                hold = max(self._MAX_MARKER_LEN, len(self.end_tag)) - 1
+                safe_len = len(self.buffer) - hold
+                if safe_len > 0:
+                    self._full_body += self.buffer[:safe_len]
+                    self.buffer = self.buffer[safe_len:]
+                break
+
+            if self._arg_state == "streaming":
+                text_out, consumed, ended = self._consume_arg_value(
+                    self.buffer
+                )
+                if consumed > 0:
+                    self._full_body += self.buffer[:consumed]
+                    self.buffer = self.buffer[consumed:]
+                if text_out:
+                    self._current_arg_emitted_any = True
+                if text_out or ended:
+                    arg_chunks.append(
+                        (self._current_tool_name or "", text_out, ended)
+                    )
+                if ended:
+                    self._arg_state = "post"
+                    continue
+                # Not ended yet and nothing consumed (stuck on partial
+                # ``\\uXXXX`` at buffer tail) → wait for more.
+                if consumed == 0:
+                    break
+                # Consumed some chars but no close yet — next iteration
+                # will re-enter with more buffer or stop.
+                continue
+
+            # arg_state == "post"
+            end_idx = self.buffer.find(self.end_tag)
+            if end_idx == -1:
+                hold = len(self.end_tag) - 1
+                safe_len = len(self.buffer) - hold
+                if safe_len > 0:
+                    self._full_body += self.buffer[:safe_len]
+                    self.buffer = self.buffer[safe_len:]
+                break
+            self._full_body += self.buffer[:end_idx]
+            # If we streamed at least one char for this arg, mark as
+            # already-dispatched so the consumer doesn't re-emit at
+            # end. Empty-arg calls (streaming enabled but model emitted
+            # ``"text":""``) fall through to the normal dispatch path
+            # so ``_validate_tool_args`` can surface an error to the
+            # next pass.
+            was_streamed = self._current_arg_emitted_any
+            tool_bodies.append((self._full_body, was_streamed))
+            self.buffer = self.buffer[end_idx + len(self.end_tag):]
+            self.inside = False
+            continue
+        return "".join(display_parts), arg_chunks, tool_bodies
+
+    def flush(self) -> Tuple[str, List[Tuple[str, str, bool]], List[Tuple[str, bool]]]:
         """Drain any trailing state at end of generation."""
         if not self.inside:
             out = self.buffer
             self.buffer = ""
-            return out, []
-        # Unclosed tool call — likely truncated by max_tokens / barge-in.
+            return out, [], []
+        # Unclosed tool_call — likely truncated by max_tokens / barge-in.
         remaining = self.buffer
         self.buffer = ""
         self.inside = False
@@ -283,7 +557,7 @@ class _ToolCallStreamParser:
             "tool_call block at stream end had no closing tag; dropping %d chars",
             len(remaining),
         )
-        return "", []
+        return "", [], []
 
 
 @register_node("QwenTextMlxNode")
@@ -305,8 +579,17 @@ class QwenTextMlxNode(MultiprocessNode):
         hf_repo: str = DEFAULT_HF_REPO,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         max_new_tokens: int = 256,
+        # Qwen3 instruct (non-thinking) sampling recipe, per Alibaba's
+        # model card: temp=0.7, top_p=0.8, top_k=20, min_p=0.0,
+        # presence_penalty=1.5, repetition_penalty=1.0. These defaults
+        # are what you want for a voice-assistant turn; override per-node
+        # for creative / deterministic use cases.
         temperature: float = 0.7,
-        top_p: float = 0.9,
+        top_p: float = 0.8,
+        top_k: int = 20,
+        min_p: float = 0.0,
+        presence_penalty: float = 1.5,
+        repetition_penalty: float = 1.0,
         tools: Optional[Iterable[Union[ToolSpec, Dict[str, Any]]]] = None,
         enable_say_tool: bool = True,
         enable_show_tool: bool = True,
@@ -341,6 +624,10 @@ class QwenTextMlxNode(MultiprocessNode):
         self.max_new_tokens = int(params.get("max_new_tokens", max_new_tokens))
         self.temperature = float(params.get("temperature", temperature))
         self.top_p = float(params.get("top_p", top_p))
+        self.top_k = int(params.get("top_k", top_k))
+        self.min_p = float(params.get("min_p", min_p))
+        self.presence_penalty = float(params.get("presence_penalty", presence_penalty))
+        self.repetition_penalty = float(params.get("repetition_penalty", repetition_penalty))
 
         self._model: Any = None
         self._processor: Any = None
@@ -689,15 +976,33 @@ class QwenTextMlxNode(MultiprocessNode):
             logger.debug("[%s] empty user turn; skipping", self.node_id)
             return
 
+        # Reset the barge-in latch on entry. In this pipeline's
+        # architecture the VAD publishes ``barge_in`` on every
+        # ``speech_start`` — including the very FIRST utterance when
+        # no model response is in flight. The user's transcribed
+        # speech then arrives here as the new turn's input. By the
+        # time we're called, the barge-in's intent ("cancel the
+        # previous response") has already been achieved, so we clear
+        # the flag and start the new turn fresh. Mid-turn barge-ins
+        # (user talks over an in-progress response) are still caught
+        # by the pass-top / consumer-loop checks below.
         self._interrupt = False
         tools_active = bool(self._active_tool_names)
 
-        # Sampler + prompt cache are shared across passes of one turn.
+        # Sampler + prompt cache + logits processors are shared across
+        # passes of one turn. The sampler carries temp/top_p/top_k/min_p;
+        # the processors carry repetition/presence/frequency penalties.
+        # Splitting them matches mlx-lm's own API — the sampler operates
+        # on log-probs (after processors), the processors operate on
+        # raw logits with access to prior tokens.
         sampler = None
         if _mlxlm_make_sampler is not None:
             try:
                 sampler = _mlxlm_make_sampler(
-                    temp=self.temperature, top_p=self.top_p
+                    temp=self.temperature,
+                    top_p=self.top_p,
+                    top_k=self.top_k,
+                    min_p=self.min_p,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.debug(
@@ -705,6 +1010,28 @@ class QwenTextMlxNode(MultiprocessNode):
                     self.node_id, exc,
                 )
                 sampler = None
+
+        logits_processors: List[Any] = []
+        if _mlxlm_make_logits_processors is not None:
+            try:
+                # `make_logits_processors` treats 1.0 (repetition) and 0.0
+                # (presence/frequency) as no-ops internally, but we omit
+                # defaults explicitly so the processor list stays empty
+                # when everything is off — avoids allocating per-step
+                # zero masks in the model's forward path.
+                lp_kwargs: Dict[str, Any] = {}
+                if self.repetition_penalty != 1.0:
+                    lp_kwargs["repetition_penalty"] = self.repetition_penalty
+                if self.presence_penalty != 0.0:
+                    lp_kwargs["presence_penalty"] = self.presence_penalty
+                if lp_kwargs:
+                    logits_processors = _mlxlm_make_logits_processors(**lp_kwargs)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "[%s] make_logits_processors failed (%s); skipping penalties",
+                    self.node_id, exc,
+                )
+                logits_processors = []
 
         if self._prompt_cache is None and _mlxlm_make_prompt_cache is not None:
             try:
@@ -742,6 +1069,28 @@ class QwenTextMlxNode(MultiprocessNode):
         # so the template renders the tool wrappers consistently.
         accumulated_messages: List[Dict[str, str]] = self._build_messages(user_text)
         max_passes = self._max_tool_passes if tools_active else 1
+
+        # Per-turn tool-call dedupe set. Across multiple passes Qwen often
+        # re-emits identical `say(text=...)` or `show(content=...)` calls
+        # that were already dispatched in an earlier pass — the model sees
+        # its own prior tool call in history and decides to repeat it
+        # instead of ending the turn. Without dedupe the listener hears
+        # the same sentence 2-4x. Signature is (name, JSON-normalised
+        # arguments); anything we've already dispatched this turn is
+        # silently skipped on subsequent passes.
+        dispatched_sigs_this_turn: Set[str] = set()
+
+        def _call_sig(call_obj: Dict[str, Any]) -> Optional[str]:
+            cname = call_obj.get("name")
+            if not isinstance(cname, str):
+                return None
+            try:
+                args_json = json.dumps(
+                    call_obj.get("arguments"), sort_keys=True, default=str
+                )
+            except (TypeError, ValueError):
+                args_json = repr(call_obj.get("arguments"))
+            return f"{cname}::{args_json}"
 
         pass_idx = 0
         turn_error: Optional[str] = None
@@ -810,6 +1159,8 @@ class QwenTextMlxNode(MultiprocessNode):
                     else:
                         kwargs["temp"] = self.temperature
                         kwargs["top_p"] = self.top_p
+                    if logits_processors:
+                        kwargs["logits_processors"] = logits_processors
                     if prompt_cache_ref is not None:
                         kwargs["prompt_cache"] = prompt_cache_ref
                     gen = _mlxlm_stream_generate(
@@ -832,11 +1183,34 @@ class QwenTextMlxNode(MultiprocessNode):
 
             parser: Optional[_ToolCallStreamParser] = None
             if tools_active:
-                parser = _ToolCallStreamParser(start_tag, end_tag)
+                # Streaming only on the first pass. Subsequent passes
+                # fall back to buffer-and-dispatch so the dedup check
+                # can catch a duplicate re-emission before any audio
+                # leaks — streaming a duplicate would have the user
+                # hearing the same sentence twice.
+                parser = _ToolCallStreamParser(
+                    start_tag, end_tag,
+                    streaming_enabled=(pass_idx == 0),
+                )
 
             producer = asyncio.create_task(asyncio.to_thread(_produce))
             raw_parts_this_pass: List[str] = []
-            dispatched_names_this_pass: List[str] = []
+            # Each entry is (tool_name, tool_result_content). Content is
+            # empty for a successful dispatch, or an error string when the
+            # call was rejected pre-flight (e.g. empty `say(text=...)`).
+            # Errors get fed back to the model as a {role:"tool"} message
+            # so the NEXT pass can correct itself.
+            dispatched_results_this_pass: List[Tuple[str, str]] = []
+            # Track whether any NEW (non-duplicate) tool call was
+            # dispatched this pass. If the pass only emitted calls we've
+            # already seen this turn, the model is just re-generating
+            # what it said before — we treat that as a termination
+            # signal (same effect as the model naturally ending the
+            # turn) instead of looping for another 10-20s of duplicate
+            # inference. Without this guard the 30 s scheduler timeout
+            # trips on simple Q&A replies where the model spins through
+            # max_tool_passes re-emitting its first `say`.
+            had_new_dispatch_this_pass = False
             pass_error: Optional[str] = None
 
             try:
@@ -865,16 +1239,86 @@ class QwenTextMlxNode(MultiprocessNode):
                         await asyncio.sleep(0)
                         continue
 
-                    display_text, tool_bodies = parser.feed(item)
+                    display_text, arg_chunks, tool_bodies = parser.feed(item)
                     if display_text and self._emit_display_text:
                         yield self._display_envelope(display_text)
-                    for body in tool_bodies:
+                    # Stream tool-arg chars to the downstream TextCollector
+                    # / TTS as they arrive. `say` goes on the tts channel
+                    # (spoken); `show` goes on the ui channel (displayed
+                    # only). When is_final=True we also append a newline
+                    # on the tts channel so the sentence collector
+                    # flushes the complete utterance to TTS immediately
+                    # instead of waiting for end-of-turn.
+                    for tool_name, text, is_final in arg_chunks:
+                        if self._interrupt:
+                            break
+                        if tool_name == "say":
+                            if text:
+                                yield RuntimeData.text(text, channel="tts")
+                            if is_final:
+                                yield RuntimeData.text("\n", channel="tts")
+                        elif tool_name == "show":
+                            if text:
+                                yield RuntimeData.text(text, channel="ui")
+                            if is_final:
+                                yield RuntimeData.text("\n", channel="ui")
+                    for body_entry in tool_bodies:
+                        # Re-check barge-in between dispatches: a single
+                        # streaming chunk can contain multiple complete
+                        # tool-call bodies (mlx-lm may decode several
+                        # tokens at once), and without this gate a `say`
+                        # fired in body N would still reach TTS after
+                        # the user already started talking at body N-1.
+                        if self._interrupt:
+                            break
+                        body, was_streamed = body_entry
                         call = self._parse_tool_body(body)
                         if call is None:
                             continue
+                        sig = _call_sig(call)
+                        if sig is not None and sig in dispatched_sigs_this_turn:
+                            logger.info(
+                                "[%s] skipping duplicate tool_call across passes: %s",
+                                self.node_id, sig[:120],
+                            )
+                            # Still record the name so the follow-up
+                            # tool-result turn stays structurally
+                            # consistent with what the model emitted —
+                            # we just don't re-synthesise the output.
+                            name = call.get("name")
+                            if isinstance(name, str) and name in self._active_tool_names:
+                                dispatched_results_this_pass.append((name, ""))
+                            continue
+                        if sig is not None:
+                            dispatched_sigs_this_turn.add(sig)
+                        had_new_dispatch_this_pass = True
+                        if was_streamed:
+                            # The parser already emitted the arg chars
+                            # incrementally via `arg_chunks` above. Skip
+                            # the terminal dispatch so we don't
+                            # double-speak the same content.
+                            name = call.get("name")
+                            if isinstance(name, str) and name in self._active_tool_names:
+                                dispatched_results_this_pass.append((name, ""))
+                            continue
                         name = call.get("name")
                         if isinstance(name, str) and name in self._active_tool_names:
-                            dispatched_names_this_pass.append(name)
+                            # Pre-flight: validate required args before
+                            # running the side-effect. If the call is
+                            # malformed (empty `say(text=...)` etc.),
+                            # feed the error back to the model via the
+                            # tool-result turn instead of silently
+                            # dropping — the next pass sees the error
+                            # and typically re-emits the call correctly.
+                            err = self._validate_tool_args(name, call)
+                            if err is not None:
+                                logger.warning(
+                                    "[%s] tool_call validation failed: %s",
+                                    self.node_id, err,
+                                )
+                                dispatched_results_this_pass.append((name, err))
+                                continue
+                            dispatched_results_this_pass.append((name, ""))
                         async for out in self._dispatch_parsed_call(call):
                             yield out
                     await asyncio.sleep(0)
@@ -887,18 +1331,65 @@ class QwenTextMlxNode(MultiprocessNode):
                     except Exception:  # noqa: BLE001
                         pass
 
-            # Drain parser tail.
+            # Drain parser tail. When the pass ended because of
+            # barge-in we must NOT emit buffered display text or
+            # dispatch buffered tool calls — the user already
+            # interrupted, so any such output is stale. Still call
+            # `parser.flush()` to clear its internal buffer (prevents
+            # carry-over into the next pass), just drop its results.
             if parser is not None:
-                tail_display, tail_bodies = parser.flush()
+                tail_display, tail_arg_chunks, tail_bodies = parser.flush()
+                if self._interrupt:
+                    tail_display = ""
+                    tail_arg_chunks = []
+                    tail_bodies = []
                 if tail_display and self._emit_display_text:
                     yield self._display_envelope(tail_display)
-                for body in tail_bodies:
+                for tool_name, text, is_final in tail_arg_chunks:
+                    if tool_name == "say":
+                        if text:
+                            yield RuntimeData.text(text, channel="tts")
+                        if is_final:
+                            yield RuntimeData.text("\n", channel="tts")
+                    elif tool_name == "show":
+                        if text:
+                            yield RuntimeData.text(text, channel="ui")
+                        if is_final:
+                            yield RuntimeData.text("\n", channel="ui")
+                for body_entry in tail_bodies:
+                    body, was_streamed = body_entry
                     call = self._parse_tool_body(body)
                     if call is None:
                         continue
+                    sig = _call_sig(call)
+                    if sig is not None and sig in dispatched_sigs_this_turn:
+                        logger.info(
+                            "[%s] skipping duplicate tool_call across passes (tail): %s",
+                            self.node_id, sig[:120],
+                        )
+                        name = call.get("name")
+                        if isinstance(name, str) and name in self._active_tool_names:
+                            dispatched_results_this_pass.append((name, ""))
+                        continue
+                    if sig is not None:
+                        dispatched_sigs_this_turn.add(sig)
+                    had_new_dispatch_this_pass = True
+                    if was_streamed:
+                        name = call.get("name")
+                        if isinstance(name, str) and name in self._active_tool_names:
+                            dispatched_results_this_pass.append((name, ""))
+                        continue
                     name = call.get("name")
                     if isinstance(name, str) and name in self._active_tool_names:
-                        dispatched_names_this_pass.append(name)
+                        err = self._validate_tool_args(name, call)
+                        if err is not None:
+                            logger.warning(
+                                "[%s] tool_call validation failed (tail): %s",
+                                self.node_id, err,
+                            )
+                            dispatched_results_this_pass.append((name, err))
+                            continue
+                        dispatched_results_this_pass.append((name, ""))
                     async for out in self._dispatch_parsed_call(call):
                         yield out
 
@@ -908,7 +1399,17 @@ class QwenTextMlxNode(MultiprocessNode):
             # at end-of-turn). Raw content preserves the `<tool_call>`
             # tags verbatim — Qwen's assistant-role template renders
             # `content` as-is, so the tags flow through correctly.
+            #
+            # Barge-in can leave `raw_this_pass` truncated mid-tool-call
+            # (e.g. ending in `<tool_call>{"name":"say","arguments":{`).
+            # Committing that verbatim poisons the next turn's prompt:
+            # Qwen sees an unclosed tool_call in context and tries to
+            # complete it rather than answering the new user turn. Drop
+            # any trailing content after the last `</tool_call>`; if
+            # there IS no closing tag, drop everything from the first
+            # unclosed `<tool_call>` onward.
             raw_this_pass = "".join(raw_parts_this_pass)
+            raw_this_pass = _strip_unclosed_tool_call_suffix(raw_this_pass)
             if raw_this_pass.strip():
                 assistant_msg = {"role": "assistant", "content": raw_this_pass}
                 turn_history_additions.append(assistant_msg)
@@ -920,12 +1421,33 @@ class QwenTextMlxNode(MultiprocessNode):
                 break
 
             # ── Decide whether to loop ────────────────────────────
-            if not dispatched_names_this_pass:
+            if not dispatched_results_this_pass:
                 # Model ended naturally; turn is complete.
                 break
+            if not had_new_dispatch_this_pass:
+                # Every tool call in this pass was a duplicate of one
+                # already dispatched earlier in the turn — the model is
+                # stuck regenerating and has nothing new to say. Treat
+                # that as end-of-turn. Without this, Qwen spins through
+                # max_tool_passes re-emitting its first `say`, each
+                # pass costing ~10-20 s of inference, which blows past
+                # the 30 s scheduler timeout for simple Q&A replies and
+                # kills subsequent turns.
+                logger.info(
+                    "[%s] pass %d emitted only duplicates — ending turn",
+                    self.node_id, pass_idx + 1,
+                )
+                break
             if pass_idx + 1 >= max_passes:
-                logger.warning(
-                    "[%s] hit max_tool_passes=%d with tool calls still pending",
+                # Budget exhausted. NOT a sign that the model wanted to
+                # keep going — Qwen terminates with <|im_end|> right
+                # after each tool call, so we have no way to tell from
+                # this side whether it would have emitted more. The cap
+                # is just a guardrail against runaway loops. Log at
+                # debug; promoting this to warn would cry wolf on every
+                # multi-beat reply.
+                logger.debug(
+                    "[%s] reached max_tool_passes=%d; ending turn",
                     self.node_id, max_passes,
                 )
                 break
@@ -933,15 +1455,14 @@ class QwenTextMlxNode(MultiprocessNode):
                 self._interrupt = False
                 break
 
-            # Synthetic tool-result turn. `say` (and any other side-effect
-            # tool in this first cut) has no return value, so content is
-            # empty — the model just needs SOMETHING in the tool slot to
-            # resume. For future return_value tools, plug real results in
-            # here. Qwen's chat template renders these as
-            # `<|im_start|>tool\n...<|im_end|>` wrappers.
+            # Synthetic tool-result turn. Success calls carry an empty
+            # content body (the side-effect IS the output). Rejected
+            # calls carry a human-readable error string so the model
+            # can correct itself on the next pass. Qwen's chat template
+            # renders these as `<|im_start|>tool\n...<|im_end|>`.
             tool_msgs = [
-                {"role": "tool", "name": n, "content": ""}
-                for n in dispatched_names_this_pass
+                {"role": "tool", "name": n, "content": content}
+                for n, content in dispatched_results_this_pass
             ]
             turn_history_additions.extend(tool_msgs)
             accumulated_messages.extend(tool_msgs)
@@ -1001,6 +1522,74 @@ class QwenTextMlxNode(MultiprocessNode):
             return
         async for out in self._dispatch_parsed_call(call):
             yield out
+
+    def _validate_tool_args(
+        self, name: str, call: Dict[str, Any]
+    ) -> Optional[str]:
+        """Pre-flight tool-arg validation.
+
+        Returns ``None`` when the call looks dispatchable, or a
+        human-readable error string that should be fed back to the
+        model via the synthetic tool-result turn so the next pass can
+        correct itself.
+
+        Built-in side-effect tools (``say``, ``show``) REQUIRE a
+        non-empty string argument — an empty call produces silence and
+        confuses the downstream pipeline. Instead of dropping the call
+        silently, we surface the error into the chat history.
+        """
+        raw_args = call.get("arguments")
+        args: Dict[str, Any] = {}
+        if isinstance(raw_args, dict):
+            args = raw_args
+        elif isinstance(raw_args, str):
+            stripped = raw_args.strip()
+            if stripped.startswith("{"):
+                try:
+                    parsed = json.loads(stripped)
+                    if isinstance(parsed, dict):
+                        args = parsed
+                except json.JSONDecodeError:
+                    pass
+
+        def _has_nonempty(keys: Iterable[str]) -> bool:
+            for k in keys:
+                v = args.get(k)
+                if isinstance(v, str) and v.strip():
+                    return True
+                # Allow the model to put the argument at the top level
+                # too — some Qwen variants do this when coerced.
+                v_top = call.get(k)
+                if isinstance(v_top, str) and v_top.strip():
+                    return True
+            # Accept a bare raw-string `arguments` as a positional fallback.
+            if isinstance(raw_args, str) and raw_args.strip():
+                return True
+            return False
+
+        if name == "say":
+            if _has_nonempty(("text", "content", "message", "body", "spoken")):
+                return None
+            return (
+                "ERROR: say tool_call rejected — the `text` argument is "
+                "missing or empty. Retry with the spoken words as `text`, "
+                "e.g. `say(text=\"Sure, here's the answer.\")`. Do NOT "
+                "call `say` with no text; the user will hear silence."
+            )
+
+        if name == "show":
+            if _has_nonempty(("content", "markdown", "text", "body")):
+                return None
+            return (
+                "ERROR: show tool_call rejected — the `content` argument "
+                "is missing or empty. Retry with the markdown as "
+                "`content`. Do NOT call `show` with no content; the user "
+                "will see nothing."
+            )
+
+        # Unknown / custom tools — defer to `_dispatch_parsed_call`, no
+        # pre-flight validation here.
+        return None
 
     async def _dispatch_parsed_call(
         self, call: Dict[str, Any]
@@ -1076,11 +1665,23 @@ class QwenTextMlxNode(MultiprocessNode):
                 ["text", "content", "message", "body", "spoken"]
             )
             if spoken:
-                # Plain text on the default (tts) channel → flows into
-                # the existing TTS contract unchanged. Each yield reaches
-                # the next node (sentencer → TTS) in real time — no
-                # end-of-turn buffering.
-                yield RuntimeData.text(spoken)
+                # Downstream TextCollectorNode flushes on sentence
+                # boundary chars (.!?;\n) or the `<|text_end|>` sentinel
+                # — which only fires at end-of-turn, after every tool
+                # pass has finished (can be 30-60 s with max_tool_passes=4).
+                # If a `say` argument lacks a trailing boundary, the
+                # sentencer buffers it for the whole turn and the user
+                # hears nothing until the turn completes (or barge-in
+                # triggers the final sentinel).
+                #
+                # Append a newline here so each `say` is a complete
+                # "sentence" from the collector's POV and flushes to
+                # the TTS immediately. `\n` is already one of the
+                # default boundary chars, doesn't pollute the spoken
+                # transcript, and won't nest with any trailing `.`/`?`
+                # the model did provide.
+                spoken_flushable = spoken if spoken.endswith(("\n",)) else spoken + "\n"
+                yield RuntimeData.text(spoken_flushable)
             else:
                 logger.warning(
                     "[%s] `say` tool call had no recognisable text arg; "
@@ -1141,6 +1742,10 @@ class QwenTextMlxNode(MultiprocessNode):
             "max_new_tokens": self.max_new_tokens,
             "temperature": self.temperature,
             "top_p": self.top_p,
+            "top_k": self.top_k,
+            "min_p": self.min_p,
+            "presence_penalty": self.presence_penalty,
+            "repetition_penalty": self.repetition_penalty,
             "context_len": len(self._context),
             "history_turns": len(self._history),
             "available_tools": sorted(self._available_tools.keys()),

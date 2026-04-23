@@ -72,6 +72,12 @@ pub use speech_presence::{SpeechPresenceNode, SpeechPresenceConfig, SpeechPresen
 pub mod conversation_flow;
 pub use conversation_flow::{ConversationFlowNode, ConversationFlowConfig, ConversationFlowNodeFactory};
 
+pub mod conversation_coordinator;
+pub use conversation_coordinator::{
+    ConversationCoordinatorConfig, ConversationCoordinatorNode,
+    ConversationCoordinatorNodeFactory,
+};
+
 pub mod session_health;
 pub use session_health::{SessionHealthNode, SessionHealthConfig, SessionHealthNodeFactory};
 

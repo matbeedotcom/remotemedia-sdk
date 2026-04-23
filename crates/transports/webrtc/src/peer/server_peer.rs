@@ -221,6 +221,40 @@ impl ServerPeer {
             session_handle.session_id, self.peer_id
         );
 
+        // Install the flush-audio hook on this session's SessionControl
+        // so Rust nodes (e.g. ConversationCoordinatorNode on barge-in)
+        // can drain the outbound audio ring buffer without reaching
+        // into the webrtc crate directly. A small bounded mpsc is
+        // enough — flush requests are idempotent, so coalescing is
+        // fine.
+        if let Some(ctrl) = self
+            .executor
+            .control_bus()
+            .get(&session_handle.session_id)
+        {
+            let (flush_tx, mut flush_rx) = tokio::sync::mpsc::channel::<()>(4);
+            ctrl.install_flush_audio_hook(flush_tx).await;
+            let track_registry = Arc::clone(&self.track_registry);
+            let session_id_for_log = session_handle.session_id.clone();
+            tokio::spawn(async move {
+                while flush_rx.recv().await.is_some() {
+                    let mut dropped = 0usize;
+                    for stream_id in track_registry.audio_stream_ids().await {
+                        if let Some(track) = track_registry.get_audio_track(&stream_id).await {
+                            dropped += track.flush_send_buffer().await;
+                        }
+                    }
+                    if dropped > 0 {
+                        tracing::debug!(
+                            "[server_peer] session {} flushed {} queued audio frames",
+                            session_id_for_log,
+                            dropped
+                        );
+                    }
+                }
+            });
+        }
+
         // Add audio track for sending pipeline audio output to client (requires opus-codec feature)
         // Note: This sets the Opus clock rate in SDP - must match pipeline output sample rate
         let audio_config = crate::media::audio::AudioEncoderConfig {
