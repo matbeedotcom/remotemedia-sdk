@@ -336,8 +336,11 @@ impl SyncStreamingNode for ConversationCoordinatorNode {
                 && now.saturating_sub(state.last_llm_activity_ms)
                     >= self.llm_silence_timeout_ms
             {
-                if self.yield_partial_on_end && !state.text_buffer.is_empty() {
-                    pending.push(RuntimeData::Text(state.text_buffer.trim_start().to_string()));
+                if self.yield_partial_on_end {
+                    let trimmed = state.text_buffer.trim_start().to_string();
+                    if !trimmed.is_empty() {
+                        pending.push(RuntimeData::Text(trimmed));
+                    }
                     state.text_buffer.clear();
                 }
                 pending.push(RuntimeData::Text("<|text_end|>".to_string()));
@@ -566,12 +569,12 @@ impl SyncStreamingNode for ConversationCoordinatorNode {
                                         state.phase
                                     );
                                 } else {
-                                    if self.yield_partial_on_end
-                                        && !state.text_buffer.is_empty()
-                                    {
-                                        pending.push(RuntimeData::Text(
-                                            state.text_buffer.trim_start().to_string(),
-                                        ));
+                                    if self.yield_partial_on_end {
+                                        let trimmed =
+                                            state.text_buffer.trim_start().to_string();
+                                        if !trimmed.is_empty() {
+                                            pending.push(RuntimeData::Text(trimmed));
+                                        }
                                         state.text_buffer.clear();
                                     }
                                     pending.push(RuntimeData::Text(
