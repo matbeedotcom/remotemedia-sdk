@@ -47,17 +47,33 @@ pub enum AggregationMode {
     /// Each input frame is its own user turn (one chat-completion
     /// request per frame). Default.
     PerInput,
-    /// Accumulate parts in a per-session buffer; flush when a `Text`
-    /// input matches `sentinel`. Default sentinel is `"<|input_end|>"`,
-    /// matching the conversation coordinator's end-of-turn marker.
+    /// Accumulate parts in a per-session buffer; flush when one of
+    /// these triggers fires:
+    ///
+    /// 1. A `Text` input matching `sentinel` arrives.
+    /// 2. The buffer reaches `max_parts` (overflow flush).
+    ///
+    /// `sentinel` defaults to `"<|input_end|>"`, matching the
+    /// conversation coordinator's end-of-turn marker. `max_parts`
+    /// caps memory growth on stuck pipelines (32 by default).
     CoalesceUntil {
         #[serde(default = "default_sentinel")]
         sentinel: String,
+        /// Maximum content-parts buffered per session before forcing
+        /// a flush. Prevents runaway memory if the sentinel never
+        /// arrives. Defaults to 32 — well above realistic per-turn
+        /// frame counts but well below "OOM the process".
+        #[serde(default = "default_max_parts")]
+        max_parts: usize,
     },
 }
 
 fn default_sentinel() -> String {
     "<|input_end|>".to_string()
+}
+
+fn default_max_parts() -> usize {
+    32
 }
 
 impl Default for AggregationMode {
@@ -239,7 +255,7 @@ impl MultimodalLLMNode {
                 if stripped.is_empty() {
                     return Ok(None);
                 }
-                if let AggregationMode::CoalesceUntil { sentinel } = &self.config.aggregation {
+                if let AggregationMode::CoalesceUntil { sentinel, .. } = &self.config.aggregation {
                     if stripped == *sentinel || t == sentinel {
                         return Ok(Some(InputPart::Sentinel));
                     }
@@ -293,6 +309,26 @@ impl MultimodalLLMNode {
     /// because gpt-4o-mini accepts both equally.
     fn user_message(parts: Vec<Value>) -> Value {
         serde_json::json!({"role": "user", "content": parts})
+    }
+
+    /// Push a part to the per-session buffer and return `Some(drained)`
+    /// when the buffer has reached `max_parts` (caller flushes), or
+    /// `None` to keep buffering. Synchronous — no HTTP, easy to test
+    /// in isolation from the async path.
+    fn push_and_check_overflow(
+        &self,
+        sid: &str,
+        p: Value,
+        max_parts: usize,
+    ) -> Option<Vec<Value>> {
+        let mut bufs = self.coalesce_buffers.lock();
+        let buf = bufs.entry(sid.to_string()).or_insert_with(Vec::new);
+        buf.push(p);
+        if buf.len() >= max_parts {
+            Some(std::mem::take(buf))
+        } else {
+            None
+        }
     }
 }
 
@@ -388,13 +424,23 @@ impl AsyncStreamingNode for MultimodalLLMNode {
                 );
                 Ok(0)
             }
-            (AggregationMode::CoalesceUntil { .. }, InputPart::Part(p)) => {
-                self.coalesce_buffers
-                    .lock()
-                    .entry(sid.clone())
-                    .or_insert_with(Vec::new)
-                    .push(p);
-                Ok(0)
+            (AggregationMode::CoalesceUntil { max_parts, .. }, InputPart::Part(p)) => {
+                // Push, then check overflow. Overflow flushes the
+                // buffer as if a sentinel had arrived — same shape, no
+                // dangling parts.
+                let overflow_parts = self.push_and_check_overflow(&sid, p, *max_parts);
+                if let Some(parts) = overflow_parts {
+                    tracing::warn!(
+                        node = "MultimodalLLMNode",
+                        session = %sid,
+                        max_parts = *max_parts,
+                        "coalesce buffer reached max_parts; force-flushing"
+                    );
+                    let user_msg = Self::user_message(parts);
+                    self.backend.run(&sid, user_msg, &cfg, &mut callback).await
+                } else {
+                    Ok(0)
+                }
             }
             (AggregationMode::CoalesceUntil { .. }, InputPart::Sentinel) => {
                 let parts = self
@@ -509,11 +555,78 @@ mod tests {
         });
         let cfg: MultimodalLLMConfig = serde_json::from_value(params).unwrap();
         match cfg.aggregation {
-            AggregationMode::CoalesceUntil { sentinel } => {
+            AggregationMode::CoalesceUntil {
+                sentinel,
+                max_parts,
+            } => {
                 assert_eq!(sentinel, "<|done|>");
+                // omitted in JSON → default
+                assert_eq!(max_parts, default_max_parts());
             }
             _ => panic!("expected CoalesceUntil"),
         }
+    }
+
+    #[test]
+    fn coalesce_max_parts_force_flushes() {
+        let cfg = MultimodalLLMConfig {
+            aggregation: AggregationMode::CoalesceUntil {
+                sentinel: "<|input_end|>".to_string(),
+                max_parts: 3,
+            },
+            ..Default::default()
+        };
+        let node = MultimodalLLMNode::with_config(cfg);
+        let part = || serde_json::json!({"type":"text","text":"x"});
+
+        // First two parts buffer.
+        assert!(node.push_and_check_overflow("s", part(), 3).is_none());
+        assert_eq!(node.coalesce_buffers.lock().get("s").unwrap().len(), 1);
+        assert!(node.push_and_check_overflow("s", part(), 3).is_none());
+        assert_eq!(node.coalesce_buffers.lock().get("s").unwrap().len(), 2);
+
+        // Third part triggers overflow flush — drained returned, buffer empty.
+        let drained = node.push_and_check_overflow("s", part(), 3).unwrap();
+        assert_eq!(drained.len(), 3);
+        assert_eq!(
+            node.coalesce_buffers.lock().get("s").unwrap().len(),
+            0,
+            "buffer should be drained after overflow flush"
+        );
+    }
+
+    #[test]
+    fn coalesce_per_session_buffer_isolation() {
+        let cfg = MultimodalLLMConfig {
+            aggregation: AggregationMode::CoalesceUntil {
+                sentinel: "<|input_end|>".to_string(),
+                max_parts: 32,
+            },
+            ..Default::default()
+        };
+        let node = MultimodalLLMNode::with_config(cfg);
+        node.coalesce_buffers
+            .lock()
+            .insert("a".into(), vec![serde_json::json!({"type":"text","text":"A"})]);
+        node.coalesce_buffers
+            .lock()
+            .insert("b".into(), vec![serde_json::json!({"type":"text","text":"B"})]);
+        // Flushing session "a" must not touch session "b".
+        let drained_a = node
+            .coalesce_buffers
+            .lock()
+            .remove("a")
+            .unwrap_or_default();
+        assert_eq!(drained_a.len(), 1);
+        assert_eq!(drained_a[0]["text"], "A");
+        assert_eq!(
+            node.coalesce_buffers
+                .lock()
+                .get("b")
+                .map(|v| v.len())
+                .unwrap_or(0),
+            1
+        );
     }
 
     #[test]
@@ -591,6 +704,7 @@ mod tests {
         let cfg = MultimodalLLMConfig {
             aggregation: AggregationMode::CoalesceUntil {
                 sentinel: "<|input_end|>".to_string(),
+                max_parts: default_max_parts(),
             },
             ..Default::default()
         };
@@ -645,6 +759,7 @@ mod tests {
         let cfg = MultimodalLLMConfig {
             aggregation: AggregationMode::CoalesceUntil {
                 sentinel: "<|input_end|>".to_string(),
+                max_parts: default_max_parts(),
             },
             ..Default::default()
         };
