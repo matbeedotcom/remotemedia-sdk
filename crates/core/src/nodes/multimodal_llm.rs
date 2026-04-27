@@ -27,6 +27,7 @@
 
 use crate::data::{tag_text_str, RuntimeData, TEXT_CHANNEL_DEFAULT};
 use crate::error::Error;
+use crate::llm::audio_encode::audio_to_wav_base64;
 use crate::llm::{data_url::image_to_data_url, ChatBackend, ChatBackendConfig, OpenAIProfile};
 use crate::nodes::AsyncStreamingNode;
 use parking_lot::Mutex;
@@ -272,6 +273,13 @@ impl MultimodalLLMNode {
                     "image_url": {"url": url},
                 }))))
             }
+            RuntimeData::Audio { .. } => {
+                let b64 = audio_to_wav_base64(data)?;
+                Ok(Some(InputPart::Part(serde_json::json!({
+                    "type": "input_audio",
+                    "input_audio": {"data": b64, "format": "wav"},
+                }))))
+            }
             other => Err(Error::Execution(format!(
                 "MultimodalLLMNode does not accept {} input",
                 other.data_type()
@@ -451,6 +459,7 @@ impl crate::nodes::StreamingNodeFactory for MultimodalLLMNodeFactory {
                 .accepts([
                     RuntimeDataType::Text,
                     RuntimeDataType::Image,
+                    RuntimeDataType::Audio,
                     RuntimeDataType::Json,
                 ])
                 .produces([RuntimeDataType::Text])
@@ -542,7 +551,7 @@ mod tests {
     }
 
     #[test]
-    fn audio_input_rejected_in_step2() {
+    fn audio_input_emits_input_audio_part() {
         let node = MultimodalLLMNode::with_config(MultimodalLLMConfig::default());
         let audio = RuntimeData::Audio {
             samples: vec![0.0_f32; 16].into(),
@@ -553,7 +562,27 @@ mod tests {
             arrival_ts_us: None,
             metadata: None,
         };
-        let err = node.input_to_part(&audio).unwrap_err();
+        let part = node.input_to_part(&audio).unwrap();
+        match part {
+            Some(InputPart::Part(v)) => {
+                assert_eq!(v["type"], "input_audio");
+                assert_eq!(v["input_audio"]["format"], "wav");
+                let data = v["input_audio"]["data"].as_str().unwrap();
+                use base64::engine::general_purpose::STANDARD as B64;
+                use base64::Engine;
+                let buf = B64.decode(data).unwrap();
+                assert_eq!(&buf[..4], b"RIFF");
+                assert_eq!(&buf[8..12], b"WAVE");
+            }
+            other => panic!("expected input_audio Part, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn unsupported_input_still_rejected() {
+        let node = MultimodalLLMNode::with_config(MultimodalLLMConfig::default());
+        let bin = RuntimeData::Binary(vec![0u8; 4]);
+        let err = node.input_to_part(&bin).unwrap_err();
         assert!(format!("{}", err).contains("does not accept"));
     }
 
@@ -586,10 +615,11 @@ mod tests {
     }
 
     #[test]
-    fn factory_schema_advertises_image_in_accepts() {
+    fn factory_schema_advertises_all_accepted_modalities() {
         let factory = MultimodalLLMNodeFactory;
         let schema = factory.schema().unwrap();
         assert!(schema.accepts.contains(&RuntimeDataType::Image));
+        assert!(schema.accepts.contains(&RuntimeDataType::Audio));
         assert!(schema.accepts.contains(&RuntimeDataType::Text));
         assert!(schema.accepts.contains(&RuntimeDataType::Json));
         assert!(schema.produces.contains(&RuntimeDataType::Text));

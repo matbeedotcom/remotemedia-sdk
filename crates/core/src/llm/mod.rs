@@ -15,6 +15,7 @@
 //!   [`OpenAIProfile`]; Anthropic / Gemini land in step 5 of the
 //!   multimodal-LLM plan.
 
+pub mod audio_encode;
 pub mod chat_backend;
 pub mod data_url;
 pub mod history;
