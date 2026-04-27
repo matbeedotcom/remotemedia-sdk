@@ -20,7 +20,7 @@
 
 use crate::data::{RuntimeData, TEXT_CHANNEL_DEFAULT};
 use crate::error::Error;
-use crate::llm::{ChatBackend, ChatBackendConfig, OpenAIProfile};
+use crate::llm::{ChatBackend, ChatBackendConfig, ProviderKind};
 use crate::nodes::AsyncStreamingNode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -130,6 +130,13 @@ pub struct OpenAIChatConfig {
     /// accepted (the value is forwarded verbatim).
     #[serde(default, alias = "toolChoice")]
     pub tool_choice: Option<Value>,
+
+    /// LLM vendor profile. Default `OpenAI`. Set to `anthropic` to
+    /// use the Messages API. Note: the public node name remains
+    /// `OpenAIChatNode` for back-compat, but the profile genuinely
+    /// drives the wire format — pick what matches your `base_url`.
+    #[serde(default, alias = "provider")]
+    pub provider: ProviderKind,
 }
 
 impl Default for OpenAIChatConfig {
@@ -151,6 +158,7 @@ impl Default for OpenAIChatConfig {
             tools: Vec::new(),
             active_tools: None,
             tool_choice: None,
+            provider: ProviderKind::default(),
         }
     }
 }
@@ -177,9 +185,10 @@ pub struct OpenAIChatNode {
 impl OpenAIChatNode {
     /// Create from a config struct.
     pub fn with_config(config: OpenAIChatConfig) -> Self {
+        let profile = config.provider.into_profile();
         Self {
             config,
-            backend: Arc::new(ChatBackend::new(Arc::new(OpenAIProfile))),
+            backend: Arc::new(ChatBackend::new(profile)),
         }
     }
 
@@ -196,7 +205,7 @@ impl OpenAIChatNode {
         self.config
             .base_url
             .clone()
-            .unwrap_or_else(|| "https://api.openai.com/v1".to_string())
+            .unwrap_or_else(|| self.config.provider.default_base_url().to_string())
     }
 
     fn resolve_model(&self) -> String {
@@ -696,6 +705,29 @@ mod tests {
         let factory = OpenAIChatNodeFactory;
         assert_eq!(factory.node_type(), "OpenAIChatNode");
         assert!(factory.is_multi_output_streaming());
+    }
+
+    #[test]
+    fn test_provider_default_is_openai() {
+        let cfg = OpenAIChatConfig::default();
+        assert_eq!(cfg.provider, crate::llm::ProviderKind::OpenAI);
+    }
+
+    #[test]
+    fn test_provider_anthropic_uses_anthropic_default_base_url() {
+        let mut cfg = OpenAIChatConfig::default();
+        cfg.provider = crate::llm::ProviderKind::Anthropic;
+        let node = OpenAIChatNode::with_config(cfg);
+        assert_eq!(node.resolve_base_url(), "https://api.anthropic.com/v1");
+    }
+
+    #[test]
+    fn test_provider_explicit_base_url_overrides_default() {
+        let mut cfg = OpenAIChatConfig::default();
+        cfg.provider = crate::llm::ProviderKind::Anthropic;
+        cfg.base_url = Some("http://localhost:9999/v1".into());
+        let node = OpenAIChatNode::with_config(cfg);
+        assert_eq!(node.resolve_base_url(), "http://localhost:9999/v1");
     }
 
     #[test]

@@ -28,7 +28,7 @@
 use crate::data::{tag_text_str, RuntimeData, TEXT_CHANNEL_DEFAULT};
 use crate::error::Error;
 use crate::llm::audio_encode::audio_to_wav_base64;
-use crate::llm::{data_url::image_to_data_url, ChatBackend, ChatBackendConfig, OpenAIProfile};
+use crate::llm::{data_url::image_to_data_url, ChatBackend, ChatBackendConfig, ProviderKind};
 use crate::nodes::AsyncStreamingNode;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -125,6 +125,12 @@ pub struct MultimodalLLMConfig {
     /// Aggregation policy. See [`AggregationMode`].
     #[serde(alias = "aggregation")]
     pub aggregation: AggregationMode,
+
+    /// LLM vendor profile. Default `OpenAI`. Set to `anthropic` to
+    /// target the Messages API; the node will reshape image and tool
+    /// content automatically.
+    #[serde(default, alias = "provider")]
+    pub provider: ProviderKind,
 }
 
 impl Default for MultimodalLLMConfig {
@@ -147,6 +153,7 @@ impl Default for MultimodalLLMConfig {
             active_tools: None,
             tool_choice: None,
             aggregation: AggregationMode::default(),
+            provider: ProviderKind::default(),
         }
     }
 }
@@ -166,9 +173,10 @@ pub struct MultimodalLLMNode {
 
 impl MultimodalLLMNode {
     pub fn with_config(config: MultimodalLLMConfig) -> Self {
+        let profile = config.provider.into_profile();
         Self {
             config,
-            backend: Arc::new(ChatBackend::new(Arc::new(OpenAIProfile))),
+            backend: Arc::new(ChatBackend::new(profile)),
             coalesce_buffers: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -185,7 +193,7 @@ impl MultimodalLLMNode {
         self.config
             .base_url
             .clone()
-            .unwrap_or_else(|| "https://api.openai.com/v1".to_string())
+            .unwrap_or_else(|| self.config.provider.default_base_url().to_string())
     }
 
     fn resolve_model(&self) -> String {
