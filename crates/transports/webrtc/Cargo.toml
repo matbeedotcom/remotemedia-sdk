@@ -86,6 +86,8 @@ bollard = { workspace = true }
 tokio-test = "0.4"
 criterion = "0.5"
 tracing-subscriber = { workspace = true }
+reqwest = { workspace = true }
+tokio-tungstenite = "0.21"
 
 # Pull Python node factories (LFM2AudioNode, WhisperSTTNode, …) into
 # the default streaming registry for example binaries. They register

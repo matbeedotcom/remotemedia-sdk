@@ -46,7 +46,18 @@ pub use silero_vad::SileroVADNode;
 pub mod audio_buffer_accumulator;
 pub use audio_buffer_accumulator::AudioBufferAccumulatorNode;
 
+pub mod speculative_audio_commit;
+pub use speculative_audio_commit::SpeculativeAudioCommitNode;
+
 pub mod audio_chunker;
+
+pub mod tool_spec;
+pub use tool_spec::{
+    default_say_tool, default_show_tool, to_openai_tools_array, ToolKind, ToolSpec,
+};
+
+pub mod openai_chat;
+pub use openai_chat::{OpenAIChatConfig, OpenAIChatNode, OpenAIChatNodeFactory};
 pub use audio_chunker::AudioChunkerNode;
 
 pub mod health_emitter;
@@ -123,8 +134,8 @@ pub use pipeline_analysis::{analyze_pipeline, list_all_node_types, get_node_type
 pub use provider::{iter_providers, provider_count, NodeProvider};
 pub use registry::{CompositeRegistry, NodeFactory as NodeFactoryTrait, RuntimeHint};
 pub use streaming_node::{
-    AsyncNodeWrapper, AsyncStreamingNode, StreamingNode, StreamingNodeFactory,
-    StreamingNodeRegistry, SyncNodeWrapper, SyncStreamingNode,
+    AsyncNodeWrapper, AsyncStreamingNode, InitializeContext, StreamingNode,
+    StreamingNodeFactory, StreamingNodeRegistry, SyncNodeWrapper, SyncStreamingNode,
 };
 
 // =============================================================================

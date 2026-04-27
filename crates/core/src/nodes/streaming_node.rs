@@ -13,10 +13,58 @@
 
 use crate::capabilities::{CapabilityBehavior, MediaCapabilities};
 use crate::data::RuntimeData;
+use crate::transport::session_control::SessionControl;
 use crate::Error;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Context passed to [`StreamingNode::initialize`].
+///
+/// Gives nodes access to the session's [`SessionControl`] bus so they can
+/// emit progress events (e.g. "downloading model", "loading voice") while
+/// loading resources. Nodes that don't need progress reporting can ignore
+/// this parameter entirely.
+#[derive(Clone)]
+pub struct InitializeContext {
+    /// Session ID for this pipeline run.
+    pub session_id: String,
+    /// Node ID (from the manifest).
+    pub node_id: String,
+    /// Optional control bus handle. `None` when the session was created
+    /// without a control bus (e.g. unit tests, gRPC unary mode).
+    pub control: Option<Arc<SessionControl>>,
+}
+
+impl InitializeContext {
+    /// Emit a progress event on the control bus.
+    ///
+    /// Clients subscribed to `__system__.out` receive these as JSON events
+    /// with `kind: "loading"`. No-op if `control` is `None`.
+    ///
+    /// # Arguments
+    /// * `status` - One of `"loading_node"`, `"downloading"`, `"loading_model"`, etc.
+    /// * `message` - Human-readable description shown in the UI.
+    pub fn emit_progress(&self, status: &str, message: &str) {
+        if let Some(ctrl) = &self.control {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            ctrl.publish_tap(
+                "__system__",
+                None,
+                RuntimeData::Json(serde_json::json!({
+                    "kind": "loading",
+                    "status": status,
+                    "node": self.node_id,
+                    "message": message,
+                    "ts_ms": ts,
+                })),
+            );
+        }
+    }
+}
 
 /// Node execution status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,7 +190,9 @@ pub trait AsyncStreamingNode: Send + Sync {
     fn node_type(&self) -> &str;
 
     /// Initialize the node (load models, resources, etc.)
-    async fn initialize(&self) -> Result<(), Error> {
+    ///
+    /// Use `ctx.emit_progress()` to report loading progress to the frontend.
+    async fn initialize(&self, _ctx: &InitializeContext) -> Result<(), Error> {
         Ok(()) // Default: no-op
     }
 
@@ -235,8 +285,11 @@ pub trait StreamingNode: Send + Sync {
     }
 
     /// Initialize the node (load models, resources, etc.)
-    /// This is called during pre-initialization before streaming starts
-    async fn initialize(&self) -> Result<(), Error> {
+    ///
+    /// This is called during pre-initialization before streaming starts.
+    /// Use the [`InitializeContext`] to emit progress events via
+    /// `ctx.emit_progress()` so the frontend can show loading states.
+    async fn initialize(&self, _ctx: &InitializeContext) -> Result<(), Error> {
         Ok(()) // Default: no-op for nodes without initialization
     }
 
@@ -477,8 +530,8 @@ impl<T: AsyncStreamingNode + 'static> StreamingNode for AsyncNodeWrapper<T> {
         self.0.node_type()
     }
 
-    async fn initialize(&self) -> Result<(), Error> {
-        self.0.initialize().await
+    async fn initialize(&self, ctx: &InitializeContext) -> Result<(), Error> {
+        self.0.initialize(ctx).await
     }
 
     async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {

@@ -956,7 +956,7 @@ impl crate::nodes::AsyncStreamingNode for RemotePipelineNode {
         "RemotePipelineNode"
     }
 
-    async fn initialize(&self) -> crate::Result<()> {
+    async fn initialize(&self, _ctx: &crate::nodes::InitializeContext) -> crate::Result<()> {
         // The initialization is done in RemotePipelineNode::initialize which is &mut
         // For now, we'll just log that init was called
         tracing::debug!(

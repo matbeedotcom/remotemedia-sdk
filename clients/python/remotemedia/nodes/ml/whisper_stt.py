@@ -201,6 +201,10 @@ class WhisperSTTNode(MultiprocessNode):
         if device == "cpu":
             dtype = torch.float32
 
+        self.publish_progress(
+            "loading_model",
+            f"Loading {self.model_id} on {device} (dtype={self._requested_dtype})",
+        )
         logger.info(
             "[%s] loading whisper '%s' on %s (dtype=%s)",
             self.node_id, self.model_id, device, dtype,
@@ -212,6 +216,7 @@ class WhisperSTTNode(MultiprocessNode):
             device=device,
             chunk_length_s=self.chunk_length_s,
         )
+        self.publish_progress("ready", f"Whisper {self.model_id} loaded")
         logger.info("[%s] whisper ready", self.node_id)
 
     async def cleanup(self) -> None:

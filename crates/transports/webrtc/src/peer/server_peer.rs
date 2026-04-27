@@ -578,7 +578,7 @@ impl ServerPeer {
                                     };
 
                                     if let Err(e) = dc_input_tx.send(transport_data).await {
-                                        error!("Failed to send decoded audio to pipeline for peer {}: {}", peer_id, e);
+                                        debug!("Audio reception ended for peer {}: {}", peer_id, e);
                                         break;
                                     }
                                 }
@@ -631,8 +631,8 @@ impl ServerPeer {
                     peer_id_for_input
                 );
                 if let Err(e) = input_sender.send(transport_data).await {
-                    error!(
-                        "Failed to forward input to pipeline for peer {}: {}",
+                    debug!(
+                        "Input forwarder ended for peer {}: {}",
                         peer_id_for_input, e
                     );
                     break;

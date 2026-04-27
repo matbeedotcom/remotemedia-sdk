@@ -172,15 +172,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
-name = "approx"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cab112f0a86d568ea0e627cc1d6be74a1e9cd55214684db5561995f6dad897c6"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -287,14 +278,6 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
-
-[[package]]
-name = "audiogram"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "autocfg"
@@ -1271,14 +1254,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cros"
-version = "0.1.0"
-dependencies = [
- "dsp-core",
- "serde",
-]
-
-[[package]]
 name = "crossbeam"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1677,10 +1652,6 @@ dependencies = [
  "quote",
  "syn 2.0.114",
 ]
-
-[[package]]
-name = "dsp-core"
-version = "0.1.0"
 
 [[package]]
 name = "dtls"
@@ -2614,27 +2585,6 @@ name = "hound"
 version = "3.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
-
-[[package]]
-name = "hrtf"
-version = "0.1.0"
-dependencies = [
- "dsp-core",
-]
-
-[[package]]
-name = "hrtf-synth"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bincode",
- "hound",
- "nalgebra",
- "num-complex",
- "rustfft",
- "serde",
- "thiserror 1.0.69",
-]
 
 [[package]]
 name = "http"
@@ -3890,34 +3840,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
-name = "nalgebra"
-version = "0.33.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d43ddcacf343185dfd6de2ee786d9e8b1c2301622afab66b6c73baf9882abfd"
-dependencies = [
- "approx",
- "matrixmultiply",
- "nalgebra-macros",
- "num-complex",
- "num-rational",
- "num-traits",
- "serde",
- "simba",
- "typenum",
-]
-
-[[package]]
-name = "nalgebra-macros"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "254a5372af8fc138e36684761d3c0cdb758a4410e938babcff1c860ce14ddbfc"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.114",
-]
-
-[[package]]
 name = "napi"
 version = "2.16.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4117,7 +4039,6 @@ checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
 dependencies = [
  "bytemuck",
  "num-traits",
- "serde",
 ]
 
 [[package]]
@@ -5533,27 +5454,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "remotemedia-hearing-nodes"
-version = "0.4.0"
-dependencies = [
- "async-trait",
- "audiogram",
- "criterion",
- "cros",
- "dsp-core",
- "hrtf",
- "hrtf-synth",
- "parking_lot",
- "remotemedia-core",
- "remotemedia-rt-bridge",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tracing",
- "wdrc",
-]
-
-[[package]]
 name = "remotemedia-http"
 version = "0.4.0"
 dependencies = [
@@ -5795,6 +5695,7 @@ dependencies = [
  "remotemedia-core",
  "remotemedia-python-nodes",
  "remotemedia-webrtc",
+ "reqwest 0.11.27",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -5859,10 +5760,12 @@ dependencies = [
  "system-configuration 0.5.1",
  "tokio",
  "tokio-rustls 0.24.1",
+ "tokio-util",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams",
  "web-sys",
  "webpki-roots 0.25.4",
  "winreg",
@@ -6146,15 +6049,6 @@ name = "ryu"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a50f4cf475b65d88e057964e0e9bb1f0aa9bbb2036dc65c64596b42932536984"
-
-[[package]]
-name = "safe_arch"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96b02de82ddbe1b636e6170c21be622223aea188ef2e139be0a5b219ec215323"
-dependencies = [
- "bytemuck",
-]
 
 [[package]]
 name = "safetensors"
@@ -6537,19 +6431,6 @@ checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
 dependencies = [
  "digest",
  "rand_core 0.6.4",
-]
-
-[[package]]
-name = "simba"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c99284beb21666094ba2b75bbceda012e610f5479dfcc2d6e2426f53197ffd95"
-dependencies = [
- "approx",
- "num-complex",
- "num-traits",
- "paste",
- "wide",
 ]
 
 [[package]]
@@ -7958,14 +7839,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wdrc"
-version = "0.1.0"
-dependencies = [
- "audiogram",
- "dsp-core",
-]
-
-[[package]]
 name = "web-sys"
 version = "0.3.85"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8197,16 +8070,6 @@ dependencies = [
  "home",
  "once_cell",
  "rustix 0.38.44",
-]
-
-[[package]]
-name = "wide"
-version = "0.7.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ce5da8ecb62bcd8ec8b7ea19f69a51275e91299be594ea5cc6ef7819e16cd03"
-dependencies = [
- "bytemuck",
- "safe_arch",
 ]
 
 [[package]]

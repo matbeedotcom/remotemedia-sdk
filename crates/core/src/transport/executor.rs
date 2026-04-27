@@ -521,6 +521,13 @@ impl PipelineExecutor {
         let unregister_sid = session_id.clone();
         let task_handle = tokio::spawn(async move {
             let result = router.run_public().await;
+            if let Err(ref e) = result {
+                tracing::error!(
+                    session_id = %unregister_sid,
+                    error = %e,
+                    "Session router task exited with error"
+                );
+            }
             bus.unregister(&unregister_sid);
             result
         });

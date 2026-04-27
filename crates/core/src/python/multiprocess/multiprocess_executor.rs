@@ -419,6 +419,10 @@ pub struct MultiprocessExecutor {
     /// Python environment manager for auto-provisioning venvs.
     /// None when PythonEnvMode::System (default / backward-compatible).
     env_manager: Option<Arc<crate::python::env_manager::PythonEnvManager>>,
+
+    /// Optional control bus handle for forwarding progress events from
+    /// Python nodes during initialization. Set via `set_control()`.
+    control: Arc<std::sync::Mutex<Option<Arc<crate::transport::session_control::SessionControl>>>>,
 }
 
 impl MultiprocessExecutor {
@@ -1196,6 +1200,7 @@ impl MultiprocessExecutor {
             #[cfg(feature = "docker")]
             docker_support,
             env_manager,
+            control: Arc::new(std::sync::Mutex::new(None)),
         };
 
         // Setup pipeline termination on node failure
@@ -1203,6 +1208,17 @@ impl MultiprocessExecutor {
         executor.setup_failure_handling();
 
         executor
+    }
+
+    /// Set the control bus handle for forwarding progress events from
+    /// Python nodes during initialization.
+    pub fn set_control(&self, control: Arc<crate::transport::session_control::SessionControl>) {
+        *self.control.lock().unwrap() = Some(control);
+    }
+
+    /// Get a clone of the control bus handle (if set).
+    fn get_control(&self) -> Option<Arc<crate::transport::session_control::SessionControl>> {
+        self.control.lock().unwrap().clone()
     }
 
     /// Register a Python module for node registration
@@ -1735,6 +1751,8 @@ except Exception:
         let registry = self.channel_registry.clone();
         let channel_name = control_channel_name.clone();
         let node_id_clone = node_id.to_string();
+        let session_id_clone = session_id.to_string();
+        let control = self.get_control();
 
         // Control channel was already created in initialize() before spawning Python
         // Now poll for the READY signal - need direct iceoryx2 subscriber (not RuntimeData wrapper)
@@ -1797,6 +1815,38 @@ except Exception:
                                 node_id_clone,
                                 deps_json
                             );
+                        } else if bytes.starts_with(b"PROGRESS:") {
+                            // Node is reporting initialization progress.
+                            // Forward to the control bus so the frontend can show it.
+                            if let Some(ctrl) = &control {
+                                let json_str =
+                                    std::str::from_utf8(&bytes[9..]).unwrap_or("{}");
+                                if let Ok(json) =
+                                    serde_json::from_str::<serde_json::Value>(json_str)
+                                {
+                                    let ts = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_millis() as u64)
+                                        .unwrap_or(0);
+                                    let status = json.get("status").and_then(|v| v.as_str()).unwrap_or("loading");
+                                    let message = json.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                                    tracing::info!(
+                                        "[{}] Node {} progress: {} - {}",
+                                        session_id_clone, node_id_clone, status, message
+                                    );
+                                    ctrl.publish_tap(
+                                        "__system__",
+                                        None,
+                                        crate::data::RuntimeData::Json(serde_json::json!({
+                                            "kind": "loading",
+                                            "status": status,
+                                            "node": node_id_clone,
+                                            "message": message,
+                                            "ts_ms": ts,
+                                        })),
+                                    );
+                                }
+                            }
                         } else {
                             tracing::warn!(
                                 "Received unexpected control message from node {}: {:?}",

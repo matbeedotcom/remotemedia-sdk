@@ -158,6 +158,10 @@ class KokoroTTSNode(MultiprocessNode):
             # Import Kokoro here to avoid import errors if not installed
             from kokoro import KPipeline
 
+            self.publish_progress(
+                "loading_voice",
+                f"Loading Kokoro TTS voice '{self.voice}' (lang={self.lang_code})",
+            )
             logger.info(f"Initializing Kokoro TTS with lang_code='{self.lang_code}', voice='{self.voice}'")
 
             # Initialize the pipeline synchronously
@@ -165,6 +169,7 @@ class KokoroTTSNode(MultiprocessNode):
             # from Rust/PyO3 event loop on Windows. We initialize here which is safe.
             self._pipeline = KPipeline(lang_code=self.lang_code)
 
+            self.publish_progress("ready", f"Kokoro TTS voice '{self.voice}' loaded")
             self._initialized = True
             logger.info("Kokoro TTS pipeline initialized successfully")
 

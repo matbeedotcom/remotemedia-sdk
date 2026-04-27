@@ -169,6 +169,40 @@ export class Session {
     const { control } = this
     const s = () => useStore.getState()
 
+    // Pipeline loading state from `__system__.out` events.
+    // The server emits these during node initialization so the
+    // frontend can show "initializing" vs "ready" indicators.
+    this.unsubscribers.push(
+      await control.subscribe('__system__.out', (ev) => {
+        if (ev.kind !== 'json') return
+        const p = ev.payload as {
+          kind?: string
+          status?: string
+          node?: string
+          message?: string
+        }
+        if (p.kind !== 'loading') return
+        console.log('[system] loading:', p.status, p.message)
+        switch (p.status) {
+          case 'initializing':
+            s().setPipelineStatus({ kind: 'initializing', message: p.message })
+            break
+          case 'loading_node':
+            s().setPipelineStatus({
+              kind: 'loading_node',
+              node: p.node,
+              message: p.message,
+            })
+            break
+          case 'ready':
+            s().setPipelineStatus({ kind: 'ready', message: p.message })
+            break
+          default:
+            break
+        }
+      }),
+    )
+
     this.unsubscribers.push(
       await control.subscribe('vad.out', (ev) => {
         if (ev.kind !== 'json') return

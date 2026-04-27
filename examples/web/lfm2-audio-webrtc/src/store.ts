@@ -15,6 +15,13 @@ export type ConnectionStatus =
   | 'failed'
   | 'disconnected'
 
+/// Pipeline loading state, driven by `__system__.out` events from the server.
+export type PipelineStatus =
+  | { kind: 'unknown' }
+  | { kind: 'initializing'; message?: string }
+  | { kind: 'loading_node'; node?: string; message?: string }
+  | { kind: 'ready'; message?: string }
+
 export interface VADSnapshot {
   hasSpeech: boolean
   probability: number
@@ -81,11 +88,15 @@ interface StoreState extends SettingsState {
   currentTurnId: number | null
   knowledge: KnowledgeEntry[]
 
+  /** Pipeline loading state from `__system__.out` events. */
+  pipelineStatus: PipelineStatus
+
   setStatus: (s: ConnectionStatus) => void
   setError: (e: string | null) => void
   setPeerId: (p: string | null) => void
   setRemoteAudioStream: (s: MediaStream | null) => void
   setLocalStream: (s: MediaStream | null) => void
+  setPipelineStatus: (s: PipelineStatus) => void
 
   setVad: (v: VADSnapshot) => void
 
@@ -138,12 +149,14 @@ const __useStore = create<StoreState>()(
   turns: [],
   currentTurnId: null,
   knowledge: [],
+  pipelineStatus: { kind: 'unknown' } as PipelineStatus,
 
   setStatus: (status) => set({ status }),
   setError: (error) => set({ error }),
   setPeerId: (peerId) => set({ peerId }),
   setRemoteAudioStream: (remoteAudioStream) => set({ remoteAudioStream }),
   setLocalStream: (localStream) => set({ localStream }),
+  setPipelineStatus: (pipelineStatus) => set({ pipelineStatus }),
 
   setVad: (vad) => set({ vad }),
 
@@ -259,6 +272,7 @@ const __useStore = create<StoreState>()(
       currentTurnId: null,
       knowledge: [],
       error: null,
+      pipelineStatus: { kind: 'unknown' },
     })
   },
     }),

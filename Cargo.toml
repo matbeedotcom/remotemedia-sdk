@@ -4,7 +4,7 @@ members = [
     "crates/core-derive",  # Proc-macros for NodeConfig
     "crates/python-nodes",  # Python node dynamic registration
     "crates/candle-nodes",  # Candle ML inference nodes
-    "crates/hearing-nodes",  # Hearing aid DSP nodes (WDRC, CROS, HRTF)
+    # "crates/hearing-nodes",  # Hearing aid DSP nodes — disabled: depends on sibling repo Realtime_Competitive_Game_Audio not present on this machine
     "crates/rt-bridge",  # RT-thread ↔ async pipeline bridge (SPSC rings)
     "crates/transports/grpc",  # gRPC transport
     "crates/transports/ffi",   # Python FFI transport
@@ -25,6 +25,7 @@ members = [
 ]
 exclude = [
     "examples/*",  # Examples are independent projects demonstrating usage
+    "crates/hearing-nodes",  # Disabled: depends on sibling repo Realtime_Competitive_Game_Audio not present on this machine
 ]
 resolver = "2"
 
@@ -112,7 +113,7 @@ base64 = "0.22"
 ed25519-dalek = { version = "2.2", default-features = false }
 serde_json_canonicalizer = "0.3"
 num_cpus = "1.16"
-reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls", "stream"] }
 ctrlc = "3.4"
 regex = "1.10"
 url = "2.5"

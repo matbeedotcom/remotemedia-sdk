@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { useStore } from '../store'
+import { useStore, type PipelineStatus } from '../store'
 
 function VoiceActivityIcon({ active, level }: { active: boolean; level: number }) {
   const clamped = Math.max(0, Math.min(1, level))
@@ -37,6 +37,7 @@ export function StatusBar({
   const vad = useStore((s) => s.vad)
   const turns = useStore((s) => s.turns)
   const currentTurnId = useStore((s) => s.currentTurnId)
+  const pipelineStatus = useStore((s) => s.pipelineStatus)
 
   const current = currentTurnId
     ? turns.find((t) => t.id === currentTurnId)
@@ -63,6 +64,10 @@ export function StatusBar({
       ? 'pill-off bg-red-900/50 text-red-300 border-red-800'
       : 'pill-off'
 
+  // Pipeline loading indicator
+  const pipelineLabel = getPipelineLabel(pipelineStatus)
+  const pipelinePill = getPipelinePill(pipelineStatus)
+
   return (
     <div className="flex items-center gap-3 px-6 py-2 bg-slate-900/40 border-b border-slate-800 text-xs">
       <span className={statusPill}>
@@ -75,6 +80,11 @@ export function StatusBar({
         {statusLabel}
       </span>
       {peerId && <span className="text-slate-500">peer: {peerId}</span>}
+      {pipelineLabel && (
+        <span className={pipelinePill} title={getPipelineTitle(pipelineStatus, pipelineLabel)}>
+          {pipelineLabel}
+        </span>
+      )}
       <div className="flex-1" />
       <span
         className={clsx(
@@ -111,4 +121,34 @@ export function StatusBar({
       )}
     </div>
   )
+}
+
+function getPipelineLabel(ps: PipelineStatus): string | null {
+  switch (ps.kind) {
+    case 'initializing':
+      return 'initializing'
+    case 'loading_node':
+      return ps.node ? `loading ${ps.node}` : 'loading'
+    case 'ready':
+      return 'ready'
+    default:
+      return null
+  }
+}
+
+function getPipelineTitle(ps: PipelineStatus, label: string): string {
+  if ('message' in ps && ps.message) return ps.message
+  return label
+}
+
+function getPipelinePill(ps: PipelineStatus): string {
+  switch (ps.kind) {
+    case 'initializing':
+    case 'loading_node':
+      return 'pill-warn pulse-live'
+    case 'ready':
+      return 'pill-on'
+    default:
+      return 'pill-off'
+  }
 }

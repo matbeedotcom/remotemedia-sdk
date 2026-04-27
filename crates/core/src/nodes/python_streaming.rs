@@ -7,9 +7,11 @@
 //! separate processes with independent GILs for concurrent execution.
 
 use crate::data::RuntimeData;
-use crate::nodes::{AsyncStreamingNode, NodeContext, NodeExecutor};
+use crate::nodes::{AsyncStreamingNode, InitializeContext, NodeContext, NodeExecutor};
+use crate::transport::session_control::SessionControl;
 use crate::Error;
 use serde_json::Value;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Wrapper that adapts a Python node to the AsyncStreamingNode trait
@@ -20,6 +22,9 @@ pub struct PythonStreamingNode {
     executor: Mutex<Option<Box<dyn NodeExecutor>>>,
     /// Session ID for multiprocess execution (spec 002)
     session_id: Option<String>,
+    /// Control bus handle for progress reporting during initialization.
+    /// Set by `initialize()` from the `InitializeContext`.
+    control: Mutex<Option<Arc<SessionControl>>>,
 }
 
 impl PythonStreamingNode {
@@ -46,6 +51,7 @@ impl PythonStreamingNode {
             params: params.clone(),
             executor: Mutex::new(None),
             session_id,
+            control: Mutex::new(None),
         })
     }
 
@@ -62,6 +68,7 @@ impl PythonStreamingNode {
             params: params.clone(),
             executor: Mutex::new(None),
             session_id: Some(session_id),
+            control: Mutex::new(None),
         })
     }
 
@@ -78,6 +85,7 @@ impl PythonStreamingNode {
             params: params.clone(),
             executor: Mutex::new(Some(executor)),
             session_id: None,
+            control: Mutex::new(None),
         })
     }
 
@@ -98,6 +106,15 @@ impl PythonStreamingNode {
             let mut py_executor: Box<dyn NodeExecutor> = Box::new(
                 crate::python::multiprocess::MultiprocessExecutor::new(config),
             );
+
+            // Pass the control bus handle so progress events from Python
+            // nodes during initialization can be forwarded to the frontend.
+            if let Some(ctrl) = self.control.lock().await.as_ref() {
+                py_executor
+                    .as_any_mut()
+                    .downcast_mut::<crate::python::multiprocess::MultiprocessExecutor>()
+                    .map(|mp| mp.set_control(Arc::clone(ctrl)));
+            }
 
             // Create context for initialization
             let context = NodeContext {
@@ -123,7 +140,12 @@ impl AsyncStreamingNode for PythonStreamingNode {
         &self.node_type
     }
 
-    async fn initialize(&self) -> Result<(), Error> {
+    async fn initialize(&self, ctx: &InitializeContext) -> Result<(), Error> {
+        // Store the control bus handle so ensure_initialized can pass it
+        // to the MultiprocessExecutor for progress forwarding.
+        if let Some(ctrl) = &ctx.control {
+            *self.control.lock().await = Some(Arc::clone(ctrl));
+        }
         // Delegate to ensure_initialized which loads the Python node
         self.ensure_initialized().await
     }

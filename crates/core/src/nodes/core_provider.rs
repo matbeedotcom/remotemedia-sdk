@@ -17,8 +17,9 @@ use std::sync::Arc;
 // Import all factory types from streaming_registry
 use super::streaming_registry::{
     AudioBufferAccumulatorNodeFactory, AudioChunkerNodeFactory, CalculatorNodeFactory,
-    FastResampleNodeFactory, PassThroughNodeFactory, SpeculativeVADCoordinatorFactory,
-    SpeculativeVADGateFactory, TextCollectorNodeFactory, VideoFlipNodeFactory,
+    FastResampleNodeFactory, PassThroughNodeFactory, SpeculativeAudioCommitNodeFactory,
+    SpeculativeVADCoordinatorFactory, SpeculativeVADGateFactory, TextCollectorNodeFactory,
+    VideoFlipNodeFactory,
 };
 
 // Import factories defined in their own modules
@@ -31,6 +32,7 @@ use crate::nodes::conversation_coordinator::ConversationCoordinatorNodeFactory;
 use crate::nodes::conversation_flow::ConversationFlowNodeFactory;
 use crate::nodes::event_correlator::EventCorrelatorNodeFactory;
 use crate::nodes::health_emitter::HealthEmitterNodeFactory;
+use crate::nodes::openai_chat::OpenAIChatNodeFactory;
 use crate::nodes::remote_pipeline::RemotePipelineNodeFactory;
 use crate::nodes::session_health::SessionHealthNodeFactory;
 use crate::nodes::silence_detector::SilenceDetectorNodeFactory;
@@ -67,12 +69,16 @@ impl NodeProvider for CoreNodesProvider {
         // Audio processing nodes
         registry.register(Arc::new(AudioChunkerNodeFactory));
         registry.register(Arc::new(AudioBufferAccumulatorNodeFactory));
+        registry.register(Arc::new(SpeculativeAudioCommitNodeFactory));
         registry.register(Arc::new(FastResampleNodeFactory));
         registry.register(Arc::new(AudioChannelSplitterNodeFactory));
 
         // Text processing nodes
         registry.register(Arc::new(TextCollectorNodeFactory));
         registry.register(Arc::new(ConversationCoordinatorNodeFactory));
+
+        // LLM nodes
+        registry.register(Arc::new(OpenAIChatNodeFactory));
 
         // Remote pipeline node
         registry.register(Arc::new(RemotePipelineNodeFactory));

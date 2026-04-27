@@ -55,6 +55,22 @@ pub struct ConversationCoordinatorConfig {
     #[serde(alias = "yieldPartialOnEnd")]
     pub yield_partial_on_end: bool,
 
+    /// Speculative first-chunk emission threshold (chars). On the
+    /// **first** text chunk of an agent turn, flush as soon as the
+    /// buffered LLM output reaches this length AND a soft boundary
+    /// (space, comma, semicolon, colon) appears at or after the
+    /// threshold — even if no hard sentence terminator (`. ! ?`) has
+    /// arrived yet.
+    ///
+    /// This trades a small amount of prosody quality on the very first
+    /// audio chunk for ~300–600 ms lower time-to-first-audio. Subsequent
+    /// chunks revert to the normal `split_pattern` boundary detection.
+    ///
+    /// `0` (default) disables the feature — sentence emission waits
+    /// for hard boundaries as before.
+    #[serde(alias = "firstChunkMinChars")]
+    pub first_chunk_min_chars: usize,
+
     /// LLM-silence watchdog (ms). If no LLM token arrives within this
     /// window while the agent is thinking/speaking, emit a synthetic
     /// `<|text_end|>` downstream and return to Idle.
@@ -95,6 +111,7 @@ impl Default for ConversationCoordinatorConfig {
             llm_silence_timeout_ms: 45_000,
             user_speech_debounce_ms: 150,
             barge_in_targets: vec!["llm".to_string(), "audio".to_string()],
+            first_chunk_min_chars: 0,
         }
     }
 }
@@ -140,6 +157,11 @@ struct CoordinatorState {
     /// Wall-clock ms of the last VAD `is_speech_start` that was
     /// accepted (i.e. caused a state change). Used for debounce.
     last_user_start_ms: u64,
+    /// Whether the speculative-first-chunk emission has fired for
+    /// the current turn. Reset to `false` on every `text_buffer.clear()`
+    /// site (turn end, barge, reset, silence timeout). Honoured only
+    /// when `first_chunk_min_chars > 0`.
+    first_chunk_emitted: bool,
 }
 
 impl Default for CoordinatorState {
@@ -150,6 +172,7 @@ impl Default for CoordinatorState {
             text_buffer: String::new(),
             last_llm_activity_ms: 0,
             last_user_start_ms: 0,
+            first_chunk_emitted: false,
         }
     }
 }
@@ -159,6 +182,7 @@ pub struct ConversationCoordinatorNode {
     boundary_chars: Vec<char>,
     min_sentence_length: usize,
     yield_partial_on_end: bool,
+    first_chunk_min_chars: usize,
     llm_silence_timeout_ms: u64,
     user_speech_debounce_ms: u64,
     barge_in_targets: Vec<String>,
@@ -179,6 +203,7 @@ impl ConversationCoordinatorNode {
             boundary_chars: parse_boundary_chars(config.split_pattern.as_deref()),
             min_sentence_length: config.min_sentence_length,
             yield_partial_on_end: config.yield_partial_on_end,
+            first_chunk_min_chars: config.first_chunk_min_chars,
             llm_silence_timeout_ms: config.llm_silence_timeout_ms,
             user_speech_debounce_ms: config.user_speech_debounce_ms,
             barge_in_targets: config.barge_in_targets,
@@ -192,6 +217,48 @@ impl ConversationCoordinatorNode {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0)
+    }
+
+    /// Speculative first-chunk extractor. If the buffer has at least
+    /// `min_chars` UTF-8 characters AND a soft boundary (space, comma,
+    /// semicolon, colon, em-dash) appears at or after the threshold,
+    /// return `(prefix_to_emit, remaining_buffer)`. Otherwise `None`,
+    /// leaving the buffer untouched.
+    ///
+    /// The threshold is in **chars**, not bytes — multibyte text (em-
+    /// dashes, smart quotes) won't fire too early. We include the
+    /// boundary character in the emitted prefix so TTS sees natural
+    /// punctuation rather than a word fragment.
+    fn try_split_first_chunk(buf: &str, min_chars: usize) -> Option<(String, String)> {
+        if min_chars == 0 {
+            return None;
+        }
+        let mut chars_seen = 0usize;
+        let mut split_at: Option<usize> = None;
+        for (byte_idx, c) in buf.char_indices() {
+            chars_seen += 1;
+            if chars_seen < min_chars {
+                continue;
+            }
+            if c == ' '
+                || c == ','
+                || c == ';'
+                || c == ':'
+                || c == '\t'
+                || c == '\n'
+                || c == '—'
+            {
+                split_at = Some(byte_idx + c.len_utf8());
+                break;
+            }
+        }
+        let split_at = split_at?;
+        let prefix = buf[..split_at].trim_start().to_string();
+        if prefix.is_empty() {
+            return None;
+        }
+        let remainder = buf[split_at..].to_string();
+        Some((prefix, remainder))
     }
 
     /// Fan a server-side barge-in publish to each configured target
@@ -343,6 +410,7 @@ impl SyncStreamingNode for ConversationCoordinatorNode {
                     }
                     state.text_buffer.clear();
                 }
+                state.first_chunk_emitted = false;
                 pending.push(RuntimeData::Text("<|text_end|>".to_string()));
                 state.phase = Phase::Idle;
                 state.last_llm_activity_ms = 0;
@@ -366,6 +434,7 @@ impl SyncStreamingNode for ConversationCoordinatorNode {
                                 state.turn_id += 1;
                                 state.phase = Phase::Idle;
                                 state.text_buffer.clear();
+                                state.first_chunk_emitted = false;
                                 state.last_llm_activity_ms = 0;
                                 pending_tap.push(turn_state_json(
                                     state.turn_id,
@@ -392,6 +461,7 @@ impl SyncStreamingNode for ConversationCoordinatorNode {
                                     state.turn_id += 1;
                                     state.phase = Phase::UserSpeaking;
                                     state.text_buffer.clear();
+                                    state.first_chunk_emitted = false;
                                     state.last_llm_activity_ms = 0;
                                     state.last_user_start_ms = now;
                                     pending_tap.push(turn_state_json(
@@ -443,6 +513,7 @@ impl SyncStreamingNode for ConversationCoordinatorNode {
                                 state.turn_id += 1;
                                 state.phase = Phase::UserSpeaking;
                                 state.text_buffer.clear();
+                                state.first_chunk_emitted = false;
                                 state.last_llm_activity_ms = 0;
                                 state.last_user_start_ms = now;
                                 pending_tap.push(turn_state_json(
@@ -506,6 +577,18 @@ impl SyncStreamingNode for ConversationCoordinatorNode {
                         // a caption, and the UI would show garbage.
                         // The browser subscribes to `coordinator.out`
                         // for display_text instead.
+                        //
+                        // Heartbeat: any LLM text — including reasoning
+                        // tokens emitted on the `think` channel by
+                        // Qwen3/DeepSeek-style models — counts as
+                        // activity for the silence watchdog. Without
+                        // this, a model spending 30+ s inside a
+                        // `<think>` block (no `delta.content` yet) was
+                        // killed prematurely by the watchdog and
+                        // produced no spoken reply.
+                        if state.phase.is_agent() && !cleaned.is_empty() {
+                            state.last_llm_activity_ms = now;
+                        }
                         if !cleaned.is_empty() {
                             pending_tap.push(RuntimeData::Json(serde_json::json!({
                                 "kind": "display_text",
@@ -540,6 +623,29 @@ impl SyncStreamingNode for ConversationCoordinatorNode {
                             }
 
                             state.text_buffer.push_str(&cleaned);
+
+                            // Speculative first-chunk emission: trade
+                            // a little prosody on the very first
+                            // utterance for ~300–600 ms lower TTFA.
+                            // Only fires once per turn and only if
+                            // `extract_sentences` wouldn't already
+                            // produce something on its own. Subsequent
+                            // emissions fall through to the normal
+                            // sentence boundary path below.
+                            if self.first_chunk_min_chars > 0
+                                && !state.first_chunk_emitted
+                                && state.phase == Phase::AgentSpeaking
+                            {
+                                if let Some((prefix, remainder)) = Self::try_split_first_chunk(
+                                    &state.text_buffer,
+                                    self.first_chunk_min_chars,
+                                ) {
+                                    pending.push(RuntimeData::Text(prefix));
+                                    state.text_buffer = remainder;
+                                    state.first_chunk_emitted = true;
+                                }
+                            }
+
                             let (sentences, remainder) = extract_sentences(
                                 &state.text_buffer,
                                 &self.boundary_chars,
@@ -577,6 +683,7 @@ impl SyncStreamingNode for ConversationCoordinatorNode {
                                         }
                                         state.text_buffer.clear();
                                     }
+                                    state.first_chunk_emitted = false;
                                     pending.push(RuntimeData::Text(
                                         "<|text_end|>".to_string(),
                                     ));

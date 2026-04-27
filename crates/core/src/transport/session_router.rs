@@ -42,8 +42,10 @@ use crate::executor::{
     DriftMetrics, DriftThresholds, NodeStats, PipelineGraph, SchedulerConfig, StreamingScheduler,
 };
 use crate::manifest::Manifest;
-use crate::nodes::{StreamingNode, StreamingNodeRegistry};
-use crate::transport::session_control::{CloseReason, SessionControl};
+use crate::nodes::{InitializeContext, StreamingNode, StreamingNodeRegistry};
+use crate::transport::session_control::{
+    aux_port_of, CloseReason, SessionControl, BARGE_IN_PORT,
+};
 use crate::Result;
 use parking_lot::RwLock as DriftRwLock;
 use std::collections::HashMap;
@@ -388,7 +390,20 @@ impl SessionRouter {
             self.manifest.nodes.len()
         );
 
+        // Emit a "loading" event on the control bus so clients subscribed
+        // to `__system__.out` can show an initializing indicator.
+        self.emit_loading_event(
+            "initializing",
+            Some(format!("Starting {} nodes", self.manifest.nodes.len())),
+        );
+
         for node_spec in &self.manifest.nodes {
+            // Emit per-node loading event.
+            self.emit_loading_event(
+                "loading_node",
+                Some(format!("Loading {} ({})", node_spec.id, node_spec.node_type)),
+            );
+
             // Inject manifest-level python dependency info into params
             // so the multiprocess executor can provision the right venv
             let mut params = node_spec.params.clone();
@@ -419,7 +434,29 @@ impl SessionRouter {
             )?;
 
             // Initialize the node (load models, etc.)
-            node.initialize().await?;
+            // Pass the InitializeContext so nodes can emit progress events.
+            let init_ctx = InitializeContext {
+                session_id: self.session_id.clone(),
+                node_id: node_spec.id.clone(),
+                control: self.control.clone(),
+            };
+            if let Err(e) = node.initialize(&init_ctx).await {
+                tracing::error!(
+                    session_id = %self.session_id,
+                    node_id = %node_spec.id,
+                    node_type = %node_spec.node_type,
+                    error = %e,
+                    "Node initialization failed; aborting session startup"
+                );
+                self.emit_loading_event(
+                    "error",
+                    Some(format!(
+                        "Node '{}' ({}) failed to initialize: {}",
+                        node_spec.id, node_spec.node_type, e
+                    )),
+                );
+                return Err(e);
+            }
 
             self.cached_nodes.insert(node_spec.id.clone(), node);
             tracing::debug!(
@@ -436,11 +473,36 @@ impl SessionRouter {
             self.cached_nodes.len()
         );
 
+        // Emit a "ready" event: pipeline is fully loaded and processing.
+        self.emit_loading_event("ready", Some("Pipeline ready".to_string()));
+
         // Spec 025: After initialization, propagate actual capabilities from
         // RuntimeDiscovered nodes to downstream Adaptive/Passthrough nodes
         self.propagate_runtime_capabilities().await?;
 
         Ok(())
+    }
+
+    /// Emit a loading-state event on the control bus.
+    ///
+    /// Clients subscribed to `__system__.out` receive these as JSON events
+    /// with `kind: "loading"`. This lets the frontend show an initializing
+    /// indicator while nodes load models, then switch to "ready" once the
+    /// pipeline is fully loaded.
+    fn emit_loading_event(&self, status: &str, message: Option<String>) {
+        if let Some(ctrl) = &self.control {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let event = RuntimeData::Json(serde_json::json!({
+                "kind": "loading",
+                "status": status,
+                "message": message,
+                "ts_ms": ts,
+            }));
+            ctrl.publish_tap("__system__", None, event);
+        }
     }
 
     /// Propagate capabilities from RuntimeDiscovered nodes after initialization (spec 025).
@@ -628,6 +690,8 @@ impl SessionRouter {
         loop {
             let ingress_start = std::time::Instant::now();
             tokio::select! {
+                biased;
+
                 result = input_rx.recv() => {
                     match result {
                         Some(packet) => {
@@ -635,19 +699,29 @@ impl SessionRouter {
                             self.route_input(packet, &pipeline.input_txs).await;
                         }
                         None => {
-                            tracing::info!(
-                                "Session {}: Input channel closed, shutting down",
+                            tracing::warn!(
+                                "Session {}: Input channel closed (all senders dropped), shutting down pipeline",
                                 self.session_id
                             );
                             break;
                         }
                     }
                 }
-                _ = shutdown_rx.recv() => {
-                    tracing::info!(
-                        "Session {}: Shutdown signal received",
-                        self.session_id
-                    );
+                result = shutdown_rx.recv() => {
+                    match result {
+                        Some(()) => {
+                            tracing::info!(
+                                "Session {}: Shutdown signal received, closing pipeline",
+                                self.session_id
+                            );
+                        }
+                        None => {
+                            tracing::warn!(
+                                "Session {}: Shutdown channel closed (sender dropped), closing pipeline",
+                                self.session_id
+                            );
+                        }
+                    }
                     break;
                 }
             }
@@ -822,9 +896,63 @@ impl SessionRouter {
             }
         });
 
+        // ── Aux-port filter task ───────────────────────────────────────
+        //
+        // Sits between the router-level `input_rx` and the main node
+        // task. It does TWO things every node benefits from for free:
+        //
+        //   1. `barge_in` envelopes are intercepted here. They never
+        //      reach the node's `process_*`. Instead they fire
+        //      `cancel.notify_waiters()` which aborts whatever the
+        //      node is currently doing (see select! below). This is
+        //      the universal cancellation primitive — every node
+        //      becomes preemptible without any per-node code.
+        //
+        //   2. All other frames (normal data + non-barge aux ports
+        //      like `context` for nodes that opt into them) are
+        //      forwarded unchanged. Nodes that consume aux ports
+        //      (e.g. lfm2_text, qwen_tts_mlx) keep working.
+        //
+        // Putting this filter in the runtime — rather than asking
+        // every node to recognise barge envelopes — was a direct
+        // response to barge frames leaking into LLM prompts and TTS
+        // synthesis whenever a node forgot to filter them.
+        let cancel = Arc::new(tokio::sync::Notify::new());
+        let (filt_tx, mut filt_rx) =
+            mpsc::channel::<RuntimeData>(NODE_FANOUT_CAPACITY);
+        let filter_cancel = Arc::clone(&cancel);
+        let filter_node_id = node_id.clone();
+        let filter_session_id = session_id.clone();
+        let filter_handle = tokio::spawn(async move {
+            while let Some(input) = input_rx.recv().await {
+                if let Some(port) = aux_port_of(&input) {
+                    if port == BARGE_IN_PORT {
+                        tracing::debug!(
+                            session_id = %filter_session_id,
+                            node_id = %filter_node_id,
+                            "Runtime: barge_in received — cancelling in-flight call"
+                        );
+                        // Wake whatever future is currently waiting in
+                        // the dispatch select!. If nothing is running,
+                        // this is a no-op (notify_waiters does NOT
+                        // queue a permit), which is what we want.
+                        filter_cancel.notify_waiters();
+                        continue;
+                    }
+                    // Other aux ports fall through — node-side aux
+                    // handlers (e.g. `_handle_aux_port` in Python
+                    // nodes) still receive them.
+                }
+                if filt_tx.send(input).await.is_err() {
+                    break;
+                }
+            }
+        });
+
         // ── Main node task ─────────────────────────────────────────────
         let main_node_id = node_id.clone();
         let main_session_id = session_id.clone();
+        let main_cancel = Arc::clone(&cancel);
         let main_handle = tokio::spawn(async move {
             // Move the node into a raw pointer so we can hand out `&`
             // references to scheduler closures without fighting the
@@ -833,7 +961,7 @@ impl SessionRouter {
             let node = node; // bind
             let node_ref: &dyn StreamingNode = &*node;
 
-            while let Some(input) = input_rx.recv().await {
+            while let Some(input) = filt_rx.recv().await {
                 // Node-state gate (Bypass / Disabled). Per-input, so a
                 // runtime control-bus toggle takes effect on the next
                 // packet.
@@ -873,82 +1001,112 @@ impl SessionRouter {
                 let use_fast = scheduler.config.is_fast_path(&main_node_id);
                 let node_dispatch_start = std::time::Instant::now();
 
-                let result = if use_fast {
-                    let input_clone = input.clone();
-                    let session_clone = main_session_id.clone();
-                    scheduler
-                        .execute_streaming_node_fast(&main_node_id, || async move {
-                            node_ref
-                                .process_streaming_async(
-                                    input_clone,
-                                    Some(session_clone),
-                                    cb,
-                                )
-                                .await
-                                .map(|_| ())
-                        })
-                        .await
-                } else {
-                    // Full path retries the closure on transient failures,
-                    // so each retry rebuilds the callback + input clone.
-                    let input_outer = input.clone();
-                    let session_outer = main_session_id.clone();
-                    let cb_outer = std::sync::Mutex::new(Some(cb));
-                    scheduler
-                        .execute_streaming_node(&main_node_id, || {
-                            let input_clone = input_outer.clone();
-                            let session_clone = session_outer.clone();
-                            // Take the callback for the first attempt;
-                            // subsequent retries rebuild a fresh one
-                            // against the same fan_tx so yields from a
-                            // retry still reach the drain task.
-                            let cb_taken = cb_outer.lock().unwrap().take();
-                            let cb_for_attempt: Box<
-                                dyn FnMut(RuntimeData) -> Result<()> + Send,
-                            > = match cb_taken {
-                                Some(c) => c,
-                                None => {
-                                    let fan_tx = fan_tx.clone();
-                                    let id = main_node_id.clone();
-                                    Box::new(move |out| {
-                                        if let Err(e) = fan_tx.try_send(out) {
-                                            tracing::warn!(
-                                                "node '{}' fan_tx backpressure drop: {}",
-                                                id, e
-                                            );
-                                        }
-                                        Ok(())
-                                    })
-                                }
-                            };
-                            async move {
+                // Build the dispatch future (not yet awaited). Once
+                // we await it inside the select!, dropping it on
+                // cancel will run all destructors — including HTTP
+                // streams, multiprocess IPC sends in flight, etc. —
+                // so cancellation is genuine, not just gated output.
+                let dispatch_fut = async {
+                    if use_fast {
+                        let input_clone = input.clone();
+                        let session_clone = main_session_id.clone();
+                        scheduler
+                            .execute_streaming_node_fast(&main_node_id, || async move {
                                 node_ref
                                     .process_streaming_async(
                                         input_clone,
                                         Some(session_clone),
-                                        cb_for_attempt,
+                                        cb,
                                     )
                                     .await
                                     .map(|_| ())
-                            }
-                        })
-                        .await
+                            })
+                            .await
+                    } else {
+                        // Full path retries the closure on transient failures,
+                        // so each retry rebuilds the callback + input clone.
+                        let input_outer = input.clone();
+                        let session_outer = main_session_id.clone();
+                        let cb_outer = std::sync::Mutex::new(Some(cb));
+                        scheduler
+                            .execute_streaming_node(&main_node_id, || {
+                                let input_clone = input_outer.clone();
+                                let session_clone = session_outer.clone();
+                                // Take the callback for the first attempt;
+                                // subsequent retries rebuild a fresh one
+                                // against the same fan_tx so yields from a
+                                // retry still reach the drain task.
+                                let cb_taken = cb_outer.lock().unwrap().take();
+                                let cb_for_attempt: Box<
+                                    dyn FnMut(RuntimeData) -> Result<()> + Send,
+                                > = match cb_taken {
+                                    Some(c) => c,
+                                    None => {
+                                        let fan_tx = fan_tx.clone();
+                                        let id = main_node_id.clone();
+                                        Box::new(move |out| {
+                                            if let Err(e) = fan_tx.try_send(out) {
+                                                tracing::warn!(
+                                                    "node '{}' fan_tx backpressure drop: {}",
+                                                    id, e
+                                                );
+                                            }
+                                            Ok(())
+                                        })
+                                    }
+                                };
+                                async move {
+                                    node_ref
+                                        .process_streaming_async(
+                                            input_clone,
+                                            Some(session_clone),
+                                            cb_for_attempt,
+                                        )
+                                        .await
+                                        .map(|_| ())
+                                }
+                            })
+                            .await
+                    }
                 };
 
-                probes.node_out.record_since(node_dispatch_start);
+                let cancelled = tokio::select! {
+                    biased;
+                    _ = main_cancel.notified() => {
+                        tracing::info!(
+                            session_id = %main_session_id,
+                            node_id = %main_node_id,
+                            "Runtime: in-flight call cancelled by barge_in"
+                        );
+                        // Dropping the dispatch_fut here cascades drop
+                        // through every awaited future inside the
+                        // node call (HTTP streams, IPC sends, etc.),
+                        // which is the cancellation mechanism.
+                        true
+                    }
+                    r = dispatch_fut => {
+                        if let Err(e) = r {
+                            tracing::error!(
+                                "Session {}: node '{}' execution error: {}",
+                                main_session_id,
+                                main_node_id,
+                                e
+                            );
+                        }
+                        false
+                    }
+                };
+                let _ = cancelled;
 
-                if let Err(e) = result {
-                    tracing::error!(
-                        "Session {}: node '{}' execution error: {}",
-                        main_session_id,
-                        main_node_id,
-                        e
-                    );
-                }
+                probes.node_out.record_since(node_dispatch_start);
             }
             // input_rx closed: drop fan_tx so the drain task exits once
             // it finishes forwarding any already-queued outputs.
             drop(fan_tx);
+            // Filter task ends when input_rx closes (its sender drops
+            // after the last source emits None). Await it so we don't
+            // leak it on shutdown.
+            let _ = filter_handle.await;
         });
 
         (main_handle, fan_handle)

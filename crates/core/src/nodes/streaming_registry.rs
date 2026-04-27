@@ -530,6 +530,56 @@ impl StreamingNodeFactory for AudioBufferAccumulatorNodeFactory {
     }
 }
 
+pub(crate) struct SpeculativeAudioCommitNodeFactory;
+impl StreamingNodeFactory for SpeculativeAudioCommitNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::SpeculativeAudioCommitNode;
+
+        let commit_delay_ms = params
+            .get("commitDelayMs")
+            .or(params.get("commit_delay_ms"))
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
+        let pre_roll_ms = params
+            .get("preRollMs")
+            .or(params.get("pre_roll_ms"))
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
+        let min_utterance_duration_ms = params
+            .get("minUtteranceDurationMs")
+            .or(params.get("min_utterance_duration_ms"))
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
+        let max_utterance_duration_ms = params
+            .get("maxUtteranceDurationMs")
+            .or(params.get("max_utterance_duration_ms"))
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
+
+        use crate::nodes::SyncNodeWrapper;
+        let node = SpeculativeAudioCommitNode::new(
+            commit_delay_ms,
+            pre_roll_ms,
+            min_utterance_duration_ms,
+            max_utterance_duration_ms,
+        );
+        Ok(Box::new(SyncNodeWrapper(node)))
+    }
+
+    fn node_type(&self) -> &str {
+        "SpeculativeAudioCommitNode"
+    }
+
+    fn is_multi_output_streaming(&self) -> bool {
+        true // Emits 0 or 1 RuntimeData::Audio per call (committed utterance)
+    }
+}
+
 pub(crate) struct TextCollectorNodeFactory;
 impl StreamingNodeFactory for TextCollectorNodeFactory {
     fn create(
@@ -1248,7 +1298,7 @@ impl crate::nodes::AsyncStreamingNode for SrtOutputStreamingNode {
         "SrtOutput"
     }
 
-    async fn initialize(&self) -> Result<(), Error> {
+    async fn initialize(&self, _ctx: &crate::nodes::InitializeContext) -> Result<(), Error> {
         Ok(())
     }
 

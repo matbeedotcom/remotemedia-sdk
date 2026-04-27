@@ -210,6 +210,26 @@ pub enum CloseReason {
 /// for this key to distinguish aux-channel input from the main input.
 pub const AUX_PORT_ENVELOPE_KEY: &str = "__aux_port__";
 
+/// Reserved aux port name for "the user has barged in / cancel the
+/// in-flight call". Handled universally by the router (see
+/// `session_router::spawn_node_pipeline`) — nodes never see a frame
+/// on this port; the runtime aborts whatever they're currently doing
+/// and drops the envelope.
+pub const BARGE_IN_PORT: &str = "barge_in";
+
+/// If `data` is an aux-port envelope produced by [`wrap_aux_port`],
+/// return the port name. Otherwise return `None`.
+///
+/// Used by the router to filter universal control frames (currently
+/// `barge_in`) before they reach `process_*` and to decide whether a
+/// frame is aux-channel or main-channel for routing purposes.
+pub fn aux_port_of(data: &RuntimeData) -> Option<&str> {
+    match data {
+        RuntimeData::Json(v) => v.get(AUX_PORT_ENVELOPE_KEY).and_then(|p| p.as_str()),
+        _ => None,
+    }
+}
+
 /// Wrap a `RuntimeData` payload in the aux-port envelope described in
 /// [`SessionControl::publish`]. Pulled out so `python_streaming_node.rs`
 /// and test code can construct the same shape.

@@ -383,7 +383,12 @@ impl SessionRouter {
                     );
 
                     // 🔥 Actually call initialize() to load models
-                    match node.initialize().await {
+                    let init_ctx = remotemedia_core::nodes::InitializeContext {
+                        session_id: self.session_id.clone(),
+                        node_id: node_id.clone(),
+                        control: None,
+                    };
+                    match node.initialize(&init_ctx).await {
                         Ok(_) => {
                             info!(
                                 "   ✅ [{}/{}] {} initialized successfully ({}% complete)",

@@ -504,7 +504,7 @@ impl StreamingNode for AutoResampleStreamingNodeWrapper {
         &self.inner.node_id
     }
 
-    async fn initialize(&self) -> Result<()> {
+    async fn initialize(&self, _ctx: &crate::nodes::InitializeContext) -> Result<()> {
         Ok(()) // Lazy initialization happens on first process()
     }
 

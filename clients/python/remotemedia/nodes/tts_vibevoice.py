@@ -138,6 +138,11 @@ class VibeVoiceTTSNode(MultiprocessNode):
         try:
             import torch
 
+            self.publish_progress(
+                "loading_model",
+                f"Loading VibeVoice model '{self.model_name}'",
+            )
+
             def _load():
                 from vibevoice.modular.modeling_vibevoice_streaming_inference import (
                     VibeVoiceStreamingForConditionalGenerationInference,
@@ -241,6 +246,10 @@ class VibeVoiceTTSNode(MultiprocessNode):
                 logger.warning("No voice presets found - synthesis will fail")
 
             self._initialized = True
+            self.publish_progress(
+                "ready",
+                f"VibeVoice loaded ({len(self._voice_presets)} voices, voice={self.voice})",
+            )
             logger.info(f"VibeVoice streaming model initialized. Voices: {list(self._voice_presets.keys())}")
 
         except ImportError as e:

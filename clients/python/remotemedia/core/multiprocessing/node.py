@@ -101,6 +101,9 @@ class MultiprocessNode(BaseNode):
         self.input_channels: Dict[str, Any] = {}
         self.output_channels: Dict[str, Any] = {}
 
+        # Control channel publisher for progress reporting (set by runner)
+        self._control_publisher: Optional[Any] = None
+
         # Statistics
         self.messages_processed = 0
         self.messages_failed = 0
@@ -131,6 +134,39 @@ class MultiprocessNode(BaseNode):
         if value != self._status:
             self.logger.info(f"Status change: {self._status.value} -> {value.value}")
             self._status = value
+
+    def publish_progress(self, status: str, message: str) -> None:
+        """
+        Emit a progress event to the control bus.
+
+        This sends a message through the iceoryx2 control channel so the
+        Rust-side SessionControl can forward it to clients subscribed to
+        `__system__.out`. Use this during `initialize()` to report
+        progress (e.g. model downloads, voice loading).
+
+        No-op if the control publisher is not yet set (called too early).
+
+        Args:
+            status: Progress status tag (e.g. "downloading", "loading_model",
+                    "loading_voice", "building_index").
+            message: Human-readable description shown in the UI.
+        """
+        if self._control_publisher is None:
+            return
+        try:
+            import json
+            payload = json.dumps({
+                "status": status,
+                "message": message,
+            })
+            msg = f"PROGRESS:{payload}".encode("utf-8")
+            sample = self._control_publisher.loan_slice_uninit(len(msg))
+            for i, byte_val in enumerate(msg):
+                sample.payload()[i] = byte_val
+            sample = sample.assume_init()
+            sample.send()
+        except Exception as e:
+            self.logger.debug(f"Failed to send progress message: {e}")
 
     @abstractmethod
     async def initialize(self) -> None:

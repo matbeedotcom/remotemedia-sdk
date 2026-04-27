@@ -602,7 +602,7 @@ fn generate_trait_impl(
                 #node_type
             }
 
-            async fn initialize(&self) -> Result<(), remotemedia_core::Error> {
+            async fn initialize(&self, _ctx: &remotemedia_core::nodes::InitializeContext) -> Result<(), remotemedia_core::Error> {
                 Ok(())
             }
 
