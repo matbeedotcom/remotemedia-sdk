@@ -63,6 +63,14 @@ impl NodeProvider for CandleNodesProvider {
             registry.register(Arc::new(SileroVadNodeFactory::new()));
             tracing::debug!("Registered candle-silero-vad node factory");
         }
+
+        // Emotion vector nodes (always available, no feature flag)
+        {
+            use crate::emotion::{EmotionExtractorNodeFactory, EmotionSteeringNodeFactory};
+            registry.register(Arc::new(EmotionExtractorNodeFactory::new()));
+            registry.register(Arc::new(EmotionSteeringNodeFactory::new()));
+            tracing::debug!("Registered emotion-extractor and emotion-steering node factories");
+        }
     }
 
     fn provider_name(&self) -> &'static str {
@@ -87,6 +95,8 @@ impl NodeProvider for CandleNodesProvider {
         {
             count += 1;
         }
+        // Emotion vector nodes (always available)
+        count += 2;
         count
     }
 
@@ -139,6 +149,10 @@ pub fn list_candle_node_types() -> Vec<&'static str> {
     #[cfg(feature = "vad")]
     types.push("candle-silero-vad");
 
+    // Emotion vector nodes (always available)
+    types.push("EmotionExtractorNode");
+    types.push("EmotionSteeringNode");
+
     types
 }
 
@@ -146,7 +160,8 @@ pub fn list_candle_node_types() -> Vec<&'static str> {
 pub fn is_candle_node(node_type: &str) -> bool {
     matches!(
         node_type,
-        "candle-whisper" | "candle-yolo" | "candle-phi" | "candle-llama" | "candle-silero-vad"
+        "candle-whisper" | "candle-yolo" | "candle-phi" | "candle-llama"
+            | "candle-silero-vad" | "EmotionExtractorNode" | "EmotionSteeringNode"
     )
 }
 

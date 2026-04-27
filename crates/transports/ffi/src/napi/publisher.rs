@@ -111,7 +111,7 @@ fn convert_to_ipc_runtime_data(data: &RuntimeData) -> napi::Result<IpcRuntimeDat
         RuntimeData::Binary(_) => Err(napi::Error::from_reason(
             "Binary data type not supported for IPC. Use Text or Tensor instead.",
         )),
-        RuntimeData::Tensor { data, shape, dtype } => {
+        RuntimeData::Tensor { data, shape, dtype, .. } => {
             // Serialize tensor with shape metadata
             let mut payload = Vec::new();
             payload.extend_from_slice(&(*dtype as u32).to_le_bytes());

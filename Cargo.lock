@@ -5275,6 +5275,7 @@ dependencies = [
  "rand 0.8.5",
  "remotemedia-core",
  "rubato",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
  "tempfile",

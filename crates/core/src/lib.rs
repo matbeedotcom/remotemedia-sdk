@@ -265,6 +265,10 @@ pub mod data {
         shape: Vec<i32>,
         /// Data type (0=float32, 1=int32, etc.)
         dtype: i32,
+        /// Optional extensible metadata (e.g., emotion labels, layer info, model ID).
+        /// Flows through pipeline with the tensor data. Nodes that don't use it ignore it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        metadata: Option<serde_json::Value>,
     },
     /// Numpy array data (zero-copy passthrough until IPC boundary)
     /// This allows numpy arrays to flow through the pipeline without conversion,

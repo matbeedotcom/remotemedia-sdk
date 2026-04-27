@@ -359,6 +359,7 @@ impl NapiRuntimeData {
                 data: data.to_vec(),
                 shape,
                 dtype,
+                metadata: None,
             },
         }
     }

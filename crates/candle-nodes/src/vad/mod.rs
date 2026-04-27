@@ -18,7 +18,7 @@ use remotemedia_core::capabilities::{
 };
 use remotemedia_core::data::RuntimeData;
 use remotemedia_core::nodes::streaming_node::{
-    AsyncStreamingNode, StreamingNode, StreamingNodeFactory,
+    AsyncStreamingNode, InitializeContext, StreamingNode, StreamingNodeFactory,
 };
 use remotemedia_core::Error;
 use serde_json::Value;
@@ -392,7 +392,7 @@ impl AsyncStreamingNode for SileroVadNode {
         "silero-vad"
     }
 
-    async fn initialize(&self) -> std::result::Result<(), Error> {
+    async fn initialize(&self, _ctx: &InitializeContext) -> std::result::Result<(), Error> {
         self.load_model()
             .await
             .map_err(|e| Error::Execution(e.to_string()))
@@ -430,8 +430,8 @@ impl StreamingNode for SileroVadNodeWrapper {
         &self.0.node_id
     }
 
-    async fn initialize(&self) -> std::result::Result<(), Error> {
-        AsyncStreamingNode::initialize(self.0.as_ref()).await
+    async fn initialize(&self, ctx: &InitializeContext) -> std::result::Result<(), Error> {
+        AsyncStreamingNode::initialize(self.0.as_ref(), ctx).await
     }
 
     async fn process_async(&self, data: RuntimeData) -> std::result::Result<RuntimeData, Error> {

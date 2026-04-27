@@ -82,6 +82,34 @@ impl Default for AggregationMode {
     }
 }
 
+/// Output mode for the MultimodalLLMNode.
+///
+/// Controls what data the node emits alongside the primary text output.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmOutputMode {
+    /// Default: emit only `RuntimeData::Text` with the LLM response.
+    #[default]
+    Text,
+    /// Emit text + `RuntimeData::Json` metadata (token counts, usage,
+    /// model info, timestamps). Enables downstream analysis without
+    /// changing the primary text stream.
+    TextWithMetadata,
+    /// Emit text + metadata JSON + `RuntimeData::Tensor` with a
+    /// text embedding of the LLM response. Requires the LLM endpoint
+    /// to support the `/embeddings` API (OpenAI, vLLM, local models
+    /// with embedding support). The embedding model defaults to the
+    /// chat model; override with `embedding_model` in config.
+    ///
+    /// The tensor output has shape `[embedding_dim]` with dtype
+    /// float32 (dtype=0). Downstream nodes can use this for:
+    /// - Emotion vector analysis (cosine similarity against
+    ///   pre-extracted emotion direction vectors)
+    /// - Semantic clustering / topic detection
+    /// - Retrieval-augmented generation (RAG) indexing
+    TextWithEmbedding,
+}
+
 /// Configuration for [`MultimodalLLMNode`]. Mirrors
 /// [`crate::nodes::openai_chat::OpenAIChatConfig`] field-for-field
 /// where they overlap; new fields are documented inline.
@@ -131,6 +159,33 @@ pub struct MultimodalLLMConfig {
     /// content automatically.
     #[serde(default, alias = "provider")]
     pub provider: ProviderKind,
+
+    // ── Output mode (vector / embedding support) ────────────────────
+    /// Output mode. Default `text` (text only). Set to
+    /// `text_with_metadata` to also emit JSON metadata (token counts,
+    /// model info). Set to `text_with_embedding` to also emit a
+    /// `RuntimeData::Tensor` with the response embedding for
+    /// downstream emotion-vector analysis or semantic clustering.
+    #[serde(default, alias = "outputMode")]
+    pub output_mode: LlmOutputMode,
+
+    /// Embedding model for `text_with_embedding` output mode.
+    /// Defaults to the chat model if the endpoint supports it.
+    /// Set to a dedicated embedding model (e.g. `text-embedding-3-small`)
+    /// for better semantic representations.
+    #[serde(default, alias = "embeddingModel")]
+    pub embedding_model: Option<String>,
+
+    /// Enable logprobs in the chat completion request. When true,
+    /// the node emits token-level log probabilities as JSON metadata,
+    /// enabling confidence analysis and token-level steering.
+    #[serde(default, alias = "logprobs")]
+    pub logprobs: bool,
+
+    /// Number of top logprobs to return per token (requires `logprobs=true`).
+    /// Default 0 (only the chosen token's logprob).
+    #[serde(default, alias = "topLogprobs")]
+    pub top_logprobs: u8,
 }
 
 impl Default for MultimodalLLMConfig {
@@ -154,6 +209,10 @@ impl Default for MultimodalLLMConfig {
             tool_choice: None,
             aggregation: AggregationMode::default(),
             provider: ProviderKind::default(),
+            output_mode: LlmOutputMode::Text,
+            embedding_model: None,
+            logprobs: false,
+            top_logprobs: 0,
         }
     }
 }
@@ -169,6 +228,8 @@ pub struct MultimodalLLMNode {
     /// Per-session content-parts buffer used by the `CoalesceUntil`
     /// aggregation mode. `PerInput` mode never reads or writes this.
     coalesce_buffers: Arc<Mutex<HashMap<String, Vec<Value>>>>,
+    /// HTTP client for embedding requests (lazy-initialized).
+    embedding_client: std::sync::OnceLock<Arc<reqwest::Client>>,
 }
 
 impl MultimodalLLMNode {
@@ -178,7 +239,119 @@ impl MultimodalLLMNode {
             config,
             backend: Arc::new(ChatBackend::new(profile)),
             coalesce_buffers: Arc::new(Mutex::new(HashMap::new())),
+            embedding_client: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Get the embedding HTTP client (lazy-initialized).
+    fn get_embedding_client(&self) -> &Arc<reqwest::Client> {
+        self.embedding_client.get_or_init(|| {
+            Arc::new(
+                reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(60))
+                    .build()
+                    .expect("build embedding client"),
+            )
+        })
+    }
+
+    /// Fetch a text embedding from the LLM endpoint.
+    ///
+    /// Returns `RuntimeData::Tensor` with shape `[embedding_dim]` and
+    /// dtype float32, or `None` if the endpoint doesn't support embeddings.
+    async fn fetch_embedding(&self, text: &str) -> Option<RuntimeData> {
+        let api_key = self.resolve_api_key()?;
+        let base_url = self.resolve_base_url();
+        let model = self
+            .config
+            .embedding_model
+            .clone()
+            .unwrap_or_else(|| self.resolve_model());
+
+        let url = format!("{}/embeddings", base_url.trim_end_matches('/'));
+
+        let body = serde_json::json!({
+            "model": model,
+            "input": text,
+        });
+
+        let client = self.get_embedding_client();
+        let response = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await;
+
+        let response = match response {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!(
+                    node = "MultimodalLLMNode",
+                    "embedding request failed: {}", e
+                );
+                return None;
+            }
+        };
+
+        if !response.status().is_success() {
+            tracing::debug!(
+                node = "MultimodalLLMNode",
+                "embedding API returned {}", response.status()
+            );
+            return None;
+        }
+
+        let json: Value = match response.json().await {
+            Ok(j) => j,
+            Err(e) => {
+                tracing::debug!(node = "MultimodalLLMNode", "embedding JSON parse: {}", e);
+                return None;
+            }
+        };
+
+        // Extract embedding vector from response
+        let embedding = json["data"][0]["embedding"]
+            .as_array()
+            .or_else(|| json["data"][0]["embedding"][0].as_array()); // some APIs nest an extra dimension
+
+        let embedding = embedding?;
+
+        // Convert to f32 bytes
+        let data: Vec<u8> = embedding
+            .iter()
+            .filter_map(|v| v.as_f64())
+            .flat_map(|v| (v as f32).to_le_bytes())
+            .collect();
+
+        Some(RuntimeData::Tensor {
+            data,
+            shape: vec![embedding.len() as i32],
+            dtype: 0, // float32
+            metadata: None,
+        })
+    }
+
+    /// Build metadata JSON for the output.
+    fn build_metadata(&self, token_count: usize, full_text: &str) -> RuntimeData {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+
+        RuntimeData::Json(serde_json::json!({
+            "node": "MultimodalLLMNode",
+            "model": self.resolve_model(),
+            "output_mode": match self.config.output_mode {
+                LlmOutputMode::Text => "text",
+                LlmOutputMode::TextWithMetadata => "text_with_metadata",
+                LlmOutputMode::TextWithEmbedding => "text_with_embedding",
+            },
+            "token_count": token_count,
+            "char_count": full_text.len(),
+            "ts_ms": ts,
+        }))
     }
 
     fn resolve_api_key(&self) -> Option<String> {
@@ -408,6 +581,8 @@ impl AsyncStreamingNode for MultimodalLLMNode {
         F: FnMut(RuntimeData) -> Result<(), Error> + Send,
     {
         let sid = session_id.unwrap_or_else(|| "default".to_string());
+        let needs_metadata = !matches!(self.config.output_mode, LlmOutputMode::Text);
+        let needs_embedding = matches!(self.config.output_mode, LlmOutputMode::TextWithEmbedding);
 
         let part = match self.input_to_part(&data)? {
             Some(p) => p,
@@ -415,10 +590,24 @@ impl AsyncStreamingNode for MultimodalLLMNode {
         };
 
         let cfg = self.backend_config();
-        match (&self.config.aggregation, part) {
+
+        // Wrap the callback to capture full text for metadata/embeddings
+        let mut full_text = String::new();
+        let mut token_count = 0usize;
+        let mut wrapped_cb = |out: RuntimeData| -> Result<(), Error> {
+            if needs_metadata || needs_embedding {
+                if let RuntimeData::Text(ref t) = out {
+                    full_text.push_str(t);
+                    token_count += 1;
+                }
+            }
+            callback(out)
+        };
+
+        let result = match (&self.config.aggregation, part) {
             (AggregationMode::PerInput, InputPart::Part(p)) => {
                 let user_msg = Self::user_message(vec![p]);
-                self.backend.run(&sid, user_msg, &cfg, &mut callback).await
+                self.backend.run(&sid, user_msg, &cfg, &mut wrapped_cb).await
             }
             (AggregationMode::PerInput, InputPart::Sentinel) => {
                 // PerInput mode has no buffer to flush — sentinels are
@@ -430,7 +619,7 @@ impl AsyncStreamingNode for MultimodalLLMNode {
                     node = "MultimodalLLMNode",
                     "received sentinel in PerInput mode — dropping (no buffer to flush)"
                 );
-                Ok(0)
+                return Ok(0);
             }
             (AggregationMode::CoalesceUntil { max_parts, .. }, InputPart::Part(p)) => {
                 // Push, then check overflow. Overflow flushes the
@@ -445,9 +634,9 @@ impl AsyncStreamingNode for MultimodalLLMNode {
                         "coalesce buffer reached max_parts; force-flushing"
                     );
                     let user_msg = Self::user_message(parts);
-                    self.backend.run(&sid, user_msg, &cfg, &mut callback).await
+                    self.backend.run(&sid, user_msg, &cfg, &mut wrapped_cb).await
                 } else {
-                    Ok(0)
+                    return Ok(0);
                 }
             }
             (AggregationMode::CoalesceUntil { .. }, InputPart::Sentinel) => {
@@ -464,9 +653,23 @@ impl AsyncStreamingNode for MultimodalLLMNode {
                     return Ok(0);
                 }
                 let user_msg = Self::user_message(parts);
-                self.backend.run(&sid, user_msg, &cfg, &mut callback).await
+                self.backend.run(&sid, user_msg, &cfg, &mut wrapped_cb).await
+            }
+        };
+
+        // After the LLM response is complete, emit metadata and/or embedding
+        if needs_metadata && !full_text.is_empty() {
+            let metadata = self.build_metadata(token_count, &full_text);
+            callback(metadata)?;
+        }
+
+        if needs_embedding && !full_text.is_empty() {
+            if let Some(embedding) = self.fetch_embedding(&full_text).await {
+                callback(embedding)?;
             }
         }
+
+        result
     }
 }
 
@@ -504,10 +707,12 @@ impl crate::nodes::StreamingNodeFactory for MultimodalLLMNodeFactory {
         Some(
             NodeSchema::new("MultimodalLLMNode")
                 .description(
-                    "Streaming chat completion node accepting text and image input. \
+                    "Streaming chat completion node accepting text, image, and audio input. \
                      Aggregates inputs into one user message with content-parts \
-                     (text + image_url). v1 targets OpenAI-shape APIs (cloud OpenAI, \
-                     vLLM, modern llama.cpp + llava).",
+                     (text + image_url + input_audio). Targets OpenAI-shape APIs \
+                     (cloud OpenAI, vLLM, modern llama.cpp + llava). \
+                     Supports vector output modes for emotion analysis and \
+                     semantic clustering via the `output_mode` config.",
                 )
                 .category("llm")
                 .accepts([
@@ -516,7 +721,11 @@ impl crate::nodes::StreamingNodeFactory for MultimodalLLMNodeFactory {
                     RuntimeDataType::Audio,
                     RuntimeDataType::Json,
                 ])
-                .produces([RuntimeDataType::Text])
+                .produces([
+                    RuntimeDataType::Text,
+                    RuntimeDataType::Json,
+                    RuntimeDataType::Tensor,
+                ])
                 .capabilities(NodeCapabilitiesSchema {
                     parallelizable: false,
                     batch_aware: false,

@@ -36,6 +36,12 @@ pub mod llm;
 #[cfg(feature = "vad")]
 pub mod vad;
 
+/// Emotion vector extraction and steering nodes.
+///
+/// Implements the two-phase pipeline from Anthropic's 2026 emotion-vector
+/// research: extraction (offline) and steering (runtime).
+pub mod emotion;
+
 mod device;
 mod cache;
 mod convert;
@@ -62,3 +68,11 @@ pub use llm::{PhiNode, LlamaNode, LlmConfig, GenerationConfig};
 
 #[cfg(feature = "vad")]
 pub use vad::{SileroVadNode, VadConfig, VadSampleRate, SileroVadNodeFactory, VadOutput, SpeechSegment};
+
+// Emotion vector extraction and steering
+pub use emotion::{
+    EmotionExtractConfig, EmotionExtractorNode, EmotionExtractorNodeFactory,
+    EmotionSteerConfig, EmotionSteeringNode, EmotionSteeringNodeFactory,
+    EmotionVectorMetadata, PoolingMode, SteeringVectorConfig,
+    load_emotion_vector, save_emotion_vector,
+};

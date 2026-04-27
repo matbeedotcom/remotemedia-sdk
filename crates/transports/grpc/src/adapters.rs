@@ -123,7 +123,7 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
                 is_keyframe: *is_keyframe,
             })
         }
-        RuntimeData::Tensor { data, shape, dtype } => {
+        RuntimeData::Tensor { data, shape, dtype, .. } => {
             DataType::Tensor(TensorBuffer {
                 data: data.clone(),
                 shape: shape.iter().map(|&s| s as u64).collect(),
@@ -323,6 +323,7 @@ pub fn data_buffer_to_runtime_data_with_arrival(buffer: &DataBuffer, arrival_ts_
             data: tensor.data.clone(),
             shape: tensor.shape.iter().map(|&s| s as i32).collect(),
             dtype: tensor.dtype,
+            metadata: None,
         }),
         Some(DataType::Json(json)) => serde_json::from_str(&json.json_payload)
             .ok()

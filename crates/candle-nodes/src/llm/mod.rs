@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use remotemedia_core::capabilities::CapabilityBehavior;
 use remotemedia_core::data_compat::RuntimeData;
 use remotemedia_core::nodes::streaming_node::{
-    AsyncStreamingNode, StreamingNode, StreamingNodeFactory,
+    AsyncStreamingNode, InitializeContext, StreamingNode, StreamingNodeFactory,
 };
 use remotemedia_core::Error;
 use serde_json::Value;
@@ -248,7 +248,7 @@ impl AsyncStreamingNode for PhiNode {
         "candle-phi"
     }
 
-    async fn initialize(&self) -> std::result::Result<(), Error> {
+    async fn initialize(&self, _ctx: &InitializeContext) -> std::result::Result<(), Error> {
         self.load_model()
             .await
             .map_err(|e| Error::Execution(e.to_string()))
@@ -311,7 +311,7 @@ impl AsyncStreamingNode for LlamaNode {
         "candle-llama"
     }
 
-    async fn initialize(&self) -> std::result::Result<(), Error> {
+    async fn initialize(&self, _ctx: &InitializeContext) -> std::result::Result<(), Error> {
         self.load_model()
             .await
             .map_err(|e| Error::Execution(e.to_string()))
@@ -373,8 +373,8 @@ impl StreamingNode for PhiNodeWrapper {
     fn node_type(&self) -> &str { self.0.node_type() }
     fn node_id(&self) -> &str { &self.0.node_id }
 
-    async fn initialize(&self) -> std::result::Result<(), Error> {
-        AsyncStreamingNode::initialize(self.0.as_ref()).await
+    async fn initialize(&self, ctx: &InitializeContext) -> std::result::Result<(), Error> {
+        AsyncStreamingNode::initialize(self.0.as_ref(), ctx).await
     }
 
     async fn process_async(&self, data: RuntimeData) -> std::result::Result<RuntimeData, Error> {
@@ -404,8 +404,8 @@ impl StreamingNode for LlamaNodeWrapper {
     fn node_type(&self) -> &str { self.0.node_type() }
     fn node_id(&self) -> &str { &self.0.node_id }
 
-    async fn initialize(&self) -> std::result::Result<(), Error> {
-        AsyncStreamingNode::initialize(self.0.as_ref()).await
+    async fn initialize(&self, ctx: &InitializeContext) -> std::result::Result<(), Error> {
+        AsyncStreamingNode::initialize(self.0.as_ref(), ctx).await
     }
 
     async fn process_async(&self, data: RuntimeData) -> std::result::Result<RuntimeData, Error> {

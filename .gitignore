@@ -215,3 +215,5 @@ vendor/
 .ffmpeg/
 .playwright-artifacts**/
 .worktrees/
+
+external/

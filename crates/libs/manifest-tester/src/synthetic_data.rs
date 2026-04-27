@@ -188,6 +188,7 @@ fn generate_tensor() -> RuntimeData {
         data: vec![0u8; 4 * 10], // 10 float32 zeros
         shape: vec![1, 10],
         dtype: 0, // float32
+        metadata: None,
     }
 }
 

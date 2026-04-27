@@ -1,0 +1,124 @@
+# Emotion Vector Extraction & Steering Pipeline
+#
+# Demonstrates the two-phase emotion vector workflow:
+#
+# Phase 1 (offline): Extract emotion direction vectors from labelled activations
+#   → Feed labelled Tensor activations into EmotionExtractorNode
+#   → Trigger computation with "compute" message
+#   → Outputs: direction vectors as RuntimeData::Tensor
+#
+# Phase 2 (runtime): Apply steering during LLM inference
+#   → Vectors flow from extractor to steering node
+#   → Update coefficients at runtime via JSON
+#   → Generate steered text output
+#
+# Vectors flow as RuntimeData::Tensor between nodes.
+# Emotion labels are carried in tensor metadata.
+#
+# Usage:
+#   remotemedia run emotion-vector.yaml --input labelled-activations.bin
+#   remotemedia run emotion-vector.yaml --input prompt.txt --steer
+
+version: v1
+metadata:
+  name: emotion-vector-pipeline
+  description: >
+    Two-phase emotion vector pipeline: extract direction vectors from
+    labelled activations, then apply steering during LLM inference.
+    Vectors flow as RuntimeData::Tensor; emotion labels in tensor metadata.
+  category: ml
+  references:
+    - https://transformer-circuits.pub/2026/emotions/index.html
+    - https://github.com/mezoistvan/llm_feeling_weather
+
+nodes:
+  # -----------------------------------------------------------------------
+  # Phase 1: Emotion Vector Extraction (offline, one-time)
+  # -----------------------------------------------------------------------
+  # Accumulates labelled activations, computes mean-subtraction vectors
+  #
+  # Input:  RuntimeData::Tensor { data, shape, dtype, metadata: { emotion } }
+  # Output: RuntimeData::Tensor (direction vector per emotion)
+  #         RuntimeData::Json   (EmotionVectorMetadata)
+  # -----------------------------------------------------------------------
+  - id: extractor
+    node_type: EmotionExtractorNode
+    params:
+      model: "meta-llama/Llama-3.1-8B-Instruct"
+      layers: [21]
+      hidden_size: 4096
+      pooling: last_token
+      system_prompt: ""
+      normalize: true
+
+  # -----------------------------------------------------------------------
+  # Phase 2: Emotion Steering (runtime inference)
+  # -----------------------------------------------------------------------
+  # Receives vectors from extractor, applies steering coefficients
+  # to shift LLM output toward target emotions
+  #
+  # Input:  RuntimeData::Tensor (emotion vectors from extractor)
+  #         RuntimeData::Text   (user prompt)
+  #         RuntimeData::Json   (coefficient updates)
+  # Output: RuntimeData::Text   (steered text)
+  #         RuntimeData::Json   (steering metadata)
+  # -----------------------------------------------------------------------
+  - id: steering
+    node_type: EmotionSteeringNode
+    params:
+      model: "meta-llama/Llama-3.1-8B-Instruct"
+      layer: 21
+      layer_norm: 14.7
+      max_coefficient: 1.0
+      vectors:
+        - emotion: happy
+          coefficient: 0.5
+        - emotion: sad
+          coefficient: 0.0
+        - emotion: angry
+          coefficient: 0.0
+        - emotion: fearful
+          coefficient: 0.0
+      generation:
+        max_tokens: 256
+        temperature: 0.7
+        top_p: 0.9
+        top_k: 40
+
+connections:
+  # Extraction output (Tensor vectors) → Steering input
+  # Each tensor carries metadata: { emotion, layer, hidden_size, normalized, raw_norm }
+  - from: extractor
+    to: steering
+
+# ---------------------------------------------------------------------------
+# Python integration example (using remotemedia Python SDK)
+# ---------------------------------------------------------------------------
+#
+# from remotemedia import Pipeline, RuntimeData
+# import numpy as np
+#
+# # Phase 1: Feed labelled activations
+# pipeline = Pipeline.load("emotion-vector.yaml")
+#
+# for sample in labelled_activations:
+#     tensor = RuntimeData.tensor(
+#         data=sample.activation.astype(np.float32).tobytes(),
+#         shape=[4096],
+#         dtype=0,  # float32
+#         metadata={"emotion": sample.label},
+#     )
+#     pipeline.send("extractor", tensor)
+#
+# # Trigger vector computation
+# pipeline.send("extractor", RuntimeData.text("compute"))
+#
+# # Phase 2: Vectors flow to steering node automatically
+# # Update coefficients at runtime:
+# pipeline.send("steering", RuntimeData.json({
+#     "coefficients": {"happy": 0.8, "sad": -0.3}
+# }))
+#
+# # Generate steered text:
+# result = pipeline.send("steering", RuntimeData.text("Tell me a story"))
+# # result includes: steering metadata { delta_norm, coefficients, mode }

@@ -40,6 +40,7 @@ remotemedia-core = { path = "../core", default-features = false, features = ["mu
 # Utilities
 dirs.workspace = true
 rand.workspace = true
+schemars.workspace = true
 
 # Auto-registration
 inventory.workspace = true

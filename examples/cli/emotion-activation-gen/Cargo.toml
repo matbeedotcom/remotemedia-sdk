@@ -1,0 +1,36 @@
+[package]
+name = "emotion-activation-gen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Generate emotion-labelled prompts for activation extraction datasets"
+license.workspace = true
+
+[[bin]]
+name = "emotion-activation-gen"
+path = "src/main.rs"
+
+[dependencies]
+# SDK core
+remotemedia-core = { workspace = true }
+
+# CLI framework
+clap = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Random sampling
+rand = { workspace = true }
