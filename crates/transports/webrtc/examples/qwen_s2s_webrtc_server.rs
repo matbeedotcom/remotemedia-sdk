@@ -606,6 +606,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|d| d.as_secs())
         .unwrap_or_default();
     exec_cfg.session_id_prefix = format!("s{}", ts);
+
+    // Per-node scheduler budgets. The scheduler's default 30s cap is
+    // too tight for large MLX LLMs: Qwen3-9B on M-series routinely
+    // takes 6-10s per generation pass, and a four-pass tool-call
+    // turn with growing chat history can push a single pass past
+    // 30s. Kokoro synthesis is chunk-streamed but still benefits
+    // from extra headroom when synthesising long sentences.
+    //
+    // Budget = per-pass allowance × passes-per-turn + margin.
+    //   LLM:    4 passes × up to 45 s = 180 s ceiling
+    //   audio:  long sentences + queue drain → 120 s
+    // These are ceilings: normal calls complete well under these.
+    // Setting them here avoids the `"Node 'llm' timed out after 30s"`
+    // kill that truncated replies during longer turns.
+    exec_cfg.scheduler_config = exec_cfg
+        .scheduler_config
+        .with_node_timeout("llm", 180_000)
+        .with_node_timeout("audio", 120_000)
+        .with_node_timeout("kokoro_tts", 120_000);
+
     let executor = Arc::new(PipelineExecutor::with_config(exec_cfg)?);
 
     let config = Arc::new(WebRtcTransportConfig::default());
