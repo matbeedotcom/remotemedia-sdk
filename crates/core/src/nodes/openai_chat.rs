@@ -155,10 +155,77 @@ impl Default for OpenAIChatConfig {
 // Message history entry
 // ---------------------------------------------------------------------------
 
+/// One entry in the per-session conversation history.
+///
+/// Stored as a fully-shaped `serde_json::Value` (not just role+content)
+/// so we can round-trip OpenAI's `tool_calls` field on assistant
+/// messages and the `tool_call_id` field on tool-role results. A
+/// pure-content `assistant` reply is just `{role, content}`; a tools-
+/// only reply is `{role:"assistant", content:null, tool_calls:[…]}`
+/// followed by one `{role:"tool", tool_call_id, name, content}` per
+/// dispatched call. Without that round-trip the model has no record
+/// of what it said via `say`/`show` and can't recall its own outputs.
 #[derive(Debug, Clone)]
 struct MessageEntry {
-    role: String,
-    content: String,
+    /// Pre-shaped chat-completions message ready to drop into the
+    /// `messages` array of the next request.
+    message: Value,
+}
+
+impl MessageEntry {
+    fn user(content: &str) -> Self {
+        Self {
+            message: serde_json::json!({ "role": "user", "content": content }),
+        }
+    }
+
+    fn assistant_text(content: &str) -> Self {
+        Self {
+            message: serde_json::json!({ "role": "assistant", "content": content }),
+        }
+    }
+
+    /// Assistant message with `tool_calls` populated. `content` is sent
+    /// as `null` when the model emitted no plain text alongside its
+    /// calls, matching what the SSE stream returned. The OpenAI API
+    /// rejects a string `content` paired with `tool_calls` on some
+    /// stricter servers — `null` is the safe shape.
+    fn assistant_with_tool_calls(content: Option<&str>, tool_calls: Value) -> Self {
+        let content_value = match content {
+            Some(s) if !s.is_empty() => Value::String(s.to_string()),
+            _ => Value::Null,
+        };
+        Self {
+            message: serde_json::json!({
+                "role": "assistant",
+                "content": content_value,
+                "tool_calls": tool_calls,
+            }),
+        }
+    }
+
+    /// Synthetic tool-result message paired with a prior assistant
+    /// `tool_calls` entry. Side-effect tools have no return value, so
+    /// `content` is the empty string — but the message MUST exist or
+    /// the OpenAI API will 400 on the next request because of dangling
+    /// `tool_calls` ids.
+    fn tool_result(tool_call_id: &str, name: &str, content: &str) -> Self {
+        Self {
+            message: serde_json::json!({
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "name": name,
+                "content": content,
+            }),
+        }
+    }
+
+    fn role(&self) -> &str {
+        self.message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +238,12 @@ struct MessageEntry {
 /// dispatching.
 #[derive(Debug, Default)]
 struct ToolCallAccum {
+    /// Streaming `tool_call.id` assigned by the server. Required when
+    /// we round-trip the assistant message back into the next request:
+    /// every `tool_calls` entry must pair with a `tool` role message
+    /// carrying the same `tool_call_id`. Falls back to a synthetic
+    /// `call_<index>` id at dispatch time if the server omitted it.
+    id: String,
     name: String,
     /// Stringified JSON fragment that, once concatenated, parses to
     /// the tool-call argument object. Kept as `String` (not `Value`)
@@ -312,21 +385,43 @@ impl OpenAIChatNode {
             }));
         }
 
-        // Conversation history (bounded by history_turns)
+        // Conversation history (bounded by history_turns).
+        //
+        // The window is counted in **user turns**, not raw entries.
+        // A single assistant turn can produce multiple history entries
+        // (assistant + N tool results), so a flat `len > max*2` cap
+        // would amputate the tool results from the most recent turn
+        // and leave dangling `tool_calls` ids in the prompt — which
+        // OpenAI-shaped servers reject with a 400. We instead walk
+        // backwards counting user messages, then take the suffix
+        // starting at the Nth-most-recent user turn.
         {
             let hist = self.history.lock();
             if let Some(entries) = hist.get(session_id) {
                 let max_turns = self.config.history_turns;
-                let start = if entries.len() > max_turns * 2 {
-                    entries.len() - max_turns * 2
+                let start = if max_turns == 0 {
+                    entries.len()
                 } else {
-                    0
+                    // Walk backwards; mark `idx` at each user turn we
+                    // pass through, stop when we've kept `max_turns`.
+                    // `idx` always points at the user message that
+                    // opens the oldest kept turn — its assistant +
+                    // tool entries follow it in order.
+                    let mut user_seen = 0usize;
+                    let mut idx = entries.len();
+                    for (i, entry) in entries.iter().enumerate().rev() {
+                        if entry.role() == "user" {
+                            user_seen += 1;
+                            idx = i;
+                            if user_seen >= max_turns {
+                                break;
+                            }
+                        }
+                    }
+                    idx
                 };
                 for entry in entries.iter().skip(start) {
-                    messages.push(serde_json::json!({
-                        "role": entry.role,
-                        "content": entry.content,
-                    }));
+                    messages.push(entry.message.clone());
                 }
             }
         }
@@ -371,15 +466,26 @@ impl OpenAIChatNode {
         Ok(body)
     }
 
-    /// Append a message to per-session history.
-    fn append_history(&self, session_id: &str, role: &str, content: &str) {
+    /// Append one message to per-session history.
+    fn append_history_entry(&self, session_id: &str, entry: MessageEntry) {
         let mut hist = self.history.lock();
         hist.entry(session_id.to_string())
             .or_insert_with(Vec::new)
-            .push(MessageEntry {
-                role: role.to_string(),
-                content: content.to_string(),
-            });
+            .push(entry);
+    }
+
+    /// Append a batch of messages to per-session history atomically.
+    /// The assistant + tool-results that close a turn must commit as a
+    /// unit so a barge / drop in the middle never leaves a dangling
+    /// `tool_calls` reference in history.
+    fn extend_history(&self, session_id: &str, entries: Vec<MessageEntry>) {
+        if entries.is_empty() {
+            return;
+        }
+        let mut hist = self.history.lock();
+        hist.entry(session_id.to_string())
+            .or_insert_with(Vec::new)
+            .extend(entries);
     }
 }
 
@@ -663,12 +769,6 @@ impl OpenAIChatNode {
                 let written = extract_string(&["content", "markdown", "text", "body"]);
                 if let Some(text) = written {
                     callback(RuntimeData::Text(tag_text_str(&text, "ui")))?;
-                    // Mirror to the default channel so the assistant
-                    // transcript shows the displayed content too.
-                    callback(RuntimeData::Text(tag_text_str(
-                        &text,
-                        TEXT_CHANNEL_DEFAULT,
-                    )))?;
                 } else {
                     tracing::warn!(
                         node = "OpenAIChatNode",
@@ -706,7 +806,7 @@ impl OpenAIChatNode {
         let body = self.build_request_body(session_id, user_content)?;
 
         // Record user message in history.
-        self.append_history(session_id, "user", user_content);
+        self.append_history_entry(session_id, MessageEntry::user(user_content));
 
         tracing::info!(
             node = "OpenAIChatNode",
@@ -854,6 +954,13 @@ impl OpenAIChatNode {
                                         .and_then(Value::as_u64)
                                         .unwrap_or(0);
                                     let entry = tool_calls.entry(idx).or_default();
+                                    if let Some(id) =
+                                        tc.get("id").and_then(Value::as_str)
+                                    {
+                                        if !id.is_empty() {
+                                            entry.id = id.to_string();
+                                        }
+                                    }
                                     if let Some(n) = tc
                                         .pointer("/function/name")
                                         .and_then(Value::as_str)
@@ -875,15 +982,59 @@ impl OpenAIChatNode {
                 }
             }
 
-            // Dispatch any tool calls collected during the stream.
-            // Sort by index so multiple calls fire in protocol order.
+            // Dispatch any tool calls collected during the stream and
+            // build the turn-history additions in lock-step. We sort by
+            // streaming index so multiple calls fire (and commit) in
+            // protocol order.
             let mut indices: Vec<u64> = tool_calls.keys().copied().collect();
             indices.sort_unstable();
+
+            let mut tool_calls_for_history: Vec<Value> = Vec::with_capacity(indices.len());
+            let mut tool_result_entries: Vec<MessageEntry> =
+                Vec::with_capacity(indices.len());
+
             for idx in indices {
                 let entry = match tool_calls.remove(&idx) {
                     Some(e) => e,
                     None => continue,
                 };
+                if entry.name.is_empty() {
+                    // Same skip rule as dispatch_tool_call — also drop
+                    // it from the history record so we don't emit a
+                    // dangling tool_calls slot.
+                    continue;
+                }
+                // Some servers (older llama.cpp builds) omit `id` on
+                // streaming chunks. Synthesize a stable one tied to
+                // the protocol index so the assistant.tool_calls and
+                // tool.tool_call_id stay paired.
+                let call_id = if entry.id.is_empty() {
+                    format!("call_{}", idx)
+                } else {
+                    entry.id.clone()
+                };
+
+                tool_calls_for_history.push(serde_json::json!({
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": entry.name,
+                        // History stores the literal string the model
+                        // emitted, not the parsed Value — matches what
+                        // OpenAI sends back in non-streaming responses
+                        // and avoids re-encoding quirks.
+                        "arguments": entry.arguments,
+                    },
+                }));
+                // Side-effect tools have no return value; record an
+                // empty content body. The message MUST exist so the
+                // next request doesn't 400 on a dangling tool_call_id.
+                tool_result_entries.push(MessageEntry::tool_result(
+                    &call_id,
+                    &entry.name,
+                    "",
+                ));
+
                 Self::dispatch_tool_call(
                     &tool_registry,
                     &entry,
@@ -892,12 +1043,28 @@ impl OpenAIChatNode {
                 )?;
             }
 
-            // Record assistant response in history. (If the runtime
-            // cancelled us mid-stream this line is never reached
-            // because the future was dropped.)
-            if !full_text.is_empty() {
-                self.append_history(session_id, "assistant", &full_text);
+            // Commit the turn to history as a single batch. Without
+            // this, tools-only replies (the common path when `say` /
+            // `show` are enabled and the model emits no plain
+            // `delta.content`) leave history with the user message and
+            // no assistant turn — the model can't recall what it just
+            // said. Cancellation mid-stream short-circuits before this
+            // line because the future is dropped.
+            let mut turn_entries: Vec<MessageEntry> = Vec::new();
+            if !tool_calls_for_history.is_empty() {
+                turn_entries.push(MessageEntry::assistant_with_tool_calls(
+                    if full_text.is_empty() {
+                        None
+                    } else {
+                        Some(&full_text)
+                    },
+                    Value::Array(tool_calls_for_history),
+                ));
+                turn_entries.extend(tool_result_entries);
+            } else if !full_text.is_empty() {
+                turn_entries.push(MessageEntry::assistant_text(&full_text));
             }
+            self.extend_history(session_id, turn_entries);
 
             tracing::info!(
                 node = "OpenAIChatNode",
@@ -948,7 +1115,7 @@ impl OpenAIChatNode {
             }
 
             // Record in history.
-            self.append_history(session_id, "assistant", &content);
+            self.append_history_entry(session_id, MessageEntry::assistant_text(&content));
 
             callback(RuntimeData::Text(tag_text_str(&content, &output_channel)))?;
 
@@ -1160,16 +1327,106 @@ mod tests {
         let mut config = OpenAIChatConfig::default();
         config.api_key = Some("sk-test".into());
         let node = OpenAIChatNode::with_config(config);
-        node.append_history("s1", "user", "Hi");
-        node.append_history("s1", "assistant", "Hello!");
+        node.append_history_entry("s1", MessageEntry::user("Hi"));
+        node.append_history_entry("s1", MessageEntry::assistant_text("Hello!"));
 
         let hist = node.history.lock();
         let entries = hist.get("s1").unwrap();
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].role, "user");
-        assert_eq!(entries[0].content, "Hi");
-        assert_eq!(entries[1].role, "assistant");
-        assert_eq!(entries[1].content, "Hello!");
+        assert_eq!(entries[0].role(), "user");
+        assert_eq!(entries[0].message["content"], "Hi");
+        assert_eq!(entries[1].role(), "assistant");
+        assert_eq!(entries[1].message["content"], "Hello!");
+    }
+
+    #[test]
+    fn test_history_round_trips_tool_calls() {
+        // Tools-only replies must commit an assistant message with
+        // tool_calls + a tool result per call, otherwise the model
+        // can't recall its own outputs and the next request 400s on
+        // dangling tool_call_ids.
+        let mut config = OpenAIChatConfig::default();
+        config.api_key = Some("sk-test".into());
+        config.enable_say_tool = true;
+        let node = OpenAIChatNode::with_config(config);
+
+        node.append_history_entry("s1", MessageEntry::user("hi"));
+        node.extend_history(
+            "s1",
+            vec![
+                MessageEntry::assistant_with_tool_calls(
+                    None,
+                    serde_json::json!([{
+                        "id": "call_0",
+                        "type": "function",
+                        "function": {
+                            "name": "say",
+                            "arguments": "{\"text\":\"Hello!\"}",
+                        },
+                    }]),
+                ),
+                MessageEntry::tool_result("call_0", "say", ""),
+            ],
+        );
+
+        let body = node.build_request_body("s1", "what did you just say?").unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        // history (user + assistant + tool) + new user
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert!(messages[1]["content"].is_null());
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "call_0");
+        assert_eq!(messages[1]["tool_calls"][0]["function"]["name"], "say");
+        assert_eq!(messages[2]["role"], "tool");
+        assert_eq!(messages[2]["tool_call_id"], "call_0");
+        assert_eq!(messages[3]["role"], "user");
+        assert_eq!(messages[3]["content"], "what did you just say?");
+    }
+
+    #[test]
+    fn test_history_window_keeps_tool_results_intact() {
+        // The history window is bounded in user turns, not raw entries.
+        // A naive `entries.len() > max*2` cap would slice off the tool
+        // result of the most recent turn and leave a dangling
+        // tool_call_id, which the API rejects.
+        let mut config = OpenAIChatConfig::default();
+        config.api_key = Some("sk-test".into());
+        config.history_turns = 1;
+        let node = OpenAIChatNode::with_config(config);
+
+        // Turn 1 — plain assistant reply.
+        node.append_history_entry("s1", MessageEntry::user("hi"));
+        node.append_history_entry("s1", MessageEntry::assistant_text("hello"));
+        // Turn 2 — tools-only reply (assistant + tool entry = 2 rows).
+        node.append_history_entry("s1", MessageEntry::user("again"));
+        node.extend_history(
+            "s1",
+            vec![
+                MessageEntry::assistant_with_tool_calls(
+                    None,
+                    serde_json::json!([{
+                        "id": "call_0",
+                        "type": "function",
+                        "function": {"name": "say", "arguments": "{}"},
+                    }]),
+                ),
+                MessageEntry::tool_result("call_0", "say", ""),
+            ],
+        );
+
+        let body = node.build_request_body("s1", "next").unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        // history_turns=1 → keep ONLY turn 2 (user + assistant + tool)
+        // followed by the current user turn. The tool entry must be
+        // preserved alongside the assistant tool_calls.
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(roles, vec!["user", "assistant", "tool", "user"]);
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "call_0");
+        assert_eq!(messages[2]["tool_call_id"], "call_0");
     }
 
     #[test]
