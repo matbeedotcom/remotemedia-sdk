@@ -33,4 +33,4 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 # Random sampling
-rand = { workspace = true }
+rand = "0.8"

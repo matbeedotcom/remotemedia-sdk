@@ -61,7 +61,7 @@ A streaming text transform. Source-agnostic: not coupled to TTS, not coupled to 
 |---|---|
 | **Input** | `RuntimeData::Text` — any text stream. LLM tokens, S2S text-delta, transcript replay, interleaved audio+text generators, static prompt, etc. Channel-aware via `split_text_str` (`tts`, `ui`, `think`, …); channel tags are opaque. |
 | **Output frame 1 (data path)** | `RuntimeData::Text` — original text on the original channel, with all tags removed. Always emitted, even when no tags matched (downstream consumers like TTS rely on continuous text flow). |
-| **Output frame 2 (data path)** | `RuntimeData::Json` — `{kind:"emotion", emoji, alias?, source_offset_chars, ts_ms, turn_id?}`. Emitted **only** when at least one tag matched in this input frame. Multiple matches in one input → multiple Json frames in source order, each with its own `source_offset_chars`. `turn_id` is forwarded only if the upstream frame carries it; the node itself does not track turns. |
+| **Output frame 2 (data path)** | `RuntimeData::Json` — `{kind:"emotion", emoji, alias?, source_offset_chars, ts_ms, turn_id?}`. Emitted **only** when at least one tag matched in this input frame. Multiple matches in one input → multiple Json frames in source order, each with its own `source_offset_chars`. `turn_id` is forwarded only if the upstream frame carries it under the conventional `metadata.turn_id` key (where the coordinator's `display_text` envelopes already carry it); the node itself does not track turns. Absent → field omitted. |
 | **Multi-output declaration** | Factory declares `is_multi_output_streaming = true`. Schema declares `produces([Text, Json])`. Existing pattern (`silero_vad` already does this for `(audio, vad_event)`). |
 | **Coordinator coupling** | None. Coordinator is not modified by this spec. |
 | **Config** | `tag_pattern` (regex with one capture group; default `\[EMOTION:([^\]]+)\]`). `emoji_aliases` (optional `Map<String,String>`, e.g. `"happy" → "😊"` — applied before tag emission so the Json carries the canonical emoji). |
@@ -276,9 +276,11 @@ struct DrawableState {
     opacity: f32,
     render_order: u16,
     is_visible: bool,
-    // texture, UVs, indices, blend mode, mask refs, culling are STATIC per
-    // drawable — uploaded once at session init, looked up by drawable_id.
-    // Only the per-frame dynamic state crosses IPC.
+    // texture, UVs, indices, blend mode, mask refs, culling, AND vertex_count
+    // are STATIC per drawable — loaded once at session init from the
+    // .model3.json and cached on the Rust side keyed by drawable_id. The
+    // iceoryx2 message buffer is sized at session init using these static
+    // counts, so per-tick payloads are fixed-shape.
 }
 ```
 
@@ -343,7 +345,7 @@ Both auto-resolve as soon as the audio clock stops advancing — the renderer's 
 To close the 150–200 ms gap cleanly:
 
 - **Coordinator's `barge_in_targets` config** (already a list, currently `["llm", "audio"]`) gains two entries in avatar manifests: `["llm", "audio", "audio2face_lipsync", "live2d_render"]`.
-- **`Audio2FaceLipSyncNode`** implements an `in.barge_in` aux port: clears its internal audio buffer + pending blendshape outputs; emits no further frames until next audio arrives.
+- **`Audio2FaceLipSyncNode`** implements an `in.barge_in` aux port: clears its internal audio buffer and stops emitting further keyframes until next audio arrives. **Note:** "stops emitting" is the contract — frames already published to iceoryx2 but not yet consumed by the renderer will still arrive. They get evicted by the renderer's stale-pts ring rule (`pts_ms < audio_clock_ms - 200`) once a fresh turn starts publishing newer pts. Don't try to yank in-flight IPC frames.
 - **`Live2DRenderNode`** implements an `in.barge_in` aux port: clears the blendshape ring; snaps mouth-target toward neutral immediately (interpolation still runs, but from the now-cleared state).
 - **Emotion expression on the renderer is NOT cleared by barge** — the expression hangs around for its `expression_hold_seconds`. The avatar shouldn't go emotionally blank just because the user interrupted.
 
@@ -393,7 +395,7 @@ Each node testable in isolation; renderer testable without a GPU at the unit-tes
 | `Audio2FaceLipSyncNode` | Blendshape output is 52-vector with valid ranges; `pts_ms` monotonic and matches input audio timestamps; barge clears internal buffer | Synthetic audio → assert blendshape stream rate matches `output_framerate` |
 | `Live2DRenderNode` (input arbitration) | A `MockBackend` that records `render_frame` calls; assert input arbitration logic (blendshape sampling, emotion expiration, idle/blink scheduling, barge clears ring) drives the right calls | — |
 | `Live2DRenderNode` (Rust render layer) | wgpu render-to-texture against a synthetic `ModelFrame`; pixel-count + alpha sanity check on output | Headless mode driving a checked-in tiny model; emit a few frames; non-zero-pixel sanity check (no image-diff in this spec) |
-| `Live2DRenderNode` (Python model-state layer) | Snapshot test: load model, apply known params, assert vertex output stable across runs | iceoryx2 round-trip integration: Python → Rust mesh delivery latency under 5 ms |
+| `Live2DRenderNode` (Python model-state layer) | Snapshot test: load model, apply known params, assert vertex output stable across runs | iceoryx2 round-trip integration: Python → Rust mesh delivery latency. **Soft target**: under 5 ms median on the dev machine; treat as a perf budget recorded in the implementation plan, not a CI pass/fail gate (CI hosts vary too much). |
 | Audio clock tap | Existing transport tests gain one assertion: `AudioSender` publishes one `audio.out.clock` Json per dequeued frame when a SessionControl is installed | End-to-end: drive synthetic audio through the audio track; subscribe to `audio.out.clock`; assert pts_ms monotonicity |
 
 ## 10. Risks worth flagging now
@@ -404,6 +406,7 @@ Each node testable in isolation; renderer testable without a GPU at the unit-tes
 - **Audio2Face ONNX latency.** Reportedly ~5–15 ms/inference on a recent NVIDIA GPU. CPU fallback may be too slow for realtime. Spec assumes GPU; CPU is best-effort.
 - **ARKit → VBridger mapper as config.** Letting users override the mapping in YAML is powerful but error-prone (off-by-one params nuke lip-sync). Default ships baked-in; override is opt-in.
 - **`audio_clock` tap couples renderer to transport.** If a deployment swaps WebRTC for a non-WebRTC transport without porting the same publish, the renderer falls into "no audio" mode. Documented; not load-bearing.
+- **"Transport stalled" vs "intentional silence" is observationally indistinguishable** without a heartbeat on `audio.out.clock`. The implementation plan must make a definitive call on whether to ship the optional 500 ms heartbeat (`pts_ms = null`) — without it, an upstream audio bug that wedges the AudioSender thread looks identical to the listener being quiet, and the renderer will silently park on neutral pose. Recommend shipping the heartbeat in the first iteration.
 - **Live2D model licensing.** Aria is included in the persona-engine binary distribution under its own terms; we don't redistribute. Users supply their own models.
 
 ## 11. Follow-up specs (rough sketch, in priority order)
