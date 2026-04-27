@@ -43,6 +43,7 @@ pub mod audio;
 pub mod capabilities;
 pub mod executor;
 pub mod ingestion;
+pub mod llm;
 pub mod metrics;
 pub mod nodes;
 pub mod python;
