@@ -29,6 +29,7 @@ use crate::executor::streaming_scheduler::{SchedulerConfig, StreamingScheduler};
 use crate::executor::DriftThresholds;
 use crate::manifest::Manifest;
 use crate::nodes::{StreamingNodeFactory, StreamingNodeRegistry};
+use crate::transport::session_control::{SessionControl, SessionControlBus};
 use crate::transport::session_router::{DataPacket, SessionRouter};
 use crate::transport::TransportData;
 use crate::Result;
@@ -67,23 +68,44 @@ impl Default for ExecutorConfig {
 pub struct SessionHandle {
     /// Unique session identifier
     pub session_id: String,
-    /// Channel for sending input data to the session (None after input complete)
-    input_tx: Option<mpsc::UnboundedSender<DataPacket>>,
-    /// Channel for receiving output data from the session
-    output_rx: mpsc::UnboundedReceiver<RuntimeData>,
+    /// Channel for sending input data to the session (None after input complete).
+    ///
+    /// Bounded — see `DEFAULT_ROUTER_INPUT_CAPACITY` in `session_router`.
+    input_tx: Option<mpsc::Sender<DataPacket>>,
+    /// Channel for receiving output data from the session.
+    ///
+    /// Bounded — see `DEFAULT_ROUTER_OUTPUT_CAPACITY` in `session_router`.
+    output_rx: mpsc::Receiver<RuntimeData>,
     /// Shutdown signal sender
     shutdown_tx: mpsc::Sender<()>,
     /// Handle to the session router task
     task_handle: JoinHandle<Result<()>>,
     /// Whether the session is still active
     is_active: bool,
+    /// Active trace recorder, if `REMOTEMEDIA_RECORD_DIR` was set when
+    /// the session was created. Held here so its tap subscriptions +
+    /// writer task live exactly as long as the session does; on drop
+    /// the writer finishes the JSONL file and the tap relays exit.
+    _recorder: Option<crate::transport::session_recorder::SessionRecorder>,
 }
 
 impl SessionHandle {
-    /// Send input data to the session
+    /// Send input data to the session.
     ///
     /// The data will be processed through the pipeline and outputs
     /// will be available via `recv_output()`.
+    ///
+    /// # **REAL-TIME UNSAFE**
+    ///
+    /// This method is `async` and awaits on a bounded tokio channel. It
+    /// must not be called from a real-time-priority thread (Core Audio
+    /// HAL IO proc, AU render callback, JACK process callback, AAudio
+    /// data callback, etc.) — `.await` returns control to the tokio
+    /// scheduler, and a full queue parks the caller. For RT audio hosts,
+    /// use the [`remotemedia-rt-bridge`] crate, which pumps data from
+    /// RT threads into the async pipeline through pinned-thread SPSC
+    /// rings, or call [`crate::nodes::process_sync`] directly on a
+    /// [`crate::nodes::SyncStreamingNode`] to skip the executor entirely.
     pub async fn send_input(&self, data: TransportData) -> Result<()> {
         if !self.is_active {
             return Err(crate::Error::Execution("Session is closed".to_string()));
@@ -101,7 +123,10 @@ impl SessionHandle {
         let tx = self.input_tx.as_ref().ok_or_else(|| {
             crate::Error::Execution("Input channel closed (input complete signalled)".to_string())
         })?;
-        tx.send(packet).map_err(|e| {
+        // Bounded channel: this `.await` is the ingress backpressure point.
+        // When the router's input queue is full, the producer stalls here
+        // rather than growing memory unboundedly.
+        tx.send(packet).await.map_err(|e| {
             crate::Error::Execution(format!("Failed to send input: {}", e))
         })?;
 
@@ -143,6 +168,26 @@ impl SessionHandle {
         self.input_tx = None;
     }
 
+    /// Clone-able, send-only handle onto this session's input.
+    ///
+    /// Transport adapters (WebRTC, gRPC) need to forward inputs on one
+    /// task while draining outputs on another — without this split, a
+    /// full router input channel blocks the same task that's supposed
+    /// to be pulling outputs, which can deadlock if the router's
+    /// output channel is also full (classic bounded-channel ring
+    /// deadlock). This returns a lightweight handle that owns a clone
+    /// of the input `Sender` and can be moved into its own task.
+    ///
+    /// Returns `None` after `signal_input_complete()` has been called.
+    pub fn input_sender(&self) -> Option<SessionInputSender> {
+        self.input_tx
+            .as_ref()
+            .map(|tx| SessionInputSender {
+                tx: tx.clone(),
+                session_id: self.session_id.clone(),
+            })
+    }
+
     /// Close the session gracefully
     pub async fn close(&mut self) -> Result<()> {
         if !self.is_active {
@@ -162,6 +207,38 @@ impl SessionHandle {
         self.task_handle.await.map_err(|e| {
             crate::Error::Execution(format!("Session task panicked: {}", e))
         })?
+    }
+}
+
+/// Clone-able, send-only side of a [`SessionHandle`].
+///
+/// See [`SessionHandle::input_sender`] for why this exists.
+#[derive(Clone)]
+pub struct SessionInputSender {
+    tx: mpsc::Sender<DataPacket>,
+    session_id: String,
+}
+
+impl SessionInputSender {
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Send input data. Blocks when the router input channel is full
+    /// — call from a dedicated task so a full queue doesn't wedge
+    /// the output-drain loop.
+    pub async fn send(&self, data: TransportData) -> Result<()> {
+        let packet = DataPacket {
+            data: data.data,
+            from_node: "client".to_string(),
+            to_node: None,
+            session_id: self.session_id.clone(),
+            sequence: data.sequence.unwrap_or(0),
+            sub_sequence: data.sequence.unwrap_or(0),
+        };
+        self.tx.send(packet).await.map_err(|e| {
+            crate::Error::Execution(format!("Failed to send input: {}", e))
+        })
     }
 }
 
@@ -210,6 +287,13 @@ pub struct PipelineExecutor {
     scheduler: Arc<StreamingScheduler>,
     /// Session counter for ID generation
     session_counter: std::sync::atomic::AtomicU64,
+    /// Process-wide control bus for client-side pub/sub/intercept.
+    ///
+    /// Populated automatically for every session created via
+    /// [`Self::create_session`]. Transport layers (gRPC, WebRTC) look
+    /// up a session here when a client sends an `Attach(session_id)`
+    /// control frame.
+    control_bus: Arc<SessionControlBus>,
 }
 
 impl PipelineExecutor {
@@ -226,12 +310,29 @@ impl PipelineExecutor {
             crate::nodes::streaming_registry::create_default_streaming_registry(),
         ));
 
+        let control_bus = SessionControlBus::new();
+        // Install as the process-wide singleton so Rust nodes can reach
+        // their session's control handle for cross-node aux publishes
+        // (e.g. ConversationCoordinatorNode → llm.in.barge_in). Safe to
+        // call repeatedly: first-writer-wins, later calls no-op.
+        SessionControlBus::install_global(control_bus.clone());
+
         Ok(Self {
             config,
             registry,
             scheduler,
             session_counter: std::sync::atomic::AtomicU64::new(0),
+            control_bus,
         })
+    }
+
+    /// Access the process-wide [`SessionControlBus`].
+    ///
+    /// Transport servers (gRPC `PipelineControl`, WebRTC control data
+    /// channel) use this to look up a [`SessionControl`] by `session_id`
+    /// when a client opens a control-plane attach.
+    pub fn control_bus(&self) -> Arc<SessionControlBus> {
+        self.control_bus.clone()
     }
 
     /// Get the scheduler reference
@@ -366,8 +467,11 @@ impl PipelineExecutor {
 
         let session_id = self.generate_session_id();
 
-        // Create output channel
-        let (output_tx, output_rx) = mpsc::unbounded_channel();
+        // Create bounded output channel. Capacity mirrors the router input
+        // default so producer and consumer side backpressure are balanced.
+        let (output_tx, output_rx) = mpsc::channel(
+            crate::transport::session_router::DEFAULT_ROUTER_OUTPUT_CAPACITY,
+        );
 
         // Get a snapshot of the registry for the session
         let registry_snapshot = {
@@ -378,7 +482,7 @@ impl PipelineExecutor {
         // Create session router with scheduler config and drift thresholds
         let (mut router, shutdown_tx) = SessionRouter::with_config(
             session_id.clone(),
-            manifest,
+            manifest.clone(),
             registry_snapshot,
             output_tx,
             Some(self.config.scheduler_config.clone()),
@@ -389,11 +493,37 @@ impl PipelineExecutor {
             },
         )?;
 
+        // Create and attach the per-session control bus. Must happen before
+        // `start()` consumes the router's input_tx.
+        let control = SessionControl::new(session_id.clone());
+        router.attach_control(control.clone()).await;
+        self.control_bus.register(control.clone());
+
+        // Trace recorder: if `REMOTEMEDIA_RECORD_DIR` is set, attach
+        // now so the taps are in place BEFORE the router starts —
+        // otherwise we'd miss the first few frames. Failures log and
+        // degrade to "no recording" (they must never take the
+        // session out). The recorder handle is moved into
+        // SessionHandle below so its lifetime matches the session.
+        let recorder = crate::transport::session_recorder::SessionRecorder::maybe_attach_from_env(
+            session_id.clone(),
+            control.clone(),
+            &manifest,
+        )
+        .await;
+
         // Get input sender before moving router
         let input_tx = router.get_input_sender();
 
-        // Spawn router task
-        let task_handle = tokio::spawn(async move { router.run_public().await });
+        // Spawn router task. When the router exits, remove the session
+        // entry from the bus so late attaches cleanly see SessionNotFound.
+        let bus = self.control_bus.clone();
+        let unregister_sid = session_id.clone();
+        let task_handle = tokio::spawn(async move {
+            let result = router.run_public().await;
+            bus.unregister(&unregister_sid);
+            result
+        });
 
         Ok(SessionHandle {
             session_id,
@@ -402,6 +532,7 @@ impl PipelineExecutor {
             shutdown_tx,
             task_handle,
             is_active: true,
+            _recorder: recorder,
         })
     }
 

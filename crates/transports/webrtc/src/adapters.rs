@@ -12,7 +12,7 @@ use crate::generated::{
     DataBuffer, DeadlineWarning, FileBuffer, JsonData, NumpyBuffer, PixelFormat as ProtoPixelFormat,
     TensorBuffer, TextBuffer, VideoCodec as ProtoVideoCodec, VideoFrame,
 };
-use remotemedia_core::data::{PixelFormat, RuntimeData, VideoCodec};
+use remotemedia_core::data::{split_text_str, PixelFormat, RuntimeData, VideoCodec};
 use remotemedia_core::transport::TransportData;
 
 /// Convert core PixelFormat to protobuf PixelFormat
@@ -118,11 +118,19 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             json_payload: serde_json::to_string(value).unwrap_or_default(),
             schema_type: String::new(),
         }),
-        RuntimeData::Text(s) => DataType::Text(TextBuffer {
-            text_data: s.as_bytes().to_vec(),
-            encoding: "utf-8".to_string(),
-            language: String::new(),
-        }),
+        RuntimeData::Text(s) => {
+            // Strip the `\x00<len><channel>` routing header and
+            // forward the channel as a structured protobuf field.
+            // The browser / any gRPC consumer gets clean UTF-8 plus an
+            // explicit `channel` it can dispatch on.
+            let (channel, content) = split_text_str(s);
+            DataType::Text(TextBuffer {
+                text_data: content.as_bytes().to_vec(),
+                encoding: "utf-8".to_string(),
+                language: String::new(),
+                channel: channel.to_string(),
+            })
+        }
         RuntimeData::Binary(bytes) => DataType::Binary(BinaryBuffer {
             data: bytes.clone(),
             mime_type: "application/octet-stream".to_string(),
@@ -229,7 +237,7 @@ pub fn data_buffer_to_runtime_data(buffer: &DataBuffer) -> Option<RuntimeData> {
                 .collect();
 
             Some(RuntimeData::Audio {
-                samples,
+                samples: samples.into(),
                 sample_rate: audio.sample_rate,
                 channels: audio.channels,
                 stream_id: None,

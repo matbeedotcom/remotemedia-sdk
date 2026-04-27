@@ -4,6 +4,8 @@ members = [
     "crates/core-derive",  # Proc-macros for NodeConfig
     "crates/python-nodes",  # Python node dynamic registration
     "crates/candle-nodes",  # Candle ML inference nodes
+    "crates/hearing-nodes",  # Hearing aid DSP nodes (WDRC, CROS, HRTF)
+    "crates/rt-bridge",  # RT-thread ↔ async pipeline bridge (SPSC rings)
     "crates/transports/grpc",  # gRPC transport
     "crates/transports/ffi",   # Python FFI transport
     "crates/transports/webrtc", # WebRTC transport
@@ -119,6 +121,16 @@ url = "2.5"
 crossbeam = "0.8"
 hdrhistogram = "7.5"
 bitflags = "2.4"
+parking_lot = "0.12"
+dashmap = "6.1"
+
+# Real-time bridging (crates/rt-bridge). `rtrb` provides wait-free
+# SPSC rings; `thread_priority` + `core_affinity` are feature-gated
+# behind `realtime` and only pulled in when the RT worker thread
+# actually needs kernel-level scheduling policy knobs.
+rtrb = "0.3"
+thread-priority = "1.2"
+core_affinity = "0.8"
 
 # Docker/build utilities
 tar = "0.4"

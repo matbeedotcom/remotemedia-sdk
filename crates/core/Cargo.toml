@@ -81,6 +81,8 @@ histogram = "0.11.3"
 crossbeam.workspace = true
 sha2.workspace = true
 hdrhistogram.workspace = true
+parking_lot.workspace = true
+dashmap.workspace = true
 hyper = { workspace = true, features = ["full"] }
 http-body-util = { version = "0.1", optional = true }
 
@@ -117,6 +119,9 @@ rand = { workspace = true }
 url = { workspace = true }
 
 # Low-latency streaming optimizations (spec 007)
+# NOTE: These appear to be duplicated under the `[target.'cfg(windows)'.dependencies]`
+# scope above due to a missing section header in the original file. The real
+# declarations are in the main `[dependencies]` block near `histogram = ...`.
 crossbeam = { workspace = true }
 hdrhistogram = { workspace = true }
 
@@ -177,6 +182,11 @@ path = "tests/integration/test_speculative_vad_coordinator.rs"
 [[test]]
 name = "test_control_messages"
 path = "tests/integration/test_control_messages.rs"
+
+# Phase 0 + 1 real-time backpressure / probe / buffer-pool integration
+[[test]]
+name = "test_rt_backpressure"
+path = "tests/integration/test_rt_backpressure.rs"
 
 # Old Docker executor tests removed - use test_docker_multiprocess instead
 
@@ -275,4 +285,17 @@ harness = false
 [[bench]]
 name = "bench_streaming_scheduler"
 path = "benches/bench_streaming_scheduler.rs"
+harness = false
+
+# Phase 0 / 1 real-time backpressure benchmarks
+[[bench]]
+name = "bench_rt_backpressure"
+path = "benches/bench_rt_backpressure.rs"
+harness = false
+
+# End-to-end router probe harness: drives an N-node sync pipeline through
+# the SessionRouter and prints probe distributions after each run.
+[[bench]]
+name = "bench_router_probes"
+path = "benches/bench_router_probes.rs"
 harness = false

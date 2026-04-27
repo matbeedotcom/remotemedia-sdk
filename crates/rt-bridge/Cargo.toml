@@ -1,0 +1,42 @@
+[package]
+name = "remotemedia-rt-bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Real-time thread ↔ async pipeline bridge for remotemedia-core. Pinned worker + wait-free SPSC rings for Core Audio HAL, AU, JACK, and other RT audio hosts."
+
+[dependencies]
+remotemedia-core = { path = "../core" }
+
+# Wait-free SPSC ring buffer. The public handles (producer/consumer)
+# are what RT callbacks hold.
+rtrb = { workspace = true }
+
+# Logging on the (non-RT) worker thread side.
+tracing = { workspace = true }
+
+# Feature-gated RT-scheduling knobs. Off by default so plain debug
+# builds don't pull in platform-specific syscalls; tests and benches
+# that want them enable the `realtime` feature.
+thread-priority = { workspace = true, optional = true }
+core_affinity = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+criterion = { workspace = true }
+
+[features]
+default = []
+# Enables RT-priority + core-affinity on the worker thread. Not
+# enabled by default because setting SCHED_FIFO / thread priority
+# typically requires elevated capabilities (CAP_SYS_NICE on Linux,
+# realtime entitlement on macOS). Enable this for production HAL
+# embedding; leave off for unit/integration tests.
+realtime = ["dep:thread-priority", "dep:core_affinity"]
+
+[[bench]]
+name = "bench_rt_bridge"
+harness = false

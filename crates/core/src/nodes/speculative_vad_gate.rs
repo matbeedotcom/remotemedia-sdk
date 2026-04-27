@@ -14,9 +14,9 @@
 use crate::data::{ControlMessageType, RuntimeData, SpeculativeSegment};
 use crate::executor::latency_metrics::LatencyMetrics;
 use crate::Error;
+use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Per-session state for speculative VAD processing
 #[derive(Debug)]
@@ -190,13 +190,16 @@ impl SpeculativeVADGate {
         Ok(output_count)
     }
 
-    /// Get or create session state
-    async fn get_or_create_session(
-        &self,
-        session_id: &str,
-    ) -> tokio::sync::MutexGuard<'_, HashMap<String, SessionState>> {
-        let mut sessions = self.sessions.lock().await;
-
+    /// Ensure a session state exists, create it if missing.
+    ///
+    /// Returning a `MutexGuard` is deliberately avoided — the previous
+    /// implementation returned one from an `async fn`, which is the
+    /// classic async-lock antipattern: the caller then held it across
+    /// every subsequent `.await` point. All session access is now
+    /// scoped: locks are acquired inside a narrow sync block and
+    /// released before any await.
+    fn ensure_session_exists(&self, session_id: &str) {
+        let mut sessions = self.sessions.lock();
         if !sessions.contains_key(session_id) {
             let samples_per_ms = self.config.sample_rate / 1000;
             let ring_buffer_capacity = (self.config.lookback_ms * samples_per_ms) as usize;
@@ -205,8 +208,6 @@ impl SpeculativeVADGate {
                 SessionState::new(ring_buffer_capacity),
             );
         }
-
-        sessions
     }
 
     /// Process audio chunk and determine if speculation should occur
@@ -219,12 +220,16 @@ impl SpeculativeVADGate {
         vad_result: Option<VADResult>,
     ) -> Result<Vec<RuntimeData>, Error> {
         let mut outputs = Vec::new();
-        let mut sessions = self.get_or_create_session(session_id).await;
+        self.ensure_session_exists(session_id);
+        // Acquire the lock for the rest of this fn. Inside this scope
+        // we do only synchronous buffer ops + `handle_vad_decision`
+        // (also sync) — no `.await` while the lock is held.
+        let mut sessions = self.sessions.lock();
         let state = sessions.get_mut(session_id).unwrap();
 
         // **Step 1: Forward audio immediately (speculative)**
         let audio_output = RuntimeData::Audio {
-            samples: samples.to_vec(),
+            samples: samples.to_vec().into(),
             sample_rate,
             channels,
             stream_id: None,
@@ -311,9 +316,13 @@ impl SpeculativeVADGate {
             .as_millis() as u64
     }
 
-    /// Get speculation acceptance rate for a session
+    /// Get speculation acceptance rate for a session.
+    ///
+    /// Kept `async` for API stability even though the lock is now sync —
+    /// callers already `.await` it. Acquires the lock briefly and
+    /// releases it before returning.
     pub async fn get_acceptance_rate(&self, session_id: &str) -> f64 {
-        let sessions = self.sessions.lock().await;
+        let sessions = self.sessions.lock();
         sessions
             .get(session_id)
             .map(|s| s.acceptance_rate())
@@ -322,11 +331,14 @@ impl SpeculativeVADGate {
 
     /// Clean up session state
     pub async fn terminate_session(&self, session_id: &str) {
-        let mut sessions = self.sessions.lock().await;
+        let mut sessions = self.sessions.lock();
         sessions.remove(session_id);
     }
 
-    /// Apply a VAD result after the corresponding audio was already forwarded
+    /// Apply a VAD result after the corresponding audio was already forwarded.
+    ///
+    /// The sessions lock is held only for the synchronous state update;
+    /// user callbacks fire outside the lock.
     pub async fn process_vad_result<F>(
         &self,
         session_id: &str,
@@ -336,9 +348,12 @@ impl SpeculativeVADGate {
     where
         F: FnMut(RuntimeData) -> Result<(), Error> + Send,
     {
-        let mut sessions = self.get_or_create_session(session_id).await;
-        let state = sessions.get_mut(session_id).unwrap();
-        let outputs = self.handle_vad_decision(state, session_id, vad_result);
+        self.ensure_session_exists(session_id);
+        let outputs = {
+            let mut sessions = self.sessions.lock();
+            let state = sessions.get_mut(session_id).unwrap();
+            self.handle_vad_decision(state, session_id, vad_result)
+        };
 
         let count = outputs.len();
         for output in outputs {
@@ -364,7 +379,7 @@ mod tests {
         let gate = SpeculativeVADGate::with_default();
 
         let audio = RuntimeData::Audio {
-            samples: vec![0.1, 0.2, 0.3],
+            samples: vec![0.1, 0.2, 0.3].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: None,
@@ -406,7 +421,7 @@ mod tests {
 
         // After processing without VAD, should still be 1.0
         let audio = RuntimeData::Audio {
-            samples: vec![0.1; 100],
+            samples: vec![0.1; 100].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: None,
@@ -435,7 +450,7 @@ mod tests {
             let session_id = format!("session_{}", session_num);
 
             let audio = RuntimeData::Audio {
-                samples: vec![session_num as f32; 100],
+                samples: vec![session_num as f32; 100].into(),
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: None,

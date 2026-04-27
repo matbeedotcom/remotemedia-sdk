@@ -1,0 +1,126 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .panel {
+    @apply bg-slate-900 border border-slate-800 rounded-lg shadow-lg;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm font-medium
+      transition-colors focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50
+      disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-sky-600 hover:bg-sky-500 text-white;
+  }
+  .btn-ghost {
+    @apply btn bg-slate-800 hover:bg-slate-700 text-slate-200;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 hover:bg-red-500 text-white;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+  .pill-on {
+    @apply pill bg-emerald-900/50 text-emerald-300 border border-emerald-700/40;
+  }
+  .pill-off {
+    @apply pill bg-slate-800 text-slate-400 border border-slate-700;
+  }
+  .pill-warn {
+    @apply pill bg-amber-900/60 text-amber-300 border border-amber-700/40;
+  }
+  .transcript-line {
+    @apply text-sm leading-snug;
+  }
+  .tag {
+    @apply text-[10px] uppercase tracking-wider font-semibold text-slate-500 mr-2;
+  }
+}
+
+/* Voice-activity bars: live mini-equalizer icon inside the VAD status pill.
+ * Heights scale with VAD probability in 5 discrete buckets (b0..b4), keeping
+ * the styling in CSS (no inline style objects from React). */
+.voice-activity {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 0.75rem;
+  width: 1.25rem;
+  margin-right: 0.25rem;
+}
+.voice-activity__bar {
+  width: 2px;
+  border-radius: 1px;
+  background-color: rgb(100 116 139); /* slate-500 */
+  transition: height 120ms ease, background-color 120ms ease;
+  height: 25%;
+}
+.voice-activity--idle { opacity: 0.6; }
+.voice-activity--idle .voice-activity__bar { background-color: rgb(100 116 139); }
+
+/* Active state: emerald bars with a pulsing height animation per bar. */
+.voice-activity[class*="voice-activity--b"] .voice-activity__bar {
+  background-color: rgb(52 211 153); /* emerald-400 */
+  animation: va-pulse 700ms ease-in-out infinite alternate;
+}
+.voice-activity__bar--1 { animation-delay: 0ms; }
+.voice-activity__bar--2 { animation-delay: 80ms; }
+.voice-activity__bar--3 { animation-delay: 160ms; }
+.voice-activity__bar--4 { animation-delay: 80ms; }
+.voice-activity__bar--5 { animation-delay: 0ms; }
+
+/* Per-bucket base heights (center bar tallest). Buckets 0..4 scale intensity. */
+.voice-activity--b0 .voice-activity__bar--1 { height: 25%; }
+.voice-activity--b0 .voice-activity__bar--2 { height: 40%; }
+.voice-activity--b0 .voice-activity__bar--3 { height: 55%; }
+.voice-activity--b0 .voice-activity__bar--4 { height: 40%; }
+.voice-activity--b0 .voice-activity__bar--5 { height: 25%; }
+
+.voice-activity--b1 .voice-activity__bar--1 { height: 30%; }
+.voice-activity--b1 .voice-activity__bar--2 { height: 50%; }
+.voice-activity--b1 .voice-activity__bar--3 { height: 70%; }
+.voice-activity--b1 .voice-activity__bar--4 { height: 50%; }
+.voice-activity--b1 .voice-activity__bar--5 { height: 30%; }
+
+.voice-activity--b2 .voice-activity__bar--1 { height: 40%; }
+.voice-activity--b2 .voice-activity__bar--2 { height: 65%; }
+.voice-activity--b2 .voice-activity__bar--3 { height: 85%; }
+.voice-activity--b2 .voice-activity__bar--4 { height: 65%; }
+.voice-activity--b2 .voice-activity__bar--5 { height: 40%; }
+
+.voice-activity--b3 .voice-activity__bar--1 { height: 50%; }
+.voice-activity--b3 .voice-activity__bar--2 { height: 75%; }
+.voice-activity--b3 .voice-activity__bar--3 { height: 95%; }
+.voice-activity--b3 .voice-activity__bar--4 { height: 75%; }
+.voice-activity--b3 .voice-activity__bar--5 { height: 50%; }
+
+.voice-activity--b4 .voice-activity__bar--1 { height: 60%; }
+.voice-activity--b4 .voice-activity__bar--2 { height: 85%; }
+.voice-activity--b4 .voice-activity__bar--3 { height: 100%; }
+.voice-activity--b4 .voice-activity__bar--4 { height: 85%; }
+.voice-activity--b4 .voice-activity__bar--5 { height: 60%; }
+
+@keyframes va-pulse {
+  0%   { transform: scaleY(0.85); }
+  100% { transform: scaleY(1.15); }
+}
+
+/* Subtle "live" pulse when a VAD speech-active event is showing. */
+.pulse-live {
+  position: relative;
+}
+.pulse-live::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 9999px;
+  border: 2px solid rgba(74, 222, 128, 0.6);
+  animation: pulse 1.3s ease-out infinite;
+}
+@keyframes pulse {
+  0% { transform: scale(0.95); opacity: 0.9; }
+  100% { transform: scale(1.4); opacity: 0; }
+}

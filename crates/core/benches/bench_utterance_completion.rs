@@ -84,7 +84,7 @@ fn build_utterance_chunks() -> Vec<RuntimeData> {
                 })
                 .collect();
             RuntimeData::Audio {
-                samples,
+                samples: samples.into(),
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: None,

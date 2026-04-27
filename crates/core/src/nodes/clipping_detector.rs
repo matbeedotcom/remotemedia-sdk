@@ -3,7 +3,7 @@
 //! Detects audio clipping/distortion by analyzing peak saturation ratio and crest factor.
 
 use crate::data::RuntimeData;
-use crate::nodes::StreamingNode;
+use crate::nodes::{StreamingNode, SyncNodeWrapper, SyncStreamingNode};
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -142,26 +142,19 @@ impl ClippingDetectorNode {
     }
 }
 
-#[async_trait::async_trait]
-impl StreamingNode for ClippingDetectorNode {
+// Phase A-Wave 1: `SyncStreamingNode` — body is sync, state is
+// read-only config. Wrapped through `SyncNodeWrapper` at the registry
+// boundary.
+impl SyncStreamingNode for ClippingDetectorNode {
     fn node_type(&self) -> &str {
         "ClippingDetectorNode"
     }
 
-    fn node_id(&self) -> &str {
-        &self.node_id
-    }
-
-    async fn initialize(&self) -> Result<(), Error> {
-        tracing::debug!("ClippingDetectorNode {} initialized", self.node_id);
-        Ok(())
-    }
-
-    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         self.process_audio(data)
     }
 
-    async fn process_multi_async(
+    fn process_multi(
         &self,
         inputs: HashMap<String, RuntimeData>,
     ) -> Result<RuntimeData, Error> {
@@ -193,7 +186,7 @@ impl crate::nodes::StreamingNodeFactory for ClippingDetectorNodeFactory {
             serde_json::from_value(params.clone()).unwrap_or_default()
         };
 
-        Ok(Box::new(ClippingDetectorNode::new(node_id, config)))
+        Ok(Box::new(SyncNodeWrapper(ClippingDetectorNode::new(node_id, config))))
     }
 
     fn node_type(&self) -> &str {

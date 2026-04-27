@@ -118,6 +118,40 @@ impl AudioRingBuffer {
             self.capacity - read_pos + write_pos
         }
     }
+
+    /// Drain the ring buffer without stopping the sender thread.
+    ///
+    /// Called on barge-in: the user started speaking while the
+    /// assistant was still playing queued TTS audio. Advancing
+    /// `read_pos` to `write_pos` discards all queued frames so the
+    /// next frames the thread pops are the fresh ones. The `Option`
+    /// slots are left as-is — the thread's `try_pop` tolerates both
+    /// None and stale Some readings (it checks read_pos==write_pos
+    /// first, and any stale Some is overwritten on the next push).
+    fn clear(&self) -> usize {
+        let write_pos = self.write_pos.load(Ordering::Acquire);
+        let old_read_pos = self.read_pos.swap(write_pos, Ordering::AcqRel);
+        let dropped = if write_pos >= old_read_pos {
+            (write_pos - old_read_pos) as usize
+        } else {
+            self.capacity - old_read_pos as usize + write_pos as usize
+        };
+        // Proactively clear the Option slots we just skipped over so
+        // we don't hold onto AudioFrame allocations until the next
+        // wrap-around.
+        let mut cursor = old_read_pos as usize;
+        while cursor != write_pos as usize {
+            // SAFETY: same reasoning as try_pop — positions are in
+            // bounds and we just claimed this range by moving read_pos.
+            unsafe {
+                let slot =
+                    self.buffer.as_ptr().add(cursor) as *mut Option<AudioFrame>;
+                *slot = None;
+            }
+            cursor = (cursor + 1) % self.capacity;
+        }
+        dropped
+    }
 }
 
 /// Audio sender with ring buffer and dedicated transmission thread
@@ -316,6 +350,16 @@ impl AudioSender {
     /// Get the number of frames currently buffered
     pub fn buffer_len(&self) -> usize {
         self.buffer.len()
+    }
+
+    /// Drain the ring buffer without stopping the sender thread.
+    ///
+    /// Used on barge-in: we want the assistant to stop speaking
+    /// immediately, not after the already-queued ~10 s of TTS audio
+    /// finishes playing. The sender thread keeps running, it just
+    /// finds the buffer empty and waits for the next push.
+    pub fn flush_buffer(&self) -> usize {
+        self.buffer.clear()
     }
 
     /// Get the current RTP timestamp

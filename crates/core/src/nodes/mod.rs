@@ -72,6 +72,12 @@ pub use speech_presence::{SpeechPresenceNode, SpeechPresenceConfig, SpeechPresen
 pub mod conversation_flow;
 pub use conversation_flow::{ConversationFlowNode, ConversationFlowConfig, ConversationFlowNodeFactory};
 
+pub mod conversation_coordinator;
+pub use conversation_coordinator::{
+    ConversationCoordinatorConfig, ConversationCoordinatorNode,
+    ConversationCoordinatorNodeFactory,
+};
+
 pub mod session_health;
 pub use session_health::{SessionHealthNode, SessionHealthConfig, SessionHealthNodeFactory};
 
@@ -120,6 +126,74 @@ pub use streaming_node::{
     AsyncNodeWrapper, AsyncStreamingNode, StreamingNode, StreamingNodeFactory,
     StreamingNodeRegistry, SyncNodeWrapper, SyncStreamingNode,
 };
+
+// =============================================================================
+// REAL-TIME SAFE DISPATCH
+// =============================================================================
+
+use crate::data::RuntimeData;
+
+/// **REAL-TIME SAFE** synchronous node dispatch.
+///
+/// Calls [`SyncStreamingNode::process`] directly — no tokio, no `.await`,
+/// no bounded-channel send, no shared lock. Suitable for calling from:
+///
+/// - a Core Audio HAL `AudioDeviceIOProc` callback,
+/// - an AudioUnit `AURenderCallback`,
+/// - a JACK client process callback,
+/// - an AAudio `AAudioStream_dataCallback`,
+/// - or any other real-time-priority thread.
+///
+/// This is the legitimate public entry point into the node layer from an
+/// RT thread. It is the **only** RT-safe way to put data through a node.
+/// Do not call [`crate::transport::PipelineExecutor::send_input`],
+/// [`crate::transport::SessionRouter::run`], or any other async function
+/// from an RT callback — they enter the tokio scheduler, take bounded
+/// channels, or acquire shared locks, any of which can park or deadlock
+/// the audio thread.
+///
+/// # RT-safety contract
+///
+/// This function is RT-safe **only if the node implementation is also
+/// RT-safe**: no heap allocations, no blocking system calls, no
+/// unbounded locks inside `process`. The function itself adds zero
+/// overhead — it is a direct call. RT-audit your node independently.
+///
+/// If you want an asynchronous pipeline to consume the output while
+/// still feeding the node from an RT thread, use the
+/// [`remotemedia-rt-bridge`] crate, which pairs this function with a
+/// pinned worker thread and lock-free SPSC rings. That is the correct
+/// shape for driving `remotemedia-core` from a Core Audio HAL plugin.
+///
+/// # Example
+///
+/// ```ignore
+/// use remotemedia_core::data::RuntimeData;
+/// use remotemedia_core::nodes::{process_sync, SyncStreamingNode};
+///
+/// extern "C" fn hal_io_proc(
+///     _device: AudioDeviceID,
+///     _now: *const AudioTimeStamp,
+///     input: *const AudioBufferList,
+///     _in_ts: *const AudioTimeStamp,
+///     output: *mut AudioBufferList,
+///     _out_ts: *const AudioTimeStamp,
+///     ctx: *mut c_void,
+/// ) -> OSStatus {
+///     let node: &dyn SyncStreamingNode = unsafe { &*(ctx as *const _) };
+///     // Copy hal input into a RuntimeData::Audio backed by a pool buffer,
+///     // process synchronously, write output back. No allocations, no awaits.
+///     // ...
+///     0
+/// }
+/// ```
+#[inline]
+pub fn process_sync(
+    node: &dyn SyncStreamingNode,
+    data: RuntimeData,
+) -> Result<RuntimeData> {
+    node.process(data)
+}
 
 /// Node execution context containing runtime state
 #[derive(Debug, Clone)]

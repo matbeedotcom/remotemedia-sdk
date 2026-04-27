@@ -4,7 +4,7 @@
 //! and adding context about event sequences.
 
 use crate::data::RuntimeData;
-use crate::nodes::StreamingNode;
+use crate::nodes::{StreamingNode, SyncNodeWrapper, SyncStreamingNode};
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -435,26 +435,18 @@ impl EventCorrelatorNode {
     }
 }
 
-#[async_trait::async_trait]
-impl StreamingNode for EventCorrelatorNode {
+// Phase A-Wave 1: `SyncStreamingNode` — body uses `std::sync::RwLock`
+// internally (no `.await`). Multi-input aggregation is preserved.
+impl SyncStreamingNode for EventCorrelatorNode {
     fn node_type(&self) -> &str {
         "EventCorrelatorNode"
     }
 
-    fn node_id(&self) -> &str {
-        &self.node_id
-    }
-
-    async fn initialize(&self) -> Result<(), Error> {
-        tracing::debug!("EventCorrelatorNode {} initialized", self.node_id);
-        Ok(())
-    }
-
-    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         self.process_input(data)
     }
 
-    async fn process_multi_async(
+    fn process_multi(
         &self,
         inputs: HashMap<String, RuntimeData>,
     ) -> Result<RuntimeData, Error> {
@@ -504,7 +496,7 @@ impl crate::nodes::StreamingNodeFactory for EventCorrelatorNodeFactory {
             serde_json::from_value(params.clone()).unwrap_or_default()
         };
 
-        Ok(Box::new(EventCorrelatorNode::new(node_id, config)))
+        Ok(Box::new(SyncNodeWrapper(EventCorrelatorNode::new(node_id, config))))
     }
 
     fn node_type(&self) -> &str {
@@ -621,7 +613,7 @@ mod tests {
             "timestamp_us": 1000000
         });
 
-        let result = node.process_async(RuntimeData::Json(event.clone())).await.unwrap();
+        let result = node.process(RuntimeData::Json(event.clone())).unwrap();
 
         if let RuntimeData::Json(json) = result {
             // Should emit raw event
@@ -648,8 +640,8 @@ mod tests {
             "timestamp_us": 1050000 // 50ms later
         });
 
-        node.process_async(RuntimeData::Json(event1)).await.unwrap();
-        node.process_async(RuntimeData::Json(event2)).await.unwrap();
+        node.process(RuntimeData::Json(event1)).unwrap();
+        node.process(RuntimeData::Json(event2)).unwrap();
 
         // Wait for window to close
         tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
@@ -660,7 +652,7 @@ mod tests {
             "timestamp_us": 2000000 // Much later
         });
 
-        let result = node.process_async(RuntimeData::Json(event3)).await.unwrap();
+        let result = node.process(RuntimeData::Json(event3)).unwrap();
 
         if let RuntimeData::Json(json) = result {
             if json.is_array() {

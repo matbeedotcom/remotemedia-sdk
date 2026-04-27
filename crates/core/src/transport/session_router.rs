@@ -43,11 +43,41 @@ use crate::executor::{
 };
 use crate::manifest::Manifest;
 use crate::nodes::{StreamingNode, StreamingNodeRegistry};
+use crate::transport::session_control::{CloseReason, SessionControl};
 use crate::Result;
+use parking_lot::RwLock as DriftRwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::mpsc;
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
+
+/// Default capacity for the router's internal input channel.
+///
+/// Sized for ~160 ms of headroom at 48 kHz / 20 ms frames (8 frames × 20 ms).
+/// Bounded channels apply block-producer backpressure on the transport side,
+/// which is the desired behavior for real-time media pipelines — we'd rather
+/// stall the ingress than grow memory unboundedly.
+///
+/// Override at session creation via `REMOTEMEDIA_ROUTER_INPUT_CAPACITY`.
+pub const DEFAULT_ROUTER_INPUT_CAPACITY: usize = 8;
+
+/// Default capacity for per-session client output channels.
+///
+/// Callers (`PipelineExecutor::create_session`, transport streaming handlers)
+/// create the output channel and pass the sender in; this constant is the
+/// recommended default. Same sizing rationale as the input capacity.
+pub const DEFAULT_ROUTER_OUTPUT_CAPACITY: usize = 256;
+
+/// Read the input-channel capacity from the environment, falling back to
+/// [`DEFAULT_ROUTER_INPUT_CAPACITY`].
+fn input_capacity_from_env() -> usize {
+    std::env::var("REMOTEMEDIA_ROUTER_INPUT_CAPACITY")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_ROUTER_INPUT_CAPACITY)
+}
 
 /// Data packet flowing through the pipeline
 #[derive(Clone, Debug)]
@@ -92,17 +122,29 @@ pub struct SessionRouter {
     /// Cached node instances (created once per session)
     cached_nodes: HashMap<String, Box<dyn StreamingNode>>,
 
-    /// Channel to send outputs to client
-    output_tx: mpsc::UnboundedSender<RuntimeData>,
+    /// Channel to send outputs to client.
+    ///
+    /// Bounded — caller picks the capacity when creating the channel. Sends
+    /// block when full, producing natural backpressure toward the sink node.
+    output_tx: mpsc::Sender<RuntimeData>,
 
-    /// Channel to receive inputs from client
-    input_rx: Option<mpsc::UnboundedReceiver<DataPacket>>,
+    /// Channel to receive inputs from client.
+    ///
+    /// Bounded — see [`DEFAULT_ROUTER_INPUT_CAPACITY`].
+    ///
+    /// Wrapped in `std::sync::Mutex` so the router struct stays `Sync`
+    /// once it is shared across per-packet spawn tasks (`tokio::spawn`
+    /// requires `Arc<Self>: Send`, which requires `Self: Sync`). The
+    /// receiver is `take()`-n once at the top of `run()` and used
+    /// locally from then on, so lock contention is irrelevant.
+    input_rx: std::sync::Mutex<Option<mpsc::Receiver<DataPacket>>>,
 
-    /// Channel to send inputs to router (held by external code, dropped in run())
-    input_tx: Option<mpsc::UnboundedSender<DataPacket>>,
+    /// Channel to send inputs to router (held by external code, dropped in run()).
+    input_tx: Option<mpsc::Sender<DataPacket>>,
 
-    /// Shutdown signal receiver
-    shutdown_rx: Option<mpsc::Receiver<()>>,
+    /// Shutdown signal receiver. See [`Self::input_rx`] for why the
+    /// receiver is wrapped in a `std::sync::Mutex`.
+    shutdown_rx: std::sync::Mutex<Option<mpsc::Receiver<()>>>,
 
     /// Shutdown signal sender (held externally)
     _shutdown_tx: mpsc::Sender<()>,
@@ -114,12 +156,62 @@ pub struct SessionRouter {
     /// StreamingScheduler for node execution with timeout, retry, circuit breaker (spec 026)
     scheduler: Arc<StreamingScheduler>,
 
-    /// Per-stream drift metrics for health monitoring (spec 026)
-    /// Key: stream_id (from RuntimeData.stream_id or "default")
-    drift_metrics: Arc<RwLock<HashMap<String, Arc<RwLock<DriftMetrics>>>>>,
+    /// Per-stream drift metrics for health monitoring (spec 026).
+    ///
+    /// Map is `DashMap` (lock-free sharded hashmap). Phase B1 swaps
+    /// the inner `tokio::sync::RwLock` for `parking_lot::RwLock` —
+    /// no `.await` is ever held across the lock (writes finish in
+    /// `record_sample` before any await), so the async RwLock was
+    /// pure overhead on the per-packet path. `parking_lot::RwLock`
+    /// uncontended fast path is a single CAS.
+    ///
+    /// Key: stream_id (from RuntimeData.stream_id or "default").
+    drift_metrics: Arc<dashmap::DashMap<String, Arc<DriftRwLock<DriftMetrics>>>>,
+
+    /// Real-time latency probes (Phase 0 of the tokio-off-data-plane
+    /// migration). Records into `ingress` and `egress` today; `route_in`,
+    /// `node_in`, `node_out` are reserved for follow-up wiring inside
+    /// `process_input`.
+    ///
+    /// Accessed out-of-band via [`Self::probe_snapshots`]. Shared via
+    /// `Arc` because consumers may want to poll from a separate task.
+    probes: Arc<crate::metrics::RtProbeSet>,
 
     /// Drift thresholds for new streams
     drift_thresholds: DriftThresholds,
+
+    /// Optional per-session control bus (client-side pub/sub/intercept).
+    /// Attached via [`Self::attach_control`] after construction, before
+    /// `start()`. When `None`, the router's hot path skips the control
+    /// hook entirely — no overhead for sessions without attaches.
+    control: Option<Arc<SessionControl>>,
+}
+
+/// Bounded capacity of each node's input channel.
+///
+/// Sized the same as the router's own ingress: enough to absorb a small burst
+/// without drops, not so large that a stalled node hides backpressure. If a
+/// node is a bottleneck, we want the upstream producer to block at `send`
+/// rather than silently queuing megabytes of buffered audio.
+const NODE_INPUT_CAPACITY: usize = 16;
+
+/// Bounded capacity of each node's internal fan-out (callback → drain task).
+///
+/// Larger than the input because one input packet can produce many output
+/// chunks (e.g. a TTS sentence → ~20 audio frames). `try_send` overflow
+/// drops a chunk with a warning; sizing this generously avoids drops under
+/// normal TTS/VAD burst patterns while still bounding memory growth.
+const NODE_FANOUT_CAPACITY: usize = 1024;
+
+/// Per-node task handles + input sender map, owned by the router for the
+/// lifetime of the session. Built in [`SessionRouter::spawn_pipeline_tasks`]
+/// and torn down in [`SessionRouter::teardown_pipeline_tasks`].
+struct PipelineTasks {
+    /// Input sender for each node (keyed by node id). The router pushes
+    /// source-bound and `to_node`-addressed packets through these.
+    input_txs: HashMap<String, mpsc::Sender<RuntimeData>>,
+    /// All spawned tasks (main + fan-out per node). Awaited on shutdown.
+    handles: Vec<JoinHandle<()>>,
 }
 
 impl SessionRouter {
@@ -130,7 +222,10 @@ impl SessionRouter {
     /// * `session_id` - Unique identifier for this session
     /// * `manifest` - Pipeline manifest defining nodes and connections
     /// * `registry` - Registry for creating streaming nodes
-    /// * `output_tx` - Channel for sending outputs to the client
+    /// * `output_tx` - Bounded channel for sending outputs to the client.
+    ///   Callers create this via `mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY)`
+    ///   or similar; the capacity determines how much backpressure the sink
+    ///   can absorb before the router's send awaits.
     ///
     /// # Returns
     ///
@@ -140,7 +235,7 @@ impl SessionRouter {
         session_id: String,
         manifest: Arc<Manifest>,
         registry: Arc<StreamingNodeRegistry>,
-        output_tx: mpsc::UnboundedSender<RuntimeData>,
+        output_tx: mpsc::Sender<RuntimeData>,
     ) -> Result<(Self, mpsc::Sender<()>)> {
         Self::with_config(
             session_id,
@@ -159,7 +254,7 @@ impl SessionRouter {
     /// * `session_id` - Unique identifier for this session
     /// * `manifest` - Pipeline manifest defining nodes and connections
     /// * `registry` - Registry for creating streaming nodes
-    /// * `output_tx` - Channel for sending outputs to the client
+    /// * `output_tx` - Bounded channel for sending outputs to the client.
     /// * `scheduler_config` - Optional scheduler configuration (uses defaults if None)
     /// * `drift_thresholds` - Optional drift threshold configuration (uses defaults if None)
     ///
@@ -171,7 +266,7 @@ impl SessionRouter {
         session_id: String,
         manifest: Arc<Manifest>,
         registry: Arc<StreamingNodeRegistry>,
-        output_tx: mpsc::UnboundedSender<RuntimeData>,
+        output_tx: mpsc::Sender<RuntimeData>,
         scheduler_config: Option<SchedulerConfig>,
         drift_thresholds: Option<DriftThresholds>,
     ) -> Result<(Self, mpsc::Sender<()>)> {
@@ -186,8 +281,14 @@ impl SessionRouter {
             graph.sinks
         );
 
-        // Create input/shutdown channels
-        let (input_tx, input_rx) = mpsc::unbounded_channel();
+        // Create input/shutdown channels.
+        //
+        // The input channel is bounded so that transport ingress applies
+        // backpressure to the upstream (gRPC/WebRTC/etc.) when the pipeline
+        // falls behind. Capacity is configurable via
+        // `REMOTEMEDIA_ROUTER_INPUT_CAPACITY` (default 8 frames ≈ 160 ms at
+        // 48 kHz/20 ms) — see [`DEFAULT_ROUTER_INPUT_CAPACITY`].
+        let (input_tx, input_rx) = mpsc::channel(input_capacity_from_env());
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         let shutdown_tx_clone = shutdown_tx.clone();
 
@@ -214,21 +315,45 @@ impl SessionRouter {
             registry,
             cached_nodes: HashMap::new(),
             output_tx,
-            input_rx: Some(input_rx),
+            input_rx: std::sync::Mutex::new(Some(input_rx)),
             input_tx: Some(input_tx),
-            shutdown_rx: Some(shutdown_rx),
+            shutdown_rx: std::sync::Mutex::new(Some(shutdown_rx)),
             _shutdown_tx: shutdown_tx,
             resolution_ctx: None,
             scheduler,
-            drift_metrics: Arc::new(RwLock::new(HashMap::new())),
+            drift_metrics: Arc::new(dashmap::DashMap::new()),
+            probes: Arc::new(crate::metrics::RtProbeSet::new()),
             drift_thresholds: drift_thresholds.unwrap_or_default(),
+            control: None,
         };
 
         Ok((router, shutdown_tx_clone))
     }
 
-    /// Get the input sender for feeding data to the router
-    pub fn get_input_sender(&self) -> mpsc::UnboundedSender<DataPacket> {
+    /// Attach a [`SessionControl`] bus to this router.
+    ///
+    /// After this call, the control can:
+    ///   - see every node output via `on_node_output` (tap + intercept)
+    ///   - inject inputs via `publish` (the bus forwards to the router's
+    ///     own input channel, with `to_node` set).
+    ///
+    /// Must be called before `start()` / `run()`. Safe to skip entirely —
+    /// a router with `control = None` has zero control-bus overhead.
+    pub async fn attach_control(&mut self, control: Arc<SessionControl>) {
+        let input_tx = self
+            .input_tx
+            .clone()
+            .expect("attach_control must be called before run() consumes input_tx");
+        control.attach_input_sender(input_tx).await;
+        self.control = Some(control);
+    }
+
+    /// Get the input sender for feeding data to the router.
+    ///
+    /// The returned sender is bounded; callers should `.send(...).await`
+    /// and treat the back-pressure as real (drop-on-deadline is a policy
+    /// decision for the transport ingress, not the router).
+    pub fn get_input_sender(&self) -> mpsc::Sender<DataPacket> {
         self.input_tx.clone().expect("input_tx not yet consumed by run()")
     }
 
@@ -438,7 +563,7 @@ impl SessionRouter {
     }
 
     /// Start the router - runs until shutdown signal
-    pub fn start(mut self) -> JoinHandle<()> {
+    pub fn start(self) -> JoinHandle<()> {
         let session_id = self.session_id.clone();
         tracing::info!("Session {}: Starting session router", session_id);
 
@@ -456,25 +581,37 @@ impl SessionRouter {
     /// This is the public entry point for starting the session router.
     /// It takes ownership of the input/shutdown channels and processes
     /// data through the pipeline graph.
-    pub async fn run_public(&mut self) -> Result<()> {
+    pub async fn run_public(self) -> Result<()> {
         self.run().await
     }
 
-    async fn run(&mut self) -> Result<()> {
+    async fn run(mut self) -> Result<()> {
         // Initialize all nodes before processing starts
         self.initialize_nodes().await?;
 
-        // Drop router's own input_tx so the channel closes when
-        // all external senders (SessionHandle) are dropped
+        // Spawn one task per node, wired through mpsc channels along the
+        // manifest connections. From here on, every node runs concurrently:
+        // an audio chunk yielded by node A reaches node B's input_rx on the
+        // same scheduler tick, instead of being batched into a `Vec` until
+        // A's `process_streaming_async` returns. Sink yields go straight to
+        // the client `output_tx`. See `spawn_pipeline_tasks` for the wiring.
+        let pipeline = self.spawn_pipeline_tasks();
+
+        // Drop router's own input_tx so the transport channel closes when
+        // all external senders (SessionHandle) are dropped.
         self.input_tx.take();
 
         let mut input_rx = self
             .input_rx
+            .lock()
+            .unwrap()
             .take()
             .ok_or_else(|| crate::Error::Execution("Input channel already taken".to_string()))?;
 
         let mut shutdown_rx = self
             .shutdown_rx
+            .lock()
+            .unwrap()
             .take()
             .ok_or_else(|| crate::Error::Execution("Shutdown channel already taken".to_string()))?;
 
@@ -483,44 +620,348 @@ impl SessionRouter {
             self.session_id
         );
 
+        // Single-threaded ingress loop. We no longer spawn per-packet tasks
+        // because work is performed by per-node tasks; the router's only
+        // job here is to shovel input packets into the right source node's
+        // input channel. Each node's bounded input mpsc provides natural
+        // backpressure back through `input_rx`.
         loop {
+            let ingress_start = std::time::Instant::now();
             tokio::select! {
                 result = input_rx.recv() => {
                     match result {
                         Some(packet) => {
-                            tracing::debug!(
-                                "Session {}: Received input packet (seq: {}, from: {})",
-                                self.session_id,
-                                packet.sequence,
-                                packet.from_node
-                            );
-
-                            if let Err(e) = self.process_input(packet).await {
-                                tracing::error!("Session {}: Processing error: {}", self.session_id, e);
-                                // Continue processing other inputs
-                            }
+                            self.probes.ingress.record_since(ingress_start);
+                            self.route_input(packet, &pipeline.input_txs).await;
                         }
                         None => {
-                            tracing::info!("Session {}: Input channel closed, shutting down", self.session_id);
+                            tracing::info!(
+                                "Session {}: Input channel closed, shutting down",
+                                self.session_id
+                            );
                             break;
                         }
                     }
                 }
                 _ = shutdown_rx.recv() => {
-                    tracing::info!("Session {}: Shutdown signal received", self.session_id);
+                    tracing::info!(
+                        "Session {}: Shutdown signal received",
+                        self.session_id
+                    );
                     break;
                 }
             }
         }
 
+        // Graceful teardown. Dropping every source input_tx cascades through
+        // the pipeline: each node's main task exits when its input_rx
+        // closes, which drops its fan_tx, which closes the next hop.
+        Self::teardown_pipeline_tasks(pipeline).await;
+
+        // Wake every attached control client so they drain and exit.
+        // Idempotent — harmless if no control is attached.
+        if let Some(ctrl) = &self.control {
+            ctrl.signal_close(CloseReason::Normal);
+        }
+
         Ok(())
     }
 
-    /// Process a single input through the pipeline graph
-    async fn process_input(&mut self, packet: DataPacket) -> Result<()> {
-        let start_time = std::time::Instant::now();
+    /// Build the per-node task pipeline.
+    ///
+    /// For every node in the graph we create a bounded input mpsc. We then
+    /// walk the manifest connections to decide each node's successor set.
+    /// Sinks additionally get a send-to-client hop.
+    ///
+    /// Drains `self.cached_nodes` — the node instances are moved into their
+    /// owning tasks, so we can no longer borrow them from `self`. That's
+    /// fine; after this call the router's only remaining role is shovelling
+    /// packets into the source nodes' input channels.
+    fn spawn_pipeline_tasks(&mut self) -> PipelineTasks {
+        let mut input_txs: HashMap<String, mpsc::Sender<RuntimeData>> = HashMap::new();
+        let mut input_rxs: HashMap<String, mpsc::Receiver<RuntimeData>> = HashMap::new();
 
-        // Stamp arrival timestamp on incoming data (spec 026)
+        // Pass 1: create an input channel for every node we have cached.
+        for node_id in self.cached_nodes.keys() {
+            let (tx, rx) = mpsc::channel::<RuntimeData>(NODE_INPUT_CAPACITY);
+            input_txs.insert(node_id.clone(), tx);
+            input_rxs.insert(node_id.clone(), rx);
+        }
+
+        // Pass 2: compute each node's successor set from the graph. Fan-out
+        // is native — one output gets cloned to every successor's input
+        // channel. `successors[from]` yields a list of `input_txs[to]`
+        // clones.
+        let mut successors: HashMap<String, Vec<mpsc::Sender<RuntimeData>>> = HashMap::new();
+        for node_id in self.cached_nodes.keys() {
+            let sends = self
+                .graph
+                .nodes
+                .get(node_id)
+                .map(|gn| {
+                    gn.outputs
+                        .iter()
+                        .filter_map(|succ| input_txs.get(succ).cloned())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            successors.insert(node_id.clone(), sends);
+        }
+
+        let sinks: std::collections::HashSet<String> =
+            self.graph.sinks.iter().cloned().collect();
+
+        // Drain node instances out of the cache. Each task owns its node.
+        let nodes = std::mem::take(&mut self.cached_nodes);
+
+        let mut handles = Vec::with_capacity(nodes.len() * 2);
+
+        for (node_id, node) in nodes {
+            let input_rx = match input_rxs.remove(&node_id) {
+                Some(rx) => rx,
+                None => {
+                    tracing::error!(
+                        "Session {}: node '{}' has no input channel (bug)",
+                        self.session_id,
+                        node_id
+                    );
+                    continue;
+                }
+            };
+            let succ_txs = successors.remove(&node_id).unwrap_or_default();
+            let is_sink = sinks.contains(&node_id);
+
+            let (main_handle, fan_handle) = Self::spawn_node_pipeline(
+                node_id,
+                node,
+                input_rx,
+                succ_txs,
+                if is_sink {
+                    Some(self.output_tx.clone())
+                } else {
+                    None
+                },
+                self.session_id.clone(),
+                self.scheduler.clone(),
+                self.control.clone(),
+                self.probes.clone(),
+            );
+
+            handles.push(main_handle);
+            handles.push(fan_handle);
+        }
+
+        PipelineTasks { input_txs, handles }
+    }
+
+    /// Spawn the two tasks that drive a single node:
+    ///
+    /// 1. **main**: owns the node instance, consumes `input_rx`, and calls
+    ///    `process_streaming_async` once per input. The scheduler wraps the
+    ///    call so timeouts, retries, circuit breakers, and metrics still
+    ///    apply. The sync callback passed into the node `try_send`s each
+    ///    yield into an internal fan-out channel (`fan_tx`).
+    ///
+    /// 2. **fan_out**: drains `fan_rx`, applies the control-bus hook (tap +
+    ///    intercept), and forwards surviving outputs to every successor's
+    ///    input channel AND — for sinks — to the client `output_tx`. The
+    ///    hook must run async, so it cannot live inside the sync callback;
+    ///    that's why we need the second task.
+    ///
+    /// Returns both `JoinHandle`s so the router can await clean shutdown.
+    fn spawn_node_pipeline(
+        node_id: String,
+        node: Box<dyn StreamingNode>,
+        mut input_rx: mpsc::Receiver<RuntimeData>,
+        successor_txs: Vec<mpsc::Sender<RuntimeData>>,
+        client_tx: Option<mpsc::Sender<RuntimeData>>,
+        session_id: String,
+        scheduler: Arc<StreamingScheduler>,
+        control: Option<Arc<SessionControl>>,
+        probes: Arc<crate::metrics::RtProbeSet>,
+    ) -> (JoinHandle<()>, JoinHandle<()>) {
+        let (fan_tx, mut fan_rx) = mpsc::channel::<RuntimeData>(NODE_FANOUT_CAPACITY);
+
+        // ── Fan-out drain task ─────────────────────────────────────────
+        let fan_node_id = node_id.clone();
+        let fan_session_id = session_id.clone();
+        let fan_control = control.clone();
+        let fan_probes = probes.clone();
+        let fan_handle = tokio::spawn(async move {
+            while let Some(out) = fan_rx.recv().await {
+                let kept = match &fan_control {
+                    Some(ctrl) => ctrl.on_node_output(&fan_node_id, None, out).await,
+                    None => Some(out),
+                };
+                let Some(kept) = kept else { continue };
+
+                // Fan out to successors first. Bounded `send` awaits on
+                // full, providing real backpressure all the way back to
+                // the node's callback (via `fan_tx` filling up).
+                for tx in &successor_txs {
+                    if tx.send(kept.clone()).await.is_err() {
+                        tracing::debug!(
+                            "Session {}: node '{}' successor closed; drop",
+                            fan_session_id, fan_node_id
+                        );
+                    }
+                }
+
+                // Sinks: also forward to the client.
+                if let Some(ref out_tx) = client_tx {
+                    let egress_start = std::time::Instant::now();
+                    let res = out_tx.send(kept).await;
+                    fan_probes.egress.record_since(egress_start);
+                    if res.is_err() {
+                        tracing::warn!(
+                            "Session {}: sink '{}' client channel closed",
+                            fan_session_id, fan_node_id
+                        );
+                    }
+                }
+            }
+        });
+
+        // ── Main node task ─────────────────────────────────────────────
+        let main_node_id = node_id.clone();
+        let main_session_id = session_id.clone();
+        let main_handle = tokio::spawn(async move {
+            // Move the node into a raw pointer so we can hand out `&`
+            // references to scheduler closures without fighting the
+            // borrow checker. Safety: we never drop or share this Box
+            // across tasks. The single owning task uses it through `&*`.
+            let node = node; // bind
+            let node_ref: &dyn StreamingNode = &*node;
+
+            while let Some(input) = input_rx.recv().await {
+                // Node-state gate (Bypass / Disabled). Per-input, so a
+                // runtime control-bus toggle takes effect on the next
+                // packet.
+                if let Some(ctrl) = &control {
+                    use crate::transport::session_control::NodeState;
+                    match ctrl.node_state(&main_node_id) {
+                        NodeState::Enabled => {}
+                        NodeState::Bypass => {
+                            if fan_tx.send(input).await.is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                        NodeState::Disabled => {
+                            continue;
+                        }
+                    }
+                }
+
+                // Per-input sync callback: try_send into the fan-out
+                // channel. A full `fan_tx` means the drain task is
+                // behind — we warn and drop. In practice this only
+                // happens under catastrophic downstream stalls; the
+                // 1024-slot buffer covers normal burst patterns.
+                let cb_fan_tx = fan_tx.clone();
+                let cb_node_id = main_node_id.clone();
+                let cb = Box::new(move |out: RuntimeData| {
+                    if let Err(e) = cb_fan_tx.try_send(out) {
+                        tracing::warn!(
+                            "node '{}' fan_tx backpressure drop: {}",
+                            cb_node_id, e
+                        );
+                    }
+                    Ok(())
+                });
+
+                let use_fast = scheduler.config.is_fast_path(&main_node_id);
+                let node_dispatch_start = std::time::Instant::now();
+
+                let result = if use_fast {
+                    let input_clone = input.clone();
+                    let session_clone = main_session_id.clone();
+                    scheduler
+                        .execute_streaming_node_fast(&main_node_id, || async move {
+                            node_ref
+                                .process_streaming_async(
+                                    input_clone,
+                                    Some(session_clone),
+                                    cb,
+                                )
+                                .await
+                                .map(|_| ())
+                        })
+                        .await
+                } else {
+                    // Full path retries the closure on transient failures,
+                    // so each retry rebuilds the callback + input clone.
+                    let input_outer = input.clone();
+                    let session_outer = main_session_id.clone();
+                    let cb_outer = std::sync::Mutex::new(Some(cb));
+                    scheduler
+                        .execute_streaming_node(&main_node_id, || {
+                            let input_clone = input_outer.clone();
+                            let session_clone = session_outer.clone();
+                            // Take the callback for the first attempt;
+                            // subsequent retries rebuild a fresh one
+                            // against the same fan_tx so yields from a
+                            // retry still reach the drain task.
+                            let cb_taken = cb_outer.lock().unwrap().take();
+                            let cb_for_attempt: Box<
+                                dyn FnMut(RuntimeData) -> Result<()> + Send,
+                            > = match cb_taken {
+                                Some(c) => c,
+                                None => {
+                                    let fan_tx = fan_tx.clone();
+                                    let id = main_node_id.clone();
+                                    Box::new(move |out| {
+                                        if let Err(e) = fan_tx.try_send(out) {
+                                            tracing::warn!(
+                                                "node '{}' fan_tx backpressure drop: {}",
+                                                id, e
+                                            );
+                                        }
+                                        Ok(())
+                                    })
+                                }
+                            };
+                            async move {
+                                node_ref
+                                    .process_streaming_async(
+                                        input_clone,
+                                        Some(session_clone),
+                                        cb_for_attempt,
+                                    )
+                                    .await
+                                    .map(|_| ())
+                            }
+                        })
+                        .await
+                };
+
+                probes.node_out.record_since(node_dispatch_start);
+
+                if let Err(e) = result {
+                    tracing::error!(
+                        "Session {}: node '{}' execution error: {}",
+                        main_session_id,
+                        main_node_id,
+                        e
+                    );
+                }
+            }
+            // input_rx closed: drop fan_tx so the drain task exits once
+            // it finishes forwarding any already-queued outputs.
+            drop(fan_tx);
+        });
+
+        (main_handle, fan_handle)
+    }
+
+    /// Dispatch an incoming [`DataPacket`] to the right source/target
+    /// node's input channel. Stamps the arrival timestamp and records a
+    /// drift sample if the payload is timed media.
+    async fn route_input(
+        &self,
+        packet: DataPacket,
+        input_txs: &HashMap<String, mpsc::Sender<RuntimeData>>,
+    ) {
         let arrival_ts_us = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -529,208 +970,89 @@ impl SessionRouter {
         let mut input_data = packet.data.clone();
         input_data.set_arrival_timestamp(arrival_ts_us);
 
-        // Record drift metrics for timed media (spec 026)
         if input_data.is_timed_media() {
             self.record_drift_sample(&input_data).await;
         }
 
-        // Track outputs from each node for routing to dependents
-        let mut all_node_outputs: HashMap<String, Vec<RuntimeData>> = HashMap::new();
-
-        // Determine which nodes receive the initial input
-        if let Some(ref target_node) = packet.to_node {
-            // Direct routing: send to specific node
-            all_node_outputs.insert(target_node.clone(), vec![input_data.clone()]);
+        let targets: Vec<&str> = if let Some(ref target) = packet.to_node {
+            vec![target.as_str()]
         } else {
-            // Default: send to all source nodes (nodes with no inputs)
-            for source_id in &self.graph.sources {
-                all_node_outputs.insert(source_id.clone(), vec![input_data.clone()]);
-            }
-        }
+            self.graph.sources.iter().map(|s| s.as_str()).collect()
+        };
 
-        // Process nodes in topological order
-        // Clone execution_order to avoid borrow issues
-        let execution_order: Vec<String> = self.graph.execution_order.clone();
-        for node_id in &execution_order {
-            let node = match self.cached_nodes.get(node_id) {
-                Some(n) => n,
-                None => {
-                    tracing::error!(
-                        "Session {}: Node '{}' not found in cache",
-                        self.session_id,
-                        node_id
-                    );
-                    continue;
-                }
-            };
-
-            // Collect inputs for this node
-            let inputs: Vec<RuntimeData> = if all_node_outputs.contains_key(node_id) {
-                // Source node or directly targeted - already has input
-                all_node_outputs.get(node_id).cloned().unwrap_or_default()
-            } else {
-                // Collect inputs from predecessor nodes via connections (fan-in)
-                let mut collected_inputs = Vec::new();
-                for conn in self
-                    .manifest
-                    .connections
-                    .iter()
-                    .filter(|c| c.to == *node_id)
-                {
-                    if let Some(predecessor_outputs) = all_node_outputs.get(&conn.from) {
-                        collected_inputs.extend(predecessor_outputs.clone());
-                    }
-                }
-                collected_inputs
-            };
-
-            if inputs.is_empty() {
+        for target in targets {
+            let Some(tx) = input_txs.get(target) else {
                 tracing::warn!(
-                    "Session {}: Node '{}' has no inputs, skipping",
+                    "Session {}: input routed to unknown node '{}'",
                     self.session_id,
-                    node_id
+                    target
                 );
                 continue;
-            }
-
-            tracing::debug!(
-                "Session {}: Processing node '{}' with {} input(s)",
-                self.session_id,
-                node_id,
-                inputs.len()
-            );
-
-            // Collect outputs from this node using a shared buffer
-            let node_outputs_ref = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-
-            // Process each input through the node via scheduler (spec 026)
-            for input in inputs {
-                let node_outputs_clone = node_outputs_ref.clone();
-                let _callback = Box::new(move |output: RuntimeData| -> crate::Result<()> {
-                    node_outputs_clone.lock().unwrap().push(output);
-                    Ok(())
-                });
-
-                let session_id = self.session_id.clone();
-                let node_id_owned = node_id.clone();
-
-                // Use scheduler for execution with timeout, retry, and circuit breaker
-                // Choose fast path or full path based on node configuration
-                let scheduler = self.scheduler.clone();
-                let use_fast_path = scheduler.config.is_fast_path(&node_id_owned);
-
-                let result = if use_fast_path {
-                    // Fast path: lock-free, no timeout, no HDR metrics
-                    let node_ref = node;
-                    let input_clone = input.clone();
-                    let session_clone = session_id.clone();
-                    let cb = Box::new({
-                        let outputs = node_outputs_ref.clone();
-                        move |output: RuntimeData| {
-                            outputs.lock().unwrap().push(output);
-                            Ok(())
-                        }
-                    });
-                    scheduler
-                        .execute_streaming_node_fast(&node_id_owned, || async move {
-                            node_ref
-                                .process_streaming_async(input_clone, Some(session_clone), cb)
-                                .await
-                                .map(|_| ())
-                        })
-                        .await
-                } else {
-                    // Full path: timeout, retry, HDR histogram metrics
-                    scheduler
-                        .execute_streaming_node(&node_id_owned, || {
-                            let node_ref = node;
-                            let input_clone = input.clone();
-                            let session_clone = session_id.clone();
-                            let cb = Box::new({
-                                let outputs = node_outputs_ref.clone();
-                                move |output: RuntimeData| {
-                                    outputs.lock().unwrap().push(output);
-                                    Ok(())
-                                }
-                            });
-                            async move {
-                                node_ref
-                                    .process_streaming_async(input_clone, Some(session_clone), cb)
-                                    .await
-                                    .map(|_| ())
-                            }
-                        })
-                        .await
-                };
-
-                match result {
-                    Ok(scheduler_result) => {
-                        tracing::debug!(
-                            "Session {}: Node '{}' executed in {}μs (retries: {})",
-                            self.session_id,
-                            node_id,
-                            scheduler_result.duration_us,
-                            scheduler_result.retry_count
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "Session {}: Node '{}' execution error: {}",
-                            self.session_id,
-                            node_id,
-                            e
-                        );
-                        // Continue with other nodes - don't fail entire pipeline
-                    }
-                }
-            }
-
-            // Get collected outputs
-            let node_outputs = node_outputs_ref.lock().unwrap().clone();
-            tracing::debug!(
-                "Session {}: Node '{}' produced {} output(s)",
-                self.session_id,
-                node_id,
-                node_outputs.len()
-            );
-
-            // Store outputs for downstream nodes (fan-out happens automatically)
-            all_node_outputs.insert(node_id.clone(), node_outputs);
-        }
-
-        // Send outputs from sink nodes (terminal nodes) to client
-        for sink_id in &self.graph.sinks {
-            if let Some(outputs) = all_node_outputs.get(sink_id) {
-                for output in outputs {
-                    tracing::debug!(
-                        "Session {}: Sending output from sink '{}' to client",
-                        self.session_id,
-                        sink_id
-                    );
-                    if let Err(e) = self.output_tx.send(output.clone()) {
-                        tracing::warn!(
-                            "Session {}: Failed to send output from sink '{}': {}",
-                            self.session_id,
-                            sink_id,
-                            e
-                        );
-                    }
-                }
+            };
+            if tx.send(input_data.clone()).await.is_err() {
+                tracing::warn!(
+                    "Session {}: node '{}' input channel closed; drop packet",
+                    self.session_id,
+                    target
+                );
             }
         }
-
-        let elapsed = start_time.elapsed();
-        tracing::info!(
-            "Session {}: Processed input through {} nodes in {:?}",
-            self.session_id,
-            self.graph.execution_order.len(),
-            elapsed
-        );
-
-        Ok(())
     }
 
-    /// Record drift sample for timed media (spec 026)
+    /// Await every spawned task after dropping the router's own input_txs.
+    async fn teardown_pipeline_tasks(pipeline: PipelineTasks) {
+        let PipelineTasks { input_txs, handles } = pipeline;
+        // Drop the router's copies of every node's input sender; each source
+        // node sees `input_rx.recv()` return `None` and exits, cascading
+        // through the graph.
+        drop(input_txs);
+        for h in handles {
+            let _ = h.await;
+        }
+    }
+
+    /// Snapshot all RT latency probes in declaration order:
+    /// `ingress, route_in, node_in, node_out, egress`.
+    ///
+    /// `ingress`, `egress`, and `node_out` are actively recorded;
+    /// `route_in` and `node_in` will be wired as A-wave migrations
+    /// land and the dispatch path gets more inspectable.
+    pub fn probe_snapshots(
+        &self,
+    ) -> [(&'static str, crate::metrics::ProbeSnapshot); 5] {
+        self.probes.snapshot_all()
+    }
+
+    /// Snapshot the router's operational counters (`spawn_count`,
+    /// `loopback_depth`). Core router doesn't currently spawn per
+    /// packet, so `spawn_count` stays at 0 — useful as a baseline and
+    /// to flag regressions if any future code adds a per-packet spawn.
+    pub fn operational_snapshot(&self) -> crate::metrics::OperationalSnapshot {
+        self.probes.operational_snapshot()
+    }
+
+    /// Clone the router's probe handle.
+    ///
+    /// [`Self::start`] consumes the router, so anything that wants to
+    /// read probe state *after* the router is running (benches, admin
+    /// endpoints, test harnesses) needs the `Arc` before the `start`
+    /// call. `probes().snapshot_all()` / `probes().operational_snapshot()`
+    /// is the out-of-band equivalent of the `&self` accessors above.
+    pub fn probes(&self) -> Arc<crate::metrics::RtProbeSet> {
+        Arc::clone(&self.probes)
+    }
+
+    // The old `process_input` (topological per-packet loop with per-node
+    // Vec batching) has been deleted. Per-node concurrent execution now
+    // lives in `spawn_pipeline_tasks` + `spawn_node_pipeline`; ingress
+    // routing is `route_input`.
+
+
+    /// Record drift sample for timed media (spec 026).
+    ///
+    /// Phase B1: inner lock is `parking_lot::RwLock`; no `.await` is
+    /// held across it. `async` kept on the method only so callers
+    /// that already use `.await` here don't need to change.
     async fn record_drift_sample(&self, data: &RuntimeData) {
         let (media_ts_us, arrival_ts_us) = data.timing();
 
@@ -743,30 +1065,22 @@ impl SessionRouter {
         // Get or create drift metrics for this stream
         let stream_id = data.stream_id().unwrap_or("default").to_string();
 
-        // Get or create metrics for this stream
-        let metrics = {
-            let metrics_map = self.drift_metrics.read().await;
-            if let Some(m) = metrics_map.get(&stream_id) {
-                m.clone()
-            } else {
-                drop(metrics_map);
-                let mut metrics_map = self.drift_metrics.write().await;
-                // Double-check after acquiring write lock
-                if let Some(m) = metrics_map.get(&stream_id) {
-                    m.clone()
-                } else {
-                    let new_metrics = Arc::new(RwLock::new(DriftMetrics::new(
-                        stream_id.clone(),
-                        self.drift_thresholds.clone(),
-                    )));
-                    metrics_map.insert(stream_id.clone(), new_metrics.clone());
-                    new_metrics
-                }
-            }
-        };
+        // Lock-free per-packet lookup via DashMap. `entry().or_insert_with`
+        // atomically gets-or-creates the per-stream metrics without the
+        // read-upgrade-write double-check pattern the old RwLock needed.
+        let metrics = self
+            .drift_metrics
+            .entry(stream_id.clone())
+            .or_insert_with(|| {
+                Arc::new(DriftRwLock::new(DriftMetrics::new(
+                    stream_id.clone(),
+                    self.drift_thresholds.clone(),
+                )))
+            })
+            .clone();
 
-        // Record the sample
-        let mut metrics_guard = metrics.write().await;
+        // Sync write lock — parking_lot, uncontended CAS fast path.
+        let mut metrics_guard = metrics.write();
 
         // Use appropriate method based on media type
         let alert_changed = if data.is_audio() {
@@ -807,21 +1121,22 @@ impl SessionRouter {
         self.scheduler.get_all_node_stats().await
     }
 
-    /// Get drift metrics for a specific stream
+    /// Get drift metrics for a specific stream.
+    ///
+    /// `async` is preserved for API stability; inner `read()` is sync
+    /// parking_lot (B1).
     pub async fn get_drift_metrics(&self, stream_id: &str) -> Option<serde_json::Value> {
-        let metrics_map = self.drift_metrics.read().await;
-        if let Some(metrics) = metrics_map.get(stream_id) {
-            let m = metrics.read().await;
-            Some(m.to_debug_json())
-        } else {
-            None
-        }
+        let metrics = self.drift_metrics.get(stream_id)?.clone();
+        let m = metrics.read();
+        Some(m.to_debug_json())
     }
 
     /// Get all stream IDs with drift metrics
     pub async fn get_stream_ids(&self) -> Vec<String> {
-        let metrics_map = self.drift_metrics.read().await;
-        metrics_map.keys().cloned().collect()
+        self.drift_metrics
+            .iter()
+            .map(|e| e.key().clone())
+            .collect()
     }
 
     /// Export all metrics in Prometheus format
@@ -831,19 +1146,26 @@ impl SessionRouter {
         // Scheduler metrics
         output.push_str(&self.scheduler.to_prometheus().await);
 
-        // Drift metrics (aggregated - per-stream detail available via debug endpoint)
-        let metrics_map = self.drift_metrics.read().await;
-        if !metrics_map.is_empty() {
+        // Drift metrics (aggregated — per-stream detail available via debug endpoint).
+        // Snapshot via DashMap::iter (no global lock) so we don't hold
+        // the shard guard across the per-stream reads.
+        let stream_metrics: Vec<Arc<DriftRwLock<DriftMetrics>>> = self
+            .drift_metrics
+            .iter()
+            .map(|e| e.value().clone())
+            .collect();
+        if !stream_metrics.is_empty() {
             output.push_str(&format!(
                 "session_router_active_streams{{session_id=\"{}\"}} {}\n",
                 self.session_id,
-                metrics_map.len()
+                stream_metrics.len()
             ));
 
-            // Aggregate health score (minimum across streams)
+            // Aggregate health score (minimum across streams). Sync
+            // reads via parking_lot.
             let mut min_health = 1.0f64;
-            for metrics in metrics_map.values() {
-                let m = metrics.read().await;
+            for metrics in &stream_metrics {
+                let m = metrics.read();
                 min_health = min_health.min(m.health_score());
             }
             output.push_str(&format!(
@@ -857,17 +1179,24 @@ impl SessionRouter {
 
     /// Export per-stream debug metrics as JSON
     pub async fn debug_stream_metrics(&self) -> serde_json::Value {
-        let metrics_map = self.drift_metrics.read().await;
+        // Snapshot pairs first so the per-stream reads happen off the
+        // DashMap shard guard (even with sync reads now, we keep the
+        // clone-and-iterate pattern).
+        let pairs: Vec<(String, Arc<DriftRwLock<DriftMetrics>>)> = self
+            .drift_metrics
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect();
+        let stream_count = pairs.len();
         let mut streams = serde_json::Map::new();
-
-        for (stream_id, metrics) in metrics_map.iter() {
-            let m = metrics.read().await;
-            streams.insert(stream_id.clone(), m.to_debug_json());
+        for (stream_id, metrics) in pairs {
+            let m = metrics.read();
+            streams.insert(stream_id, m.to_debug_json());
         }
 
         serde_json::json!({
             "session_id": self.session_id,
-            "stream_count": metrics_map.len(),
+            "stream_count": stream_count,
             "streams": streams,
             "scheduler": {
                 "max_concurrency": self.scheduler.config.max_concurrency,
@@ -921,7 +1250,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let result = SessionRouter::new(
             "test-session".to_string(),
@@ -947,7 +1276,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let result = SessionRouter::new(
             "test-session".to_string(),
@@ -974,7 +1303,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let (router, _shutdown_tx) = SessionRouter::new(
             "test-session".to_string(),
@@ -999,7 +1328,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let (router, _shutdown_tx) = SessionRouter::new(
             "test-session".to_string(),
@@ -1029,7 +1358,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let (router, _shutdown_tx) = SessionRouter::new(
             "test-session".to_string(),
@@ -1066,7 +1395,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let scheduler_config = SchedulerConfig::with_concurrency(8)
             .with_timeout(5000)
@@ -1097,7 +1426,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let drift_thresholds = DriftThresholds {
             slope_threshold_ms_per_s: 10.0,
@@ -1129,7 +1458,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let (router, _shutdown_tx) = SessionRouter::new(
             "test-session".to_string(),
@@ -1144,7 +1473,7 @@ mod tests {
 
         // Record a drift sample manually by accessing internals
         let audio_data = RuntimeData::Audio {
-            samples: vec![0.1; 100],
+            samples: vec![0.1; 100].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: Some("stream_1".to_string()),
@@ -1176,7 +1505,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let (router, _shutdown_tx) = SessionRouter::new(
             "test-session".to_string(),
@@ -1188,7 +1517,7 @@ mod tests {
 
         // Record a sample to create stream metrics
         let audio_data = RuntimeData::Audio {
-            samples: vec![0.1; 100],
+            samples: vec![0.1; 100].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: Some("test_stream".to_string()),
@@ -1217,7 +1546,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let (router, _shutdown_tx) = SessionRouter::new(
             "test-session".to_string(),
@@ -1229,7 +1558,7 @@ mod tests {
 
         // Record samples from two streams
         let audio_1 = RuntimeData::Audio {
-            samples: vec![0.1; 100],
+            samples: vec![0.1; 100].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: Some("audio_1".to_string()),
@@ -1238,7 +1567,7 @@ mod tests {
             metadata: None,
         };
         let audio_2 = RuntimeData::Audio {
-            samples: vec![0.2; 100],
+            samples: vec![0.2; 100].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: Some("audio_2".to_string()),
@@ -1267,7 +1596,7 @@ mod tests {
         );
 
         let registry = Arc::new(StreamingNodeRegistry::new());
-        let (output_tx, _output_rx) = mpsc::unbounded_channel();
+        let (output_tx, _output_rx) = mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
         let (router, _shutdown_tx) = SessionRouter::new(
             "test-session".to_string(),

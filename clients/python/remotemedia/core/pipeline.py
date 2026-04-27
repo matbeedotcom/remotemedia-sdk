@@ -162,7 +162,11 @@ class Pipeline:
         try:
             for node in self.nodes:
                 self.logger.info(f"Initializing node: {node.name}")
-                node.initialize()
+                # Nodes may expose either sync or async `initialize`
+                # (MultiprocessNode subclasses use async). Handle both.
+                result = node.initialize()
+                if inspect.isawaitable(result):
+                    await result
 
             self._is_initialized = True
             self.logger.info(f"Pipeline '{self.name}' initialized successfully")
@@ -387,7 +391,9 @@ class Pipeline:
 
         for node in self.nodes:
             try:
-                node.cleanup()
+                result = node.cleanup()
+                if inspect.isawaitable(result):
+                    await result
             except Exception as e:
                 self.logger.warning(f"Error cleaning up node '{node.name}': {e}")
 

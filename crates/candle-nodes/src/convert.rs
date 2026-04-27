@@ -24,7 +24,7 @@ impl RuntimeDataConverter {
                 channels,
                 ..
             } => Ok(AudioData {
-                samples: samples.clone(),
+                samples: samples.to_vec(),
                 sample_rate: *sample_rate,
                 channels: *channels,
             }),

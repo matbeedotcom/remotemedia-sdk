@@ -29,7 +29,7 @@ use remotemedia_core::{
 };
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
@@ -68,6 +68,11 @@ pub struct ServerPeer {
     /// Shutdown signal
     shutdown_tx: mpsc::Sender<()>,
     shutdown_rx: Arc<RwLock<Option<mpsc::Receiver<()>>>>,
+
+    /// Pipeline session id for this peer. Populated by `handle_offer`.
+    /// Transport-level control handlers read this to look up the
+    /// per-session `SessionControl` on the executor's `SessionControlBus`.
+    session_id: Arc<RwLock<Option<String>>>,
 }
 
 impl ServerPeer {
@@ -110,6 +115,7 @@ impl ServerPeer {
             event_tx: None,
             shutdown_tx,
             shutdown_rx: Arc::new(RwLock::new(Some(shutdown_rx))),
+            session_id: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -154,7 +160,31 @@ impl ServerPeer {
             event_tx,
             shutdown_tx,
             shutdown_rx: Arc::new(RwLock::new(Some(shutdown_rx))),
+            session_id: Arc::new(RwLock::new(None)),
         })
+    }
+
+    /// Session id assigned by `PipelineExecutor::create_session` when this
+    /// peer handled its first offer. `None` before the offer is processed
+    /// — callers racing the initial SDP exchange should retry.
+    pub async fn session_id(&self) -> Option<String> {
+        self.session_id.read().await.clone()
+    }
+
+    /// Drain every registered audio track's send ring buffer.
+    ///
+    /// Called from the control plane on barge-in so the user
+    /// doesn't have to wait for ~10 s of already-queued TTS to
+    /// play out before the assistant actually stops. Returns the
+    /// total number of frames dropped across all tracks.
+    pub async fn flush_audio_tracks(&self) -> usize {
+        let mut dropped = 0;
+        for stream_id in self.track_registry.audio_stream_ids().await {
+            if let Some(track) = self.track_registry.get_audio_track(&stream_id).await {
+                dropped += track.flush_send_buffer().await;
+            }
+        }
+        dropped
     }
 
     /// Handle incoming SDP offer from client
@@ -181,7 +211,49 @@ impl ServerPeer {
                 Error::InternalError(format!("Failed to create pipeline session: {}", e))
             })?;
 
-        info!("Created pipeline session for peer {}", self.peer_id);
+        // Surface the session id on this peer so transport-level control
+        // plane handlers (control.* JSON-RPC) can look up the matching
+        // SessionControl on the executor's SessionControlBus.
+        *self.session_id.write().await = Some(session_handle.session_id.clone());
+
+        info!(
+            "Created pipeline session {} for peer {}",
+            session_handle.session_id, self.peer_id
+        );
+
+        // Install the flush-audio hook on this session's SessionControl
+        // so Rust nodes (e.g. ConversationCoordinatorNode on barge-in)
+        // can drain the outbound audio ring buffer without reaching
+        // into the webrtc crate directly. A small bounded mpsc is
+        // enough — flush requests are idempotent, so coalescing is
+        // fine.
+        if let Some(ctrl) = self
+            .executor
+            .control_bus()
+            .get(&session_handle.session_id)
+        {
+            let (flush_tx, mut flush_rx) = tokio::sync::mpsc::channel::<()>(4);
+            ctrl.install_flush_audio_hook(flush_tx).await;
+            let track_registry = Arc::clone(&self.track_registry);
+            let session_id_for_log = session_handle.session_id.clone();
+            tokio::spawn(async move {
+                while flush_rx.recv().await.is_some() {
+                    let mut dropped = 0usize;
+                    for stream_id in track_registry.audio_stream_ids().await {
+                        if let Some(track) = track_registry.get_audio_track(&stream_id).await {
+                            dropped += track.flush_send_buffer().await;
+                        }
+                    }
+                    if dropped > 0 {
+                        tracing::debug!(
+                            "[server_peer] session {} flushed {} queued audio frames",
+                            session_id_for_log,
+                            dropped
+                        );
+                    }
+                }
+            });
+        }
 
         // Add audio track for sending pipeline audio output to client (requires opus-codec feature)
         // Note: This sets the Opus clock rate in SDP - must match pipeline output sample rate
@@ -301,6 +373,10 @@ impl ServerPeer {
         let peer_id_for_dc = self.peer_id.clone();
         #[cfg(feature = "ws-signaling")]
         let event_tx_for_dc_clone = event_tx_for_dc.clone();
+        // Control-bus handler is feature-gated on `grpc-signaling` because the
+        // prost-generated ControlFrame/ControlEvent types live under that feature.
+        #[cfg(feature = "grpc-signaling")]
+        let control_bus_for_dc = self.executor.control_bus();
         self.peer_connection
             .peer_connection()
             .on_data_channel(Box::new(move |data_channel| {
@@ -309,11 +385,27 @@ impl ServerPeer {
                 let data_channel_ref = Arc::clone(&data_channel_ref_for_dc);
                 #[cfg(feature = "ws-signaling")]
                 let event_tx = event_tx_for_dc_clone.clone();
+                #[cfg(feature = "grpc-signaling")]
+                let control_bus = Arc::clone(&control_bus_for_dc);
                 let data_channel = Arc::new(data_channel);
 
                 Box::pin(async move {
                     info!("Data channel opened: label={}, id={:?} for peer {}",
                         data_channel.label(), data_channel.id(), peer_id);
+
+                    // Route the "remotemedia-control" data channel to the
+                    // Session Control Bus instead of the data plane.
+                    #[cfg(feature = "grpc-signaling")]
+                    if data_channel.label() == crate::control::CONTROL_CHANNEL_LABEL {
+                        info!("Data channel '{}' routed to Session Control Bus (peer {})",
+                            data_channel.label(), peer_id);
+                        crate::control::attach_control_channel(
+                            Arc::clone(&data_channel),
+                            control_bus,
+                        )
+                        .await;
+                        return;
+                    }
 
                     // Store data channel reference for output routing
                     {
@@ -414,13 +506,54 @@ impl ServerPeer {
                             }
                         };
 
+                        // Track consecutive read errors so a genuinely
+                        // closed track terminates the loop eventually,
+                        // but one transient RTP hiccup (e.g. a stray
+                        // RTCP BYE while the remote reassigns SSRCs
+                        // during a long outbound TTS burst) doesn't
+                        // kill mic reception for the rest of the
+                        // session. Before this, a single read_rtp Err
+                        // broke the loop silently at `debug!` level,
+                        // stalling the whole pipeline after turn 1.
+                        let mut consecutive_errors: u32 = 0;
+                        const MAX_CONSECUTIVE_ERRORS: u32 = 50;
+
                         loop {
                             // Read RTP packet
                             let (rtp_packet, _) = match track.read_rtp().await {
-                                Ok(packet) => packet,
+                                Ok(packet) => {
+                                    consecutive_errors = 0;
+                                    packet
+                                }
                                 Err(e) => {
-                                    debug!("RTP read error for peer {}: {} (connection may be closed)", peer_id, e);
-                                    break;
+                                    consecutive_errors += 1;
+                                    // Surface this at warn level so
+                                    // operators can see when the
+                                    // reception stream is degrading.
+                                    // Only break once we've hit a run
+                                    // of errors that looks like an
+                                    // actual close.
+                                    warn!(
+                                        "RTP read error for peer {} ({}/{}): {}",
+                                        peer_id,
+                                        consecutive_errors,
+                                        MAX_CONSECUTIVE_ERRORS,
+                                        e,
+                                    );
+                                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                                        warn!(
+                                            "RTP reception for peer {} ending after {} consecutive errors",
+                                            peer_id, consecutive_errors,
+                                        );
+                                        break;
+                                    }
+                                    // Brief backoff so we don't
+                                    // tight-loop on a persistent error.
+                                    tokio::time::sleep(
+                                        tokio::time::Duration::from_millis(20),
+                                    )
+                                    .await;
+                                    continue;
                                 }
                             };
 
@@ -432,7 +565,7 @@ impl ServerPeer {
                                     // Send decoded audio to pipeline
                                     let transport_data = TransportData {
                                         data: RuntimeData::Audio {
-                                            samples,
+                                            samples: samples.into(),
                                             sample_rate: 48000, // Opus always decodes to 48kHz
                                             channels: 1,
                                             stream_id: None, // From client, uses default track
@@ -456,7 +589,7 @@ impl ServerPeer {
                             }
                         }
 
-                        info!("Audio reception task ended for peer {}", peer_id);
+                        warn!("Audio reception task ended for peer {}", peer_id);
                     });
                 })
             }).await;
@@ -473,41 +606,57 @@ impl ServerPeer {
                 Error::InternalError("Shutdown receiver already taken".to_string())
             })?;
 
+        // Split input forwarding and output draining into independent
+        // tasks. Before this, a single `select! { biased; .. }` coupled
+        // them: if the router's input channel was full (bursty mic
+        // during a slow model response), the select! blocked inside
+        // the input arm, which prevented the output arm from draining
+        // the router's output channel, which in turn prevented the
+        // router from making progress on the next input — classic
+        // bounded-channel ring deadlock. Separate tasks = each side
+        // has its own backpressure path.
+
+        // Input forwarder: dc_input_rx -> session input.
+        let input_sender = session_handle.input_sender().ok_or_else(|| {
+            Error::InternalError(
+                "SessionHandle has no input_sender (input_complete already signalled)"
+                    .to_string(),
+            )
+        })?;
+        let peer_id_for_input = peer_id.clone();
+        tokio::spawn(async move {
+            while let Some(transport_data) = dc_input_rx.recv().await {
+                debug!(
+                    "Forwarding data for peer {} to session",
+                    peer_id_for_input
+                );
+                if let Err(e) = input_sender.send(transport_data).await {
+                    error!(
+                        "Failed to forward input to pipeline for peer {}: {}",
+                        peer_id_for_input, e
+                    );
+                    break;
+                }
+            }
+            debug!("Input forwarder task ended for peer {}", peer_id_for_input);
+        });
+
+        // Output drainer + shutdown handler on its own task.
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    // Use biased to process shutdown and inputs with priority over outputs
-                    biased;
-
-                    // Check for shutdown signal (highest priority)
                     _ = shutdown_rx.recv() => {
                         info!("Shutting down media routing for peer {}", peer_id);
                         break;
                     }
 
-                    // Forward data channel inputs to pipeline (high priority)
-                    Some(transport_data) = dc_input_rx.recv() => {
-                        debug!("Received data from data channel for peer {}, forwarding to session", peer_id);
-                        if let Err(e) = session_handle.send_input(transport_data).await {
-                            error!("Failed to send data channel input to pipeline for peer {}: {}", peer_id, e);
-                        } else {
-                            debug!("Successfully forwarded data channel input to session for peer {}", peer_id);
-                        }
-                    }
-
-                    // Receive output from pipeline with timeout to avoid blocking inputs
-                    output_result = tokio::time::timeout(
-                        tokio::time::Duration::from_millis(10),
-                        session_handle.recv_output()
-                    ) => {
+                    output_result = session_handle.recv_output() => {
                         match output_result {
-                            Ok(Ok(Some(transport_data))) => {
+                            Ok(Some(transport_data)) => {
                                 debug!("Received output from pipeline for peer {}", peer_id);
 
-                                // Emit pipeline output event for FFI integration
                                 #[cfg(feature = "ws-signaling")]
                                 if let Some(ref tx) = event_tx_for_output {
-                                    // Serialize RuntimeData to JSON for cross-crate transport
                                     let data_json = serde_json::to_string(&transport_data.data)
                                         .unwrap_or_else(|_| "{}".to_string());
                                     let event = WebRtcEventBridge::pipeline_output(
@@ -520,26 +669,32 @@ impl ServerPeer {
                                     }
                                 }
 
-                                // Send to WebRTC
-                                if let Err(e) = Self::send_to_webrtc_multitrack(&track_registry, &data_channel_for_output, transport_data).await {
-                                    error!("Failed to send output to WebRTC for peer {}: {}", peer_id, e);
+                                if let Err(e) = Self::send_to_webrtc_multitrack(
+                                    &track_registry,
+                                    &data_channel_for_output,
+                                    transport_data,
+                                )
+                                .await
+                                {
+                                    error!(
+                                        "Failed to send output to WebRTC for peer {}: {}",
+                                        peer_id, e
+                                    );
                                 }
                             }
-                            Ok(Ok(None)) => {
-                                // Channel temporarily empty - this is normal between requests
-                                // DON'T break the loop - keep waiting for new inputs
-                                tracing::trace!("No output available for peer {}, waiting for next input", peer_id);
+                            Ok(None) => {
+                                // Session closed its output channel — exit.
+                                info!(
+                                    "Session output channel closed for peer {}, exiting drainer",
+                                    peer_id
+                                );
+                                break;
                             }
-                            Ok(Err(e)) => {
-                                // recv_output should never return Err in normal operation
-                                error!("Error receiving pipeline output for peer {}: {}", peer_id, e);
-                                // DON'T break - log and continue
-                                tracing::warn!("Continuing despite recv_output error for peer {}", peer_id);
-                            }
-                            Err(_timeout) => {
-                                // Timeout waiting for output - this is normal, continue to check inputs
-                                // Using trace level to avoid spam
-                                tracing::trace!("Timeout waiting for output from peer {}", peer_id);
+                            Err(e) => {
+                                error!(
+                                    "Error receiving pipeline output for peer {}: {}",
+                                    peer_id, e
+                                );
                             }
                         }
                     }
@@ -597,9 +752,12 @@ impl ServerPeer {
 
                 // Get the audio track from registry
                 if let Some(audio_track) = track_registry.get_audio_track(stream_id).await {
-                    // Send audio samples through the track with dynamic sample rate
+                    // Send audio samples through the track with dynamic sample rate.
+                    // `send_audio` takes `Arc<Vec<f32>>`; copy via `to_vec`
+                    // regardless of `AudioSamples` variant (Vec path is a
+                    // full clone, same as before this refactor).
                     audio_track
-                        .send_audio(Arc::new(samples.clone()), *sample_rate)
+                        .send_audio(Arc::new(samples.to_vec()), *sample_rate)
                         .await?;
 
                     // Record frame for activity tracking
@@ -659,7 +817,7 @@ impl ServerPeer {
 
                     debug!("Successfully sent {} data through data channel", runtime_data.data_type());
                 } else {
-                    warn!(
+                    trace!(
                         "No data channel available to send {} output",
                         runtime_data.data_type()
                     );

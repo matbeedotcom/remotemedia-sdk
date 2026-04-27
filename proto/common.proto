@@ -342,6 +342,14 @@ message TextBuffer {
   // Optional language code (ISO 639-1, e.g., "en", "es", "zh")
   // Used for NLP, tokenization, etc.
   string language = 3;
+
+  // Routing channel for downstream consumers. Defaults to "tts" when
+  // empty (legacy producers / speakable content). Other in-tree values:
+  //   "ui"  — text meant for visual/markdown rendering; downstream TTS
+  //           nodes MUST skip synthesis and pass it through.
+  // Producers can set any string — unknown values should be treated as
+  // "tts" for conservative fallback.
+  string channel = 4;
 }
 
 // ============================================================================

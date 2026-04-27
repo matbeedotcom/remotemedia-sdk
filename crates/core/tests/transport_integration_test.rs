@@ -68,7 +68,7 @@ async fn test_streaming_send_and_receive() {
 
     // Send input
     let input = TransportData::new(RuntimeData::Audio {
-        samples: vec![0.0, 0.1, 0.2],
+        samples: vec![0.0, 0.1, 0.2].into(),
         sample_rate: 16000,
         channels: 1,
         stream_id: None,

@@ -14,9 +14,10 @@ use remotemedia_core::data::RuntimeData;
 use remotemedia_core::nodes::video::{
     VideoDecoderConfig, VideoDecoderNode, VideoEncoderConfig, VideoEncoderNode,
 };
+use parking_lot::RwLock;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::RwLock as AsyncRwLock;
 use webrtc::media::Sample;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 
@@ -27,16 +28,21 @@ pub struct AudioTrack {
     /// Underlying WebRTC track
     track: Arc<TrackLocalStaticSample>,
 
-    /// Audio encoder
+    /// Audio encoder. Sync `parking_lot::RwLock` — never held across
+    /// an `.await` (see comment in `send_audio`).
     encoder: Arc<RwLock<AudioEncoder>>,
 
-    /// Audio decoder (for receiving audio from remote peer)
+    /// Audio decoder (for receiving audio from remote peer). Sync.
     decoder: Arc<RwLock<super::audio::AudioDecoder>>,
 
-    /// Audio sender with ring buffer (for smooth real-time transmission)
-    sender: Arc<RwLock<Option<AudioSender>>>,
+    /// Audio sender with ring buffer. Stays `tokio::sync::RwLock`
+    /// because the read-guard is held across `enqueue_frame(...).await`
+    /// in `send_audio`; `parking_lot::RwLockReadGuard` is `!Send` and
+    /// would break `tokio::spawn` shipping of the containing future.
+    sender: Arc<AsyncRwLock<Option<AudioSender>>>,
 
-    /// RTP timestamp (in sample units) - kept for compatibility but sender manages its own
+    /// RTP timestamp (in sample units). Sync parking_lot — only
+    /// `u32` reads/writes; no guard ever lives across an await.
     timestamp: Arc<RwLock<u32>>,
 }
 
@@ -64,7 +70,8 @@ impl AudioTrack {
             track,
             encoder,
             decoder,
-            sender: Arc::new(RwLock::new(Some(sender))),
+            // Async RwLock: see field doc — guard held across await.
+            sender: Arc::new(AsyncRwLock::new(Some(sender))),
             timestamp: Arc::new(RwLock::new(0)),
         })
     }
@@ -89,20 +96,28 @@ impl AudioTrack {
     /// - Transmission (dedicated thread): Dequeue frames and send at real-time pace (20ms intervals)
     /// - This decouples TTS generation speed from playback speed, preventing interruptions
     pub async fn send_audio(&self, samples: Arc<Vec<f32>>, sample_rate: u32) -> Result<()> {
-        use tracing::info;
+        use tracing::{info, trace};
+
+        // Phase B2: encoder / decoder / sender / timestamp locks
+        // swapped from `tokio::sync::RwLock` to `parking_lot::RwLock`.
+        // None of these lock sites hold across an `.await` — the
+        // `enqueue_frame(...).await` below happens *after* the
+        // encoder write-lock is released inside the `encode(...)` call
+        // on line 148, so parking_lot is safe and ~1 CAS per acquire
+        // uncontended.
 
         // Check if encoder needs to be recreated for different sample rate
         {
-            let encoder = self.encoder.read().await;
+            let encoder = self.encoder.read();
             if encoder.config.sample_rate != sample_rate {
                 drop(encoder);
-                let old_rate = self.encoder.read().await.config.sample_rate;
+                let old_rate = self.encoder.read().config.sample_rate;
                 info!(
                     "Sample rate changed from {} to {} Hz, recreating encoder",
                     old_rate, sample_rate
                 );
 
-                let mut encoder_write = self.encoder.write().await;
+                let mut encoder_write = self.encoder.write();
                 let new_config = crate::media::audio::AudioEncoderConfig {
                     sample_rate,
                     channels: encoder_write.config.channels,
@@ -118,7 +133,7 @@ impl AudioTrack {
         let frame_size = (sample_rate as usize * 20) / 1000; // 20ms frame
         let frame_duration = Duration::from_millis(20);
 
-        info!(
+        trace!(
             "AudioTrack: Enqueuing {} samples as {}sample frames @ {}Hz (duration: {:.2}s)",
             samples.len(),
             frame_size,
@@ -126,6 +141,10 @@ impl AudioTrack {
             samples.len() as f64 / sample_rate as f64
         );
 
+        // `sender` is `tokio::sync::RwLock` — the read-guard needs to
+        // be held across `.enqueue_frame(...).await` below, and a
+        // parking_lot guard wouldn't be `Send`, breaking `tokio::spawn`
+        // shipping of the containing future.
         let sender_guard = self.sender.read().await;
         let sender = sender_guard
             .as_ref()
@@ -144,8 +163,9 @@ impl AudioTrack {
                 chunk.to_vec()
             };
 
-            // Encode this chunk
-            let encoded = self.encoder.write().await.encode(&samples_to_encode)?;
+            // Encode this chunk. Write-lock is taken, `encode` is
+            // synchronous, lock released before the `.await` below.
+            let encoded = self.encoder.write().encode(&samples_to_encode)?;
 
             // Enqueue frame into ring buffer (non-blocking)
             sender
@@ -154,7 +174,7 @@ impl AudioTrack {
             frames_enqueued += 1;
         }
 
-        info!(
+        trace!(
             "AudioTrack: Enqueued {} frames into ring buffer (buffer size: {})",
             frames_enqueued,
             sender.buffer_len()
@@ -187,27 +207,48 @@ impl AudioTrack {
 
         debug!("Decoding RTP packet with {} bytes", payload.len());
 
-        // Decode the Opus payload
-        let samples = self.decoder.write().await.decode(payload)?;
+        // Decode the Opus payload. Sync parking_lot lock; decoder
+        // work is CPU-bound and doesn't await.
+        let samples = self.decoder.write().decode(payload)?;
 
         debug!("Decoded {} samples from RTP packet", samples.len());
 
         Ok(samples)
     }
 
+    /// Drain any queued TTS audio from the sender ring buffer
+    /// without stopping the sender thread.
+    ///
+    /// Used on barge-in: the user started speaking while the
+    /// assistant still had ~10 s of generated audio queued for
+    /// playback. Without this the assistant keeps talking over
+    /// the user until the ring buffer drains. Returns the number
+    /// of frames that were dropped.
+    pub async fn flush_send_buffer(&self) -> usize {
+        if let Some(sender) = self.sender.read().await.as_ref() {
+            sender.flush_buffer()
+        } else {
+            0
+        }
+    }
+
     /// Get current RTP timestamp
     pub async fn timestamp(&self) -> u32 {
-        // Use the sender's timestamp if available (more accurate for ring buffer approach)
+        // Use the sender's timestamp if available (more accurate for
+        // ring buffer approach). `sender` is still the tokio RwLock.
         if let Some(sender) = self.sender.read().await.as_ref() {
             sender.timestamp()
         } else {
-            *self.timestamp.read().await
+            *self.timestamp.read()
         }
     }
 
     /// Shutdown the audio track and wait for sender thread to complete
     pub async fn shutdown(&self) -> Result<()> {
-        if let Some(sender) = self.sender.write().await.take() {
+        // Take the sender under the async write-lock, then await the
+        // actual shutdown (the `.take()` returns owned).
+        let taken = self.sender.write().await.take();
+        if let Some(sender) = taken {
             sender.shutdown().await?;
         }
         Ok(())
@@ -358,14 +399,18 @@ impl VideoTrack {
             }
         };
 
-        // Update sequence number
-        let mut seq = self.sequence_number.write().await;
-        *seq = seq.wrapping_add(1);
-
-        // Update timestamp (90kHz clock for video)
-        let mut ts = self.timestamp.write().await;
-        let timestamp_increment = 90000 / 30; // Assuming 30fps
-        *ts = ts.wrapping_add(timestamp_increment);
+        // Update sequence number + timestamp under sync parking_lot
+        // locks. Neither is held across the `write_sample(...).await`
+        // below — scoped short by the block.
+        {
+            let mut seq = self.sequence_number.write();
+            *seq = seq.wrapping_add(1);
+        }
+        {
+            let mut ts = self.timestamp.write();
+            let timestamp_increment = 90000 / 30; // Assuming 30fps
+            *ts = ts.wrapping_add(timestamp_increment);
+        }
 
         // Create WebRTC sample with encoded bitstream
         let frame_duration = Duration::from_millis(33); // ~30fps
@@ -430,12 +475,12 @@ impl VideoTrack {
 
     /// Get current RTP sequence number
     pub async fn sequence_number(&self) -> u16 {
-        *self.sequence_number.read().await
+        *self.sequence_number.read()
     }
 
     /// Get current RTP timestamp
     pub async fn timestamp(&self) -> u32 {
-        *self.timestamp.read().await
+        *self.timestamp.read()
     }
 
     /// Get the video codec being used
@@ -446,7 +491,7 @@ impl VideoTrack {
     /// Check if the next frame should be a keyframe
     pub async fn should_force_keyframe(&self) -> bool {
         // Keyframe every 60 frames (matches encoder config)
-        let seq = *self.sequence_number.read().await;
+        let seq = *self.sequence_number.read();
         seq % 60 == 0
     }
 
@@ -562,7 +607,7 @@ pub async fn runtime_data_to_rtp(
             }
 
             // Encode the audio samples
-            audio_track.encoder.write().await.encode(samples)
+            audio_track.encoder.write().encode(samples)
         }
 
         RuntimeData::Video {
@@ -655,7 +700,7 @@ pub async fn rtp_to_runtime_data(
         let samples = audio_track.on_rtp_packet(payload).await?;
 
         Ok(RuntimeData::Audio {
-            samples,
+            samples: samples.into(),
             sample_rate: 48000, // Opus always decodes to 48kHz
             channels: 1,        // Assuming mono for now
             stream_id: None,

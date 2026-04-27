@@ -16,10 +16,9 @@ use crate::data::AudioBuffer as ProtoAudioBuffer;
 /// When speech ends (is_speech_end=true), it outputs the accumulated audio buffer.
 use crate::data::RuntimeData;
 use crate::error::{Error, Result};
-use crate::nodes::AsyncStreamingNode;
-use async_trait::async_trait;
+use crate::nodes::SyncStreamingNode;
+use parking_lot::Mutex;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Buffer state for a single session
 #[derive(Debug, Clone)]
@@ -59,10 +58,32 @@ pub struct AudioBufferAccumulatorNode {
     /// Buffer states per session
     states: Arc<Mutex<std::collections::HashMap<String, BufferState>>>,
 
-    /// Pending audio chunks waiting for VAD event (per session)
-    /// When we receive audio before VAD, we store it here
-    pending_audio: Arc<Mutex<std::collections::HashMap<String, Vec<(Vec<f32>, u32, u32)>>>>,
+    /// Pending audio chunks waiting for VAD event (per session).
+    /// Each entry carries an arrival-time `Instant` so old chunks can
+    /// be age-evicted: without that, a partial utterance whose tail
+    /// never triggered `speech_end` (the user stopped mid-sentence,
+    /// or the assistant's own output drowned out their trailing
+    /// words) leaves 640 ms of stale speech in pending — which later
+    /// gets glued onto a brand-new utterance as a phantom prefix the
+    /// STT transcribes as if it were part of the current turn.
+    pending_audio: Arc<
+        Mutex<
+            std::collections::HashMap<
+                String,
+                Vec<(Vec<f32>, u32, u32, std::time::Instant)>,
+            >,
+        >,
+    >,
 }
+
+/// Hard cap on how old a chunk sitting in `pending_audio` may be before
+/// it is discarded. The prefix-padding we glue onto a new utterance at
+/// `speech_start` is only useful when it actually precedes the current
+/// speech — anything older than this window is guaranteed stale and
+/// only serves to contaminate the next transcript. 500 ms sits just
+/// beyond the 20-chunk count cap (~640 ms) so normal continuous
+/// capture still gets its pre-roll.
+const MAX_PENDING_AGE_MS: u128 = 500;
 
 impl AudioBufferAccumulatorNode {
     pub fn new(
@@ -124,12 +145,15 @@ impl AudioBufferAccumulatorNode {
         bytes
     }
 
-    async fn handle_audio_chunk(
+    fn handle_audio_chunk(
         &self,
         audio_buf: &ProtoAudioBuffer,
         session_id: &str,
         states: &mut std::collections::HashMap<String, BufferState>,
-        pending: &mut std::collections::HashMap<String, Vec<(Vec<f32>, u32, u32)>>,
+        pending: &mut std::collections::HashMap<
+            String,
+            Vec<(Vec<f32>, u32, u32, std::time::Instant)>,
+        >,
     ) -> Result<Option<RuntimeData>> {
         let samples = self.convert_audio_to_f32(audio_buf)?;
 
@@ -179,7 +203,23 @@ impl AudioBufferAccumulatorNode {
                 .entry(session_id.to_string())
                 .or_insert_with(Vec::new);
 
-            pending_vec.push((samples, audio_buf.sample_rate, audio_buf.channels));
+            let now = std::time::Instant::now();
+            pending_vec.push((
+                samples,
+                audio_buf.sample_rate,
+                audio_buf.channels,
+                now,
+            ));
+
+            // Age-based eviction: drop anything older than the
+            // pre-roll window. This is the primary defence against
+            // stale audio leaking into a later utterance when the
+            // chunk arrival rate drops (mic muted, network hiccup,
+            // client paused). Count-based cap below still runs as a
+            // belt-and-braces size limit.
+            pending_vec.retain(|(_, _, _, t)| {
+                now.duration_since(*t).as_millis() <= MAX_PENDING_AGE_MS
+            });
 
             // Keep only last 20 chunks for speech padding (~640ms at 16kHz/512 samples)
             // This prevents accumulating minutes of silence between utterances
@@ -192,12 +232,15 @@ impl AudioBufferAccumulatorNode {
         }
     }
 
-    async fn handle_vad_event(
+    fn handle_vad_event(
         &self,
         vad_json: &serde_json::Value,
         session_id: &str,
         states: &mut std::collections::HashMap<String, BufferState>,
-        pending: &mut std::collections::HashMap<String, Vec<(Vec<f32>, u32, u32)>>,
+        pending: &mut std::collections::HashMap<
+            String,
+            Vec<(Vec<f32>, u32, u32, std::time::Instant)>,
+        >,
     ) -> Result<Option<RuntimeData>> {
         let is_speech_start = vad_json
             .get("is_speech_start")
@@ -224,15 +267,34 @@ impl AudioBufferAccumulatorNode {
             state.accumulated_samples.clear();
             state.chunks_accumulated = 0;
 
-            // Add pending chunks that contain the beginning of speech
-            if let Some(pending_chunks) = pending.remove(session_id) {
+            // Add pending chunks that contain the beginning of
+            // speech, but FIRST drop any chunk older than the pre-roll
+            // window — the count-based cap alone lets a partial prior
+            // utterance linger here when chunk arrival stalls, and
+            // that stale audio would otherwise be glued onto this
+            // brand-new utterance as a phantom prefix that Whisper
+            // transcribes as if it were part of the current turn.
+            if let Some(mut pending_chunks) = pending.remove(session_id) {
+                let now = std::time::Instant::now();
+                let before = pending_chunks.len();
+                pending_chunks.retain(|(_, _, _, t)| {
+                    now.duration_since(*t).as_millis() <= MAX_PENDING_AGE_MS
+                });
+                let evicted = before - pending_chunks.len();
+                if evicted > 0 {
+                    tracing::info!(
+                        "[AudioBuffer] Session {}: dropped {} stale pending chunk(s) (> {} ms old)",
+                        session_id, evicted, MAX_PENDING_AGE_MS,
+                    );
+                }
+
                 tracing::info!(
                     "[AudioBuffer] Session {}: Speech started, adding {} pending chunks to buffer",
                     session_id,
                     pending_chunks.len()
                 );
 
-                for (samples, sr, ch) in pending_chunks {
+                for (samples, sr, ch, _t) in pending_chunks {
                     state.accumulated_samples.extend_from_slice(&samples);
                     state.sample_rate = sr;
                     state.channels = ch;
@@ -247,7 +309,25 @@ impl AudioBufferAccumulatorNode {
 
             Ok(None)
         } else if is_speech_end {
-            // Output accumulated buffer
+            // Always clear pending on speech_end, whether or not
+            // `state.is_speaking` happens to be true. If the two go
+            // out of sync (VAD re-emits end without a preceding
+            // start, state was reset by barge-in, etc.), leaving
+            // pending populated means stale audio gets glued onto
+            // the NEXT utterance as a phantom prefix. This is the
+            // failure mode behind "I said that a minute ago" —
+            // the user's untriggered tail was parked in pending and
+            // re-emerged when the next speech_start fired.
+            if let Some(old_pending) = pending.remove(session_id) {
+                if !old_pending.is_empty() {
+                    tracing::info!(
+                        "[AudioBuffer] Session {}: Cleared {} pending chunks on speech_end",
+                        session_id,
+                        old_pending.len()
+                    );
+                }
+            }
+
             if let Some(state) = states.get_mut(session_id) {
                 if state.is_speaking {
                     tracing::info!(
@@ -257,18 +337,7 @@ impl AudioBufferAccumulatorNode {
                         state.chunks_accumulated
                     );
 
-                    let result = self.flush_buffer(state, session_id);
-
-                    // Clear any pending buffer to start fresh for next utterance
-                    if let Some(old_pending) = pending.remove(session_id) {
-                        tracing::info!(
-                            "[AudioBuffer] Session {}: Cleared {} pending chunks after speech end",
-                            session_id,
-                            old_pending.len()
-                        );
-                    }
-
-                    return result;
+                    return self.flush_buffer(state, session_id);
                 }
             }
 
@@ -306,15 +375,45 @@ impl AudioBufferAccumulatorNode {
             return Ok(None);
         }
 
+        // Energy gate — reject silent / near-silent utterances. Silero
+        // occasionally reports high speech-probability on ambient
+        // self-noise from the mic capture layer (condenser hiss,
+        // codec residue, etc.); the resulting near-silent flush
+        // then feeds Whisper, which is famous for hallucinating
+        // "Thank you." / "Bye." / "you." on silence. Kill both
+        // failure modes at the source by dropping the flush if peak
+        // amplitude is below a threshold. 0.02 ≈ -34 dBFS — well
+        // below any real speech level, but above codec dither.
+        const MIN_PEAK_AMPLITUDE: f32 = 0.02;
+        let peak = state
+            .accumulated_samples
+            .iter()
+            .fold(0.0_f32, |acc, &s| acc.max(s.abs()));
+        if peak < MIN_PEAK_AMPLITUDE {
+            tracing::info!(
+                "[AudioBuffer] Session {}: Dropping {}ms / {} samples — peak {:.4} < {:.4} (silence)",
+                session_id,
+                duration_ms,
+                state.accumulated_samples.len(),
+                peak,
+                MIN_PEAK_AMPLITUDE
+            );
+            state.accumulated_samples.clear();
+            state.is_speaking = false;
+            state.chunks_accumulated = 0;
+            return Ok(None);
+        }
+
         // Get accumulated samples
         let samples = state.accumulated_samples.clone();
         let num_samples = samples.len();
 
         tracing::info!(
-            "[AudioBuffer] Session {}: Flushing buffer - {}ms, {} samples",
+            "[AudioBuffer] Session {}: Flushing buffer - {}ms, {} samples (peak {:.4})",
             session_id,
             duration_ms,
-            num_samples
+            num_samples,
+            peak
         );
 
         // Save format info before clearing
@@ -327,7 +426,7 @@ impl AudioBufferAccumulatorNode {
         state.chunks_accumulated = 0;
 
         Ok(Some(RuntimeData::Audio {
-            samples,
+            samples: samples.into(),
             sample_rate,
             channels,
             stream_id: None,
@@ -338,68 +437,73 @@ impl AudioBufferAccumulatorNode {
     }
 }
 
-#[async_trait]
-impl AsyncStreamingNode for AudioBufferAccumulatorNode {
+// Phase A-Wave 3: migrated to `SyncStreamingNode`. Previously held two
+// `tokio::sync::Mutex` locks across `handle_audio_chunk(...).await` /
+// `handle_vad_event(...).await` — but those helpers never actually
+// awaited anything internally, so the async annotations and `.await`s
+// were vestigial. The lock-across-await hazard is gone with
+// `parking_lot::Mutex` + sync helpers. The collect-then-fire
+// discipline is preserved: all state mutation happens under the two
+// locks, which are dropped before the callback fires.
+impl SyncStreamingNode for AudioBufferAccumulatorNode {
     fn node_type(&self) -> &str {
         "AudioBufferAccumulatorNode"
     }
 
-    async fn process(&self, _data: RuntimeData) -> Result<RuntimeData> {
-        // Simplified non-streaming version - not recommended
-        // Use process_streaming for full buffering functionality
+    fn process(&self, _data: RuntimeData) -> Result<RuntimeData> {
         Err(Error::Execution(
-            "AudioBufferAccumulatorNode requires streaming mode - use process_streaming() instead"
+            "AudioBufferAccumulatorNode requires streaming mode - \
+             callers must use process_streaming() (the router does this \
+             automatically when the factory declares is_multi_output_streaming=true)"
                 .into(),
         ))
     }
 
-    async fn process_streaming<F>(
+    fn process_streaming(
         &self,
         data: RuntimeData,
-        session_id: Option<String>,
-        mut callback: F,
-    ) -> Result<usize>
-    where
-        F: FnMut(RuntimeData) -> Result<()> + Send,
-    {
-        let session_key = session_id.clone().unwrap_or_else(|| "default".to_string());
+        session_id: Option<&str>,
+        callback: &mut dyn FnMut(RuntimeData) -> Result<()>,
+    ) -> Result<usize> {
+        let session_key = session_id.unwrap_or("default").to_string();
 
-        let mut states = self.states.lock().await;
-        let mut pending = self.pending_audio.lock().await;
+        // Collect output under the lock, release, then fire callback.
+        // Both locks are `parking_lot::Mutex`; uncontended fast path
+        // is a single CAS. No `.await` anywhere in this method; the
+        // old async annotations were pure overhead.
+        let output: Option<RuntimeData> = {
+            let mut states = self.states.lock();
+            let mut pending = self.pending_audio.lock();
 
-        let output = match &data {
-            RuntimeData::Audio {
-                samples,
-                sample_rate,
-                channels,
-                ..
-            } => {
-                // Handle audio chunk - convert to buffer format expected by handler
-                let audio_buf = crate::data::AudioBuffer {
-                    samples: samples.iter().flat_map(|f| f.to_le_bytes()).collect(),
-                    sample_rate: *sample_rate,
-                    channels: *channels,
-                    format: 1, // F32
-                    num_samples: samples.len() as u64,
-                };
-                self.handle_audio_chunk(&audio_buf, &session_key, &mut states, &mut pending)
-                    .await?
-            }
-            RuntimeData::Json(json_value) => {
-                // Handle VAD event
-                self.handle_vad_event(json_value, &session_key, &mut states, &mut pending)
-                    .await?
-            }
-            _ => {
-                tracing::warn!("[AudioBuffer] Received unexpected data type");
-                None
+            match &data {
+                RuntimeData::Audio {
+                    samples,
+                    sample_rate,
+                    channels,
+                    ..
+                } => {
+                    // Convert to the legacy ProtoAudioBuffer shape the
+                    // helpers expect. One heap op per call — unchanged
+                    // from the previous implementation.
+                    let audio_buf = crate::data::AudioBuffer {
+                        samples: samples.iter().flat_map(|f| f.to_le_bytes()).collect(),
+                        sample_rate: *sample_rate,
+                        channels: *channels,
+                        format: 1, // F32
+                        num_samples: samples.len() as u64,
+                    };
+                    self.handle_audio_chunk(&audio_buf, &session_key, &mut states, &mut pending)?
+                }
+                RuntimeData::Json(json_value) => {
+                    self.handle_vad_event(json_value, &session_key, &mut states, &mut pending)?
+                }
+                _ => {
+                    tracing::warn!("[AudioBuffer] Received unexpected data type");
+                    None
+                }
             }
         };
 
-        drop(states);
-        drop(pending);
-
-        // Output accumulated buffer if speech ended
         if let Some(output_data) = output {
             callback(output_data)?;
             Ok(1)
@@ -425,14 +529,16 @@ impl AudioBufferAccumulatorNode {
         true
     }
 
-    /// Reset the buffer state
+    /// Reset the buffer state.
+    ///
+    /// Previously required `tokio::task::block_in_place` +
+    /// `blocking_lock` because the state was behind a
+    /// `tokio::sync::Mutex`. After A-Wave 3 those are
+    /// `parking_lot::Mutex` — plain sync `.lock()` works from any
+    /// thread.
     pub fn reset_state(&mut self) {
-        tokio::task::block_in_place(|| {
-            let mut states = self.states.blocking_lock();
-            states.clear();
-            let mut pending = self.pending_audio.blocking_lock();
-            pending.clear();
-        });
+        self.states.lock().clear();
+        self.pending_audio.lock().clear();
         tracing::info!("[AudioBufferAccumulator] States reset");
     }
 }

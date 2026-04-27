@@ -4,7 +4,7 @@
 //! This is an opt-in, privacy-sensitive node that never persists audio automatically.
 
 use crate::data::RuntimeData;
-use crate::nodes::StreamingNode;
+use crate::nodes::{StreamingNode, SyncNodeWrapper, SyncStreamingNode};
 use crate::Error;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
@@ -423,7 +423,7 @@ impl AudioEvidenceNode {
                 ..
             } => {
                 let ts = timestamp_us.unwrap_or_else(Self::current_timestamp_us);
-                self.process_audio(samples.clone(), *sample_rate, *channels, ts, &mut state);
+                self.process_audio(samples.to_vec(), *sample_rate, *channels, ts, &mut state);
             }
 
             // Process JSON - check for triggers
@@ -447,26 +447,18 @@ impl AudioEvidenceNode {
     }
 }
 
-#[async_trait::async_trait]
-impl StreamingNode for AudioEvidenceNode {
+// Phase A-Wave 1: `SyncStreamingNode` — state uses `std::sync::RwLock`.
+// Multi-input aggregation preserved.
+impl SyncStreamingNode for AudioEvidenceNode {
     fn node_type(&self) -> &str {
         "AudioEvidenceNode"
     }
 
-    fn node_id(&self) -> &str {
-        &self.node_id
-    }
-
-    async fn initialize(&self) -> Result<(), Error> {
-        tracing::debug!("AudioEvidenceNode {} initialized", self.node_id);
-        Ok(())
-    }
-
-    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         self.process_input(data)
     }
 
-    async fn process_multi_async(
+    fn process_multi(
         &self,
         inputs: HashMap<String, RuntimeData>,
     ) -> Result<RuntimeData, Error> {
@@ -534,7 +526,7 @@ impl crate::nodes::StreamingNodeFactory for AudioEvidenceNodeFactory {
             serde_json::from_value(params.clone()).unwrap_or_default()
         };
 
-        Ok(Box::new(AudioEvidenceNode::new(node_id, config)))
+        Ok(Box::new(SyncNodeWrapper(AudioEvidenceNode::new(node_id, config))))
     }
 
     fn node_type(&self) -> &str {
@@ -595,7 +587,7 @@ mod tests {
         // Send audio chunks
         for i in 0..10 {
             let input = RuntimeData::Audio {
-                samples: vec![0.1; 16000], // 1 second
+                samples: vec![0.1; 16000].into(), // 1 second
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: None,
@@ -603,7 +595,7 @@ mod tests {
                 arrival_ts_us: None,
                 metadata: None,
             };
-            node.process_async(input).await.unwrap();
+            node.process(input).unwrap();
         }
 
         // Buffer should be limited to 5 seconds
@@ -618,7 +610,7 @@ mod tests {
         // First, buffer some audio
         for i in 0..3 {
             let input = RuntimeData::Audio {
-                samples: vec![0.1; 16000], // 1 second each
+                samples: vec![0.1; 16000].into(), // 1 second each
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: None,
@@ -626,19 +618,19 @@ mod tests {
                 arrival_ts_us: None,
                 metadata: None,
             };
-            node.process_async(input).await.unwrap();
+            node.process(input).unwrap();
         }
 
         // Trigger clip creation
         let trigger = serde_json::json!({
             "event_type": "freeze"
         });
-        node.process_async(RuntimeData::Json(trigger)).await.unwrap();
+        node.process(RuntimeData::Json(trigger)).unwrap();
 
         // Add post-alert audio
         for i in 3..5 {
             let input = RuntimeData::Audio {
-                samples: vec![0.1; 16000],
+                samples: vec![0.1; 16000].into(),
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: None,
@@ -646,7 +638,7 @@ mod tests {
                 arrival_ts_us: None,
                 metadata: None,
             };
-            let result = node.process_async(input).await.unwrap();
+            let result = node.process(input).unwrap();
 
             // Check if clip was emitted
             if let RuntimeData::Json(json) = result {

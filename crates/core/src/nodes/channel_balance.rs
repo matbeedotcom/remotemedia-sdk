@@ -3,7 +3,7 @@
 //! Detects audio channel imbalance (one-sided audio) in stereo streams.
 
 use crate::data::RuntimeData;
-use crate::nodes::StreamingNode;
+use crate::nodes::{StreamingNode, SyncNodeWrapper, SyncStreamingNode};
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -208,26 +208,19 @@ impl ChannelBalanceNode {
     }
 }
 
-#[async_trait::async_trait]
-impl StreamingNode for ChannelBalanceNode {
+// Phase A-Wave 1: `SyncStreamingNode` — body is sync, state is
+// read-only config. Wrapped through `SyncNodeWrapper` at the registry
+// boundary.
+impl SyncStreamingNode for ChannelBalanceNode {
     fn node_type(&self) -> &str {
         "ChannelBalanceNode"
     }
 
-    fn node_id(&self) -> &str {
-        &self.node_id
-    }
-
-    async fn initialize(&self) -> Result<(), Error> {
-        tracing::debug!("ChannelBalanceNode {} initialized", self.node_id);
-        Ok(())
-    }
-
-    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         self.process_audio(data)
     }
 
-    async fn process_multi_async(
+    fn process_multi(
         &self,
         inputs: HashMap<String, RuntimeData>,
     ) -> Result<RuntimeData, Error> {
@@ -259,7 +252,7 @@ impl crate::nodes::StreamingNodeFactory for ChannelBalanceNodeFactory {
             serde_json::from_value(params.clone()).unwrap_or_default()
         };
 
-        Ok(Box::new(ChannelBalanceNode::new(node_id, config)))
+        Ok(Box::new(SyncNodeWrapper(ChannelBalanceNode::new(node_id, config))))
     }
 
     fn node_type(&self) -> &str {

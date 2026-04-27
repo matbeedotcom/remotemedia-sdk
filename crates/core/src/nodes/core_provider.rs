@@ -27,6 +27,7 @@ use crate::nodes::audio_evidence::AudioEvidenceNodeFactory;
 use crate::nodes::audio_level::AudioLevelNodeFactory;
 use crate::nodes::channel_balance::ChannelBalanceNodeFactory;
 use crate::nodes::clipping_detector::ClippingDetectorNodeFactory;
+use crate::nodes::conversation_coordinator::ConversationCoordinatorNodeFactory;
 use crate::nodes::conversation_flow::ConversationFlowNodeFactory;
 use crate::nodes::event_correlator::EventCorrelatorNodeFactory;
 use crate::nodes::health_emitter::HealthEmitterNodeFactory;
@@ -71,6 +72,7 @@ impl NodeProvider for CoreNodesProvider {
 
         // Text processing nodes
         registry.register(Arc::new(TextCollectorNodeFactory));
+        registry.register(Arc::new(ConversationCoordinatorNodeFactory));
 
         // Remote pipeline node
         registry.register(Arc::new(RemotePipelineNodeFactory));

@@ -2,6 +2,7 @@
 //!
 //! Handles individual WebSocket connections and processes JSON-RPC messages.
 
+use super::control_handlers::{handle_control_method, ControlSessionState};
 use super::events::WebRtcEventBridge;
 use crate::config::WebRtcTransportConfig;
 use crate::peer::ServerPeer;
@@ -100,6 +101,10 @@ pub async fn handle_connection(
     // Current peer ID for this connection
     let peer_id: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
 
+    // Per-connection control-plane subscriptions. Dropped on disconnect
+    // to abort forwarder tasks and release broadcast receivers.
+    let control_state: Arc<ControlSessionState> = ControlSessionState::new();
+
     // Task to forward messages from channel to WebSocket
     let ws_tx = Arc::new(RwLock::new(ws_tx));
     let ws_tx_clone = Arc::clone(&ws_tx);
@@ -122,7 +127,10 @@ pub async fn handle_connection(
     while let Some(msg) = ws_rx.next().await {
         match msg {
             Ok(Message::Text(text)) => {
-                if let Err(e) = handle_message(&text, &state_clone, &peer_id_clone, &tx_clone).await {
+                if let Err(e) =
+                    handle_message(&text, &state_clone, &peer_id_clone, &tx_clone, &control_state)
+                        .await
+                {
                     error!("Error handling message: {}", e);
                     // Send error response
                     let error_response = JsonRpcError::new(
@@ -150,6 +158,11 @@ pub async fn handle_connection(
             _ => {}
         }
     }
+
+    // Abort any active control-bus subscription forwarders. Must run
+    // before ServerPeer shutdown so we don't publish events into a
+    // half-torn-down session.
+    control_state.shutdown().await;
 
     // Cleanup on disconnect
     if let Some(peer_id) = peer_id.read().await.clone() {
@@ -189,6 +202,7 @@ async fn handle_message(
     state: &Arc<SharedState>,
     peer_id: &Arc<RwLock<Option<String>>>,
     tx: &mpsc::Sender<String>,
+    control_state: &Arc<ControlSessionState>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Parse JSON-RPC request
     let request: JsonRpcRequest = match serde_json::from_str(text) {
@@ -205,6 +219,49 @@ async fn handle_message(
     };
 
     let request_id = request.id.clone().unwrap_or(json!(null));
+
+    // Control-plane methods proxy the Session Control Bus on the
+    // peer's session. They require peer.announce to have run and the
+    // SDP exchange to have finished (session_id populated).
+    if request.method.starts_with("control.") {
+        let current_peer_id = peer_id.read().await.clone();
+        let current_peer_id = match current_peer_id {
+            Some(id) => id,
+            None => {
+                let error = JsonRpcError::new(
+                    error_codes::INVALID_REQUEST,
+                    "Not announced: call peer.announce before any control.* method"
+                        .to_string(),
+                    request_id,
+                );
+                tx.send(error.to_json()?).await?;
+                return Ok(());
+            }
+        };
+        if let Some(result) = handle_control_method(
+            &request.method,
+            &request.params,
+            &request_id,
+            state,
+            &current_peer_id,
+            tx,
+            control_state,
+        )
+        .await
+        {
+            match result {
+                Ok(response_json) => {
+                    tx.send(response_json).await?;
+                }
+                Err(msg) => {
+                    let error =
+                        JsonRpcError::new(error_codes::INVALID_PARAMS, msg, request_id);
+                    tx.send(error.to_json()?).await?;
+                }
+            }
+            return Ok(());
+        }
+    }
 
     match request.method.as_str() {
         "peer.announce" => {

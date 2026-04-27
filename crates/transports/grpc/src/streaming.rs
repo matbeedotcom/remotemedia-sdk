@@ -222,8 +222,11 @@ pub(crate) struct StreamSession {
     /// Cache misses for this session (Feature 005)
     pub(crate) cache_misses: u64,
 
-    /// Input sender to feed chunks to the session router
-    pub(crate) router_input: Option<tokio::sync::mpsc::UnboundedSender<DataPacket>>,
+    /// Bounded input sender to feed chunks to the session router.
+    ///
+    /// Sends use `.await` and block the gRPC handler when the pipeline is
+    /// behind — this is the transport-level backpressure surface.
+    pub(crate) router_input: Option<tokio::sync::mpsc::Sender<DataPacket>>,
 
     /// Router task handle
     pub(crate) router_task: Option<JoinHandle<()>>,
@@ -654,8 +657,9 @@ async fn handle_stream(
                         sub_sequence: 0,
                     };
 
-                    // Send to router (outputs will be sent back via the router's tx channel)
-                    router_input.send(packet).map_err(|e| {
+                    // Bounded router-input: .await applies real backpressure
+                    // to the gRPC client when the pipeline falls behind.
+                    router_input.send(packet).await.map_err(|e| {
                         ServiceError::Internal(format!("Failed to send audio to router: {}", e))
                     })?;
 
@@ -735,8 +739,8 @@ async fn handle_stream(
                         sub_sequence: 0,
                     };
 
-                    // Send to router
-                    router_input.send(packet).map_err(|e| {
+                    // Bounded router-input: .await applies real backpressure.
+                    router_input.send(packet).await.map_err(|e| {
                         ServiceError::Internal(format!("Failed to send to router: {}", e))
                     })?;
 
@@ -1125,8 +1129,16 @@ async fn handle_data_chunk_multi(
         // The 'node' variable already contains our globally cached instance
         // which preserves the Python object and the loaded Kokoro model
 
-        // Create a channel for chunks from Python -> Rust async world
-        let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel::<RuntimeData>();
+        // Create a bounded channel for chunks from the streaming node's
+        // sync process callback into Rust's async world. Sized at the
+        // default gRPC loopback capacity (256 slots) — generous so normal
+        // operation is try_send-fast-path, tight enough to surface a
+        // genuinely stalled downstream. Overflow drops with a warn and
+        // relies on the client_tx bounded channel downstream as the true
+        // backpressure surface.
+        let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<RuntimeData>(
+            crate::session_router::DEFAULT_GRPC_LOOPBACK_CAPACITY,
+        );
 
         // Spawn async task to send chunks as they arrive from the channel
         let tx_clone = tx.clone();
@@ -1186,15 +1198,29 @@ async fn handle_data_chunk_multi(
                     Some(session_id_clone),
                     Box::new(move |output_data| {
                         info!("📨 Callback called - sending chunk to channel");
-                        // Unbounded channels don't have try_send, just use send which never blocks
-                        if let Err(e) = chunk_tx_clone.send(output_data) {
-                            error!("Failed to send chunk to channel: {:?}", e);
-                            return Err(remotemedia_core::Error::Execution(
-                                "Failed to enqueue chunk".to_string(),
-                            ));
+                        // Sync callback cannot .await. try_send on a
+                        // bounded channel keeps the fast path allocation-
+                        // free; on overflow we log-and-drop rather than
+                        // hang, because `client_tx` downstream is the
+                        // true backpressure surface for the gRPC stream.
+                        match chunk_tx_clone.try_send(output_data) {
+                            Ok(()) => {
+                                info!("📨 Chunk sent to channel successfully");
+                                Ok(())
+                            }
+                            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                tracing::warn!(
+                                    "Streaming chunk channel full — dropping output (downstream saturated)"
+                                );
+                                Ok(())
+                            }
+                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                error!("Streaming chunk channel closed");
+                                Err(remotemedia_core::Error::Execution(
+                                    "Failed to enqueue chunk".to_string(),
+                                ))
+                            }
                         }
-                        info!("📨 Chunk sent to channel successfully");
-                        Ok(())
                     }),
                 )
                 .await;

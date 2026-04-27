@@ -1,0 +1,19 @@
+[package]
+name = "session-replay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Pretty-print / filter pipeline session trace files produced by the SessionRecorder."
+license.workspace = true
+
+[[bin]]
+name = "session-replay"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+console = { workspace = true }
+anyhow = "1.0"

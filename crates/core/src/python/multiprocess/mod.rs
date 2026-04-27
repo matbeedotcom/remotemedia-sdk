@@ -12,6 +12,7 @@ pub mod docker_support;
 #[cfg(feature = "docker")]
 pub mod container_builder;
 
+pub use data_transfer::DataType;
 pub use multiprocess_executor::{
     InitStatus, MultiprocessConfig, MultiprocessExecutor, SessionState,
 };

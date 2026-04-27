@@ -78,6 +78,13 @@ class TextMetadata:
     """Text-specific metadata."""
     encoding: str = "utf-8"
     language: Optional[str] = None  # ISO 639-1 code
+    # Routing channel for downstream consumers. `"tts"` = text intended
+    # to be spoken (TTS nodes synthesise, transcript UIs show as speech);
+    # `"ui"` = text intended for visual rendering only (markdown, code,
+    # long explanations) — TTS nodes MUST skip synthesis and pass the
+    # chunk through untouched. Defaults to `"tts"` so legacy producers
+    # and consumers retain their current behaviour.
+    channel: str = "tts"
 
 
 @dataclass
@@ -367,7 +374,8 @@ class RuntimeData:
     def text(cls,
              text: str,
              session_id: str = "",
-             language: Optional[str] = None) -> "RuntimeData":
+             language: Optional[str] = None,
+             channel: str = "tts") -> "RuntimeData":
         """
         Create text runtime data.
 
@@ -375,13 +383,17 @@ class RuntimeData:
             text: Text string
             session_id: Session identifier
             language: ISO 639-1 language code
+            channel: Routing channel — `"tts"` (default) for text meant
+                to be spoken; `"ui"` for visual/markdown text that
+                downstream TTS nodes must skip. See ``TextMetadata``.
 
         Returns:
             RuntimeData instance for text
         """
         metadata = TextMetadata(
             encoding="utf-8",
-            language=language
+            language=language,
+            channel=channel,
         )
 
         return cls(

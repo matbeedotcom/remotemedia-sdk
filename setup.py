@@ -32,7 +32,9 @@ setup(
         "protobuf>=4.21.0",
         "grpcio>=1.50.0",
         "grpcio-tools>=1.50.0",
-        "numpy>=1.21.0,<2.0",
+        # Upper bound bumped to <3.0 so venvs that pull in numpy-2.x
+        # deps (e.g. personaplex-mlx) can resolve alongside this package.
+        "numpy>=1.21.0,<3.0",
         "av>=14.0.0",
         "cloudpickle>=2.2.0",
     ],

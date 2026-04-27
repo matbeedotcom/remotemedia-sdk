@@ -27,6 +27,7 @@
 pub mod adapters;
 pub mod auth;
 pub mod client;
+pub mod control;
 pub mod execution;
 pub mod limits;
 pub mod metrics;

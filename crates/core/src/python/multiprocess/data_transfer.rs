@@ -66,7 +66,9 @@ impl RuntimeData {
         }
     }
 
-    /// Create text runtime data
+    /// Create text runtime data on the default (`"tts"`) channel.
+    ///
+    /// Serializes as raw UTF-8 bytes — the legacy wire format.
     pub fn text(text: &str, session_id: &str) -> Self {
         Self {
             data_type: DataType::Text,
@@ -76,6 +78,60 @@ impl RuntimeData {
                 .unwrap()
                 .as_micros() as u64,
             payload: text.as_bytes().to_vec(),
+        }
+    }
+
+    /// Create text runtime data tagged with an explicit routing channel.
+    ///
+    /// Wire format:
+    ///   - channel == "tts" (or empty): legacy UTF-8-only payload.
+    ///   - otherwise: `[0x00][channel_len: u8][channel: utf8][text: utf8]`.
+    ///     `0x00` is never a valid UTF-8 lead byte, so the marker has
+    ///     no collision with legacy text payloads.
+    pub fn text_on(text: &str, session_id: &str, channel: &str) -> Self {
+        let payload = encode_text_payload(text, channel);
+        Self {
+            data_type: DataType::Text,
+            session_id: session_id.to_string(),
+            timestamp: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_micros() as u64,
+            payload,
+        }
+    }
+
+    /// Decode a text payload into `(channel, text)`. Safe to call on
+    /// legacy payloads — the channel defaults to `"tts"`.
+    pub fn decode_text_payload(&self) -> Result<(String, String), String> {
+        if self.data_type != DataType::Text {
+            return Err(format!(
+                "decode_text_payload called on non-text data ({:?})",
+                self.data_type
+            ));
+        }
+        let (channel, text_bytes) = split_text_payload(&self.payload);
+        let text = std::str::from_utf8(text_bytes)
+            .map_err(|e| format!("text payload is not valid UTF-8: {e}"))?
+            .to_string();
+        Ok((channel.to_string(), text))
+    }
+
+    /// Create an "end-of-input" sentinel. Python nodes emit this after
+    /// `process()` completes for one input — it tells the Rust side to stop
+    /// waiting for further outputs from that input and return immediately.
+    /// Without this, Rust falls back to the `subsequent_timeout` / `initial_timeout`
+    /// polling windows in `process_runtime_data_streaming`, which adds 30s+
+    /// of latency per turn for nodes that return None or produce a single output.
+    pub fn end_of_input(session_id: &str) -> Self {
+        Self {
+            data_type: DataType::EndOfInput,
+            session_id: session_id.to_string(),
+            timestamp: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_micros() as u64,
+            payload: Vec::new(),
         }
     }
 
@@ -543,6 +599,7 @@ impl RuntimeData {
             5 => DataType::ControlMessage,
             6 => DataType::Numpy,
             7 => DataType::File,
+            8 => DataType::EndOfInput,
             _ => return Err(format!("Invalid data type: {}", bytes[pos])),
         };
         pos += 1;
@@ -605,7 +662,62 @@ pub enum DataType {
     ControlMessage = 5, // Spec 007: Control messages for low-latency streaming
     Numpy = 6,          // Numpy arrays with metadata for zero-copy passthrough
     File = 7,           // Spec 001: File reference with metadata
+    /// Sentinel: Python signals "I'm done with this input". Rust's
+    /// `process_runtime_data_streaming` treats this as an immediate
+    /// return so it doesn't have to fall back to timeout-based "done"
+    /// detection. Not a real payload — payload bytes are empty.
+    EndOfInput = 8,
 }
+
+// Re-exports from the feature-gate-free home in `crate::data::text_channel`.
+// Keeps these names reachable via the existing import path while making
+// the helpers available to WebRTC / other crates that don't enable the
+// `multiprocess` feature.
+pub use crate::data::text_channel::{
+    split_text_str, tag_text_str, TEXT_CHANNEL_DEFAULT,
+};
+
+/// Serialize `text` with an optional routing channel. `"tts"` (or an
+/// empty channel) emits the legacy raw-UTF-8 format for backwards
+/// compatibility; any other channel prefixes `[0x00][len:u8][channel]`
+/// ahead of the text bytes.
+pub fn encode_text_payload(text: &str, channel: &str) -> Vec<u8> {
+    if channel.is_empty() || channel == TEXT_CHANNEL_DEFAULT {
+        return text.as_bytes().to_vec();
+    }
+    let mut channel_bytes = channel.as_bytes();
+    if channel_bytes.len() > u8::MAX as usize {
+        // Shouldn't happen in practice — channel names are short
+        // identifiers. Truncate to fit the length byte rather than
+        // failing, matching the Python side's behavior.
+        channel_bytes = &channel_bytes[..u8::MAX as usize];
+    }
+    let mut out = Vec::with_capacity(2 + channel_bytes.len() + text.len());
+    out.push(0x00);
+    out.push(channel_bytes.len() as u8);
+    out.extend_from_slice(channel_bytes);
+    out.extend_from_slice(text.as_bytes());
+    out
+}
+
+/// Split a raw text payload into `(channel, text_bytes)`. Returns the
+/// default channel when the payload carries no header.
+pub fn split_text_payload(payload: &[u8]) -> (&str, &[u8]) {
+    if payload.len() >= 2 && payload[0] == 0x00 {
+        let channel_len = payload[1] as usize;
+        if 2 + channel_len <= payload.len() {
+            if let Ok(channel) = std::str::from_utf8(&payload[2..2 + channel_len]) {
+                if !channel.is_empty() {
+                    return (channel, &payload[2 + channel_len..]);
+                }
+            }
+        }
+    }
+    (TEXT_CHANNEL_DEFAULT, payload)
+}
+
+// `split_text_str` / `tag_text_str` moved to `crate::data::text_channel` so
+// they compile without the `multiprocess` feature. Re-exported above.
 
 #[cfg(test)]
 mod tests {
@@ -621,7 +733,31 @@ mod tests {
 
         assert_eq!(recovered.data_type, DataType::Audio);
         assert_eq!(recovered.session_id, "test_session");
-        assert_eq!(recovered.payload.len(), 16); // 4 f32s = 16 bytes
+
+        // Audio payload format (see `RuntimeData::audio`):
+        //   sample_rate  (4) | channels (2) | metadata_len (4) | metadata (N) | samples (4·S)
+        // With metadata = None and 4 f32 samples: 4 + 2 + 4 + 0 + 16 = 26 bytes.
+        const HEADER_LEN: usize = 4 + 2 + 4;
+        let expected_len = HEADER_LEN + samples.len() * std::mem::size_of::<f32>();
+        assert_eq!(recovered.payload.len(), expected_len);
+
+        // Verify the header round-trips intact.
+        let sr = u32::from_le_bytes(recovered.payload[0..4].try_into().unwrap());
+        let ch = u16::from_le_bytes(recovered.payload[4..6].try_into().unwrap());
+        let meta_len = u32::from_le_bytes(recovered.payload[6..10].try_into().unwrap());
+        assert_eq!(sr, 24000);
+        assert_eq!(ch, 1);
+        assert_eq!(meta_len, 0);
+
+        // Verify sample bytes survive the round-trip (stronger than the
+        // length-only check that was here before).
+        let sample_bytes = &recovered.payload[HEADER_LEN + meta_len as usize..];
+        assert_eq!(sample_bytes.len(), samples.len() * 4);
+        let recovered_samples: Vec<f32> = sample_bytes
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        assert_eq!(recovered_samples, samples);
     }
 
     #[test]
@@ -634,6 +770,45 @@ mod tests {
         assert_eq!(recovered.data_type, DataType::Text);
         assert_eq!(recovered.session_id, "test_session");
         assert_eq!(String::from_utf8_lossy(&recovered.payload), "Hello, IPC!");
+    }
+
+    #[test]
+    fn test_text_channel_tagged_wire_format() {
+        // Default channel: legacy raw UTF-8 payload (no header).
+        let plain = encode_text_payload("hello", "tts");
+        assert_eq!(plain, b"hello");
+        let (ch, body) = split_text_payload(&plain);
+        assert_eq!(ch, TEXT_CHANNEL_DEFAULT);
+        assert_eq!(body, b"hello");
+
+        // Tagged channel: `[0x00][2][u][i][body...]`.
+        let tagged = encode_text_payload("hello", "ui");
+        assert_eq!(&tagged[..4], &[0x00u8, 0x02, b'u', b'i']);
+        assert_eq!(&tagged[4..], b"hello");
+        let (ch, body) = split_text_payload(&tagged);
+        assert_eq!(ch, "ui");
+        assert_eq!(body, b"hello");
+
+        // `&str`-level helpers round-trip through the tagged form too —
+        // the tagged representation is valid UTF-8.
+        let wrapped = tag_text_str("# heading\n", "ui");
+        let (ch, content) = split_text_str(&wrapped);
+        assert_eq!(ch, "ui");
+        assert_eq!(content, "# heading\n");
+
+        // Legacy (untagged) string survives `split_text_str` unchanged.
+        let (ch, content) = split_text_str("plain legacy");
+        assert_eq!(ch, TEXT_CHANNEL_DEFAULT);
+        assert_eq!(content, "plain legacy");
+
+        // End-to-end: RuntimeData::text_on preserves the channel across
+        // a full to_bytes/from_bytes trip.
+        let rd = RuntimeData::text_on("code()", "test_session", "ui");
+        let bytes = rd.to_bytes();
+        let recovered = RuntimeData::from_bytes(&bytes).unwrap();
+        let (ch, text) = recovered.decode_text_payload().unwrap();
+        assert_eq!(ch, "ui");
+        assert_eq!(text, "code()");
     }
 
     #[test]

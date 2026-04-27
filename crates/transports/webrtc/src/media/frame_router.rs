@@ -151,9 +151,14 @@ impl FrameRouter {
             ..
         } = data
         {
-            // Send audio through the track
+            // Send audio through the track.
+            // `send_audio` currently takes `Arc<Vec<f32>>`; convert from
+            // `AudioSamples` here. `into_vec` reuses the allocation for
+            // the `Vec` variant; the `Arc` / `Pooled` variants allocate
+            // once. Upgrading `send_audio` to accept `Arc<[f32]>` would
+            // make the `Arc` variant zero-copy end-to-end.
             track
-                .send_audio(Arc::new(samples), sample_rate)
+                .send_audio(Arc::new(samples.into_vec()), sample_rate)
                 .await
                 .map_err(|e| Error::MediaTrackError(format!("Failed to send audio: {}", e)))?;
 
@@ -331,7 +336,7 @@ mod tests {
     #[test]
     fn test_extract_stream_id_audio() {
         let data = RuntimeData::Audio {
-            samples: vec![0.0; 100],
+            samples: vec![0.0; 100].into(),
             sample_rate: 48000,
             channels: 1,
             stream_id: Some("voice".to_string()),
@@ -346,7 +351,7 @@ mod tests {
     #[test]
     fn test_extract_stream_id_audio_none() {
         let data = RuntimeData::Audio {
-            samples: vec![0.0; 100],
+            samples: vec![0.0; 100].into(),
             sample_rate: 48000,
             channels: 1,
             stream_id: None,
@@ -387,7 +392,7 @@ mod tests {
     #[test]
     fn test_with_stream_id_audio() {
         let data = RuntimeData::Audio {
-            samples: vec![1.0, 2.0, 3.0],
+            samples: vec![1.0, 2.0, 3.0].into(),
             sample_rate: 48000,
             channels: 1,
             stream_id: None,
@@ -406,7 +411,7 @@ mod tests {
             ..
         } = modified
         {
-            assert_eq!(samples, vec![1.0, 2.0, 3.0]);
+            assert_eq!(samples.as_slice(), &[1.0, 2.0, 3.0]);
             assert_eq!(sample_rate, 48000);
             assert_eq!(channels, 1);
             assert_eq!(stream_id, Some("voice".to_string()));

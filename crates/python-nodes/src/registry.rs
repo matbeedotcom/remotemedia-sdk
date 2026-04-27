@@ -230,6 +230,17 @@ pub fn register_default_python_nodes() {
             .produces(["json"]),
     );
 
+    register_python_node(
+        PythonNodeConfig::new("WhisperSTTNode")
+            .with_description(
+                "Minimal multiprocess-capable Whisper STT: audio in, plain-text \
+                 transcript out. For observability / hookpoints on audio pipelines.",
+            )
+            .with_category("ml")
+            .accepts(["audio"])
+            .produces(["text"]),
+    );
+
     // TTS nodes
     register_python_node(
         PythonNodeConfig::new("KokoroTTSNode")
@@ -271,9 +282,76 @@ pub fn register_default_python_nodes() {
     register_python_node(
         PythonNodeConfig::new("LFM2AudioNode")
             .with_multi_output(true)
-            .with_description("Speech-to-speech generation using LFM2")
+            .with_description("Speech-to-speech generation using LFM2 (torch / liquid-audio)")
             .with_category("ml")
             .accepts(["audio"])
+            .produces(["audio", "text"]),
+    );
+
+    register_python_node(
+        PythonNodeConfig::new("LFM2AudioMlxNode")
+            .with_multi_output(true)
+            .with_description(
+                "Speech-to-speech LFM2 via Apple MLX (mlx-audio). \
+                 Apple Silicon / macOS only; no CUDA, no torch.",
+            )
+            .with_category("ml")
+            .accepts(["audio"])
+            .produces(["audio", "text"]),
+    );
+
+    register_python_node(
+        PythonNodeConfig::new("PersonaPlexAudioMlxNode")
+            .with_multi_output(true)
+            .with_description(
+                "Full-duplex speech-to-speech using PersonaPlex-7B (Kyutai \
+                 Moshi family) via Apple MLX. Apple Silicon only. Same \
+                 control-bus surface as LFM2AudioMlxNode (context / \
+                 system_prompt / reset / barge_in), but streams \
+                 continuously with no end-of-turn sentinels.",
+            )
+            .with_category("ml")
+            .accepts(["audio"])
+            .produces(["audio", "text"]),
+    );
+
+    register_python_node(
+        PythonNodeConfig::new("LFM2TextNode")
+            .with_description(
+                "Multi-turn text chat using LFM2 (e.g. LiquidAI/LFM2-350M). \
+                 Consumes user turns on the main input and control-bus aux-port \
+                 envelopes on 'context' / 'system_prompt' / 'reset'.",
+            )
+            .with_category("ml")
+            .accepts(["text"])
+            .produces(["text"]),
+    );
+
+    register_python_node(
+        PythonNodeConfig::new("QwenTextMlxNode")
+            .with_multi_output(true)
+            .with_description(
+                "Multi-turn text chat using Qwen MLX (mlx-vlm, e.g. \
+                 Qwen3.5-9B-MLX-4bit). Streams text tokens and fires a \
+                 `<|text_end|>` sentinel at end-of-reply so a downstream \
+                 TTS node knows to flush. Aux-ports: context / system_prompt \
+                 / reset / barge_in.",
+            )
+            .with_category("ml")
+            .accepts(["text"])
+            .produces(["text"]),
+    );
+
+    register_python_node(
+        PythonNodeConfig::new("QwenTTSMlxNode")
+            .with_multi_output(true)
+            .with_description(
+                "Streaming TTS using mlx-audio's Qwen3-TTS. Passes upstream \
+                 text tokens through and synthesises 24 kHz mono audio when \
+                 a `<|text_end|>` sentinel arrives, then emits `<|audio_end|>`.",
+            )
+            .with_category("ml")
+            .accepts(["text"])
             .produces(["audio", "text"]),
     );
 

@@ -1,0 +1,42 @@
+[package]
+name = "remotemedia-hearing-nodes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Hearing aid DSP nodes (WDRC, CROS, HRTF) for RemoteMedia pipelines"
+
+[dependencies]
+# Minimal feature set on core: hearing-nodes only needs the trait/
+# registry/data types. `multiprocess` stays enabled because core's own
+# code currently references multiprocess types outside feature gates
+# (an SDK TODO to tighten). The heavy defaults we drop are `silero-vad`
+# (ort), `docker` (bollard + SystemConfiguration), and `video` (ffmpeg)
+# — they bloat a HAL plugin bundle and break linking into coreaudiod.
+# Embedders that want them can enable at the binary leaf (e.g. `spike`).
+remotemedia-core = { path = "../core", default-features = false, features = ["multiprocess"] }
+
+async-trait.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# Hearing-aid DSP crates (sibling workspace on disk).
+dsp-core = { path = "../../../Realtime_Competitive_Game_Audio/crates/dsp-core" }
+audiogram = { path = "../../../Realtime_Competitive_Game_Audio/crates/audiogram" }
+wdrc = { path = "../../../Realtime_Competitive_Game_Audio/crates/wdrc" }
+cros = { path = "../../../Realtime_Competitive_Game_Audio/crates/cros" }
+hrtf = { path = "../../../Realtime_Competitive_Game_Audio/crates/hrtf" }
+hrtf-synth = { path = "../../../Realtime_Competitive_Game_Audio/crates/hrtf-synth", default-features = false }
+
+[dev-dependencies]
+criterion.workspace = true
+remotemedia-rt-bridge = { path = "../rt-bridge" }
+
+[[bench]]
+name = "process_sync_rt"
+harness = false

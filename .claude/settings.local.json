@@ -44,7 +44,8 @@
       "Bash($CLI servers:*)",
       "Bash($CLI models:*)",
       "Bash($CLI pack:*)",
-      "Bash(PYTHON_ENV_MODE=managed $CLI run /home/acidhax/dev/personal/remotemedia-sdk/examples/cli/pipelines/tts.yaml -i - -v --timeout 120 -O /tmp/tts.pcm)"
+      "Bash(PYTHON_ENV_MODE=managed $CLI run /home/acidhax/dev/personal/remotemedia-sdk/examples/cli/pipelines/tts.yaml -i - -v --timeout 120 -O /tmp/tts.pcm)",
+      "Bash(bash -c \"python /tmp/wtest.py\")"
     ],
     "deny": [],
     "ask": []

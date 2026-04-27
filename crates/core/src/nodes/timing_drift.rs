@@ -8,7 +8,7 @@
 
 use crate::data::RuntimeData;
 use crate::executor::drift_metrics::{DriftMetrics, DriftThresholds, DriftAlerts};
-use crate::nodes::StreamingNode;
+use crate::nodes::{StreamingNode, SyncNodeWrapper, SyncStreamingNode};
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -312,26 +312,18 @@ impl TimingDriftNode {
     }
 }
 
-#[async_trait::async_trait]
-impl StreamingNode for TimingDriftNode {
+// Phase A-Wave 1: `SyncStreamingNode` — body wraps DriftMetrics (sync).
+// Wrapped through `SyncNodeWrapper` at the registry boundary.
+impl SyncStreamingNode for TimingDriftNode {
     fn node_type(&self) -> &str {
         "TimingDriftNode"
     }
 
-    fn node_id(&self) -> &str {
-        &self.node_id
-    }
-
-    async fn initialize(&self) -> Result<(), Error> {
-        tracing::debug!("TimingDriftNode {} initialized", self.node_id);
-        Ok(())
-    }
-
-    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         self.process_input(data)
     }
 
-    async fn process_multi_async(
+    fn process_multi(
         &self,
         inputs: HashMap<String, RuntimeData>,
     ) -> Result<RuntimeData, Error> {
@@ -365,7 +357,7 @@ impl crate::nodes::StreamingNodeFactory for TimingDriftNodeFactory {
             serde_json::from_value(params.clone()).unwrap_or_default()
         };
 
-        Ok(Box::new(TimingDriftNode::new(node_id, config)))
+        Ok(Box::new(SyncNodeWrapper(TimingDriftNode::new(node_id, config))))
     }
 
     fn node_type(&self) -> &str {
@@ -428,7 +420,7 @@ mod tests {
         let node = create_test_node();
 
         let input = RuntimeData::Audio {
-            samples: vec![0.0; 1600],
+            samples: vec![0.0; 1600].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: Some("test".to_string()),
@@ -437,7 +429,7 @@ mod tests {
             metadata: None,
         };
 
-        let result = node.process_async(input).await.unwrap();
+        let result = node.process(input).unwrap();
 
         // First sample won't emit yet
         if let RuntimeData::Json(json) = result {
@@ -458,7 +450,7 @@ mod tests {
         // Process several samples
         for i in 0..5 {
             let input = RuntimeData::Audio {
-                samples: vec![0.0; 1600],
+                samples: vec![0.0; 1600].into(),
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: Some("test".to_string()),
@@ -466,7 +458,7 @@ mod tests {
                 arrival_ts_us: Some(i * 100_000),
                 metadata: None,
             };
-            node.process_async(input).await.unwrap();
+            node.process(input).unwrap();
         }
 
         // Wait for emit interval
@@ -474,7 +466,7 @@ mod tests {
 
         // Next sample should trigger report
         let input = RuntimeData::Audio {
-            samples: vec![0.0; 1600],
+            samples: vec![0.0; 1600].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: Some("test".to_string()),
@@ -483,7 +475,7 @@ mod tests {
             metadata: None,
         };
 
-        let result = node.process_async(input).await.unwrap();
+        let result = node.process(input).unwrap();
 
         if let RuntimeData::Json(json) = result {
             if !json.is_null() {

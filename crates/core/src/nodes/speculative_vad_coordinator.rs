@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use parking_lot::Mutex;
 
 #[cfg(feature = "silero-vad")]
 use crate::nodes::silero_vad::{SileroVADConfig, SileroVADNode};
@@ -152,6 +152,7 @@ impl SpeculativeVADCoordinator {
         #[cfg(feature = "silero-vad")]
         let vad_node = SileroVADNode::with_config(SileroVADConfig {
             threshold: config.vad_threshold,
+            neg_threshold: None,
             sampling_rate: config.sample_rate,
             min_speech_duration_ms: config.min_speech_duration_ms,
             min_silence_duration_ms: config.min_silence_duration_ms,
@@ -171,22 +172,25 @@ impl SpeculativeVADCoordinator {
         Self::with_config(SpeculativeVADCoordinatorConfig::default())
     }
 
-    /// Get or create session state
-    async fn get_or_create_session(&self, session_id: &str) -> tokio::sync::MutexGuard<'_, HashMap<String, CoordinatorState>> {
-        let mut sessions = self.sessions.lock().await;
-
+    /// Ensure a session state exists, create it if missing.
+    ///
+    /// Returning a `MutexGuard` is avoided — the previous impl held it
+    /// across `vad_node.process_streaming(...).await`, serializing every
+    /// concurrent session on the lock for tens of milliseconds and
+    /// making priority inversion very real. All locking is now scoped
+    /// to narrow sync blocks.
+    fn ensure_session_exists(&self, session_id: &str) {
+        let mut sessions = self.sessions.lock();
         if !sessions.contains_key(session_id) {
             let samples_per_ms = self.config.sample_rate / 1000;
             let buffer_capacity = (self.config.lookback_ms * samples_per_ms) as usize;
             sessions.insert(session_id.to_string(), CoordinatorState::new(buffer_capacity));
         }
-
-        sessions
     }
 
     /// Get speculation acceptance rate for a session
     pub async fn get_acceptance_rate(&self, session_id: &str) -> f64 {
-        let sessions = self.sessions.lock().await;
+        let sessions = self.sessions.lock();
         sessions
             .get(session_id)
             .map(|s| s.acceptance_rate())
@@ -195,7 +199,7 @@ impl SpeculativeVADCoordinator {
 
     /// Clean up session state
     pub async fn terminate_session(&self, session_id: &str) {
-        let mut sessions = self.sessions.lock().await;
+        let mut sessions = self.sessions.lock();
         sessions.remove(session_id);
     }
 
@@ -268,19 +272,28 @@ impl AsyncStreamingNode for SpeculativeVADCoordinator {
         callback(audio_output)?;
         output_count += 1;
 
-        // Get session state
-        let mut sessions = self.get_or_create_session(&session_id).await;
-        let state = sessions.get_mut(&session_id).unwrap();
+        // Ensure session state exists. We deliberately do NOT hold the
+        // sessions lock across the VAD .await below — with parking_lot
+        // that would deadlock any concurrent caller for this session_id
+        // for the duration of VAD inference (tens of ms). Instead we:
+        //   Scope A:  buffer incoming samples, release lock
+        //   (no lock) run VAD inference
+        //   Scope B:  apply VAD result to state
+        self.ensure_session_exists(&session_id);
 
-        // **Step 2: Buffer audio for potential cancellation**
-        for &sample in &samples {
-            if state.audio_buffer.len() >= state.buffer_capacity {
-                state.audio_buffer.pop_front();
+        // **Step 2: Buffer audio for potential cancellation** (Scope A)
+        {
+            let mut sessions = self.sessions.lock();
+            let state = sessions.get_mut(&session_id).unwrap();
+            for &sample in samples.iter() {
+                if state.audio_buffer.len() >= state.buffer_capacity {
+                    state.audio_buffer.pop_front();
+                }
+                state.audio_buffer.push_back(sample);
             }
-            state.audio_buffer.push_back(sample);
-        }
+        } // lock released before VAD .await
 
-        // **Step 3: Run VAD inference**
+        // **Step 3: Run VAD inference** (no lock held)
         #[cfg(feature = "silero-vad")]
         let vad_result = {
             // Collect VAD events from the internal VAD node
@@ -313,7 +326,12 @@ impl AsyncStreamingNode for SpeculativeVADCoordinator {
         #[cfg(not(feature = "silero-vad"))]
         let vad_result: Option<serde_json::Value> = None;
 
-        // **Step 4: Process VAD result and track speech segments**
+        // **Step 4: Process VAD result and track speech segments** (Scope B).
+        // Re-acquire the lock for the state update, collect the outputs
+        // to emit into a local Vec, then release the lock BEFORE firing
+        // user callbacks. This keeps the per-session lock narrow and
+        // prevents user-supplied callbacks from blocking other sessions.
+        let mut pending_outputs: Vec<RuntimeData> = Vec::new();
         if let Some(vad_json) = vad_result {
             let has_speech = vad_json
                 .get("has_speech")
@@ -332,95 +350,111 @@ impl AsyncStreamingNode for SpeculativeVADCoordinator {
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0) as f32;
 
-            // Track speech start
-            if is_speech_start {
-                state.speech_start_sample = Some(state.current_sample);
-                state.speech_triggered = true;
-                state.silence_samples = 0;
-                tracing::debug!(
-                    session_id = %session_id,
-                    sample = state.current_sample,
-                    "Speech started (speculative segment begins)"
-                );
-            }
+            {
+                let mut sessions = self.sessions.lock();
+                let state = sessions.get_mut(&session_id).unwrap();
 
-            // Update silence tracking
-            if !has_speech && state.speech_triggered {
-                state.silence_samples += samples.len();
-            } else if has_speech {
-                state.silence_samples = 0;
-            }
-
-            // Track speech end
-            if is_speech_end {
-                // Calculate segment duration
-                if let Some(start_sample) = state.speech_start_sample.take() {
-                    let duration_samples = state.current_sample - start_sample;
-                    let duration_ms = (duration_samples as f32 / self.config.sample_rate as f32 * 1000.0) as u32;
-
+                // Track speech start
+                if is_speech_start {
+                    state.speech_start_sample = Some(state.current_sample);
+                    state.speech_triggered = true;
+                    state.silence_samples = 0;
                     tracing::debug!(
                         session_id = %session_id,
-                        duration_ms = duration_ms,
-                        min_required_ms = self.config.min_speech_duration_ms,
-                        "Speech ended, checking duration"
+                        sample = state.current_sample,
+                        "Speech started (speculative segment begins)"
                     );
-
-                    // **Step 5: Determine if this is a false positive**
-                    if duration_ms < self.config.min_speech_duration_ms {
-                        // FALSE POSITIVE - segment too short, emit cancellation
-                        let segment_id = format!("{}_{}", session_id, state.segment_counter);
-                        state.segment_counter += 1;
-
-                        let cancel_msg = RuntimeData::ControlMessage {
-                            message_type: ControlMessageType::CancelSpeculation {
-                                from_timestamp: start_sample as u64,
-                                to_timestamp: state.current_sample as u64,
-                            },
-                            segment_id: Some(segment_id.clone()),
-                            timestamp_ms: Self::current_timestamp_ms(),
-                            metadata: serde_json::json!({
-                                "reason": "speech_too_short",
-                                "duration_ms": duration_ms,
-                                "min_required_ms": self.config.min_speech_duration_ms,
-                                "vad_confidence": speech_probability,
-                            }),
-                        };
-
-                        callback(cancel_msg)?;
-                        output_count += 1;
-
-                        state.speculations_cancelled += 1;
-                        tracing::info!(
-                            session_id = %session_id,
-                            segment_id = %segment_id,
-                            duration_ms = duration_ms,
-                            acceptance_rate = state.acceptance_rate() * 100.0,
-                            "Speculation cancelled (false positive)"
-                        );
-                    } else {
-                        // CONFIRMED SPEECH - speculation accepted
-                        state.speculations_accepted += 1;
-                        state.audio_buffer.clear(); // Clear buffer, no cancellation needed
-
-                        tracing::info!(
-                            session_id = %session_id,
-                            duration_ms = duration_ms,
-                            acceptance_rate = state.acceptance_rate() * 100.0,
-                            "Speculation accepted (confirmed speech)"
-                        );
-                    }
                 }
 
-                state.speech_triggered = false;
-                state.silence_samples = 0;
-            }
+                // Update silence tracking
+                if !has_speech && state.speech_triggered {
+                    state.silence_samples += samples.len();
+                } else if has_speech {
+                    state.silence_samples = 0;
+                }
 
-            // Also emit the VAD JSON for downstream nodes that want it
-            callback(RuntimeData::Json(vad_json))?;
-            output_count += 1;
+                // Track speech end
+                if is_speech_end {
+                    if let Some(start_sample) = state.speech_start_sample.take() {
+                        let duration_samples = state.current_sample - start_sample;
+                        let duration_ms = (duration_samples as f32
+                            / self.config.sample_rate as f32
+                            * 1000.0) as u32;
+
+                        tracing::debug!(
+                            session_id = %session_id,
+                            duration_ms = duration_ms,
+                            min_required_ms = self.config.min_speech_duration_ms,
+                            "Speech ended, checking duration"
+                        );
+
+                        // **Step 5: Determine if this is a false positive**
+                        if duration_ms < self.config.min_speech_duration_ms {
+                            // FALSE POSITIVE - segment too short, queue cancellation
+                            let segment_id =
+                                format!("{}_{}", session_id, state.segment_counter);
+                            state.segment_counter += 1;
+
+                            let cancel_msg = RuntimeData::ControlMessage {
+                                message_type: ControlMessageType::CancelSpeculation {
+                                    from_timestamp: start_sample as u64,
+                                    to_timestamp: state.current_sample as u64,
+                                },
+                                segment_id: Some(segment_id.clone()),
+                                timestamp_ms: Self::current_timestamp_ms(),
+                                metadata: serde_json::json!({
+                                    "reason": "speech_too_short",
+                                    "duration_ms": duration_ms,
+                                    "min_required_ms": self.config.min_speech_duration_ms,
+                                    "vad_confidence": speech_probability,
+                                }),
+                            };
+                            pending_outputs.push(cancel_msg);
+
+                            state.speculations_cancelled += 1;
+                            tracing::info!(
+                                session_id = %session_id,
+                                segment_id = %segment_id,
+                                duration_ms = duration_ms,
+                                acceptance_rate = state.acceptance_rate() * 100.0,
+                                "Speculation cancelled (false positive)"
+                            );
+                        } else {
+                            // CONFIRMED SPEECH - speculation accepted
+                            state.speculations_accepted += 1;
+                            state.audio_buffer.clear();
+
+                            tracing::info!(
+                                session_id = %session_id,
+                                duration_ms = duration_ms,
+                                acceptance_rate = state.acceptance_rate() * 100.0,
+                                "Speculation accepted (confirmed speech)"
+                            );
+                        }
+                    }
+
+                    state.speech_triggered = false;
+                    state.silence_samples = 0;
+                }
+
+                state.current_sample += samples.len();
+            } // sessions lock released here — callbacks fire unlocked
+
+            // Always emit the VAD JSON for downstream nodes that want it
+            pending_outputs.push(RuntimeData::Json(vad_json));
+        } else {
+            // No VAD result — just advance the sample counter.
+            let mut sessions = self.sessions.lock();
+            if let Some(state) = sessions.get_mut(&session_id) {
+                state.current_sample += samples.len();
+            }
         }
 
-        state.current_sample += samples.len();
+        // Fire queued callbacks with the lock released.
+        for output in pending_outputs {
+            callback(output)?;
+            output_count += 1;
+        }
 
         Ok(output_count)
     }
@@ -448,7 +482,7 @@ mod tests {
         let coordinator = SpeculativeVADCoordinator::new();
 
         let audio = RuntimeData::Audio {
-            samples: vec![0.1, 0.2, 0.3],
+            samples: vec![0.1, 0.2, 0.3].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: None,
@@ -500,7 +534,7 @@ mod tests {
             let session_id = format!("session_{}", session_num);
 
             let audio = RuntimeData::Audio {
-                samples: vec![session_num as f32; 100],
+                samples: vec![session_num as f32; 100].into(),
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: None,
@@ -531,7 +565,7 @@ mod tests {
 
         // Create a session by processing some audio
         let audio = RuntimeData::Audio {
-            samples: vec![0.1; 100],
+            samples: vec![0.1; 100].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: None,
@@ -547,7 +581,7 @@ mod tests {
 
         // Session should exist
         {
-            let sessions = coordinator.sessions.lock().await;
+            let sessions = coordinator.sessions.lock();
             assert!(sessions.contains_key("to_cleanup"));
         }
 
@@ -556,7 +590,7 @@ mod tests {
 
         // Session should be gone
         {
-            let sessions = coordinator.sessions.lock().await;
+            let sessions = coordinator.sessions.lock();
             assert!(!sessions.contains_key("to_cleanup"));
         }
     }

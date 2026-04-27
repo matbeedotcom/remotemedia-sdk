@@ -868,10 +868,17 @@ use tokio::sync::{mpsc, Mutex};
 pub struct NapiStreamSession {
     /// Unique session identifier
     session_id: String,
-    /// Channel to send inputs to the pipeline
-    input_tx: mpsc::UnboundedSender<RuntimeData>,
-    /// Channel to receive outputs from the pipeline
-    output_rx: Arc<Mutex<mpsc::UnboundedReceiver<RuntimeData>>>,
+    /// Channel to send inputs to the pipeline.
+    ///
+    /// Bounded — `send_input` `.await`s, back-pressuring the JavaScript
+    /// caller when the pipeline is behind.
+    input_tx: mpsc::Sender<RuntimeData>,
+    /// Channel to receive outputs from the pipeline.
+    ///
+    /// Bounded — the pipeline session task `.await`s its send, so a
+    /// slow JavaScript consumer back-pressures the pipeline rather
+    /// than buffering unboundedly in Rust.
+    output_rx: Arc<Mutex<mpsc::Receiver<RuntimeData>>>,
     /// Whether the session is still active
     is_active: Arc<AtomicBool>,
     /// Shutdown signal sender
@@ -902,8 +909,12 @@ impl NapiStreamSession {
             return Err(napi::Error::from_reason("Session is closed"));
         }
 
+        // Bounded: .await blocks the JS-initiated call when the
+        // pipeline is saturated. This is the ingress backpressure
+        // surface for the FFI transport.
         self.input_tx
             .send(data.inner.clone())
+            .await
             .map_err(|e| napi::Error::from_reason(format!("Failed to send input: {}", e)))?;
 
         Ok(())
@@ -983,9 +994,22 @@ pub async fn create_stream_session(manifest_json: String) -> napi::Result<NapiSt
     let session_num = SESSION_COUNTER.fetch_add(1, Ordering::SeqCst);
     let session_id = format!("napi_session_{}", session_num);
 
-    // Create channels for communication
-    let (input_tx, mut input_rx) = mpsc::unbounded_channel::<RuntimeData>();
-    let (output_tx, output_rx) = mpsc::unbounded_channel::<RuntimeData>();
+    // Create bounded channels for communication. Same sizing as the
+    // core router defaults — 8 slots ≈ 160 ms of headroom at 48 kHz /
+    // 20 ms frames. Override via
+    // `REMOTEMEDIA_FFI_INPUT_CAPACITY` / `REMOTEMEDIA_FFI_OUTPUT_CAPACITY`.
+    let input_capacity: usize = std::env::var("REMOTEMEDIA_FFI_INPUT_CAPACITY")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|&n: &usize| n > 0)
+        .unwrap_or(8);
+    let output_capacity: usize = std::env::var("REMOTEMEDIA_FFI_OUTPUT_CAPACITY")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|&n: &usize| n > 0)
+        .unwrap_or(8);
+    let (input_tx, mut input_rx) = mpsc::channel::<RuntimeData>(input_capacity);
+    let (output_tx, output_rx) = mpsc::channel::<RuntimeData>(output_capacity);
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
     let is_active = Arc::new(AtomicBool::new(true));
@@ -1049,7 +1073,9 @@ pub async fn create_stream_session(manifest_json: String) -> napi::Result<NapiSt
                     if let Some(node) = cached_nodes.get(&first_node_id) {
                         match node.process_async(input_data).await {
                             Ok(output) => {
-                                if output_tx.send(output).is_err() {
+                                // Bounded: .await applies backpressure to the
+                                // pipeline when the JS consumer falls behind.
+                                if output_tx.send(output).await.is_err() {
                                     tracing::warn!("Session {}: Output channel closed", session_id_clone);
                                     break;
                                 }

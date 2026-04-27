@@ -122,7 +122,7 @@ def _convert_dict_list_to_manifest(items: List[Dict[str, Any]]) -> str:
     return json.dumps(manifest, indent=2)
 
 
-def execute_pipeline(
+async def execute_pipeline(
     pipeline_or_manifest: Union['Pipeline', List['Node'], str, Dict[str, Any]],
     enable_metrics: bool = False
 ) -> Any:
@@ -265,7 +265,7 @@ def execute_pipeline(
 
     # Call Rust FFI with manifest JSON
     logger.debug(f"Calling Rust runtime execute_pipeline (metrics={enable_metrics})")
-    return _runtime.execute_pipeline(manifest_json, enable_metrics)
+    return await _runtime.execute_pipeline(manifest_json, enable_metrics)
 
 
 async def execute_pipeline_with_input(
@@ -397,7 +397,7 @@ async def execute_pipeline_with_input(
 
     # Call Rust FFI with manifest JSON and input data
     logger.debug(f"Calling Rust runtime execute_pipeline_with_input (metrics={enable_metrics}, inputs={len(input_data)})")
-    return _runtime.execute_pipeline_with_input(manifest_json, input_data, enable_metrics)
+    return await _runtime.execute_pipeline_with_input(manifest_json, input_data, enable_metrics)
 
 
 __all__ = [

@@ -91,6 +91,46 @@ pub trait SyncStreamingNode: Send + Sync {
     fn is_multi_input(&self) -> bool {
         false
     }
+
+    /// Process one input and emit zero or more outputs via `callback`.
+    ///
+    /// This is the sync analogue of
+    /// [`AsyncStreamingNode::process_streaming`]. Multi-output sync
+    /// nodes override it; single-output nodes use the default impl,
+    /// which invokes `process` and fires `callback` exactly once.
+    ///
+    /// The callback is `&mut dyn FnMut` (not a generic) so the trait
+    /// remains dyn-compatible — `Box<dyn SyncStreamingNode>` stays
+    /// constructible, which the registry + wrapper both depend on.
+    /// `SyncNodeWrapper` forwards the router's owned `Box<dyn FnMut>`
+    /// through a deref-coercion, so the callback path adds no
+    /// allocation at the boundary.
+    ///
+    /// `session_id` is passed through for nodes that key internal
+    /// state by session (e.g. per-session chunker buffers). Borrowed
+    /// as `&str` to avoid the `String::clone` that the async variant
+    /// pays; the wrapper derives it from an owned `Option<String>`.
+    ///
+    /// # RT-safety
+    ///
+    /// Default impl is RT-safe if `process` is. Overrides must not
+    /// allocate or acquire contended locks on the hot path.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from `process`, from `callback`, or from
+    /// the override's own logic. A callback returning `Err` aborts
+    /// the stream; a failed `process` is returned as-is without
+    /// firing the callback.
+    fn process_streaming(
+        &self,
+        data: RuntimeData,
+        _session_id: Option<&str>,
+        callback: &mut dyn FnMut(RuntimeData) -> Result<(), Error>,
+    ) -> Result<usize, Error> {
+        callback(self.process(data)?)?;
+        Ok(1)
+    }
 }
 
 /// Asynchronous streaming node trait
@@ -399,6 +439,32 @@ impl<T: SyncStreamingNode + 'static> StreamingNode for SyncNodeWrapper<T> {
 
     fn is_multi_input(&self) -> bool {
         self.0.is_multi_input()
+    }
+
+    /// Forward the router's boxed callback into the sync
+    /// `SyncStreamingNode::process_streaming`. No allocation — the
+    /// caller's `Box<dyn FnMut>` is invoked directly. Critically,
+    /// multi-output sync nodes that override `process_streaming`
+    /// emit N outputs as expected; single-output nodes fall through
+    /// to the default impl which fires the callback exactly once.
+    ///
+    /// Before A-Wave 2, `SyncNodeWrapper` didn't override this
+    /// method — migrating a multi-output node would have silently
+    /// collapsed N events into one via the default
+    /// `StreamingNode::process_streaming_async` path.
+    async fn process_streaming_async(
+        &self,
+        data: RuntimeData,
+        session_id: Option<String>,
+        mut callback: Box<dyn FnMut(RuntimeData) -> Result<(), Error> + Send>,
+    ) -> Result<usize, Error> {
+        // `Box<dyn FnMut + Send>` → `&mut dyn FnMut`: coerced via
+        // `&mut *callback`. No allocation — the router's owned box
+        // is used as-is. `session_id` borrowed as `&str` so sync
+        // nodes that key by session don't pay the String::clone cost
+        // of the async variant.
+        self.0
+            .process_streaming(data, session_id.as_deref(), &mut *callback)
     }
 }
 

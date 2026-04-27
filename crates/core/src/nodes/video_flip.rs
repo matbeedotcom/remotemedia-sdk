@@ -3,9 +3,8 @@
 //! Flips video frames vertically (upside down) or horizontally.
 
 use crate::data::RuntimeData;
-use crate::nodes::streaming_node::AsyncStreamingNode;
+use crate::nodes::streaming_node::SyncStreamingNode;
 use crate::Error;
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 /// Flip direction
@@ -217,13 +216,15 @@ impl VideoFlipNode {
     }
 }
 
-#[async_trait]
-impl AsyncStreamingNode for VideoFlipNode {
+// Phase A-Wave 1: `SyncStreamingNode` — body is pure pixel flipping,
+// no `.await`. Factory registration switches from `AsyncNodeWrapper`
+// to `SyncNodeWrapper` in `streaming_registry.rs`.
+impl SyncStreamingNode for VideoFlipNode {
     fn node_type(&self) -> &str {
         "VideoFlip"
     }
 
-    async fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         match data {
             RuntimeData::Video {
                 pixel_data,
@@ -309,7 +310,7 @@ mod tests {
             arrival_ts_us: None,
         };
 
-        let output = node.process(input_data).await.unwrap();
+        let output = node.process(input_data).unwrap();
 
         if let RuntimeData::Video { pixel_data, .. } = output {
             // After vertical flip:
@@ -352,7 +353,7 @@ mod tests {
             arrival_ts_us: None,
         };
 
-        let output = node.process(input_data).await.unwrap();
+        let output = node.process(input_data).unwrap();
 
         if let RuntimeData::Video { pixel_data, .. } = output {
             // After horizontal flip:
@@ -400,7 +401,7 @@ mod tests {
             arrival_ts_us: None,
         };
 
-        let output = node.process(input_data).await.unwrap();
+        let output = node.process(input_data).unwrap();
 
         if let RuntimeData::Video {
             pixel_data,

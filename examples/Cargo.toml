@@ -8,6 +8,7 @@ members = [
     "cli/pipeline-embed",
     "cli/stream-health-demo",
     "cli/tts-dataset-gen",
+    "cli/session-replay",
     # Future Rust examples can be added here
 ]
 resolver = "2"

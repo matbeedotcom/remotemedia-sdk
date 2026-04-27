@@ -8,7 +8,7 @@
 //! - Stereo: speaking_left, speaking_right, speaking_both, overlap, silent, dead_air
 
 use crate::data::RuntimeData;
-use crate::nodes::StreamingNode;
+use crate::nodes::{StreamingNode, SyncNodeWrapper, SyncStreamingNode};
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -418,26 +418,19 @@ impl SpeechPresenceNode {
     }
 }
 
-#[async_trait::async_trait]
-impl StreamingNode for SpeechPresenceNode {
+// Phase A-Wave 1: `SyncStreamingNode` — body is sync; internal state
+// uses `std::sync::RwLock` (no `.await`). Wrapped through
+// `SyncNodeWrapper` at the registry boundary.
+impl SyncStreamingNode for SpeechPresenceNode {
     fn node_type(&self) -> &str {
         "SpeechPresenceNode"
     }
 
-    fn node_id(&self) -> &str {
-        &self.node_id
-    }
-
-    async fn initialize(&self) -> Result<(), Error> {
-        tracing::debug!("SpeechPresenceNode {} initialized", self.node_id);
-        Ok(())
-    }
-
-    async fn process_async(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
+    fn process(&self, data: RuntimeData) -> Result<RuntimeData, Error> {
         self.process_audio(data)
     }
 
-    async fn process_multi_async(
+    fn process_multi(
         &self,
         inputs: HashMap<String, RuntimeData>,
     ) -> Result<RuntimeData, Error> {
@@ -471,7 +464,7 @@ impl crate::nodes::StreamingNodeFactory for SpeechPresenceNodeFactory {
             serde_json::from_value(params.clone()).unwrap_or_default()
         };
 
-        Ok(Box::new(SpeechPresenceNode::new(node_id, config)))
+        Ok(Box::new(SyncNodeWrapper(SpeechPresenceNode::new(node_id, config))))
     }
 
     fn node_type(&self) -> &str {
@@ -527,7 +520,7 @@ mod tests {
 
         // Silent audio
         let silent_input = RuntimeData::Audio {
-            samples: vec![0.0; 1600],
+            samples: vec![0.0; 1600].into(),
             sample_rate: 16000,
             channels: 1,
             stream_id: Some("test".to_string()),
@@ -536,7 +529,7 @@ mod tests {
             metadata: None,
         };
 
-        let result = node.process_async(silent_input).await.unwrap();
+        let result = node.process(silent_input).unwrap();
         if let RuntimeData::Json(json) = result {
             if !json.is_null() {
                 assert_eq!(json["state"], "silent");
@@ -560,7 +553,7 @@ mod tests {
             .collect();
 
         let input = RuntimeData::Audio {
-            samples,
+            samples: samples.into(),
             sample_rate: 16000,
             channels: 2,
             stream_id: Some("test".to_string()),
@@ -569,7 +562,7 @@ mod tests {
             metadata: None,
         };
 
-        let result = node.process_async(input).await.unwrap();
+        let result = node.process(input).unwrap();
         if let RuntimeData::Json(json) = result {
             if !json.is_null() {
                 assert_eq!(json["state"], "speaking_left");

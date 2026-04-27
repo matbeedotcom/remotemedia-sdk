@@ -11,13 +11,12 @@
 /// - Special tokens like <|text_end|>
 ///
 /// When a sentence boundary is detected (. ! ? , ; :), it outputs the accumulated text.
-use crate::data::RuntimeData;
-use crate::error::{Error, Result};
-use crate::nodes::AsyncStreamingNode;
-use async_trait::async_trait;
+use crate::data::{split_text_str, tag_text_str, RuntimeData, TEXT_CHANNEL_DEFAULT};
+use crate::error::Error;
+use crate::nodes::SyncStreamingNode;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use parking_lot::Mutex;
 
 /// Text Collector Node configuration
 ///
@@ -87,17 +86,7 @@ pub struct TextCollectorNode {
 impl TextCollectorNode {
     /// Create a new TextCollectorNode with the given configuration
     pub fn with_config(config: TextCollectorConfig) -> Self {
-        // Parse split pattern to extract boundary characters
-        // Default: [.!?;\n]+ (no commas - we want to keep them in sentences)
-        let boundary_chars = if let Some(pattern) = config.split_pattern {
-            // Simple parsing: extract characters from pattern like [.!?;\n]+
-            pattern
-                .chars()
-                .filter(|c| !['[', ']', '+', '\\', 'n', 'r', 't'].contains(c))
-                .collect()
-        } else {
-            vec!['.', '!', '?', ';', '\n']
-        };
+        let boundary_chars = parse_boundary_chars(config.split_pattern.as_deref());
 
         Self {
             boundary_chars,
@@ -112,7 +101,7 @@ impl TextCollectorNode {
         split_pattern: Option<String>,
         min_sentence_length: Option<usize>,
         yield_partial_on_end: Option<bool>,
-    ) -> Result<Self> {
+    ) -> Result<Self, Error> {
         Ok(Self::with_config(TextCollectorConfig {
             split_pattern,
             min_sentence_length: min_sentence_length.unwrap_or(3),
@@ -120,72 +109,98 @@ impl TextCollectorNode {
         }))
     }
 
-    fn is_boundary_char(&self, c: char) -> bool {
-        self.boundary_chars.contains(&c)
-    }
-
     fn extract_complete_sentences(&self, buffer: &str) -> (Vec<String>, String) {
-        let mut sentences = Vec::new();
-        let mut current_sentence = String::new();
-        let chars: Vec<char> = buffer.chars().collect();
-
-        let mut i = 0;
-        while i < chars.len() {
-            let c = chars[i];
-            current_sentence.push(c);
-
-            // Check if this is a boundary character
-            if self.is_boundary_char(c) {
-                // Include consecutive boundary chars in the sentence
-                while i + 1 < chars.len() && self.is_boundary_char(chars[i + 1]) {
-                    i += 1;
-                    current_sentence.push(chars[i]);
-                }
-
-                // We've found a complete sentence
-                // Only trim leading whitespace, preserve trailing punctuation spacing
-                let sentence = current_sentence.trim_start().to_string();
-                if sentence.len() >= self.min_sentence_length {
-                    sentences.push(sentence);
-                }
-                current_sentence.clear();
-            }
-
-            i += 1;
-        }
-
-        // Remainder (incomplete sentence) - don't trim to preserve spacing
-        let remainder = current_sentence;
-
-        (sentences, remainder)
+        extract_sentences(buffer, &self.boundary_chars, self.min_sentence_length)
     }
 }
 
-#[async_trait]
-impl AsyncStreamingNode for TextCollectorNode {
+/// Extract complete sentences from a buffer using the given boundary chars.
+///
+/// Walks the buffer character by character; when a boundary char is seen,
+/// consumes any run of further boundary chars and emits the accumulated
+/// slice as one sentence (trimmed of leading whitespace only). Returns
+/// `(sentences, remainder)` — callers keep `remainder` in their own
+/// buffer and re-feed it on the next call.
+///
+/// Shared between `TextCollectorNode` and `ConversationCoordinatorNode`
+/// so the sentence-boundary semantics stay in lockstep across both.
+pub(crate) fn extract_sentences(
+    buffer: &str,
+    boundary_chars: &[char],
+    min_sentence_length: usize,
+) -> (Vec<String>, String) {
+    let mut sentences = Vec::new();
+    let mut current_sentence = String::new();
+    let chars: Vec<char> = buffer.chars().collect();
+    let is_boundary = |c: char| boundary_chars.contains(&c);
+
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        current_sentence.push(c);
+
+        if is_boundary(c) {
+            while i + 1 < chars.len() && is_boundary(chars[i + 1]) {
+                i += 1;
+                current_sentence.push(chars[i]);
+            }
+
+            let sentence = current_sentence.trim_start().to_string();
+            if sentence.len() >= min_sentence_length {
+                sentences.push(sentence);
+            }
+            current_sentence.clear();
+        }
+
+        i += 1;
+    }
+
+    let remainder = current_sentence;
+    (sentences, remainder)
+}
+
+/// Parse a split-pattern string like `"[.!?;\\n]+"` into the set of
+/// boundary characters. Used by both `TextCollectorNode` and
+/// `ConversationCoordinatorNode` so configs stay compatible.
+pub(crate) fn parse_boundary_chars(pattern: Option<&str>) -> Vec<char> {
+    if let Some(pattern) = pattern {
+        pattern
+            .chars()
+            .filter(|c| !['[', ']', '+', '\\', 'n', 'r', 't'].contains(c))
+            .collect()
+    } else {
+        vec!['.', '!', '?', ';', '\n']
+    }
+}
+
+// Phase A-Wave 2: migrated to `SyncStreamingNode`. The body was
+// already sync (parking_lot::Mutex, no `.await`); only the trait
+// wrapping changes. Multi-output sentence emission preserved via the
+// `SyncStreamingNode::process_streaming` hook.
+impl SyncStreamingNode for TextCollectorNode {
     fn node_type(&self) -> &str {
         "TextCollectorNode"
     }
 
-    async fn process(&self, _data: RuntimeData) -> Result<RuntimeData> {
+    fn process(&self, _data: RuntimeData) -> Result<RuntimeData, Error> {
         Err(Error::Execution(
-            "TextCollectorNode requires streaming mode - use process_streaming() instead".into(),
+            "TextCollectorNode requires streaming mode - \
+             callers must use process_streaming() (the router does this \
+             automatically when the factory declares is_multi_output_streaming=true)"
+                .into(),
         ))
     }
 
-    async fn process_streaming<F>(
+    fn process_streaming(
         &self,
         data: RuntimeData,
-        session_id: Option<String>,
-        mut callback: F,
-    ) -> Result<usize>
-    where
-        F: FnMut(RuntimeData) -> Result<()> + Send,
-    {
-        let session_key = session_id.clone().unwrap_or_else(|| "default".to_string());
+        session_id: Option<&str>,
+        callback: &mut dyn FnMut(RuntimeData) -> Result<(), Error>,
+    ) -> Result<usize, Error> {
+        let session_key = session_id.unwrap_or("default").to_string();
 
         // Only process text data
-        let text_chunk = match &data {
+        let raw_text_chunk = match &data {
             RuntimeData::Text(text_string) => text_string.clone(),
             _ => {
                 // Pass through non-text data unchanged
@@ -198,92 +213,95 @@ impl AsyncStreamingNode for TextCollectorNode {
             }
         };
 
+        // Channel-aware routing. Only the default (`"tts"`) channel
+        // gets sentence-split — UI/display channels are passthrough so
+        // their markdown / code blocks reach downstream consumers
+        // verbatim and don't get carved up mid-line by the sentence
+        // boundary regex.
+        let (channel, content) = split_text_str(&raw_text_chunk);
+        if channel != TEXT_CHANNEL_DEFAULT {
+            tracing::debug!(
+                "[TextCollector] Session {}: passthrough channel={} ({} chars)",
+                session_key,
+                channel,
+                content.len(),
+            );
+            // Re-attach the channel prefix so downstream nodes continue
+            // to see the same tagged payload shape.
+            callback(RuntimeData::Text(tag_text_str(content, channel)))?;
+            return Ok(1);
+        }
+        let text_chunk = content.to_string();
+
         tracing::debug!(
             "[TextCollector] Session {}: Received text chunk: '{}'",
             session_key,
             text_chunk
         );
 
-        let mut states = self.states.lock().await;
-        let state = states
-            .entry(session_key.clone())
-            .or_insert_with(TextBufferState::default);
-
-        // Check for special end tokens
+        // Collect outputs under the lock, release, then fire callbacks.
+        // parking_lot::Mutex is safe here because we never hold it across
+        // an `.await`.
         let has_text_end = text_chunk.contains("<|text_end|>");
         let has_audio_end = text_chunk.contains("<|audio_end|>");
-
-        // Remove special tokens from the text (don't trim to preserve spacing)
         let cleaned_text = text_chunk
             .replace("<|text_end|>", "")
             .replace("<|audio_end|>", "")
             .to_string();
 
-        // Add to buffer
-        state.accumulated_text.push_str(&cleaned_text);
-        state.chunks_accumulated += 1;
+        let mut pending: Vec<RuntimeData> = Vec::new();
+        {
+            let mut states = self.states.lock();
+            let state = states
+                .entry(session_key.clone())
+                .or_insert_with(TextBufferState::default);
 
-        tracing::debug!(
-            "[TextCollector] Session {}: Buffer now: '{}' ({} chars)",
-            session_key,
-            state.accumulated_text,
-            state.accumulated_text.len()
-        );
+            state.accumulated_text.push_str(&cleaned_text);
+            state.chunks_accumulated += 1;
 
-        // Extract complete sentences
-        let (sentences, remainder) = self.extract_complete_sentences(&state.accumulated_text);
-
-        let mut output_count = 0;
-
-        // Yield complete sentences
-        for sentence in sentences {
-            tracing::info!(
-                "[TextCollector] Session {}: Yielding sentence: '{}'",
+            tracing::debug!(
+                "[TextCollector] Session {}: Buffer now: '{}' ({} chars)",
                 session_key,
-                sentence
+                state.accumulated_text,
+                state.accumulated_text.len()
             );
-            callback(RuntimeData::Text(sentence))?;
-            output_count += 1;
-        }
 
-        // Update buffer with remainder
-        state.accumulated_text = remainder;
-
-        // Handle end tokens
-        if has_text_end || has_audio_end {
-            // Yield any remaining partial sentence if configured
-            if self.yield_partial_on_end && !state.accumulated_text.is_empty() {
-                tracing::info!(
-                    "[TextCollector] Session {}: Yielding partial on end: '{}'",
+            let (sentences, remainder) =
+                self.extract_complete_sentences(&state.accumulated_text);
+            for sentence in sentences {
+                tracing::debug!(
+                    "[TextCollector] Session {}: Yielding sentence: '{}'",
                     session_key,
-                    state.accumulated_text
+                    sentence
                 );
-                callback(RuntimeData::Text(state.accumulated_text.clone()))?;
-                output_count += 1;
+                pending.push(RuntimeData::Text(sentence));
+            }
+            state.accumulated_text = remainder;
+
+            if has_text_end || has_audio_end {
+                if self.yield_partial_on_end && !state.accumulated_text.is_empty() {
+                    tracing::debug!(
+                        "[TextCollector] Session {}: Yielding partial on end: '{}'",
+                        session_key,
+                        state.accumulated_text
+                    );
+                    pending.push(RuntimeData::Text(state.accumulated_text.clone()));
+                    state.accumulated_text.clear();
+                }
+                if has_text_end {
+                    pending.push(RuntimeData::Text("<|text_end|>".to_string()));
+                }
+                if has_audio_end {
+                    pending.push(RuntimeData::Text("<|audio_end|>".to_string()));
+                }
                 state.accumulated_text.clear();
+                state.chunks_accumulated = 0;
             }
+        } // lock released before firing callbacks
 
-            // Pass through end tokens
-            if has_text_end {
-                tracing::info!(
-                    "[TextCollector] Session {}: Passing through <|text_end|>",
-                    session_key
-                );
-                callback(RuntimeData::Text("<|text_end|>".to_string()))?;
-                output_count += 1;
-            }
-            if has_audio_end {
-                tracing::info!(
-                    "[TextCollector] Session {}: Passing through <|audio_end|>",
-                    session_key
-                );
-                callback(RuntimeData::Text("<|audio_end|>".to_string()))?;
-                output_count += 1;
-            }
-
-            // Reset state for next message
-            state.accumulated_text.clear();
-            state.chunks_accumulated = 0;
+        let output_count = pending.len();
+        for out in pending {
+            callback(out)?;
         }
 
         Ok(output_count)

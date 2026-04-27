@@ -43,6 +43,7 @@ pub mod audio;
 pub mod capabilities;
 pub mod executor;
 pub mod ingestion;
+pub mod metrics;
 pub mod nodes;
 pub mod python;
 pub mod validation;
@@ -76,15 +77,21 @@ pub mod data {
     use serde::{Deserialize, Serialize};
 
     // Low-latency streaming data structures (spec 007)
+    pub mod audio_buffer_pool;
+    pub mod audio_samples;
     pub mod buffering_policy;
     pub mod control_message;
     pub mod ring_buffer;
     pub mod speculative_segment;
+    pub mod text_channel;
 
+    pub use audio_buffer_pool::{AudioBufferPool, PooledAudioBuf};
+    pub use audio_samples::AudioSamples;
     pub use buffering_policy::{BufferingPolicy, MergeStrategy};
     pub use control_message::{ControlMessage, ControlMessageType};
     pub use ring_buffer::RingBuffer;
     pub use speculative_segment::{SegmentStatus, SpeculativeSegment};
+    pub use text_channel::{split_text_str, tag_text_str, TEXT_CHANNEL_DEFAULT};
 
     // Video codec support (spec 012)
     pub mod video;
@@ -131,8 +138,13 @@ pub mod data {
     pub enum RuntimeData {
         /// Audio samples (f32 PCM)
         Audio {
-            /// Audio samples as f32
-            samples: Vec<f32>,
+            /// Audio samples.
+            ///
+            /// Backed by [`AudioSamples`], which can hold a `Vec<f32>`,
+            /// an `Arc<[f32]>` (zero-copy shared), or a `PooledAudioBuf`
+            /// (returns to an [`AudioBufferPool`] on drop). All three
+            /// `Deref` to `&[f32]` so read sites work unchanged.
+            samples: AudioSamples,
             /// Sample rate in Hz
             sample_rate: u32,
             /// Number of channels (1=mono, 2=stereo)
@@ -767,7 +779,7 @@ mod tests {
     #[test]
     fn test_runtime_data_timing_audio() {
         let audio = data::RuntimeData::Audio {
-            samples: vec![0.0; 100],
+            samples: vec![0.0; 100].into(),
             sample_rate: 44100,
             channels: 1,
             stream_id: Some("audio_main".to_string()),
@@ -825,7 +837,7 @@ mod tests {
     #[test]
     fn test_runtime_data_set_timestamps() {
         let mut audio = data::RuntimeData::Audio {
-            samples: vec![0.0; 100],
+            samples: vec![0.0; 100].into(),
             sample_rate: 44100,
             channels: 1,
             stream_id: None,

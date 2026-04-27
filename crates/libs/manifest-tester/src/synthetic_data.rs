@@ -45,7 +45,7 @@ impl SyntheticDataFactory {
             .collect();
 
         RuntimeData::Audio {
-            samples,
+            samples: samples.into(),
             sample_rate,
             channels,
             stream_id: None,
@@ -80,7 +80,7 @@ impl SyntheticDataFactory {
             .collect();
 
         RuntimeData::Audio {
-            samples,
+            samples: samples.into(),
             sample_rate,
             channels: 1,
             stream_id: None,
@@ -109,7 +109,7 @@ pub fn generate_audio_chunks(
             .collect();
 
         chunks.push(RuntimeData::Audio {
-            samples,
+            samples: samples.into(),
             sample_rate,
             channels: 1,
             stream_id: None,
@@ -271,7 +271,7 @@ pub fn load_wav(path: &Path) -> Result<RuntimeData, String> {
     );
 
     Ok(RuntimeData::Audio {
-        samples,
+        samples: samples.into(),
         sample_rate,
         channels: channels as u32,
         stream_id: None,
@@ -298,7 +298,7 @@ pub fn load_wav_chunked(path: &Path, chunk_size: usize) -> Result<Vec<RuntimeDat
                     let offset_samples = i * chunk_size;
                     let timestamp_us = (offset_samples as u64 * 1_000_000) / sample_rate as u64;
                     RuntimeData::Audio {
-                        samples: chunk.to_vec(),
+                        samples: chunk.to_vec().into(),
                         sample_rate,
                         channels,
                         stream_id: None,

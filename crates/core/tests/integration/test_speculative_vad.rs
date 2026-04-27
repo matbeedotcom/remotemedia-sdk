@@ -136,7 +136,7 @@ async fn test_speculative_forwarding_immediate() {
     let gate = MockSpeculativeVADGate::new(150, 50, false);
 
     let audio_input = RuntimeData::Audio {
-        samples: vec![0.1, 0.2, 0.3, 0.4, 0.5], // 5 samples
+        samples: vec![0.1, 0.2, 0.3, 0.4, 0.5].into(), // 5 samples
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
@@ -178,7 +178,7 @@ async fn test_cancellation_on_false_positive() {
     let gate = MockSpeculativeVADGate::new(150, 50, true); // should_cancel=true
 
     let audio_input = RuntimeData::Audio {
-        samples: vec![0.1, 0.2, 0.3, 0.4, 0.5],
+        samples: vec![0.1, 0.2, 0.3, 0.4, 0.5].into(),
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
@@ -253,7 +253,7 @@ async fn test_ring_buffer_storage() {
     // Send multiple audio chunks
     for i in 0..3 {
         let audio = RuntimeData::Audio {
-            samples: vec![i as f32; 100], // 100 samples per chunk
+            samples: vec![i as f32; 100].into(), // 100 samples per chunk
             sample_rate: 16000,
             channels: 1,
             stream_id: None,
@@ -288,7 +288,7 @@ async fn test_speculation_acceptance_tracking() {
     let gate_cancel = MockSpeculativeVADGate::new(150, 50, true);
 
     let audio = RuntimeData::Audio {
-        samples: vec![0.1; 100],
+        samples: vec![0.1; 100].into(),
         sample_rate: 16000,
         channels: 1,
         stream_id: None,
@@ -340,7 +340,7 @@ async fn test_concurrent_sessions() {
         let gate_clone = gate.clone();
         let handle = tokio::spawn(async move {
             let audio = RuntimeData::Audio {
-                samples: vec![session_num as f32; 100],
+                samples: vec![session_num as f32; 100].into(),
                 sample_rate: 16000,
                 channels: 1,
                 stream_id: None,

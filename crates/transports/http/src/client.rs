@@ -333,8 +333,12 @@ pub struct HttpStreamSession {
     /// HTTP client
     client: reqwest::Client,
 
-    /// Receiver for output data from SSE stream
-    output_rx: mpsc::UnboundedReceiver<TransportData>,
+    /// Receiver for output data from SSE stream.
+    ///
+    /// Bounded — the background SSE parser task `.await`s its send, so
+    /// a slow consumer back-pressures the SSE stream parsing rather
+    /// than buffering events unboundedly in memory.
+    output_rx: mpsc::Receiver<TransportData>,
 
     /// Whether the session is active
     active: bool,
@@ -351,8 +355,16 @@ impl HttpStreamSession {
         auth_token: Option<String>,
         client: reqwest::Client,
     ) -> Result<Self> {
-        // Create channel for outputs
-        let (output_tx, output_rx) = mpsc::unbounded_channel();
+        // Create bounded channel for SSE outputs. Small capacity because
+        // SSE events are typically text/JSON frames and we want to
+        // back-pressure the stream quickly when the consumer falls behind.
+        // Override via `REMOTEMEDIA_HTTP_CLIENT_OUTPUT_CAPACITY`.
+        let capacity: usize = std::env::var("REMOTEMEDIA_HTTP_CLIENT_OUTPUT_CAPACITY")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .filter(|&n: &usize| n > 0)
+            .unwrap_or(16);
+        let (output_tx, output_rx) = mpsc::channel(capacity);
 
         // Start SSE stream in background task
         let sse_url = format!("{}/stream/{}/output", base_url, session_id);
@@ -390,7 +402,9 @@ impl HttpStreamSession {
                                                     data_line.trim(),
                                                 )
                                             {
-                                                if output_tx.send(transport_data).is_err() {
+                                                // Bounded: .await applies backpressure to SSE parsing
+                                                // when the consumer falls behind.
+                                                if output_tx.send(transport_data).await.is_err() {
                                                     tracing::debug!(
                                                         "SSE receiver dropped, stopping stream"
                                                     );

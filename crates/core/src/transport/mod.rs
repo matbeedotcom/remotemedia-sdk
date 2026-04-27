@@ -30,6 +30,8 @@ pub mod client;
 pub mod data;
 pub mod plugin_registry;
 pub mod session;
+pub mod session_control;
+pub mod session_recorder;
 pub mod session_router;
 
 // PipelineExecutor facade (spec 026)
@@ -39,10 +41,12 @@ pub mod executor;
 // Re-export key types for convenience
 pub use client::{ClientStreamSession, PipelineClient, TransportType};
 pub use data::TransportData;
-pub use executor::{ExecutorConfig, PipelineExecutor, SessionHandle};
+pub use executor::{ExecutorConfig, PipelineExecutor, SessionHandle, SessionInputSender};
 pub use plugin_registry::TransportPluginRegistry;
 pub use session::{StreamSession, StreamSessionHandle};
-pub use session_router::{DataPacket, SessionRouter};
+pub use session_router::{
+    DataPacket, SessionRouter, DEFAULT_ROUTER_INPUT_CAPACITY, DEFAULT_ROUTER_OUTPUT_CAPACITY,
+};
 
 
 /// Configuration for creating a transport client

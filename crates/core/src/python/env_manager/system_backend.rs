@@ -134,8 +134,28 @@ impl EnvBackend for SystemBackend {
             return Ok(());
         }
 
-        let mut args = vec!["-m".to_string(), "pip".to_string(), "install".to_string()];
-        args.extend(deps.iter().cloned());
+        // Write a requirements file instead of passing deps as argv. pip
+        // parses each line with its own tokenizer, so `-e /path/to/src`
+        // round-trips correctly — whereas handing it as a single argv
+        // element makes pip treat the whole "-e /path" string as one
+        // requirement name and reject it with "not a valid editable
+        // requirement". Mirrors the uv_backend approach.
+        let req_path = venv.path.join("requirements.txt");
+        std::fs::write(&req_path, deps.join("\n")).map_err(|e| {
+            Error::Execution(format!(
+                "Failed to write requirements.txt to {}: {}",
+                req_path.display(),
+                e
+            ))
+        })?;
+
+        let args = vec![
+            "-m".to_string(),
+            "pip".to_string(),
+            "install".to_string(),
+            "-r".to_string(),
+            req_path.to_string_lossy().into_owned(),
+        ];
 
         let output = Command::new(&venv.python_executable)
             .args(&args)
@@ -148,6 +168,8 @@ impl EnvBackend for SystemBackend {
                     e
                 ))
             })?;
+
+        let _ = std::fs::remove_file(&req_path);
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

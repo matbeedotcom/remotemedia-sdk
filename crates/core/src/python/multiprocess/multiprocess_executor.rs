@@ -76,9 +76,13 @@ fn global_sessions(
 enum IpcCommand {
     /// Send data to the node's input channel
     SendData { data: IPCRuntimeData },
-    /// Register a callback for continuous output forwarding
+    /// Register a bounded callback channel for continuous output forwarding.
+    ///
+    /// The IPC thread uses `blocking_send` on this channel, so a full queue
+    /// will back-pressure the iceoryx2 subscriber loop — which in turn back-
+    /// pressures the Python process via iceoryx2's own publisher limits.
     RegisterOutputCallback {
-        callback_tx: tokio::sync::mpsc::UnboundedSender<IPCRuntimeData>,
+        callback_tx: tokio::sync::mpsc::Sender<IPCRuntimeData>,
     },
     /// Request graceful shutdown of the IPC thread
     Shutdown,
@@ -516,11 +520,11 @@ impl MultiprocessExecutor {
             ctx.node_id
         );
 
-        // Timeout for waiting on outputs — if no output arrives within this duration
-        // after we've already received at least one, assume the node is done processing
-        // this input. For the first output, use a longer timeout to allow for model inference.
-        let initial_timeout = std::time::Duration::from_secs(300); // 5 min for first output (model loading)
-        let subsequent_timeout = std::time::Duration::from_secs(2); // 2s gap = done
+        // Upper bound only. The hot path is the `EndOfInput` sentinel — Python
+        // emits it after each `process()` call, so we return immediately.
+        // This fallback fires only if the Python node crashes or never signals
+        // completion (e.g. an older client without the sentinel).
+        let hard_timeout = std::time::Duration::from_secs(300);
 
         loop {
             tracing::debug!(
@@ -528,13 +532,7 @@ impl MultiprocessExecutor {
                 ctx.node_id
             );
 
-            let timeout = if output_count == 0 {
-                initial_timeout
-            } else {
-                subsequent_timeout
-            };
-
-            match tokio::time::timeout(timeout, resp_rx.recv()).await {
+            match tokio::time::timeout(hard_timeout, resp_rx.recv()).await {
                 Err(_) => {
                     // Timeout — no more outputs from the node for this input
                     tracing::debug!(
@@ -546,6 +544,17 @@ impl MultiprocessExecutor {
                 }
                 Ok(recv_result) => match recv_result {
                 Some(IpcResponse::OutputData(ipc_output)) => {
+                    // `EndOfInput` is the Python side's "done for this input"
+                    // signal. Return immediately — no payload to convert.
+                    if ipc_output.data_type == super::data_transfer::DataType::EndOfInput {
+                        tracing::debug!(
+                            "[Multiprocess] Received EndOfInput from node '{}' after {} outputs",
+                            ctx.node_id,
+                            output_count
+                        );
+                        return Ok(output_count);
+                    }
+
                     tracing::debug!(
                         "[Multiprocess] Received OutputData from node '{}': type={:?}, {} bytes",
                         ctx.node_id,
@@ -605,14 +614,19 @@ impl MultiprocessExecutor {
         }
     }
 
-    /// Register a callback for continuous output forwarding from a node's IPC thread
-    /// The callback will receive ALL outputs from the node, independent of any input processing
+    /// Register a bounded callback channel for continuous output forwarding
+    /// from a node's IPC thread. The callback will receive ALL outputs from
+    /// the node, independent of any input processing.
+    ///
+    /// The sender is bounded — the caller chooses the capacity. The IPC
+    /// thread uses `blocking_send`, so a full receiver applies real
+    /// backpressure all the way back to the Python process.
     #[cfg(feature = "multiprocess")]
     pub async fn register_output_callback(
         &self,
         node_id: &str,
         session_id: &str,
-        callback_tx: tokio::sync::mpsc::UnboundedSender<IPCRuntimeData>,
+        callback_tx: tokio::sync::mpsc::Sender<IPCRuntimeData>,
     ) -> Result<()> {
         // Get the IPC thread from global sessions storage
         let global_sessions = global_sessions();
@@ -794,6 +808,16 @@ impl MultiprocessExecutor {
 
         match data {
             MainRD::Text(text) => IPCRuntimeData::text(text, session_id),
+            MainRD::Json(value) => {
+                // Serialize JSON payloads as UTF-8 text over IPC. The Python
+                // receiver can `json.loads(data.as_text())` to recover the
+                // structured value. This is also the route the Session
+                // Control Bus takes when `publish(addr_with_port, ...)` wraps
+                // the user payload in an aux-port envelope
+                // `{ "__aux_port__": "context", "payload": ... }`.
+                let text = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
+                IPCRuntimeData::text(&text, session_id)
+            }
             MainRD::Audio {
                 samples,
                 sample_rate,
@@ -915,7 +939,7 @@ impl MultiprocessExecutor {
                     .collect();
 
                 Ok(MainRD::Audio {
-                    samples,
+                    samples: samples.into(),
                     sample_rate,
                     channels,
                     stream_id: None,
@@ -1855,17 +1879,21 @@ except Exception:
                 node_id_clone
             );
 
-            // Optional callback for continuous output forwarding
-            let mut output_callback: Option<tokio::sync::mpsc::UnboundedSender<IPCRuntimeData>> =
-                None;
+            // Optional bounded callback for continuous output forwarding.
+            // Uses blocking_send from this sync OS thread so a full queue
+            // naturally stalls the iceoryx2 subscriber loop below.
+            let mut output_callback: Option<tokio::sync::mpsc::Sender<IPCRuntimeData>> = None;
 
             // Main loop: process commands using persistent publishers/subscribers
             loop {
                 // Check for commands (non-blocking poll)
                 match cmd_rx.try_recv() {
                     Ok(IpcCommand::SendData { data }) => {
-                        // Send using persistent publisher (no delay needed!)
-                        tracing::info!(
+                        // Per-frame hot path: keep tracing at trace!/debug! to avoid
+                        // allocating a format-args record per audio frame. Use
+                        // `RUST_LOG=remotemedia_core::python::multiprocess=trace` to
+                        // re-enable for diagnostics.
+                        tracing::trace!(
                             "[IPC Thread] Node '{}': Received SendData command, {} bytes of type {:?}",
                             node_id_clone,
                             data.payload.len(),
@@ -1874,7 +1902,7 @@ except Exception:
 
                         match publisher.publish(data) {
                             Ok(_) => {
-                                tracing::info!(
+                                tracing::trace!(
                                     "[IPC Thread] Node '{}': Successfully published data to iceoryx2",
                                     node_id_clone
                                 );
@@ -1915,9 +1943,13 @@ except Exception:
                         // No command, poll subscriber for incoming data
                         match subscriber.receive() {
                             Ok(Some(output_data)) => {
-                                // If we have a registered callback, use it (for continuous forwarding)
+                                // If we have a registered callback, use it (for continuous forwarding).
+                                // blocking_send applies backpressure: when the downstream
+                                // consumer is slow the send blocks this IPC thread, which
+                                // stalls `subscriber.receive()` below, which back-pressures
+                                // the Python publisher via iceoryx2.
                                 if let Some(ref cb) = output_callback {
-                                    if let Err(e) = cb.send(output_data.clone()) {
+                                    if let Err(e) = cb.blocking_send(output_data.clone()) {
                                         tracing::error!(
                                             "Failed to send output via callback for node {}: {}",
                                             node_id_clone,

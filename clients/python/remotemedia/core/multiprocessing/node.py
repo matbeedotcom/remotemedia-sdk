@@ -382,37 +382,45 @@ class MultiprocessNode(BaseNode):
         self.status = NodeStatus.PROCESSING
         start_time = asyncio.get_event_loop().time()
 
-        # Call process() - it may return a single value, an async generator, or None
-        result = self.process(data)
+        try:
+            # Call process() - it may return a single value, an async generator, or None
+            result = self.process(data)
 
-        # Check if it's an async generator (streaming node)
-        import inspect
-        if inspect.isasyncgen(result):
-            # Streaming: iterate over async generator and send each output
-            self.logger.debug(f"Node {self.node_id} returned async generator (streaming)")
-            output_count = 0
-            async for output in result:
+            # Check if it's an async generator (streaming node)
+            import inspect
+            if inspect.isasyncgen(result):
+                # Streaming: iterate over async generator and send each output
+                self.logger.debug(f"Node {self.node_id} returned async generator (streaming)")
+                output_count = 0
+                async for output in result:
+                    if output is not None:
+                        await self._send_output(output)
+                        output_count += 1
+
+                # Track statistics (count one "message processed" per input, regardless of N outputs)
+                self.messages_processed += 1
+                self.processing_time_total += asyncio.get_event_loop().time() - start_time
+                self.logger.debug(f"Streaming node produced {output_count} outputs")
+            else:
+                # Non-streaming: await the result and send if not None
+                output = await result
+
+                # Track statistics
+                self.messages_processed += 1
+                self.processing_time_total += asyncio.get_event_loop().time() - start_time
+
+                # Send output if produced
                 if output is not None:
                     await self._send_output(output)
-                    output_count += 1
+        finally:
+            # Signal end-of-input to Rust side so it stops waiting for more
+            # outputs from this input. Without this, Rust falls back to a
+            # timeout-based "done" heuristic that adds ~30 s per turn for
+            # nodes that return None (aux-port messages) and ~2 s per turn
+            # for single-output nodes.
+            await self._send_end_of_input()
 
-            # Track statistics (count one "message processed" per input, regardless of N outputs)
-            self.messages_processed += 1
-            self.processing_time_total += asyncio.get_event_loop().time() - start_time
-            self.logger.debug(f"Streaming node produced {output_count} outputs")
-        else:
-            # Non-streaming: await the result and send if not None
-            output = await result
-
-            # Track statistics
-            self.messages_processed += 1
-            self.processing_time_total += asyncio.get_event_loop().time() - start_time
-
-            # Send output if produced
-            if output is not None:
-                await self._send_output(output)
-
-        self.status = NodeStatus.READY
+            self.status = NodeStatus.READY
 
     async def _handle_control_message(self, data: RuntimeData) -> None:
         """
@@ -630,13 +638,34 @@ class MultiprocessNode(BaseNode):
                         rd.metadata.annotations = annotations
                     return rd
                 elif data_type == 3:  # Text
-                    text = payload.decode('utf-8')
+                    # Text wire format:
+                    #   Legacy: raw UTF-8 bytes.
+                    #   Tagged: [0x00][channel_len: u8][channel: utf8][text: utf8]
+                    # 0x00 is not a valid UTF-8 lead byte for any printable
+                    # text, so the discriminator has no false positives
+                    # against legacy producers.
+                    channel = "tts"
+                    text_bytes = payload
+                    if len(payload) >= 2 and payload[0] == 0x00:
+                        channel_len = payload[1]
+                        if 2 + channel_len <= len(payload):
+                            try:
+                                channel = payload[2:2 + channel_len].decode('utf-8') or "tts"
+                            except UnicodeDecodeError:
+                                self.logger.warning(
+                                    "Malformed channel header in IPC text payload; defaulting to 'tts'"
+                                )
+                                channel = "tts"
+                            text_bytes = payload[2 + channel_len:]
+                    text = text_bytes.decode('utf-8', errors='replace')
                     # Check for ping test message
                     if text == "PING_TEST":
                         self.logger.info(f"✅ 🎯 RECEIVED PING TEST MESSAGE! IPC communication is working! ✅")
                         return RuntimeData.text(text)
-                    self.logger.info(f"Received text via IPC: '{text[:50]}...'")
-                    return RuntimeData.text(text)
+                    self.logger.info(
+                        f"Received text via IPC (channel={channel}): '{text[:50]}...'"
+                    )
+                    return RuntimeData.text(text, channel=channel)
                 else:
                     self.logger.warning(f"Unsupported IPC data type: {data_type}")
                     return None
@@ -668,7 +697,19 @@ class MultiprocessNode(BaseNode):
             # Determine data type and extract payload
             if data.is_text():
                 data_type = 3  # Text
-                payload = data.as_text().encode('utf-8')
+                text_bytes = data.as_text().encode('utf-8')
+                channel = getattr(data.metadata, "channel", "tts") if data.metadata else "tts"
+                if channel and channel != "tts":
+                    # Tagged wire format — see the matching receiver for the layout.
+                    channel_bytes = channel.encode('utf-8')
+                    if len(channel_bytes) > 255:
+                        self.logger.warning(
+                            f"Channel name too long ({len(channel_bytes)} bytes); truncating"
+                        )
+                        channel_bytes = channel_bytes[:255]
+                    payload = bytes([0x00, len(channel_bytes)]) + channel_bytes + text_bytes
+                else:
+                    payload = text_bytes
             elif data.is_audio():
                 data_type = 1  # Audio
                 # New format: sample_rate(4) | channels(2) | metadata_len(4) | metadata | samples
@@ -710,6 +751,43 @@ class MultiprocessNode(BaseNode):
 
         except Exception as e:
             self.logger.error(f"Error sending to IPC: {e}", exc_info=True)
+
+    async def _send_end_of_input(self) -> None:
+        """
+        Emit the EndOfInput sentinel on the output channel.
+
+        This is the "I'm done processing this input" signal that lets the
+        Rust side return immediately instead of waiting for a polling
+        timeout. The sentinel has data_type=8 and an empty payload —
+        matching `RuntimeData::end_of_input` on the Rust side.
+        """
+        if not hasattr(self, '_output_publisher'):
+            return
+
+        try:
+            import time
+            session_id = getattr(self, '_current_session_id', None) or self.session_id or 'default'
+            session_bytes = session_id.encode('utf-8')
+            timestamp = int(time.time() * 1_000_000)
+
+            # Format matches data_transfer.rs::to_bytes:
+            # type (1) | session_len (2) | session | timestamp (8) | payload_len (4) | payload
+            message = bytearray()
+            message.append(8)  # DataType::EndOfInput
+            message.extend(len(session_bytes).to_bytes(2, 'little'))
+            message.extend(session_bytes)
+            message.extend(timestamp.to_bytes(8, 'little'))
+            message.extend((0).to_bytes(4, 'little'))  # payload_len = 0
+
+            import ctypes
+            sample = self._output_publisher.loan_slice_uninit(len(message))
+            sample_payload = sample.payload()
+            for i, byte_val in enumerate(message):
+                sample_payload[i] = ctypes.c_uint8(byte_val)
+            sample = sample.assume_init()
+            sample.send()
+        except Exception as e:
+            self.logger.warning(f"Failed to send EndOfInput sentinel: {e}")
 
     def _is_critical_error(self, error: Exception) -> bool:
         """

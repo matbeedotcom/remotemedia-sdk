@@ -13,12 +13,11 @@
 
 use crate::data::RuntimeData;
 use crate::error::{Error, Result};
-use crate::nodes::AsyncStreamingNode;
-use async_trait::async_trait;
+use crate::nodes::SyncStreamingNode;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Output mode for the audio channel splitter
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]
@@ -209,29 +208,33 @@ impl Default for AudioChannelSplitterNode {
     }
 }
 
-#[async_trait]
-impl AsyncStreamingNode for AudioChannelSplitterNode {
+// Phase A-Wave 3: migrated to `SyncStreamingNode` with
+// `parking_lot::Mutex`. The helpers never awaited — only the outer
+// trait did. Collect-then-fire: state mutation happens under the
+// lock, lock is dropped before the callbacks fire (via the existing
+// `drop(states)` in the Audio branch).
+impl SyncStreamingNode for AudioChannelSplitterNode {
     fn node_type(&self) -> &str {
         "AudioChannelSplitterNode"
     }
 
-    async fn process(&self, _data: RuntimeData) -> Result<RuntimeData> {
+    fn process(&self, _data: RuntimeData) -> Result<RuntimeData> {
         Err(Error::Execution(
-            "AudioChannelSplitterNode requires streaming mode - use process_streaming() instead".into(),
+            "AudioChannelSplitterNode requires streaming mode - \
+             callers must use process_streaming() (the router does this \
+             automatically when the factory declares is_multi_output_streaming=true)"
+                .into(),
         ))
     }
 
-    async fn process_streaming<F>(
+    fn process_streaming(
         &self,
         data: RuntimeData,
-        session_id: Option<String>,
-        mut callback: F,
-    ) -> Result<usize>
-    where
-        F: FnMut(RuntimeData) -> Result<()> + Send,
-    {
-        let session_key = session_id.clone().unwrap_or_else(|| "default".to_string());
-        let mut states = self.states.lock().await;
+        session_id: Option<&str>,
+        callback: &mut dyn FnMut(RuntimeData) -> Result<()>,
+    ) -> Result<usize> {
+        let session_key = session_id.unwrap_or("default").to_string();
+        let mut states = self.states.lock();
         let state = states.entry(session_key.clone()).or_default();
 
         match &data {
@@ -298,7 +301,7 @@ impl AsyncStreamingNode for AudioChannelSplitterNode {
                         .map(|chunk| chunk.iter().sum::<f32>() / *channels as f32)
                         .collect()
                 } else {
-                    samples.clone()
+                    samples.to_vec()
                 };
 
                 let segments = state.segments.clone();
@@ -331,7 +334,7 @@ impl AsyncStreamingNode for AudioChannelSplitterNode {
                             let stream_id = format!("{}_{}", self.stream_id_prefix, speaker_idx);
 
                             callback(RuntimeData::Audio {
-                                samples: speaker_audio,
+                                samples: speaker_audio.into(),
                                 sample_rate: *sample_rate,
                                 channels: 1, // Mono per speaker
                                 stream_id: Some(stream_id),
@@ -356,7 +359,7 @@ impl AsyncStreamingNode for AudioChannelSplitterNode {
                         let num_channels = num_speakers.min(self.max_speakers as usize) as u32;
 
                         callback(RuntimeData::Audio {
-                            samples: multichannel,
+                            samples: multichannel.into(),
                             sample_rate: *sample_rate,
                             channels: num_channels,
                             stream_id: input_stream_id.clone(),
@@ -379,16 +382,6 @@ impl AsyncStreamingNode for AudioChannelSplitterNode {
         }
     }
 
-    async fn process_control_message(
-        &self,
-        message: RuntimeData,
-        _session_id: Option<String>,
-    ) -> Result<bool> {
-        match message {
-            RuntimeData::ControlMessage { .. } => Ok(false),
-            _ => Ok(false),
-        }
-    }
 }
 
 impl AudioChannelSplitterNode {
@@ -397,12 +390,12 @@ impl AudioChannelSplitterNode {
         true
     }
 
-    /// Reset state for all sessions
+    /// Reset state for all sessions.
+    ///
+    /// Phase A-Wave 3: no longer requires `block_in_place` — backing
+    /// lock is `parking_lot::Mutex`.
     pub fn reset_state(&mut self) {
-        tokio::task::block_in_place(|| {
-            let mut states = self.states.blocking_lock();
-            states.clear();
-        });
+        self.states.lock().clear();
         tracing::info!("Audio channel splitter states reset");
     }
 }
@@ -421,7 +414,7 @@ impl crate::nodes::StreamingNodeFactory for AudioChannelSplitterNodeFactory {
             .unwrap_or_default();
         
         let node = AudioChannelSplitterNode::with_config(config);
-        Ok(Box::new(crate::nodes::AsyncNodeWrapper(Arc::new(node))))
+        Ok(Box::new(crate::nodes::SyncNodeWrapper(node)))
     }
 
     fn node_type(&self) -> &str {
