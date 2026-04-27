@@ -8,6 +8,7 @@ import { TurnHistory } from './components/TurnHistory'
 import { StatusBar } from './components/StatusBar'
 import { RemoteAudio } from './components/RemoteAudio'
 import { AudioStats } from './components/AudioStats'
+import { PerfHud } from './components/PerfHud'
 
 function randomPeerId(): string {
   const rand =
@@ -112,6 +113,7 @@ export default function App() {
             onInject={sendKnowledge}
             onSystemPrompt={sendSystemPrompt}
           />
+          <PerfHud />
         </aside>
       </main>
 

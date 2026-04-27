@@ -217,6 +217,14 @@ pub const AUX_PORT_ENVELOPE_KEY: &str = "__aux_port__";
 /// and drops the envelope.
 pub const BARGE_IN_PORT: &str = "barge_in";
 
+/// Reserved tap channel name for periodic per-node performance
+/// snapshots (`PerfSnapshot`). The session router's perf aggregator
+/// publishes here on a 1 Hz timer when `REMOTEMEDIA_PERF_TAP=1`.
+/// Frontends subscribe to `__perf__.out` to render a HUD without
+/// changing any node code. Distinct from `__system__` (loading
+/// progress) so consumers can opt in/out independently.
+pub const PERF_PORT: &str = "__perf__";
+
 /// If `data` is an aux-port envelope produced by [`wrap_aux_port`],
 /// return the port name. Otherwise return `None`.
 ///

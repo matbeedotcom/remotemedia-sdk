@@ -28,6 +28,7 @@ use std::sync::Arc;
 // Re-export submodules
 pub mod client;
 pub mod data;
+pub mod perf_aggregator;
 pub mod plugin_registry;
 pub mod session;
 pub mod session_control;

@@ -43,8 +43,9 @@ use crate::executor::{
 };
 use crate::manifest::Manifest;
 use crate::nodes::{InitializeContext, StreamingNode, StreamingNodeRegistry};
+use crate::transport::perf_aggregator::{spawn_flush_task, PerfAggregator};
 use crate::transport::session_control::{
-    aux_port_of, CloseReason, SessionControl, BARGE_IN_PORT,
+    aux_port_of, CloseReason, SessionControl, BARGE_IN_PORT, PERF_PORT,
 };
 use crate::Result;
 use parking_lot::RwLock as DriftRwLock;
@@ -187,6 +188,15 @@ pub struct SessionRouter {
     /// `start()`. When `None`, the router's hot path skips the control
     /// hook entirely — no overhead for sessions without attaches.
     control: Option<Arc<SessionControl>>,
+
+    /// Per-session performance aggregator (slice 1 of the perf-tap
+    /// feature). Records dispatch-site I/O timings into HDR
+    /// histograms; a periodic flush task publishes a `PerfSnapshot`
+    /// on the `__perf__` tap. Disabled by default — set
+    /// `REMOTEMEDIA_PERF_TAP=1` to enable. When disabled, every
+    /// `record_input`/`record_output` is an inline atomic-load + early
+    /// return, so production pays no cost.
+    perf: Arc<PerfAggregator>,
 }
 
 /// Bounded capacity of each node's input channel.
@@ -310,6 +320,12 @@ impl SessionRouter {
         // Create scheduler with config
         let scheduler = Arc::new(StreamingScheduler::new(config));
 
+        let perf = Arc::new(PerfAggregator::new(
+            session_id.clone(),
+            PerfAggregator::enabled_from_env(),
+            PerfAggregator::window_ms_from_env(),
+        ));
+
         let router = Self {
             session_id,
             manifest,
@@ -327,6 +343,7 @@ impl SessionRouter {
             probes: Arc::new(crate::metrics::RtProbeSet::new()),
             drift_thresholds: drift_thresholds.unwrap_or_default(),
             control: None,
+            perf,
         };
 
         Ok((router, shutdown_tx_clone))
@@ -659,6 +676,39 @@ impl SessionRouter {
         // the client `output_tx`. See `spawn_pipeline_tasks` for the wiring.
         let pipeline = self.spawn_pipeline_tasks();
 
+        // Spawn the periodic perf-snapshot flush task. Cheap when
+        // disabled (the task wakes on tick, sees the flag is off,
+        // and goes back to sleep). When enabled and a control bus
+        // is attached, snapshots are published as JSON on the
+        // `__perf__` tap so the frontend HUD can render them.
+        let perf_shutdown = Arc::new(tokio::sync::Notify::new());
+        let perf_flush_handle = if self.perf.is_enabled() {
+            let publish_perf = {
+                let control = self.control.clone();
+                move |snapshot: crate::data::PerfSnapshot| {
+                    if let Some(ctrl) = control.as_ref() {
+                        match serde_json::to_value(&snapshot) {
+                            Ok(v) => ctrl.publish_tap(
+                                PERF_PORT,
+                                None,
+                                RuntimeData::Json(v),
+                            ),
+                            Err(e) => tracing::warn!(
+                                "perf: failed to serialize snapshot: {}", e
+                            ),
+                        }
+                    }
+                }
+            };
+            Some(spawn_flush_task(
+                self.perf.clone(),
+                publish_perf,
+                perf_shutdown.clone(),
+            ))
+        } else {
+            None
+        };
+
         // Drop router's own input_tx so the transport channel closes when
         // all external senders (SessionHandle) are dropped.
         self.input_tx.take();
@@ -731,6 +781,14 @@ impl SessionRouter {
         // the pipeline: each node's main task exits when its input_rx
         // closes, which drops its fan_tx, which closes the next hop.
         Self::teardown_pipeline_tasks(pipeline).await;
+
+        // Stop the perf flush task before the control bus is signalled
+        // closed. Any pending snapshot is dropped — by this point the
+        // node tasks have stopped emitting events.
+        perf_shutdown.notify_waiters();
+        if let Some(handle) = perf_flush_handle {
+            let _ = handle.await;
+        }
 
         // Wake every attached control client so they drain and exit.
         // Idempotent — harmless if no control is attached.
@@ -819,6 +877,7 @@ impl SessionRouter {
                 self.scheduler.clone(),
                 self.control.clone(),
                 self.probes.clone(),
+                self.perf.clone(),
             );
 
             handles.push(main_handle);
@@ -853,6 +912,7 @@ impl SessionRouter {
         scheduler: Arc<StreamingScheduler>,
         control: Option<Arc<SessionControl>>,
         probes: Arc<crate::metrics::RtProbeSet>,
+        perf: Arc<PerfAggregator>,
     ) -> (JoinHandle<()>, JoinHandle<()>) {
         let (fan_tx, mut fan_rx) = mpsc::channel::<RuntimeData>(NODE_FANOUT_CAPACITY);
 
@@ -981,6 +1041,19 @@ impl SessionRouter {
                     }
                 }
 
+                // Perf instrumentation: record one input event,
+                // and per-output latency via the wrapped callback.
+                // When the perf aggregator is disabled, every
+                // `record_*` call is an inline atomic-load + early
+                // return.
+                perf.record_input(&main_node_id);
+                let perf_node_id = main_node_id.clone();
+                let perf_clone = perf.clone();
+                let dispatch_start_for_perf = std::time::Instant::now();
+                let first_emit_seen = std::sync::Arc::new(
+                    std::sync::atomic::AtomicBool::new(false),
+                );
+
                 // Per-input sync callback: try_send into the fan-out
                 // channel. A full `fan_tx` means the drain task is
                 // behind — we warn and drop. In practice this only
@@ -988,7 +1061,14 @@ impl SessionRouter {
                 // 1024-slot buffer covers normal burst patterns.
                 let cb_fan_tx = fan_tx.clone();
                 let cb_node_id = main_node_id.clone();
+                let cb_first_emit = first_emit_seen.clone();
                 let cb = Box::new(move |out: RuntimeData| {
+                    // Latency from input arrival to this output.
+                    let lat_us = dispatch_start_for_perf.elapsed().as_micros() as u64;
+                    let is_first = !cb_first_emit
+                        .swap(true, std::sync::atomic::Ordering::Relaxed);
+                    perf_clone.record_output(&perf_node_id, lat_us, is_first);
+
                     if let Err(e) = cb_fan_tx.try_send(out) {
                         tracing::warn!(
                             "node '{}' fan_tx backpressure drop: {}",

@@ -22,6 +22,47 @@ export type PipelineStatus =
   | { kind: 'loading_node'; node?: string; message?: string }
   | { kind: 'ready'; message?: string }
 
+/// One node's stats inside a `__perf__` snapshot. Mirrors the Rust
+/// `PerfNodeStats` shape — keep in sync with crates/core/src/data/perf.rs.
+export interface PerfLatencyPercentiles {
+  p50_us: number
+  p95_us: number
+  p99_us: number
+  max_us: number
+}
+
+export interface PerfNodeStats {
+  inputs: number
+  outputs: number
+  latency_us: PerfLatencyPercentiles
+  first_output_latency_us: PerfLatencyPercentiles
+}
+
+/// One periodic snapshot from the server's perf aggregator. Published
+/// every `window_ms` (default 1 s) on `__perf__.out` when
+/// `REMOTEMEDIA_PERF_TAP=1` is set on the server.
+export interface PerfSnapshot {
+  kind: 'perf_snapshot'
+  session_id: string
+  ts_ms: number
+  window_ms: number
+  nodes: Record<string, PerfNodeStats>
+}
+
+/// Per-node sticky stats kept across snapshots. The aggregator on the
+/// server resets its histograms every window, so a node that's idle
+/// for a tick disappears from the next snapshot's `nodes` map. The
+/// HUD wants "what were this node's last meaningful numbers" and
+/// "how long since we last saw activity" — that's what this row
+/// provides.
+export interface PerfNodeRow {
+  stats: PerfNodeStats
+  /** ts_ms of the snapshot these stats came from. */
+  lastActivityMs: number
+  /** Most recent snapshot ts_ms — used to compute "ago" age. */
+  lastSeenMs: number
+}
+
 export interface VADSnapshot {
   hasSpeech: boolean
   probability: number
@@ -91,12 +132,30 @@ interface StoreState extends SettingsState {
   /** Pipeline loading state from `__system__.out` events. */
   pipelineStatus: PipelineStatus
 
+  /** Latest perf snapshot from `__perf__.out`. `null` when the server
+   *  has perf tap disabled or hasn't emitted a snapshot yet. */
+  perfSnapshot: PerfSnapshot | null
+
+  /** Sticky per-node performance rows. A row is created on first
+   *  activity and persists across idle windows; `lastActivityMs`
+   *  tracks when its current stats were last refreshed. The HUD
+   *  uses this so kokoro_tts (which only runs once per turn) keeps
+   *  showing its last measurement instead of disappearing during
+   *  the next idle second. */
+  perfNodes: Record<string, PerfNodeRow>
+
   setStatus: (s: ConnectionStatus) => void
   setError: (e: string | null) => void
   setPeerId: (p: string | null) => void
   setRemoteAudioStream: (s: MediaStream | null) => void
   setLocalStream: (s: MediaStream | null) => void
   setPipelineStatus: (s: PipelineStatus) => void
+  setPerfSnapshot: (s: PerfSnapshot | null) => void
+  /** Merge a new snapshot into the sticky `perfNodes` map. Active
+   *  nodes overwrite their row; inactive ones bump `lastSeenMs`
+   *  but keep their previous stats. */
+  ingestPerfSnapshot: (s: PerfSnapshot) => void
+  clearPerfNodes: () => void
 
   setVad: (v: VADSnapshot) => void
 
@@ -150,6 +209,8 @@ const __useStore = create<StoreState>()(
   currentTurnId: null,
   knowledge: [],
   pipelineStatus: { kind: 'unknown' } as PipelineStatus,
+  perfSnapshot: null,
+  perfNodes: {},
 
   setStatus: (status) => set({ status }),
   setError: (error) => set({ error }),
@@ -157,6 +218,41 @@ const __useStore = create<StoreState>()(
   setRemoteAudioStream: (remoteAudioStream) => set({ remoteAudioStream }),
   setLocalStream: (localStream) => set({ localStream }),
   setPipelineStatus: (pipelineStatus) => set({ pipelineStatus }),
+  setPerfSnapshot: (perfSnapshot) => set({ perfSnapshot }),
+
+  ingestPerfSnapshot: (snap) => {
+    const prev = get().perfNodes
+    const next: Record<string, PerfNodeRow> = { ...prev }
+
+    // 1. Update rows for every node that had activity in this snapshot.
+    for (const [id, stats] of Object.entries(snap.nodes)) {
+      const active = stats.inputs > 0 || stats.outputs > 0
+      if (active) {
+        next[id] = {
+          stats,
+          lastActivityMs: snap.ts_ms,
+          lastSeenMs: snap.ts_ms,
+        }
+      } else if (prev[id]) {
+        // Node still in snapshot but idle this window — keep last
+        // stats, bump lastSeenMs so "ago" updates.
+        next[id] = { ...prev[id], lastSeenMs: snap.ts_ms }
+      }
+      // else: zero stats AND no prior row — ignore (no signal yet).
+    }
+
+    // 2. Bump lastSeenMs on rows we already had but that fell out
+    //    of the snapshot map entirely. Their stats stay.
+    for (const id of Object.keys(prev)) {
+      if (!(id in snap.nodes)) {
+        next[id] = { ...prev[id], lastSeenMs: snap.ts_ms }
+      }
+    }
+
+    set({ perfSnapshot: snap, perfNodes: next })
+  },
+
+  clearPerfNodes: () => set({ perfNodes: {}, perfSnapshot: null }),
 
   setVad: (vad) => set({ vad }),
 
@@ -273,6 +369,8 @@ const __useStore = create<StoreState>()(
       knowledge: [],
       error: null,
       pipelineStatus: { kind: 'unknown' },
+      perfSnapshot: null,
+      perfNodes: {},
     })
   },
     }),

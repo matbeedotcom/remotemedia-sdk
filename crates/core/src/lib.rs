@@ -81,6 +81,7 @@ pub mod data {
     pub mod audio_samples;
     pub mod buffering_policy;
     pub mod control_message;
+    pub mod perf;
     pub mod ring_buffer;
     pub mod speculative_segment;
     pub mod text_channel;
@@ -89,6 +90,7 @@ pub mod data {
     pub use audio_samples::AudioSamples;
     pub use buffering_policy::{BufferingPolicy, MergeStrategy};
     pub use control_message::{ControlMessage, ControlMessageType};
+    pub use perf::{LatencyPercentiles, NodeStats as PerfNodeStats, PerfEventKind, PerfSnapshot};
     pub use ring_buffer::RingBuffer;
     pub use speculative_segment::{SegmentStatus, SpeculativeSegment};
     pub use text_channel::{split_text_str, tag_text_str, TEXT_CHANNEL_DEFAULT};

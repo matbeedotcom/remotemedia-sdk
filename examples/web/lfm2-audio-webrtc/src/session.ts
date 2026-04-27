@@ -203,6 +203,27 @@ export class Session {
       }),
     )
 
+    // Periodic per-node performance snapshots from `__perf__.out`.
+    // Server emits these when `REMOTEMEDIA_PERF_TAP=1`. Frontend
+    // tolerates absence: if the env flag is off, no events arrive
+    // and the HUD stays empty.
+    //
+    // We `ingestPerfSnapshot` rather than `setPerfSnapshot` so the
+    // store's sticky-merge logic preserves stats for nodes that go
+    // idle for a window (e.g. kokoro_tts only fires once per turn —
+    // its histograms reset on the server each second, so a naive
+    // "show latest snapshot" would make it disappear between turns).
+    this.unsubscribers.push(
+      await control.subscribe('__perf__.out', (ev) => {
+        if (ev.kind !== 'json') return
+        const p = ev.payload as Record<string, unknown>
+        if (p?.kind !== 'perf_snapshot') return
+        s().ingestPerfSnapshot(
+          p as unknown as import('./store').PerfSnapshot,
+        )
+      }),
+    )
+
     this.unsubscribers.push(
       await control.subscribe('vad.out', (ev) => {
         if (ev.kind !== 'json') return
