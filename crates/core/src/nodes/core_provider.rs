@@ -32,6 +32,7 @@ use crate::nodes::conversation_coordinator::ConversationCoordinatorNodeFactory;
 use crate::nodes::conversation_flow::ConversationFlowNodeFactory;
 use crate::nodes::event_correlator::EventCorrelatorNodeFactory;
 use crate::nodes::health_emitter::HealthEmitterNodeFactory;
+use crate::nodes::multimodal_llm::MultimodalLLMNodeFactory;
 use crate::nodes::openai_chat::OpenAIChatNodeFactory;
 use crate::nodes::remote_pipeline::RemotePipelineNodeFactory;
 use crate::nodes::session_health::SessionHealthNodeFactory;
@@ -79,6 +80,7 @@ impl NodeProvider for CoreNodesProvider {
 
         // LLM nodes
         registry.register(Arc::new(OpenAIChatNodeFactory));
+        registry.register(Arc::new(MultimodalLLMNodeFactory));
 
         // Remote pipeline node
         registry.register(Arc::new(RemotePipelineNodeFactory));

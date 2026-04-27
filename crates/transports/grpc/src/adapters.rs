@@ -166,6 +166,18 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             data: bytes.clone(),
             mime_type: "application/octet-stream".to_string(),
         }),
+        // Image-over-gRPC fallback: ship as Binary with a mime-type
+        // hint. A first-class `ImageBuffer` proto entry is a follow-up
+        // spec; the typical multimodal-LLM path runs in-process or
+        // WebRTC, not gRPC. The round-trip degrades to Binary on the
+        // receiving side (format/width/height are lost).
+        RuntimeData::Image { data, format, .. } => DataType::Binary(BinaryBuffer {
+            data: data.clone(),
+            mime_type: format
+                .mime_type()
+                .unwrap_or("application/octet-stream")
+                .to_string(),
+        }),
         RuntimeData::ControlMessage {
             message_type,
             segment_id,

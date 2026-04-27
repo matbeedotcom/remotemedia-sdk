@@ -407,6 +407,23 @@ pub fn runtime_data_to_python(py: Python<'_>, data: &RuntimeData) -> PyResult<Py
             dict.set_item("note", "Video data not fully supported in FFI yet")?;
             Ok(dict.into())
         }
+        RuntimeData::Image {
+            data,
+            format,
+            width,
+            height,
+            ..
+        } => {
+            let dict = PyDict::new(py);
+            dict.set_item("type", "image")?;
+            dict.set_item("data", pyo3::types::PyBytes::new(py, data))?;
+            dict.set_item("width", width)?;
+            dict.set_item("height", height)?;
+            if let Some(mime) = format.mime_type() {
+                dict.set_item("mime_type", mime)?;
+            }
+            Ok(dict.into())
+        }
         RuntimeData::Tensor { .. } => {
             // Tensor not fully supported yet
             let dict = PyDict::new(py);

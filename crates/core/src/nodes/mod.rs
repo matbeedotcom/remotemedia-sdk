@@ -58,6 +58,12 @@ pub use tool_spec::{
 
 pub mod openai_chat;
 pub use openai_chat::{OpenAIChatConfig, OpenAIChatNode, OpenAIChatNodeFactory};
+
+pub mod multimodal_llm;
+pub use multimodal_llm::{
+    AggregationMode, MultimodalLLMConfig, MultimodalLLMNode, MultimodalLLMNodeFactory,
+};
+
 pub use audio_chunker::AudioChunkerNode;
 
 pub mod health_emitter;

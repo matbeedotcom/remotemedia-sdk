@@ -111,6 +111,33 @@ pub mod data {
         S16 = 2,
     }
 
+    /// Still-image format identifier.
+    ///
+    /// `Jpeg`/`Png`/`WebP` indicate container-encoded bytes that can be
+    /// embedded directly in a `data:image/...;base64,...` URL.
+    /// `Raw` carries uncompressed pixels — the caller must transcode
+    /// before sending to a vision LLM.
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub enum ImageFormat {
+        Jpeg,
+        Png,
+        WebP,
+        Raw { pixel_format: PixelFormat },
+    }
+
+    impl ImageFormat {
+        /// IANA mime type for the encoded variants. Returns `None` for
+        /// `Raw` because raw pixels have no canonical mime.
+        pub fn mime_type(&self) -> Option<&'static str> {
+            match self {
+                ImageFormat::Jpeg => Some("image/jpeg"),
+                ImageFormat::Png => Some("image/png"),
+                ImageFormat::WebP => Some("image/webp"),
+                ImageFormat::Raw { .. } => None,
+            }
+        }
+    }
+
     /// Data type hint for routing
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     pub enum DataTypeHint {
@@ -197,6 +224,38 @@ pub mod data {
             /// Set by transport ingest layer for drift monitoring
             #[serde(default, skip_serializing_if = "Option::is_none")]
             arrival_ts_us: Option<u64>,
+        },
+        /// Still-frame image (encoded JPEG/PNG/WebP, or raw RGBA).
+        ///
+        /// Distinct from [`RuntimeData::Video`] because image-shaped
+        /// inputs to vision LLMs (gpt-4o, llama.cpp + llava, Claude
+        /// Vision) are *encoded* container formats — JPEG/PNG/WebP —
+        /// and not codec bitstreams (VP8/AV1/H.264). Carrying them
+        /// inside `Video` would force every consumer to inspect
+        /// pixel data to figure out what shape it's in. A separate
+        /// variant gives clean type-level routing for vision
+        /// pipelines.
+        Image {
+            /// Encoded image bytes (JPEG/PNG/WebP) or raw pixels.
+            data: Vec<u8>,
+            /// Image format. `Raw { pixel_format }` carries
+            /// uncompressed pixels; the other variants carry
+            /// container-encoded bytes ready for direct embedding
+            /// (e.g. base64 in a `data:image/png;base64,…` URL).
+            format: ImageFormat,
+            /// Frame width in pixels.
+            width: u32,
+            /// Frame height in pixels.
+            height: u32,
+            /// Optional presentation timestamp in microseconds.
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            timestamp_us: Option<u64>,
+            /// Optional stream identifier for multi-track routing.
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            stream_id: Option<String>,
+            /// Optional extensible metadata.
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            metadata: Option<serde_json::Value>,
         },
     /// Tensor data
     Tensor {
@@ -300,6 +359,7 @@ pub mod data {
             match self {
                 RuntimeData::Audio { .. } => "audio",
                 RuntimeData::Video { .. } => "video",
+                RuntimeData::Image { .. } => "image",
                 RuntimeData::Tensor { .. } => "tensor",
                 RuntimeData::Numpy { .. } => "numpy",
                 RuntimeData::Json(_) => "json",
@@ -344,6 +404,7 @@ pub mod data {
             match self {
                 RuntimeData::Audio { stream_id, .. } => stream_id.as_deref(),
                 RuntimeData::Video { stream_id, .. } => stream_id.as_deref(),
+                RuntimeData::Image { stream_id, .. } => stream_id.as_deref(),
                 RuntimeData::File { stream_id, .. } => stream_id.as_deref(),
                 _ => None,
             }
@@ -357,6 +418,11 @@ pub mod data {
         /// Check if this is video data (spec 026)
         pub fn is_video(&self) -> bool {
             matches!(self, RuntimeData::Video { .. })
+        }
+
+        /// Check if this is still-image data
+        pub fn is_image(&self) -> bool {
+            matches!(self, RuntimeData::Image { .. })
         }
 
         /// Check if this is a timed media type (audio or video)
@@ -409,6 +475,7 @@ pub mod data {
             match self {
                 RuntimeData::Audio { samples, .. } => samples.len(),
                 RuntimeData::Video { .. } => 1,
+                RuntimeData::Image { .. } => 1,
                 RuntimeData::Tensor { data, .. } => data.len(),
                 RuntimeData::Numpy { shape, .. } => shape.iter().product(),
                 RuntimeData::Json(value) => match value {
@@ -428,6 +495,7 @@ pub mod data {
             match self {
                 RuntimeData::Audio { samples, .. } => samples.len() * 4,
                 RuntimeData::Video { pixel_data, .. } => pixel_data.len(),
+                RuntimeData::Image { data, .. } => data.len(),
                 RuntimeData::Tensor { data, .. } => data.len(),
                 RuntimeData::Numpy { data, shape, dtype, strides, .. } => {
                     // Size includes data + metadata overhead

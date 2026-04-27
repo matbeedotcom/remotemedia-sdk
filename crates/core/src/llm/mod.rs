@@ -16,6 +16,7 @@
 //!   multimodal-LLM plan.
 
 pub mod chat_backend;
+pub mod data_url;
 pub mod history;
 pub mod provider;
 pub mod tool_dispatch;

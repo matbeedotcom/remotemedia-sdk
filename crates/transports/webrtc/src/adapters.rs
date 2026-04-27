@@ -135,6 +135,16 @@ pub fn runtime_data_to_data_buffer(data: &RuntimeData) -> DataBuffer {
             data: bytes.clone(),
             mime_type: "application/octet-stream".to_string(),
         }),
+        // Image-over-WebRTC fallback: ship as Binary with a mime-type
+        // hint. A first-class `ImageBuffer` proto entry is a follow-up
+        // spec; vision-LLM pipelines today run image input in-process.
+        RuntimeData::Image { data, format, .. } => DataType::Binary(BinaryBuffer {
+            data: data.clone(),
+            mime_type: format
+                .mime_type()
+                .unwrap_or("application/octet-stream")
+                .to_string(),
+        }),
         RuntimeData::Numpy {
             data,
             shape,

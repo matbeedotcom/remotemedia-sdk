@@ -28,6 +28,7 @@ use std::collections::HashMap;
 pub enum RuntimeDataType {
     Audio,
     Video,
+    Image,
     Json,
     Text,
     Binary,
@@ -42,6 +43,7 @@ impl RuntimeDataType {
         &[
             RuntimeDataType::Audio,
             RuntimeDataType::Video,
+            RuntimeDataType::Image,
             RuntimeDataType::Json,
             RuntimeDataType::Text,
             RuntimeDataType::Binary,
@@ -56,6 +58,7 @@ impl RuntimeDataType {
         match self {
             RuntimeDataType::Audio => "'audio'",
             RuntimeDataType::Video => "'video'",
+            RuntimeDataType::Image => "'image'",
             RuntimeDataType::Json => "'json'",
             RuntimeDataType::Text => "'text'",
             RuntimeDataType::Binary => "'binary'",

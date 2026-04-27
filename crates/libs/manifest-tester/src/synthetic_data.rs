@@ -15,6 +15,7 @@ impl SyntheticDataFactory {
         match data_type {
             RuntimeDataType::Audio => vec![Self::generate_audio()],
             RuntimeDataType::Video => vec![generate_video()],
+            RuntimeDataType::Image => vec![generate_image()],
             RuntimeDataType::Text => vec![generate_text()],
             RuntimeDataType::Json => vec![generate_json()],
             RuntimeDataType::Binary => vec![generate_binary()],
@@ -142,6 +143,28 @@ fn generate_video() -> RuntimeData {
         is_keyframe: true,
         stream_id: None,
         arrival_ts_us: None,
+    }
+}
+
+fn generate_image() -> RuntimeData {
+    // Minimal valid 1×1 PNG (a single black pixel). Used by manifest
+    // tests as a placeholder when a node's `accepts` includes Image —
+    // pipeline shape-checks pass without depending on a real encoder.
+    const PIXEL_PNG: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    RuntimeData::Image {
+        data: PIXEL_PNG.to_vec(),
+        format: remotemedia_core::data::ImageFormat::Png,
+        width: 1,
+        height: 1,
+        timestamp_us: None,
+        stream_id: None,
+        metadata: None,
     }
 }
 
