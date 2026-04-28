@@ -6,10 +6,13 @@
 //! pts_ms: u64, turn_id?: u64}` — renderer-agnostic ARKit-52, mapped
 //! to Live2D VBridger params inside the renderer node.
 
+pub mod arkit_smoother;
+pub mod audio2face;
 mod blendshape;
 mod synthetic;
 mod trait_def;
 
+pub use arkit_smoother::ArkitSmoother;
 pub use blendshape::{BlendshapeFrame, ARKIT_BLENDSHAPE_NAMES};
 pub use synthetic::{SyntheticLipSyncConfig, SyntheticLipSyncNode};
 pub use trait_def::LipSyncNode;

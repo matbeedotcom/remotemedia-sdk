@@ -804,8 +804,8 @@ This pass shipped the **interface + integration plumbing** half of M2. The real 
 **Deferred (next M2 turn):**
 
 - **M2.2** — `Audio2FaceInference` Rust port (ONNX session + chunk inference) of [`external/.../Audio2FaceInference.cs`](../../../external/handcrafted-persona-engine/src/PersonaEngine/PersonaEngine.Lib/TTS/Synthesis/LipSync/Audio2Face/Audio2FaceInference.cs)
-- **M2.3** — `PgdBlendshapeSolver` + `BvlsBlendshapeSolver` Rust ports (12 KB + 9 KB of C# math)
-- **M2.4** — `ParamSmoother` port
+- **M2.3** — ✅ `PgdBlendshapeSolver` + `BvlsBlendshapeSolver` Rust ports — landed in M2 actuals pass 2 below
+- **M2.4** — ✅ smoother — landed in M2 actuals pass 2 below
 - **M2.5** — `Audio2FaceLipSyncNode` end-to-end wrapping the above; gated on `avatar-audio2face = ["avatar-lipsync", "dep:ort"]`
 - **M2.6** — coordinator `barge_in_targets` propagation test (covers both Audio2Face and Synthetic via `in.barge_in` aux port)
 
@@ -819,6 +819,63 @@ This pass shipped the **interface + integration plumbing** half of M2. The real 
 - `cargo test -p remotemedia-core --features avatar-emotion,avatar-lipsync --lib lip_sync` — 13/13 green.
 - `cargo test -p remotemedia-core --features avatar-emotion,avatar-lipsync --test avatar_synthetic_emotion_e2e` — 2/2 green.
 - `cargo test -p remotemedia-core --features avatar-emotion,avatar-lipsync --test emotion_extractor_test` — 10/10 green (M0 still passes).
+
+---
+
+## M2 actuals (2026-04-28, pass 2 — solver math)
+
+This pass ports the **math half** of the real Audio2Face stack:
+`SolverMath` utilities, the `BlendshapeSolver` trait, both
+`PgdBlendshapeSolver` and `BvlsBlendshapeSolver`, `ResponseCurves`,
+plus the spec's `smoothing_alpha` knob as `ArkitSmoother`. All
+self-contained — no `ort` crate, no model files, no NPZ readers.
+Pure linear algebra, testable with synthetic small problems.
+
+**Why split this way (revised after reading the C# tree).** The
+persona-engine's `Audio2FaceInference.cs` (300 lines) has the only
+hard dependency on the audio2face.onnx model + the Cubism Box-Muller
+RNG + the GRU recurrent state. The solver math underneath it is
+pure compute that runs on hand-crafted matrices. Landing the math
+first means: (1) end-to-end ONNX testing has a target to plug into,
+(2) the math is correctness-verified independently of ML model
+quality, (3) when the audio2face.onnx model becomes available, only
+the inference glue + the NPZ loader remain to be written.
+
+**Shipped:**
+
+- **M2.3** — `crates/core/src/nodes/lip_sync/audio2face/`
+  - [`solver_math.rs`](../../../crates/core/src/nodes/lip_sync/audio2face/solver_math.rs) — bounding-box diagonal, `Dᵀ`, `DᵀD`, regularization application; named multipliers `L2_MULTIPLIER`, `L1_MULTIPLIER`, `TEMPORAL_MULTIPLIER`
+  - [`solver_trait.rs`](../../../crates/core/src/nodes/lip_sync/audio2face/solver_trait.rs) — `BlendshapeSolver` trait (`solve` / `reset_temporal` / `save_temporal` / `restore_temporal`)
+  - [`pgd_solver.rs`](../../../crates/core/src/nodes/lip_sync/audio2face/pgd_solver.rs) — projected-gradient with LU-warm-started initial guess + 50-iter power-iteration step size
+  - [`bvls_solver.rs`](../../../crates/core/src/nodes/lip_sync/audio2face/bvls_solver.rs) — active-set BVLS with in-place Cholesky sub-solver
+  - [`response_curves.rs`](../../../crates/core/src/nodes/lip_sync/audio2face/response_curves.rs) — `ease_in` + `center_weighted` Hermite splines
+- **M2.4** — [`crates/core/src/nodes/lip_sync/arkit_smoother.rs`](../../../crates/core/src/nodes/lip_sync/arkit_smoother.rs) — uniform EMA on the 52-vector for the spec's `smoothing_alpha` knob (per-axis tuning lives in the renderer's `ParamSmoother` per spec §3.4)
+
+**Still deferred (final M2 pass):**
+
+- **M2.2** — `Audio2FaceInference` Rust port: `ort`-based ONNX session, `IoBinding` setup, GRU state mgmt, deterministic Box-Muller noise generation. Gates on `audio2face.onnx` (persona-engine bootstrapper download).
+- NPZ/NPY reader for `bs_skin.npz` + `model_data.npz` (delta matrix, frontal mask, neutral pose).
+- **M2.5** — `Audio2FaceLipSyncNode` coordinator wiring inference + solver + smoother into a streaming node behind `avatar-audio2face` feature.
+- **M2.6** — coordinator `barge_in_targets` propagation test against the real node.
+
+**Tests landed (45 new, all green; 70 cumulative across the avatar code):**
+
+| File | Tests | Coverage |
+|---|---|---|
+| `solver_math.rs` | 9 | bounding-box edge cases, transpose, DᵀD, regularization formula |
+| `pgd_solver.rs` | 9 | K=1 / K=2 cases, box-clipping, temporal smoothing pull, save/restore round-trip, LU primitives, power iteration |
+| `bvls_solver.rs` | 8 | same shape as PGD plus Cholesky-rejects-non-SPD, two-blendshape competition split |
+| `response_curves.rs` | 10 | endpoints, monotonicity, clamping, degenerate spans |
+| `arkit_smoother.rs` | 7 | first-frame passthrough, alpha=0 passthrough, alpha=1 hold, save/restore, decay |
+| All prior lip_sync tests | 13 | unchanged, still green |
+| Synthetic-emotion e2e | 2 | unchanged, still green |
+| EmotionExtractor | 10 | unchanged, still green |
+| `audio_clock_tap` | 4 | unchanged, still green |
+
+**Build matrix verified:**
+- `cargo test -p remotemedia-core --features avatar-lipsync --lib lip_sync` — 58/58 green.
+- `cargo test -p remotemedia-core --features avatar-emotion,avatar-lipsync --test avatar_synthetic_emotion_e2e --test emotion_extractor_test` — 12/12 green.
+- `cargo build -p remotemedia-core` (default features) — clean.
 
 ---
 
