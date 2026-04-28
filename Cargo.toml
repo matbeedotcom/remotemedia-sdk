@@ -63,6 +63,11 @@ rustfft = "6.2"
 bytemuck = "1.14"
 ort = { version = "=2.0.0-rc.10", features = ["half", "download-binaries"] }
 ndarray = "0.15"
+# Avatar pipeline (spec 2026-04-27 §3.4): NPZ archive reader for the
+# Audio2Face bundle's bs_skin / model_data NPZs. `default-features=false`
+# disables compression backends we don't need (NPZ entries are stored,
+# not deflated, in the persona-engine bundle).
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 # WASM runtime
 wasmtime = "15.0"

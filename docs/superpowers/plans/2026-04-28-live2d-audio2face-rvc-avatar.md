@@ -853,8 +853,8 @@ the inference glue + the NPZ loader remain to be written.
 
 **Still deferred (final M2 pass):**
 
-- **M2.2** — `Audio2FaceInference` Rust port: `ort`-based ONNX session, `IoBinding` setup, GRU state mgmt, deterministic Box-Muller noise generation. Gates on `audio2face.onnx` (persona-engine bootstrapper download).
-- NPZ/NPY reader for `bs_skin.npz` + `model_data.npz` (delta matrix, frontal mask, neutral pose).
+- **M2.2** — ✅ landed in M2 actuals pass 3 below
+- NPZ/NPY reader — ✅ landed in M2 actuals pass 3 below
 - **M2.5** — `Audio2FaceLipSyncNode` coordinator wiring inference + solver + smoother into a streaming node behind `avatar-audio2face` feature.
 - **M2.6** — coordinator `barge_in_targets` propagation test against the real node.
 
@@ -876,6 +876,66 @@ the inference glue + the NPZ loader remain to be written.
 - `cargo test -p remotemedia-core --features avatar-lipsync --lib lip_sync` — 58/58 green.
 - `cargo test -p remotemedia-core --features avatar-emotion,avatar-lipsync --test avatar_synthetic_emotion_e2e --test emotion_extractor_test` — 12/12 green.
 - `cargo build -p remotemedia-core` (default features) — clean.
+
+---
+
+## M2 actuals (2026-04-28, pass 3 — ONNX inference + bundle loaders)
+
+This pass ports the **inference + bundle loading half** of Audio2Face.
+NPY/NPZ readers, identity + path resolver, blendshape config + data
+loaders, and the `Audio2FaceInference` ONNX wrapper. Gated behind a
+new `avatar-audio2face` feature flag pulling `ort` + `zip`. Tier-2
+integration tests against the actual 738 MiB persona-engine bundle
+pass when `AUDIO2FACE_TEST_BUNDLE` points at the unpacked dir; skip
+cleanly otherwise.
+
+**Shipped:**
+
+- **M2.2 inference layer** — [`crates/core/src/nodes/lip_sync/audio2face/inference.rs`](../../../crates/core/src/nodes/lip_sync/audio2face/inference.rs)
+  - `Audio2FaceInference::load(path, use_gpu)` — ort 2.0.0-rc.10 session + commit_from_file
+  - `Audio2FaceInference::infer(audio, identity_index)` → `Audio2FaceOutput { skin_flat, eye_flat, frame_count }`
+  - GRU recurrent state carried across calls (`reset_state` / `save_gru_state` / `restore_gru_state` for barge handling)
+  - Deterministic Box-Muller noise via embedded SplitMix64 (cross-platform-deterministic; C# uses `System.Random` which isn't)
+  - Pre-allocated 64 MB noise tensor (1×3×60×88831), cloned per call (perf knob to revisit later)
+- **NPY/NPZ readers** — [`npy.rs`](../../../crates/core/src/nodes/lip_sync/audio2face/npy.rs) + [`npz.rs`](../../../crates/core/src/nodes/lip_sync/audio2face/npz.rs)
+  - `<f4` and `<i4` only (matches what the bundle ships)
+  - Versions 1 + 2 supported; bad-magic / wrong-dtype / unsupported-version produce actionable errors
+- **BlendshapeConfig + BlendshapeData** — [`blendshape_data.rs`](../../../crates/core/src/nodes/lip_sync/audio2face/blendshape_data.rs)
+  - Parses `bs_skin_config_<Identity>.json` + assembles the dense `[V*3, K]` delta matrix from the per-blendshape NPYs in `bs_skin_<Identity>.npz` and the `model_data_<Identity>.npz` extras
+  - Validates shape consistency (active-pose array length = num_poses, multipliers/offsets match)
+- **Identity + bundle resolver** — [`identity.rs`](../../../crates/core/src/nodes/lip_sync/audio2face/identity.rs)
+  - `Audio2FaceIdentity { Claire, James, Mark }` enum with `one_hot_index()` and `suffix()`
+  - `BundlePaths::new(root, identity)` resolves every per-identity filename in the persona-engine bundle layout
+
+**Tests landed (16 unit + 4 tier-2 integration):**
+
+| File | Tests | Notes |
+|---|---|---|
+| `npy.rs` | 9 | round-trip f32 1d/2d, i32, wrong dtype, bad magic, unsupported version, parse_header variants |
+| `npz.rs` | 3 | open + read entries, missing-entry error, has_entry |
+| `identity.rs` | 4 | one-hot indices, default, paths per identity, serde round-trip |
+| `blendshape_data.rs` | 3 | parse Claire-shaped config, active-indices match input, mismatched-array rejection |
+| `inference.rs` (unit) | 5 | Box-Muller determinism, mean/stddev sanity, odd count, splitmix64 range, output dim constants |
+| `audio2face_inference_test.rs` (tier-2) | 4 | parses real Claire config (39 active poses), loads real Claire blendshape data, runs real ONNX inference (3.6s for first call cold), GRU state determinism (different across calls / matches across reset) |
+
+**Cumulative test count across the avatar code: 86 unit + 6 integration = 92 tests, all green.**
+
+**Build matrix verified:**
+- `cargo test -p remotemedia-core --features avatar-audio2face --lib lip_sync::audio2face` — 63/63 green.
+- `cargo test --features avatar-audio2face --test audio2face_inference_test` (no env var) — 4/4 skipped cleanly in 0.00s.
+- `AUDIO2FACE_TEST_BUNDLE=$PWD/models/audio2face cargo test … --test audio2face_inference_test` — 4/4 green; first inference cold ~3.6s on Apple Silicon CPU.
+- `cargo build -p remotemedia-core` (default features) — clean.
+
+**Surprises worth noting**:
+1. Bundle filename is `network.onnx`, not `audio2face.onnx` — installer + paths updated.
+2. Bundle ships **3 identities** (Claire/James/Mark). LipSync node config (M2.5) needs an `identity` knob.
+3. Claire's active-pose count is **39**, not 47 as my plan estimate — the model deliberately abstains from predicting eye-look L/R, jaw L/R, mouth L/R, and tongueOut from audio alone. The PGD/BVLS solvers run in 39-D, not 52-D.
+4. ort 2.0.0-rc.10 `Tensor::from_array` requires owned `Vec`; the C# `OrtValue::CreateTensorValueFromMemory` zero-copy trick isn't available in the same form. We pay a ~64 MB clone per inference for the noise tensor — flagged as a perf-tuning task once renderer (M4) lands and we can profile against real audio cadence.
+
+**Still deferred (final M2 pass — needs renderer to be relevant):**
+
+- **M2.5** — `Audio2FaceLipSyncNode` streaming node coordinator wiring inference → vertex-delta extraction → PGD/BVLS solve → ARKit-52 mapping → `BlendshapeFrame` emit. Self-contained but needs the renderer to consume its output to be useful.
+- **M2.6** — coordinator `barge_in_targets` propagation test (covers reset of inference GRU state + smoother + solver temporal pull).
 
 ---
 

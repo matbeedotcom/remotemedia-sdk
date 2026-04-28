@@ -42,11 +42,28 @@
 //! In the meantime, [`super::SyntheticLipSyncNode`] satisfies the
 //! `LipSyncNode` contract for tests and manifest fallback.
 
+#[cfg(feature = "avatar-audio2face")]
+pub mod blendshape_data;
 pub mod bvls_solver;
+#[cfg(feature = "avatar-audio2face")]
+pub mod identity;
+#[cfg(feature = "avatar-audio2face")]
+pub mod inference;
+#[cfg(feature = "avatar-audio2face")]
+pub mod npy;
+#[cfg(feature = "avatar-audio2face")]
+pub mod npz;
 pub mod pgd_solver;
 pub mod response_curves;
 pub mod solver_math;
 pub mod solver_trait;
+
+#[cfg(feature = "avatar-audio2face")]
+pub use blendshape_data::{BlendshapeConfig, BlendshapeData, BlendshapeDataError};
+#[cfg(feature = "avatar-audio2face")]
+pub use identity::{Audio2FaceIdentity, BundlePaths};
+#[cfg(feature = "avatar-audio2face")]
+pub use inference::{Audio2FaceInference, Audio2FaceOutput};
 
 pub use bvls_solver::BvlsBlendshapeSolver;
 pub use pgd_solver::PgdBlendshapeSolver;
