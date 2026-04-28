@@ -49,6 +49,10 @@ pub mod emotion_extractor;
 #[cfg(feature = "avatar-emotion")]
 pub use emotion_extractor::{EmotionExtractorConfig, EmotionExtractorNode};
 
+// Avatar lip-sync — trait, blendshape envelope, synthetic stand-in.
+#[cfg(feature = "avatar-lipsync")]
+pub mod lip_sync;
+
 pub mod audio_buffer_accumulator;
 pub use audio_buffer_accumulator::AudioBufferAccumulatorNode;
 

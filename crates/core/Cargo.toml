@@ -170,6 +170,10 @@ multiprocess = ["iceoryx2", "iceoryx2-log"]
 silero-vad = ["ort"]
 # Avatar pipeline (spec 2026-04-27): emoji-tag extraction from text streams
 avatar-emotion = []
+# Avatar lip-sync — `LipSyncNode` trait, `BlendshapeFrame` envelope, and a
+# synthetic deterministic impl. Real Audio2Face ONNX impl is a follow-up
+# (gated on AUDIO2FACE_TEST_ONNX env var when it lands).
+avatar-lipsync = ["avatar-emotion"]
 speaker-diarization = ["ort", "dep:pyannote-rs"]
 grpc-client = ["tonic", "prost", "prost-types"]
 # Docker support integrated into multiprocess system

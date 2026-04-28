@@ -99,7 +99,7 @@ Each milestone ends with a green `cargo test` (or, for milestones gated on exter
 |---|-------|------|
 | M0 | `EmotionExtractorNode` + tests | ✅ shipped — see [M0 actuals](#m0-actuals-2026-04-28) |
 | M1 | `audio.out.clock` tap on `AudioSender` | ✅ shipped — see [M1 actuals](#m1-actuals-2026-04-28) |
-| M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e | `cargo test --features avatar-audio2face` green; `avatar_synthetic_emotion_e2e` green with synthetic emotion keywords |
+| M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e | 🟡 partial — interface + synthetic stand-in + e2e shipped; real Audio2Face ONNX port deferred. See [M2 actuals](#m2-actuals-2026-04-28-partial). |
 | M3 | `RVCNode` | `cargo test --features avatar-rvc` green; tier-2 tests pass on env-var-bearing host |
 | M4 | `Live2DRenderNode` (native wgpu + CubismCore) | `cargo build --features avatar-render` green w/ `LIVE2D_CUBISM_CORE_DIR` set; full pipeline e2e green when both Cubism SDK + Live2D model env vars present |
 
@@ -774,6 +774,51 @@ async fn barge_in_clears_internal_buffer_and_stops_emit() {
 ```bash
 git commit -m "test(avatar): synthetic-emotion WebRTC e2e through EmotionExtractor + Audio2Face"
 ```
+
+---
+
+## M2 actuals (2026-04-28, partial)
+
+This pass shipped the **interface + integration plumbing** half of M2. The real Audio2Face ONNX port (M2.2 inference + M2.3 PGD/BVLS solvers + M2.4 smoother) is deferred to a follow-up turn — it's a multi-day port of ~33 KB of C# math from `external/handcrafted-persona-engine/.../LipSync/Audio2Face/` and gates on `AUDIO2FACE_TEST_ONNX` (the persona-engine bootstrapper-downloaded model) which we don't have on disk yet anyway.
+
+**Why split it.** Landing the contract first means the synthetic-emotion e2e (M2.7) — the user-authorized milestone showpiece — actually runs in CI without the license-walled ONNX model. When the real Audio2Face arrives it slots into the same trait, same envelope, same manifest edge, and the existing assertions stand.
+
+**Shipped:**
+
+- **M2.0** — fixture infrastructure
+  - `avatar-lipsync = ["avatar-emotion"]` feature flag in [`crates/core/Cargo.toml`](../../../crates/core/Cargo.toml)
+  - `skip_if_no_real_avatar_models!()` macro + `sine_sweep_16k_mono()` helper in [`crates/core/tests/avatar_test_support.rs`](../../../crates/core/tests/avatar_test_support.rs) — pure-Rust sine generator, no `sox` dep
+- **M2.1** — `LipSyncNode` trait + `BlendshapeFrame` envelope in [`crates/core/src/nodes/lip_sync/`](../../../crates/core/src/nodes/lip_sync/)
+  - Canonical 52-element ARKit blendshape name array
+  - Json round-trip with `kind: "blendshapes"`, `pts_ms`, optional `turn_id`
+  - Trait declares `required_sample_rate()` + `required_channels()` for capability resolver wiring
+- **M2.5-lite** — `SyntheticLipSyncNode` deterministic stand-in
+  - RMS-driven jaw + smile activation, all other 49 ARKit slots = 0
+  - Per-chunk emit with cumulative-ms `pts_ms`
+  - `reset_clock()` for barge handling (M2.6 follow-up will wire it through `in.barge_in` aux port)
+  - Useful for tests AND as a manifest fallback when `AUDIO2FACE_TEST_ONNX` isn't set
+- **M2.7** — synthetic-emotion e2e in [`crates/core/tests/avatar_synthetic_emotion_e2e.rs`](../../../crates/core/tests/avatar_synthetic_emotion_e2e.rs)
+  - Wires `EmotionExtractorNode → SyntheticLipSyncNode` with sine-sweep audio chunks
+  - Asserts emotion event count + emoji + source order, blendshape stream monotonicity, jaw-movement-with-audio, tag stripping for the (synthetic) TTS path
+
+**Deferred (next M2 turn):**
+
+- **M2.2** — `Audio2FaceInference` Rust port (ONNX session + chunk inference) of [`external/.../Audio2FaceInference.cs`](../../../external/handcrafted-persona-engine/src/PersonaEngine/PersonaEngine.Lib/TTS/Synthesis/LipSync/Audio2Face/Audio2FaceInference.cs)
+- **M2.3** — `PgdBlendshapeSolver` + `BvlsBlendshapeSolver` Rust ports (12 KB + 9 KB of C# math)
+- **M2.4** — `ParamSmoother` port
+- **M2.5** — `Audio2FaceLipSyncNode` end-to-end wrapping the above; gated on `avatar-audio2face = ["avatar-lipsync", "dep:ort"]`
+- **M2.6** — coordinator `barge_in_targets` propagation test (covers both Audio2Face and Synthetic via `in.barge_in` aux port)
+
+**Tests landed (15 total, all green):**
+- 10 inline blendshape envelope tests in [`blendshape.rs`](../../../crates/core/src/nodes/lip_sync/blendshape.rs) (5 tests) and synthetic node tests in [`synthetic.rs`](../../../crates/core/src/nodes/lip_sync/synthetic.rs) (6 tests)
+- 2 integration tests in [`avatar_synthetic_emotion_e2e.rs`](../../../crates/core/tests/avatar_synthetic_emotion_e2e.rs)
+- All 10 prior `emotion_extractor_test` integration tests still green
+
+**Build matrix verified:**
+- `cargo build -p remotemedia-core` (default features) — clean.
+- `cargo test -p remotemedia-core --features avatar-emotion,avatar-lipsync --lib lip_sync` — 13/13 green.
+- `cargo test -p remotemedia-core --features avatar-emotion,avatar-lipsync --test avatar_synthetic_emotion_e2e` — 2/2 green.
+- `cargo test -p remotemedia-core --features avatar-emotion,avatar-lipsync --test emotion_extractor_test` — 10/10 green (M0 still passes).
 
 ---
 
