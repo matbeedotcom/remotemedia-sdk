@@ -175,56 +175,210 @@ crates/
   The `core` consumer enables only a `types` cargo feature that compiles the
   serde structs, not the FFI bindings.
 - The runner binary is shipped as a build artifact alongside `remotemedia-core`.
-  At runtime the node looks it up via `$REMOTEMEDIA_LIQUID_AUDIO_RUNNER` env
-  var or `which`, falling back to a sibling-of-current-exe search. Same
-  pattern as how the existing Python multiprocess runner is found.
+  Discovery is **new infrastructure** for this design (the existing Python
+  runner is found via `python -m remotemedia.core.multiprocessing.runner`,
+  not via filesystem search). See §"Runner discovery" below.
+
+### Spawn / IPC infrastructure refactor (prerequisite)
+
+The existing `process_manager.rs` is structurally Python-specific: it
+hardcodes `Command::new(&spawn_config.python_executable)` with `-m
+remotemedia.core.multiprocessing.runner`, owns a `MultiprocessConfig` that
+carries `python_executable`/`python_path`/`python_env`, auto-resolves a
+uv-managed venv per session, expects the child to read params from stdin as
+JSON, and expects the child to emit `b"READY"` over an iceoryx2 control
+channel. None of this is appropriate for a static Rust binary.
+
+Therefore, **before** any liquid-audio code lands, factor out the spawn target:
+
+```rust
+pub enum SpawnTarget {
+    Python {
+        executable: PathBuf,
+        env: PythonEnvConfig,
+        node_module: String,         // "remotemedia.core.multiprocessing.runner"
+        params: Value,                // sent on stdin
+    },
+    Binary {
+        executable: PathBuf,          // resolved liquid runner path
+        argv: Vec<String>,            // model paths, etc.
+        env: HashMap<String, String>,
+    },
+}
+```
+
+`ProcessManager::spawn_node()` matches on `SpawnTarget`. The Python branch
+keeps the venv resolver, params-stdin protocol, and dependency-merging code
+exactly as today (no behavior change for existing nodes). The Binary branch
+spawns directly, passes config via argv, and shares the same READY-signal /
+iceoryx2 channel-naming / health-monitor / `PR_SET_PDEATHSIG` machinery — all
+of which is already factored cleanly enough to reuse.
+
+The shared parts that **do** legitimately reuse without change:
+`spawn_ipc_thread`, `IpcCommand` enum, `register_output_callback`,
+`HealthMonitor`, the iceoryx2 channel registry. The runner-side READY
+protocol is also reused: write `b"READY"` to the control channel after init.
+
+This refactor is small but non-zero — call it ~1-2 days. Listed in
+§"Migration & Rollout" step 0.
+
+### Runner discovery
+
+The pipeline-side node resolves the `remotemedia-liquid-audio-runner` binary
+path on first `get_or_spawn` call. Precedence:
+
+1. `$REMOTEMEDIA_LIQUID_AUDIO_RUNNER` env var, if set and pointing to an
+   executable file.
+2. Sibling of `std::env::current_exe()` — i.e. `<dir-of-current-exe>/remotemedia-liquid-audio-runner`.
+3. `$PATH` lookup via `which::which("remotemedia-liquid-audio-runner")`.
+4. If none resolve: `Err(LiquidAudioError::RunnerNotFound)` with a clear
+   message naming all three locations searched and pointing the user at the
+   install-step doc.
+
+Distribution: the runner is built as part of the workspace (`cargo build -p
+liquid-audio-runner --release`) and `cargo install --path
+crates/liquid-audio-runner` puts it on `$PATH`. Documented in
+`crates/liquid-audio-runner/README.md`.
 
 ### Subprocess lifecycle
 
-Reuses `crates/core/src/python/multiprocess/process_manager.rs` pattern,
-generalized to spawn an arbitrary binary instead of `python -m runner`:
+Reuses the refactored `process_manager.rs` (see prerequisite above) with
+`SpawnTarget::Binary`:
 
 1. Pipeline construction: `LlamaCppLiquidASRNode::initialize()` (or TTS's)
-   asks `LiquidRunnerRegistry::get_or_spawn(&LiquidAudioConfig)` for an
-   `Arc<LiquidAudioRunner>`.
+   asks `SessionState::liquid_runners().get_or_spawn(&LiquidAudioConfig)`
+   for an `Arc<LiquidAudioRunner>`. **Sharing scope: per-session, not
+   process-global.** The registry lives inside `SessionState`, not as a
+   `OnceLock`. Cross-session sharing was considered and rejected: it would
+   require dropping `session_id` from iceoryx2 channel names (departing
+   from the existing `{session_id}_{node_id}_input` convention), would
+   complicate `terminate_session` (which currently tears down all
+   per-session IPC), and the cold-start mitigation (Risk 1) is mostly
+   about *intra-session* sharing of one runner across ASR + TTS, not
+   cross-session caching.
 2. Registry key: `(model_path, mmproj_path, vocoder_path, speaker_path,
-   backend_tag)`. If a live entry exists with that key, return its `Arc`.
-3. If no live entry: spawn `remotemedia-liquid-audio-runner --session-id X
-   --model … --mmproj … --vocoder … --speaker …`, set
-   `PR_SET_PDEATHSIG` (Linux) so the child dies if we die (the codebase
-   already does this for Python children — see project memory entry on
-   orphan process fix), spawn IPC thread for it, register output callback,
-   wait for `READY` signal on stdout (control channel only — data flows
-   over iceoryx2). Insert `Weak` into registry.
-4. Return the `Arc<LiquidAudioRunner>`. ASR and TTS nodes both receive the
-   same `Arc` if their configs match.
-5. On node drop: the `Arc` count decrements. When it hits zero (no nodes
-   reference this runner), the registry's `Weak` upgrade fails on next
-   lookup, and a future request for the same config respawns. The runner
-   itself dies because we explicitly send `Shutdown` and join its IPC thread
-   in `LiquidAudioRunner::drop`.
+   backend_tag)`.
+3. **Lock ordering** (corrects v2's earlier ambiguity):
+   ```text
+   acquire spawn_locks[key] (per-key Arc<Mutex<()>>)
+       ↓
+   Weak::upgrade on inner[key]
+       ↓
+   if Some(arc): return arc
+   if None:      spawn → register Weak → return arc
+   ```
+   The per-key mutex serializes *both* the upgrade attempt and the spawn,
+   eliminating the TOCTOU race where two nodes drop and respawn between
+   each other's checks.
+4. Spawn path: build `SpawnTarget::Binary` with the resolved runner path
+   (see "Runner discovery"); call `process_manager.spawn_node(target,
+   session_id, node_id="liquid_audio_runner_<key_hash>")`. The IPC thread,
+   health monitor, channel naming, and `PR_SET_PDEATHSIG` (Linux) are all
+   inherited from the refactored manager.
+5. Wait for `READY` signal on the iceoryx2 control channel (existing
+   protocol, byte string `b"READY"`). The runner emits `READY` *only after*
+   it has loaded all four GGUFs and emitted its `RunnerCapabilities` event
+   (see §"IPC protocol" below) — so by the time `initialize()` returns, the
+   pipeline-side node has the actual sample rates available for capability
+   resolution Phase 2.
+6. On node drop: the `Arc` count decrements. When it hits zero, the
+   per-session registry's `Weak::upgrade` fails on next lookup. The runner
+   itself dies via `Drop` on `LiquidAudioRunner`, which sends `Shutdown`
+   and joins the IPC thread.
+7. On parent crash (Linux): `PR_SET_PDEATHSIG` kills the runner. On
+   parent crash (macOS): no equivalent system call — see §"Risk 4" for the
+   heartbeat-based fallback.
 
-### IPC payload format
+### IPC protocol
 
-Reuse the existing binary format from
-`crates/core/src/python/multiprocess/data_transfer.rs`. We add two new type
-discriminator bytes:
+**Sibling protocol, not the existing `RuntimeData` format.** The existing
+`data_transfer.rs` format uses a `DataType` u8 discriminator at offset 0
+that is exhausted (values `1..=8` for Audio/Text/Image/etc.) and rejects
+any other value. Adding new top-level discriminators (`0x10`, `0x20`) would
+not survive `RuntimeData::from_bytes`. The liquid-audio IPC therefore runs
+on **separate iceoryx2 services** with a different on-wire schema.
 
-- `0x10` = `LiquidIpcCommand::AudioChunk { source_node_id, samples }`
-- `0x11` = `LiquidIpcCommand::TextUtterance { source_node_id, text }`
-- `0x12` = `LiquidIpcCommand::Shutdown`
-- `0x20` = `LiquidIpcEvent::TextResult { node_id, text, partial }`
-- `0x21` = `LiquidIpcEvent::AudioResult { node_id, samples, sample_rate }`
-- `0x22` = `LiquidIpcEvent::Error { node_id, message }`
+iceoryx2 service-name convention (parallel to the existing
+`{session_id}_{node_id}_input`):
 
-The serializer/deserializer lives in `llama-cpp-liquid::ipc` and is shared
-between the runner and the pipeline-side node code, ensuring on-wire
-compatibility by construction. No serde/JSON in the hot path — fixed-layout
-binary, zero-copy where possible.
+- `{session_id}_liquid_{runner_id}_input`  — pipeline-side → runner
+- `{session_id}_liquid_{runner_id}_output` — runner → pipeline-side
+
+where `runner_id` is a hash of the registry key (so multiple liquid runners
+in the same session don't collide).
+
+Frame layout (every frame on either channel):
+
+```text
++------+------+--------+------+------+--------------+
+| ver  | kind | corr_id| nid_l| n_id | payload      |
+| u8=1 | u8   | u64    | u16  | utf-8| ...          |
++------+------+--------+------+------+--------------+
+```
+
+- `ver = 1` (protocol version; bump for breaking changes)
+- `kind`: command/event discriminator
+- `corr_id` (u64, little-endian): correlation id; the runner echoes the
+  command's `corr_id` on responses so async pipelines can match results
+  back to inputs
+- `nid_l` (u16): length of `n_id` in bytes
+- `n_id`: pipeline-side node id (UTF-8, no null terminator), tells the
+  runner-client router which `mpsc::Receiver` to dispatch to
+- `payload`: kind-specific, length-prefixed where needed
+
+Discriminator values (sibling protocol; never appear in `RuntimeData::from_bytes`):
+
+| `kind` | direction         | meaning                                                                |
+|--------|-------------------|------------------------------------------------------------------------|
+| `0x01` | client → runner   | `AudioChunk` (payload: `len:u32 \| f32_samples_le`)                    |
+| `0x02` | client → runner   | `TextUtterance` (payload: `len:u32 \| utf8_bytes`)                     |
+| `0x03` | client → runner   | `Shutdown` (payload: empty)                                            |
+| `0x80` | runner → client   | `RunnerCapabilities` (payload: `asr_rate:u32 \| tts_rate:u32 \| n_ch:u16 \| asr_format:u8 \| tts_format:u8`) |
+| `0x81` | runner → client   | `TextResult` (payload: `partial:u8 \| len:u32 \| utf8_bytes`)          |
+| `0x82` | runner → client   | `AudioResult` (payload: `sample_rate:u32 \| len:u32 \| f32_samples_le`) |
+| `0x83` | runner → client   | `Error` (payload: `len:u32 \| utf8_bytes`)                             |
+
+`RunnerCapabilities` is emitted by the runner exactly once, immediately
+before the `b"READY"` control byte. This wires Phase-2 capability
+resolution (see §"Capability resolution wiring" below).
+
+The encode/decode lives in `llama-cpp-liquid::ipc` and is shared between
+the runner and the pipeline-side node code, ensuring on-wire compatibility
+by construction. No serde/JSON in the hot path — fixed-layout binary,
+zero-copy where possible. Frames are bounded by an iceoryx2 sample-size
+config that's set per service to fit the largest expected `AudioResult`
+(default: 64 KiB, configurable per `LiquidAudioConfig`).
+
+### Capability resolution wiring
+
+Two-phase, runs against the existing `CapabilityResolver`:
+
+1. **Phase 1 (forward pass, at construction).** Both ASR and TTS nodes
+   declare `CapabilityBehavior::RuntimeDiscovered` and return *potential*
+   ranges from `potential_capabilities()`:
+   - ASR: `audio(sample_rate=8000..48000, channels=1, format=F32)` →
+     `text`
+   - TTS: `text` → `audio(sample_rate=16000..48000, channels=1, format=F32)`
+2. **`node.initialize()`** calls `LiquidRunnerRegistry::get_or_spawn`,
+   which blocks until the runner emits `RunnerCapabilities` and `READY`.
+   The pipeline-side node caches the actual `(asr_rate, tts_rate)` from
+   `RunnerCapabilities` into its own state. `initialize()` then returns.
+3. **Phase 2 (re-validation).** The framework calls
+   `actual_capabilities()` on each `RuntimeDiscovered` node. The node
+   returns the cached values from step 2. The resolver re-validates
+   downstream connections (e.g. SpeakerOutput's input rate against the
+   TTS's actual output rate) and fails fast with a clear error if
+   downstream nodes can't accept the discovered values.
+
+When a second node attaches to an already-running runner (cache hit), the
+runner client *also* synthesizes `RunnerCapabilities` from cached state and
+returns it synchronously to the second `get_or_spawn` caller. So the
+contract — "after `initialize()` returns, `actual_capabilities()` is ready"
+— holds regardless of cache hit/miss.
 
 ### Pipeline-side node design
 
-#### `LiquidRunnerRegistry`
+#### `LiquidRunnerRegistry` (per-session)
 
 ```rust
 pub struct LiquidRunnerRegistry {
@@ -233,16 +387,21 @@ pub struct LiquidRunnerRegistry {
 }
 
 impl LiquidRunnerRegistry {
-    pub fn get_or_spawn(&self, cfg: &LiquidAudioConfig) -> Result<Arc<LiquidAudioRunner>>;
+    pub async fn get_or_spawn(&self, cfg: &LiquidAudioConfig)
+        -> Result<Arc<LiquidAudioRunner>>;
 }
 ```
 
-- `Weak` references prevent leaking the runner across pipeline restarts.
-- `spawn_locks` is the per-key thundering-herd guard: if two nodes call
-  `get_or_spawn` with the same key concurrently after the previous runner
-  died, only one spawns; the other waits on the per-key mutex and then
-  observes the live `Arc`.
-- One global registry (`OnceLock<LiquidRunnerRegistry>`), per-process.
+- Lives **inside `SessionState`**, not as a process-global. One registry per
+  session. Cross-session sharing was rejected — see §"Subprocess lifecycle"
+  step 1.
+- `Weak` references prevent leaking the runner across pipeline restarts
+  *within* the session.
+- `spawn_locks` is the per-key thundering-herd guard. Lock ordering is
+  documented in §"Subprocess lifecycle" step 3.
+- `SessionState::Drop` (or `terminate_session`) drops the registry; any
+  `Arc<LiquidAudioRunner>` still held drops to zero, the runner gets
+  `Shutdown`, and the IPC thread joins.
 
 #### `LiquidAudioRunner`
 
@@ -250,46 +409,65 @@ impl LiquidRunnerRegistry {
 pub struct LiquidAudioRunner {
     process: ManagedChild,
     command_tx: mpsc::Sender<LiquidIpcCommand>,
-    output_rx: Mutex<broadcast::Receiver<LiquidIpcEvent>>, // per-node subscription
+    capabilities: RunnerCapabilities,                    // cached from READY
+    subscribers: Mutex<HashMap<String, mpsc::Sender<LiquidIpcEvent>>>,
     health: Arc<HealthMonitor>,
 }
 
 impl LiquidAudioRunner {
-    pub fn send_audio(&self, source_node_id: &str, samples: &[f32]) -> Result<()>;
-    pub fn send_text(&self, source_node_id: &str, text: &str) -> Result<()>;
-    pub fn subscribe(&self, node_id: &str) -> broadcast::Receiver<LiquidIpcEvent>;
+    pub async fn send_audio(&self, src: &str, samples: &[f32]) -> Result<u64>;
+    pub async fn send_text(&self, src: &str, text: &str) -> Result<u64>;
+
+    /// Returns the per-node mpsc receiver. Drop on node shutdown to
+    /// remove the subscription.
+    pub fn subscribe(&self, node_id: &str) -> mpsc::Receiver<LiquidIpcEvent>;
+
+    pub fn capabilities(&self) -> &RunnerCapabilities;
 }
 ```
 
-A `broadcast` channel from the IPC thread fans events out to all
-subscribers; each node filters events by `node_id` to receive only its own
-results. This matches how multi-node-per-process Python runners work today.
+**Per-node `mpsc::Receiver`, not `broadcast`.** The runner-client owns a
+single iceoryx2-output-draining task that demultiplexes events by `node_id`
+and forwards each to the right per-node `mpsc::Sender`. This matches how
+the existing Python multiprocess executor handles fan-out (one `mpsc` per
+registered output callback) and avoids `broadcast`'s lag-and-drop semantics
+that would silently drop ASR results when TTS or downstream nodes briefly
+stall.
+
+Backpressure: the per-node `mpsc` capacity is bounded (default 32, tunable
+via `LiquidAudioConfig`). If a slow consumer fills the channel, the
+demuxer task awaits and the iceoryx2 subscriber's internal queue absorbs
+the burst; if the iceoryx2 queue saturates, the runner observes pub-side
+backpressure (via `Publisher::loan` failure) and pauses its inference loop
+until drained. This is the correct flow-control story; `broadcast` would
+have lied about it.
 
 #### `LlamaCppLiquidASRNode`
 
 ```rust
 #[node(
     node_type = "LlamaCppLiquidASR",
-    capabilities = "runtime_discovered",
-    input_caps  = "audio(sample_rate=16000, channels=1, format=F32)",
-    output_caps = "text"
+    capabilities = "runtime_discovered"
 )]
 pub struct LlamaCppLiquidASRNode {
     runner: Arc<LiquidAudioRunner>,
-    rx: broadcast::Receiver<LiquidIpcEvent>,
+    rx: mpsc::Receiver<LiquidIpcEvent>,
     cfg: LiquidAudioASRConfig,
     node_id: String,
 }
 ```
 
-Capability behavior is `RuntimeDiscovered` (corrected from v1's `Configured`,
-per spec-review #9): the node reports a *potential* range
-(`audio(sample_rate=8000..48000)`) at construction, and the *actual* value
-(read from mmproj GGUF metadata after the runner has loaded it) on
-post-init `resolve_capabilities()`.
+`potential_capabilities()`: `audio(sample_rate=8000..48000, channels=1,
+format=F32) → text`.
 
-Per-chunk flow: `RuntimeData::Audio` in → `runner.send_audio(self.node_id, &samples)`
-→ await `LiquidIpcEvent::TextResult { node_id == self.node_id }` from `rx` →
+`actual_capabilities()`: returns the cached value from
+`runner.capabilities().asr_rate` (populated during `initialize()` from
+the runner's `RunnerCapabilities` event — see §"Capability resolution
+wiring").
+
+Per-chunk flow: `RuntimeData::Audio` in →
+`runner.send_audio(self.node_id, &samples)` → await
+`LiquidIpcEvent::TextResult { node_id == self.node_id }` from `rx` →
 emit `RuntimeData::Text`.
 
 #### `LlamaCppLiquidTTSNode`
@@ -297,17 +475,21 @@ emit `RuntimeData::Text`.
 ```rust
 #[node(
     node_type = "LlamaCppLiquidTTS",
-    capabilities = "runtime_discovered",
-    input_caps  = "text",
-    output_caps = "audio"  // sample_rate resolved at runtime from vocoder GGUF
+    capabilities = "runtime_discovered"
 )]
 pub struct LlamaCppLiquidTTSNode {
     runner: Arc<LiquidAudioRunner>,
-    rx: broadcast::Receiver<LiquidIpcEvent>,
+    rx: mpsc::Receiver<LiquidIpcEvent>,
     cfg: LiquidAudioTTSConfig,
     node_id: String,
 }
 ```
+
+`potential_capabilities()`: `text → audio(sample_rate=16000..48000,
+channels=1, format=F32)`.
+
+`actual_capabilities()`: returns the cached value from
+`runner.capabilities().tts_rate`.
 
 Per-input flow: `RuntimeData::Text` in →
 `runner.send_text(self.node_id, &text)` → await `AudioResult` → emit
@@ -396,10 +578,18 @@ progress events (the runtime already reports node-init progress to clients).
 
 Audio at 16 kHz mono f32 is ~64 KB/s — trivial for iceoryx2. TTS output at
 24 kHz mono f32 is ~96 KB/s. iceoryx2's zero-copy shared-memory transport
-handles MB/s easily. Latency overhead per chunk is single-digit microseconds
-(measured on existing Python multiprocess audio paths in this repo).
+handles MB/s easily on its own benchmarks.
 
-**Mitigation:** none needed. Specifically NOT a concern.
+**Verification status:** the project has `crates/core/benches/docker_ipc_benchmark.rs`
+and `crates/core/benches/docker_vs_multiprocess.rs`, which measure full
+multiprocess pipeline latency including Python overhead. Neither isolates
+"raw iceoryx2 chunk overhead" specifically. Numbers should be confirmed
+during the smoke-test phase by adding a microbenchmark that round-trips an
+empty `AudioChunk` command through the runner with a no-op handler.
+
+**Mitigation:** verify with a microbenchmark before claiming no concern.
+If overhead exceeds ~1 ms per chunk on target hardware, revisit chunk-size
+defaults.
 
 ### Risk 3 — Streaming TTS
 
@@ -410,16 +600,26 @@ Token-by-token streaming through the vocoder may produce boundary clicks.
 intra-utterance streaming. Streaming TTS deferred until the PR's vocoder
 demonstrates clean streaming behavior in upstream tests.
 
-### Risk 4 — Runner crash / OOM
+### Risk 4 — Runner crash / OOM / parent-death on macOS
 
 If the runner segfaults (model loading bug, CUDA OOM, PR rebase regression),
 the IPC thread observes channel closure. The pipeline-side node returns
 `Error::ProcessError` for in-flight requests. The `LiquidAudioRunner`'s
 `Drop` cleans up; next call to `get_or_spawn` respawns.
 
-**Mitigation:** reuse `health_monitor.rs`. Surface crashes as structured
-errors per chunk, not panics. Document that the *first* chunk after restart
-will pay the cold-start cost again.
+On Linux, the parent's `PR_SET_PDEATHSIG(SIGTERM)` ensures the runner dies
+if the runtime crashes. On macOS, no equivalent system call exists — this
+matches the existing Python multiprocess executor's behavior (also
+Linux-only). Without intervention, a runtime crash on macOS will orphan the
+runner with the GGUFs resident in memory.
+
+**Mitigation:** reuse `health_monitor.rs` for liveness; surface crashes as
+structured errors per chunk, not panics; document the cold-start cost
+after restart. **For macOS specifically**, the runner emits a heartbeat
+ping on the iceoryx2 control channel every 5 s; if it does not see a pong
+from the parent within 30 s, it self-shutdowns. Cost: ~10 lines in the
+runner main loop. Consistent with parent-death on Linux without requiring
+a system call macOS doesn't provide.
 
 ### Risk 5 — PR rebase churn
 
@@ -442,6 +642,20 @@ downloadable. The PR references `LiquidAI/LFM2.5-Audio-1.5B-GGUF`.
 a downloader in this iteration. The existing Python `LFM2AudioNode` uses
 `hf_repo` parameter; the llama.cpp nodes take filesystem paths.
 
+### Risk 7 — iceoryx2 macOS coverage
+
+The pivot to multiprocess implicitly assumes iceoryx2 works on macOS. The
+existing Python multiprocess integration is Linux-tested; macOS coverage of
+iceoryx2 itself depends on upstream support and is not gated by this repo's
+CI today. If upstream macOS support regresses, the liquid-audio path
+regresses with it.
+
+**Mitigation:** add a macOS smoke-test job to the CI matrix (see §"CI
+matrix" below) that exercises the existing Python multiprocess path *and*
+the new liquid-audio path. If iceoryx2 macOS proves fragile during
+implementation, demote macOS to "best-effort, untested" in the README and
+file an upstream-tracking issue.
+
 ## Open Questions (deferred, not blockers)
 
 - **Q1** — Does the PR expose stable C entry points for the audio decode loop
@@ -456,18 +670,39 @@ a downloader in this iteration. The existing Python `LFM2AudioNode` uses
 
 ## Migration & Rollout
 
+0. **Refactor `process_manager.rs` to support `SpawnTarget::{Python,Binary}`.**
+   No behavioral change for existing Python nodes; lays the groundwork for
+   the runner. ~1-2 days. (See §"Spawn / IPC infrastructure refactor".)
 1. Land `llama-cpp-liquid-sys` (vendored fork, no rename pipeline). Verify it
-   builds standalone with CUDA on Linux + macOS.
+   builds standalone with CUDA on Linux and (best-effort) macOS.
 2. Land `llama-cpp-liquid` safe wrapper. Unit-test against the canary GGUFs.
-3. Land `liquid-audio-runner` binary. Test `READY → AudioChunk → TextResult`
-   round-trip with a recorded audio fixture.
+3. Land `liquid-audio-runner` binary. Test
+   `READY → RunnerCapabilities → AudioChunk → TextResult` round-trip with a
+   recorded audio fixture, and `TextUtterance → AudioResult` round-trip.
 4. Land `core/src/nodes/llama_cpp/liquid_audio/` behind the
-   `llama-cpp-liquid-audio` feature. No effect on existing users.
-5. Add an example (`crates/core/examples/liquid_audio_smoke.rs`) modeled on
+   `llama-cpp-liquid-audio` feature, including the runner-discovery logic
+   (§"Runner discovery"). No effect on existing users.
+5. Add a microbenchmark for IPC chunk overhead (verifies Risk 2's claim).
+6. Add an example (`crates/core/examples/liquid_audio_smoke.rs`) modeled on
    `crates/core/examples/llama_cpp_chat_smoke.rs`. The existing
    `lfm2_audio_webrtc_server.rs` example becomes a candidate for a third
    backend choice (`LFM2_AUDIO_BACKEND=llamacpp`) once nodes land.
-6. Document GGUF paths in `docs/`.
+7. Document GGUF paths and the install procedure for the runner binary
+   (`cargo install --path crates/liquid-audio-runner`) in `docs/`.
+
+## CI matrix
+
+| Job                                                             | Platform       | Purpose                                                                |
+|-----------------------------------------------------------------|----------------|------------------------------------------------------------------------|
+| `cargo build` (no features)                                      | Linux, macOS   | No liquid pieces present; baseline                                     |
+| `cargo build --features llama-cpp`                                | Linux, macOS   | Stock llama.cpp only                                                   |
+| `cargo build --features llama-cpp-liquid-audio`                   | Linux, macOS   | Liquid types in core; runner builds separately                         |
+| `cargo build -p liquid-audio-runner --release --features cuda`    | Linux          | Runner with CUDA                                                       |
+| `cargo build --features llama-cpp-all`                            | Linux, macOS   | Both stacks enabled (in different binaries)                            |
+| `cargo test --features llama-cpp,llama-cpp-liquid-audio` smoke    | Linux, macOS   | Round-trips ASR + TTS through the runner with mocked GGUFs             |
+| `cargo test` runner-respawn-after-kill                            | Linux          | `kill -9` the runner; next chunk produces clean error + respawn        |
+| Microbenchmark: IPC chunk overhead                                | Linux          | Verifies Risk 2's single-digit-µs claim                                |
+| `cargo test` macOS-multiprocess-smoke                             | macOS          | Verifies iceoryx2 macOS still works (gates Risk 7)                     |
 
 ## Success Criteria
 
@@ -477,13 +712,28 @@ a downloader in this iteration. The existing Python `LFM2AudioNode` uses
   passes on Linux + macOS, including a smoke test that round-trips audio
   through ASR and TTS via the runner.
 - A pipeline manifest `MicInput → LiquidASR → LlamaGeneration → LiquidTTS →
-  SpeakerOutput` constructs, validates capabilities, runs end-to-end, and
-  produces audible TTS output.
+  SpeakerOutput` constructs, runs Phase-2 capability resolution against
+  values discovered from the runner's `RunnerCapabilities` event, runs
+  end-to-end, and produces audible TTS output.
 - No regression in `--features llama-cpp` or `--features llama-cpp-cuda`
   builds. No symbol collisions are even possible: the two stacks live in
   different processes.
+- The Python multiprocess executor's tests still pass after the
+  `SpawnTarget` refactor (no behavioral change for existing nodes).
 - Killing the liquid runner from outside (`kill -9`) results in a clean
   per-chunk error and a successful respawn on the next request.
+- IPC chunk-overhead microbenchmark reports < 100 µs on commodity hardware.
+
+## Non-Goals (restated)
+
+- **Windows.** iceoryx2's Windows transport is gated behind a non-default
+  feature flag and is not exercised by the existing Python multiprocess
+  integration. Windows support for the liquid runner is filed as a
+  follow-up.
+- **In-process linking** of stock + liquid llama.cpp. See "Supersedes" at
+  the top.
+- **Streaming TTS partials** (intra-utterance). See Risk 3.
+- **Auto-downloading GGUFs.** See Risk 6.
 
 ## References
 
