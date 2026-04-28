@@ -78,6 +78,13 @@ impl NodeProvider for CoreNodesProvider {
         registry.register(Arc::new(TextCollectorNodeFactory));
         registry.register(Arc::new(ConversationCoordinatorNodeFactory));
 
+        // Avatar pipeline (spec 2026-04-27): emoji-tag extraction
+        #[cfg(feature = "avatar-emotion")]
+        {
+            use super::streaming_registry::EmotionExtractorNodeFactory;
+            registry.register(Arc::new(EmotionExtractorNodeFactory));
+        }
+
         // LLM nodes
         registry.register(Arc::new(OpenAIChatNodeFactory));
         registry.register(Arc::new(MultimodalLLMNodeFactory));

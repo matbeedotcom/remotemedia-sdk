@@ -1,0 +1,33 @@
+live2d-py module:  /Users/mathieugosbee/dev/originals/remotemedia-sdk/scripts/probes/.venv/lib/python3.11/site-packages/live2d/v3/__init__.py
+LIVE2D_VERSION:    3
+
+=== Model ===
+  data-plane methods present: (none)
+  data-plane methods missing: ['GetDrawableConstantFlags', 'GetDrawableDynamicFlags', 'GetDrawableIndexCount', 'GetDrawableIndices', 'GetDrawableOpacities', 'GetDrawableOpacity', 'GetDrawableRenderOrder', 'GetDrawableRenderOrders', 'GetDrawableTextureIndex', 'GetDrawableTextureIndices', 'GetDrawableVertexCount', 'GetDrawableVertexCounts', 'GetDrawableVertexPositions', 'GetDrawableVertexUvs']
+
+=== LAppModel ===
+  data-plane methods present: (none)
+  data-plane methods missing: ['GetDrawableConstantFlags', 'GetDrawableDynamicFlags', 'GetDrawableIndexCount', 'GetDrawableIndices', 'GetDrawableOpacities', 'GetDrawableOpacity', 'GetDrawableRenderOrder', 'GetDrawableRenderOrders', 'GetDrawableTextureIndex', 'GetDrawableTextureIndices', 'GetDrawableVertexCount', 'GetDrawableVertexCounts', 'GetDrawableVertexPositions', 'GetDrawableVertexUvs']
+
+=== Construction without glInit ===
+  Skipped: empirically, both `Model()` and `LAppModel()` SIGSEGV when
+  instantiated without a prior `glInit()` call (verified separately).
+  This means the wrapper *requires* GL even before any draw call —
+  another data point against §5 'split Rust+Python' viability.
+
+VERDICT
+-------
+live2d-py 0.6.1.1 does NOT expose post-deformer drawable mesh data.
+`Update()`/`UpdatePhysics()` compute the deformed mesh internally,
+but it is consumed only by `Draw()` (which requires an active GL
+context). No Python-level accessor exists for vertex_positions,
+vertex_count, indices, UVs, opacity, render_order, or flags.
+
+=> Spec §5 'split Rust+Python backend' is NOT viable on this wrapper.
+=> Promote spec §11(1) 'live2d-render-native-wgpu' to first-shipped,
+   OR fork live2d-py and add bindings for csmGetDrawable* APIs.
+─────────────────────────────────────────────────────────────
+ 🐾 live2d-py (built with Python 3.11.0)
+ 🧸 3rd-party lib integrated with official Live2D native SDK 
+ ✨ Official SDK: https://www.live2d.com/sdk/download/native/
+─────────────────────────────────────────────────────────────

@@ -43,6 +43,12 @@ pub mod silero_vad;
 #[cfg(feature = "silero-vad")]
 pub use silero_vad::SileroVADNode;
 
+// Avatar pipeline (spec 2026-04-27): emoji-tag extraction from text streams
+#[cfg(feature = "avatar-emotion")]
+pub mod emotion_extractor;
+#[cfg(feature = "avatar-emotion")]
+pub use emotion_extractor::{EmotionExtractorConfig, EmotionExtractorNode};
+
 pub mod audio_buffer_accumulator;
 pub use audio_buffer_accumulator::AudioBufferAccumulatorNode;
 

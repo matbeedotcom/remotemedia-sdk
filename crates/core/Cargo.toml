@@ -168,6 +168,8 @@ tonic = { workspace = true }
 default = ["multiprocess", "silero-vad", "docker", "video"]
 multiprocess = ["iceoryx2", "iceoryx2-log"]
 silero-vad = ["ort"]
+# Avatar pipeline (spec 2026-04-27): emoji-tag extraction from text streams
+avatar-emotion = []
 speaker-diarization = ["ort", "dep:pyannote-rs"]
 grpc-client = ["tonic", "prost", "prost-types"]
 # Docker support integrated into multiprocess system

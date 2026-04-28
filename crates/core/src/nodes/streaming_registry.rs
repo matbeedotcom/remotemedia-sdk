@@ -617,6 +617,58 @@ impl StreamingNodeFactory for TextCollectorNodeFactory {
     }
 }
 
+#[cfg(feature = "avatar-emotion")]
+pub(crate) struct EmotionExtractorNodeFactory;
+
+#[cfg(feature = "avatar-emotion")]
+impl StreamingNodeFactory for EmotionExtractorNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::emotion_extractor::{EmotionExtractorConfig, EmotionExtractorNode};
+        let config: EmotionExtractorConfig =
+            serde_json::from_value(params.clone()).unwrap_or_default();
+        let node = EmotionExtractorNode::new(config).map_err(|e| {
+            Error::Execution(format!("invalid EmotionExtractorNode pattern: {}", e))
+        })?;
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "EmotionExtractorNode"
+    }
+
+    fn is_multi_output_streaming(&self) -> bool {
+        true // Outputs 1 Text + N Json per input frame
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::emotion_extractor::EmotionExtractorConfig;
+        use crate::nodes::schema::{LatencyClass, NodeCapabilitiesSchema, NodeSchema, RuntimeDataType};
+        Some(
+            NodeSchema::new("EmotionExtractorNode")
+                .description(
+                    "Extracts [EMOTION:<emoji>] tags from text streams. \
+                     Emits the original text with tags removed plus a Json \
+                     emotion event per matched tag (spec 2026-04-27 §3.1).",
+                )
+                .category("text")
+                .accepts([RuntimeDataType::Text])
+                .produces([RuntimeDataType::Text, RuntimeDataType::Json])
+                .capabilities(NodeCapabilitiesSchema {
+                    parallelizable: true,
+                    batch_aware: false,
+                    supports_control: false,
+                    latency_class: LatencyClass::Fast,
+                })
+                .config_schema_from::<EmotionExtractorConfig>(),
+        )
+    }
+}
+
 #[cfg(feature = "silero-vad")]
 pub(crate) struct SileroVADNodeFactory;
 
