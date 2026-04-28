@@ -217,3 +217,9 @@ vendor/
 .worktrees/
 
 external/
+
+# Local model artifacts — too large to commit, downloaded on demand.
+# silero_vad.onnx + test_model.onnx (~10 MB) are explicitly committed
+# above the gitignore boundary; everything under models/<bundle>/
+# (Audio2Face, RVC, Live2D, etc.) is per-developer.
+/models/audio2face/
