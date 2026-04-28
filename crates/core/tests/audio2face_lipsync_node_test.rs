@@ -26,6 +26,7 @@ use remotemedia_core::nodes::lip_sync::{
     LipSyncNode,
 };
 use remotemedia_core::nodes::AsyncStreamingNode;
+use remotemedia_core::transport::session_control::{wrap_aux_port, BARGE_IN_PORT};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -194,6 +195,9 @@ async fn barge_in_clears_state_and_drains_buffer() {
     .await;
 
     // Send barge envelope. Should drop buffered audio and emit nothing.
+    // The kind:barge_in JSON is the in-band path the node accepts on
+    // its data channel; the manifest-level path goes through
+    // process_control_message (covered by the M2.6 router test).
     let barge = RuntimeData::Json(serde_json::json!({"kind": "barge_in"}));
     let outs = drive(&node, barge).await;
     assert_eq!(outs.len(), 0, "barge emits no frames");
@@ -234,6 +238,70 @@ async fn loud_audio_produces_nontrivial_blendshape_activity() {
         nonzero > 0,
         "mid-window frame should have at least some non-zero blendshape activations"
     );
+}
+
+/// M2.6: barge envelope dispatched via `process_control_message` (the
+/// path the session router takes when a coordinator's
+/// `barge_in_targets` includes this node) clears state identically to
+/// the in-band JSON path tested above. Asserts the
+/// `wrap_aux_port(BARGE_IN_PORT, …)` envelope produced by
+/// `SessionControl::publish` makes its way through correctly.
+#[tokio::test]
+async fn process_control_message_barge_in_clears_state() {
+    skip_if_no_real_avatar_models!("AUDIO2FACE_TEST_BUNDLE");
+    let node = Audio2FaceLipSyncNode::load(default_config()).expect("load node");
+
+    // Half-second to seed the buffer + advance the clock.
+    let _ = drive(
+        &node,
+        audio_chunk(sine_sweep_16k_mono(0.5, 220.0, 880.0), 16_000),
+    )
+    .await;
+
+    // Wrapped aux-port envelope, exactly as `SessionControl::publish`
+    // for `<node>.in.barge_in` would build.
+    let envelope = wrap_aux_port(BARGE_IN_PORT, RuntimeData::Json(serde_json::json!({})));
+    let handled = node
+        .process_control_message(envelope, Some("session-1".into()))
+        .await
+        .expect("control message ok");
+    assert!(handled, "node must report it handled the barge envelope");
+
+    // Buffer was drained → another half-second alone shouldn't fire.
+    let outs = drive(
+        &node,
+        audio_chunk(sine_sweep_16k_mono(0.5, 220.0, 880.0), 16_000),
+    )
+    .await;
+    assert_eq!(outs.len(), 0, "barge should have drained the buffer");
+
+    // Another half-second crosses the 1-sec window → 30 frames, with
+    // pts_ms restarting at zero (cum_window_ms reset by barge).
+    let outs = drive(
+        &node,
+        audio_chunk(sine_sweep_16k_mono(0.5, 220.0, 880.0), 16_000),
+    )
+    .await;
+    assert_eq!(outs.len(), NUM_CENTER_FRAMES);
+    let first = BlendshapeFrame::from_json(outs[0].as_json()).unwrap();
+    assert!(first.pts_ms < 50, "post-barge pts_ms restarts from 0");
+}
+
+/// Non-barge control messages (e.g. unrelated Json) return
+/// `Ok(false)` so the runtime's universal fallback semantics still
+/// apply (i.e. messages that aren't the barge port pass through any
+/// other handler if one is added later).
+#[tokio::test]
+async fn process_control_message_ignores_non_barge() {
+    skip_if_no_real_avatar_models!("AUDIO2FACE_TEST_BUNDLE");
+    let node = Audio2FaceLipSyncNode::load(default_config()).expect("load node");
+
+    let unrelated = RuntimeData::Json(serde_json::json!({"kind": "context", "text": "hi"}));
+    let handled = node
+        .process_control_message(unrelated, None)
+        .await
+        .expect("ok");
+    assert!(!handled);
 }
 
 #[tokio::test]

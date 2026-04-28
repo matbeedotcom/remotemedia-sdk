@@ -560,6 +560,24 @@ impl<T: AsyncStreamingNode + 'static> StreamingNode for AsyncNodeWrapper<T> {
             .process_streaming(data, session_id, move |output_data| callback(output_data))
             .await
     }
+
+    /// Forward control messages to the inner `AsyncStreamingNode`.
+    ///
+    /// The bridge was previously absent — overrides on the underlying
+    /// node never reached the runtime. As of the avatar M2.6 work the
+    /// session router actively dispatches `barge_in` aux-port envelopes
+    /// to this method (in addition to the universal future-cancellation
+    /// it already triggers), so nodes can clear `&self`-held state on
+    /// barge. Default impl on `AsyncStreamingNode` returns `Ok(false)`,
+    /// so adding the forward is backwards-compatible for nodes that
+    /// don't override it.
+    async fn process_control_message(
+        &self,
+        message: RuntimeData,
+        session_id: Option<String>,
+    ) -> Result<bool, Error> {
+        self.0.process_control_message(message, session_id).await
+    }
 }
 
 /// Factory trait for creating streaming node instances

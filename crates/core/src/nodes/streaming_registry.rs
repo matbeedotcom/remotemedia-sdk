@@ -669,6 +669,55 @@ impl StreamingNodeFactory for EmotionExtractorNodeFactory {
     }
 }
 
+#[cfg(feature = "avatar-lipsync")]
+pub(crate) struct SyntheticLipSyncNodeFactory;
+
+#[cfg(feature = "avatar-lipsync")]
+impl StreamingNodeFactory for SyntheticLipSyncNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::lip_sync::{SyntheticLipSyncConfig, SyntheticLipSyncNode};
+        let config: SyntheticLipSyncConfig =
+            serde_json::from_value(params.clone()).unwrap_or_default();
+        let node = SyntheticLipSyncNode::new(config);
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "SyntheticLipSyncNode"
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::lip_sync::SyntheticLipSyncConfig;
+        use crate::nodes::schema::{
+            LatencyClass, NodeCapabilitiesSchema, NodeSchema, RuntimeDataType,
+        };
+        Some(
+            NodeSchema::new("SyntheticLipSyncNode")
+                .description(
+                    "Deterministic stand-in for Audio2FaceLipSyncNode — derives \
+                     ARKit-52 BlendshapeFrame envelopes from the input audio's \
+                     RMS. Used for tests + manifest fallback when the real \
+                     Audio2Face bundle is unavailable.",
+                )
+                .category("avatar")
+                .accepts([RuntimeDataType::Audio])
+                .produces([RuntimeDataType::Json])
+                .capabilities(NodeCapabilitiesSchema {
+                    parallelizable: false,
+                    batch_aware: false,
+                    supports_control: true,
+                    latency_class: LatencyClass::Fast,
+                })
+                .config_schema_from::<SyntheticLipSyncConfig>(),
+        )
+    }
+}
+
 #[cfg(feature = "silero-vad")]
 pub(crate) struct SileroVADNodeFactory;
 

@@ -990,13 +990,28 @@ impl SessionRouter {
                         tracing::debug!(
                             session_id = %filter_session_id,
                             node_id = %filter_node_id,
-                            "Runtime: barge_in received — cancelling in-flight call"
+                            "Runtime: barge_in received — cancelling in-flight call \
+                             and forwarding to node.process_control_message"
                         );
                         // Wake whatever future is currently waiting in
                         // the dispatch select!. If nothing is running,
                         // this is a no-op (notify_waiters does NOT
                         // queue a permit), which is what we want.
                         filter_cancel.notify_waiters();
+                        // Also forward the barge envelope to the main
+                        // task so the node's `process_control_message`
+                        // override can clear `&self`-held state
+                        // (audio buffers, GRU state, smoother, etc.).
+                        // For nodes whose only meaningful response to
+                        // barge is in-flight cancellation (e.g. the
+                        // OpenAIChatNode HTTP-stream-drop path), the
+                        // default `process_control_message` returns
+                        // `Ok(false)`, so this is a free no-op.
+                        // Avatar M2.6 wires this through to the
+                        // Audio2FaceLipSyncNode + SyntheticLipSyncNode.
+                        if filt_tx.send(input).await.is_err() {
+                            break;
+                        }
                         continue;
                     }
                     // Other aux ports fall through — node-side aux
@@ -1022,6 +1037,33 @@ impl SessionRouter {
             let node_ref: &dyn StreamingNode = &*node;
 
             while let Some(input) = filt_rx.recv().await {
+                // Barge-in dispatch. The filter task forwards barge
+                // envelopes here in addition to firing
+                // `cancel.notify_waiters()`. We route the envelope to
+                // `process_control_message` so nodes can clear
+                // `&self`-held state (e.g. audio buffers, GRU). This
+                // does NOT flow through `process_streaming_async` —
+                // barge envelopes never appear in the data path. The
+                // result is dropped: barge handling is fire-and-forget
+                // and a node returning `Ok(false)` (or an error) just
+                // means it had no state to clear.
+                if let Some(port) = aux_port_of(&input) {
+                    if port == BARGE_IN_PORT {
+                        let session_for_ctrl = main_session_id.clone();
+                        if let Err(e) = node_ref
+                            .process_control_message(input, Some(session_for_ctrl))
+                            .await
+                        {
+                            tracing::debug!(
+                                node_id = %main_node_id,
+                                "process_control_message(barge_in) error (ignored): {}",
+                                e
+                            );
+                        }
+                        continue;
+                    }
+                }
+
                 // Node-state gate (Bypass / Disabled). Per-input, so a
                 // runtime control-bus toggle takes effect on the next
                 // packet.

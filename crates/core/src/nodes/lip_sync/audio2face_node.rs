@@ -57,6 +57,7 @@ use crate::nodes::lip_sync::audio2face::solver_trait::BlendshapeSolver;
 use crate::nodes::lip_sync::blendshape::{BlendshapeFrame, ARKIT_52};
 use crate::nodes::lip_sync::{ArkitSmoother, LipSyncNode};
 use crate::nodes::AsyncStreamingNode;
+use crate::transport::session_control::{aux_port_of, BARGE_IN_PORT};
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -344,6 +345,26 @@ impl AsyncStreamingNode for Audio2FaceLipSyncNode {
             emitted += self.process_window(&window, window_start_ms, &mut callback)?;
         }
         Ok(emitted)
+    }
+
+    /// Runtime-dispatched control message handler. The session router
+    /// forwards `<node>.in.barge_in` aux-port envelopes here; on
+    /// receipt we drop GRU + solver-temporal + smoother + audio buffer
+    /// + pts clock. Other control messages (e.g. typed
+    /// `RuntimeData::ControlMessage`) are ignored — there's no
+    /// speculative-segment buffering on this node, so cancel
+    /// speculation is a no-op the runtime already handles via future
+    /// drop. See spec §3.4 + the avatar plan's M2.6 task.
+    async fn process_control_message(
+        &self,
+        message: RuntimeData,
+        _session_id: Option<String>,
+    ) -> Result<bool> {
+        if matches!(aux_port_of(&message), Some(BARGE_IN_PORT)) {
+            self.barge();
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
 

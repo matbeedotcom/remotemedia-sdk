@@ -99,7 +99,7 @@ Each milestone ends with a green `cargo test` (or, for milestones gated on exter
 |---|-------|------|
 | M0 | `EmotionExtractorNode` + tests | ✅ shipped — see [M0 actuals](#m0-actuals-2026-04-28) |
 | M1 | `audio.out.clock` tap on `AudioSender` | ✅ shipped — see [M1 actuals](#m1-actuals-2026-04-28) |
-| M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e | 🟢 shipped — interface + synthetic stand-in + e2e + solver math + ONNX inference + bundle loaders + `Audio2FaceLipSyncNode` coordinator all landed (M2.6 control-bus propagation test still deferred). See [M2 actuals](#m2-actuals-2026-04-28-partial) and pass 4 below. |
+| M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e + barge propagation | 🟢 shipped — full M2 set landed across 5 incremental passes (interface+synthetic+e2e, solver math, ONNX inference+bundle loaders, Audio2FaceLipSyncNode coordinator, manifest-level barge propagation via session-control bus). See [M2 actuals](#m2-actuals-2026-04-28-partial) and passes 2–5 below. |
 | M3 | `RVCNode` | `cargo test --features avatar-rvc` green; tier-2 tests pass on env-var-bearing host |
 | M4 | `Live2DRenderNode` (native wgpu + CubismCore) | `cargo build --features avatar-render` green w/ `LIVE2D_CUBISM_CORE_DIR` set; full pipeline e2e green when both Cubism SDK + Live2D model env vars present |
 
@@ -980,7 +980,56 @@ This pass wires the previous three passes' primitives (inference, blendshape con
 
 **Still deferred (final M2 pass):**
 
-- **M2.6** — coordinator `barge_in_targets` propagation test against the *manifest-level* aux port routing (covers session-control-bus delivery, which M2.5's in-process `barge()` API doesn't exercise).
+- **M2.6** — ✅ landed in M2 actuals pass 5 below
+
+---
+
+## M2 actuals (2026-04-28, pass 5 — M2.6 manifest-level barge propagation)
+
+This pass closes M2 by wiring the **session router → node** half of the barge path, so the coordinator's existing `barge_in_targets` mechanism actually clears `&self`-held state on lip-sync nodes (not just cancels in-flight calls). The runtime change is small and principled — it activates a previously-dormant `process_control_message` trait method that several other nodes already implement.
+
+**Why this needed runtime work, not just node work:**
+
+The router's filter task swallowed `barge_in` envelopes — calling `cancel.notify_waiters()` and then dropping the frame. That works for nodes whose only barge response is in-flight cancellation (e.g. `OpenAIChatNode`'s reqwest stream drop), but the lip-sync nodes need to clear persistent state (audio accumulator, GRU, solver temporal pull, smoother, pts clock) that no future-cancellation can touch. So the router needed to deliver the envelope to the node — and `AsyncNodeWrapper`, which bridges `AsyncStreamingNode → StreamingNode`, was missing the `process_control_message` forward, meaning even nodes that overrode it would never have been called.
+
+**Shipped:**
+
+- **`AsyncNodeWrapper::process_control_message` forward** — [`crates/core/src/nodes/streaming_node.rs`](../../../crates/core/src/nodes/streaming_node.rs#L527)
+  - Adds the missing async forward from the unified `StreamingNode` trait to the underlying `AsyncStreamingNode`. Backwards-compatible: nodes that don't override return `Ok(false)` (the default).
+- **Session router barge dispatch** — [`crates/core/src/transport/session_router.rs`](../../../crates/core/src/transport/session_router.rs)
+  - Filter task: keeps firing `cancel.notify_waiters()` (universal cancellation), and now ALSO forwards the wrapped barge envelope through `filt_tx`.
+  - Main task: detects `aux_port_of(&input) == Some(BARGE_IN_PORT)` at the top of its loop and dispatches via `node_ref.process_control_message(input, Some(session_id))` — bypasses perf instrumentation + `process_streaming_async`. Errors logged at `debug!` and ignored (fire-and-forget).
+- **Lip-sync `process_control_message` overrides** — both lip-sync impls inspect the envelope's wrapped aux port and clear state on `barge_in`:
+  - [`Audio2FaceLipSyncNode::process_control_message`](../../../crates/core/src/nodes/lip_sync/audio2face_node.rs) → calls `self.barge()` (drops GRU, solver temporal, smoother, audio buffer, `cum_window_ms`)
+  - [`SyntheticLipSyncNode::process_control_message`](../../../crates/core/src/nodes/lip_sync/synthetic.rs) → calls `self.reset_clock()`
+- **`SyntheticLipSyncNodeFactory` registered** — [`crates/core/src/nodes/streaming_registry.rs`](../../../crates/core/src/nodes/streaming_registry.rs) + [`core_provider.rs`](../../../crates/core/src/nodes/core_provider.rs); makes the synthetic stand-in usable in real manifests (not just the unit-test direct-construction path), and gives M2.6's integration test a routable target without the heavy Audio2Face bundle.
+
+**Tests landed (4 unit + 4 integration; +2 over M2.5's 89/14 baseline → 91 unit + 16 integration = 107 tests):**
+
+| File | Tests | Notes |
+|---|---|---|
+| `synthetic.rs` (unit) | +2 | `process_control_message_barge_in_resets_clock`, `process_control_message_ignores_non_barge` |
+| `audio2face_lipsync_node_test.rs` (tier-2) | +2 | `process_control_message_barge_in_clears_state`, `process_control_message_ignores_non_barge` |
+| `lipsync_barge_propagation_test.rs` (integration) | +2 | end-to-end through `SessionRouter` + `SessionControl::publish` against `SyntheticLipSyncNode`: `manifest_barge_in_resets_lipsync_pts_ms` + `manifest_barge_in_to_other_node_is_no_op` (pins the routing so a future broadcast bug fails loudly) |
+
+**Build + run matrix verified:**
+- `cargo build -p remotemedia-core --features avatar-audio2face` — clean.
+- `cargo test -p remotemedia-core --features avatar-audio2face --lib lip_sync` — 88/88 green (up from 86, +2 new synthetic tests).
+- `cargo test -p remotemedia-core --features avatar-audio2face --test session_control_integration` — 8/8 green (no regressions in pre-existing control-bus tests; the routing change is non-breaking).
+- `cargo test -p remotemedia-core --features avatar-audio2face --lib transport` — 52/52 green.
+- `cargo test -p remotemedia-core --features avatar-audio2face --test lipsync_barge_propagation_test` — 2/2 green.
+- `AUDIO2FACE_TEST_BUNDLE=$PWD/models/audio2face cargo test … --test audio2face_lipsync_node_test` — 10/10 green (8 from M2.5 + 2 new for M2.6).
+
+(Pre-existing flake noted: `data::ring_buffer::tests::test_concurrent_push_overwrite` is a concurrent-timing test that fails identically on `main` pre-changes; not related to M2.6.)
+
+**Why this is the right shape:**
+
+1. **`process_control_message` was already in the trait, just unwired.** Activating it now cleans up dead code (10+ existing impls), and the dispatch path is explicit at the runtime call site rather than smuggled through the data path.
+2. **Universal cancellation still happens.** Existing nodes that rely on future-drop barge handling (e.g. `OpenAIChatNode`) keep working — `cancel.notify_waiters()` still fires before `process_control_message` is invoked.
+3. **Non-barge envelopes are unaffected.** The dispatch only fires when `aux_port_of(&input) == Some(BARGE_IN_PORT)`. Other aux-port frames (`context`, etc.) flow through to `process_streaming_async` as before.
+4. **No node-side opt-in flag.** Nodes that don't override `process_control_message` return `Ok(false)` (the default) — harmless. The opt-in is implicit: override the method to handle barges.
+
+**M2 done. Cumulative shipped:** EmotionExtractorNode (M0) + audio.out.clock tap (M1) + LipSyncNode trait + BlendshapeFrame + SyntheticLipSyncNode (M2 partial) + Audio2Face solver math + ArkitSmoother (M2.3 + M2.4) + Audio2Face ONNX inference + bundle loaders (M2.2) + Audio2FaceLipSyncNode coordinator (M2.5) + manifest-level barge propagation (M2.6). Avatar audio→blendshape pipeline is now complete; M3 (RVCNode) and M4 (Live2DRenderNode) are the remaining tracks.
 
 ---
 

@@ -85,6 +85,16 @@ impl NodeProvider for CoreNodesProvider {
             registry.register(Arc::new(EmotionExtractorNodeFactory));
         }
 
+        // Avatar pipeline (spec 2026-04-27 §3.4): SyntheticLipSyncNode —
+        // deterministic stand-in registered alongside the real
+        // Audio2FaceLipSyncNode (which is bundle-path-driven and built
+        // by manifest config rather than a typed factory entry).
+        #[cfg(feature = "avatar-lipsync")]
+        {
+            use super::streaming_registry::SyntheticLipSyncNodeFactory;
+            registry.register(Arc::new(SyntheticLipSyncNodeFactory));
+        }
+
         // LLM nodes
         registry.register(Arc::new(OpenAIChatNodeFactory));
         registry.register(Arc::new(MultimodalLLMNodeFactory));

@@ -33,6 +33,7 @@ use crate::error::{Error, Result};
 use crate::nodes::lip_sync::blendshape::{BlendshapeFrame, ARKIT_52};
 use crate::nodes::lip_sync::LipSyncNode;
 use crate::nodes::AsyncStreamingNode;
+use crate::transport::session_control::{aux_port_of, BARGE_IN_PORT};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -162,6 +163,23 @@ impl AsyncStreamingNode for SyntheticLipSyncNode {
         callback(RuntimeData::Json(frame.to_json()))?;
         Ok(1)
     }
+
+    /// Runtime-dispatched control message handler. On `barge_in` we
+    /// reset the cumulative-ms clock so the post-barge turn's `pts_ms`
+    /// stream restarts at zero — keeping the wire-format contract
+    /// identical between the synthetic stand-in and the real
+    /// `Audio2FaceLipSyncNode`. See spec §3.4 + the avatar plan's M2.6.
+    async fn process_control_message(
+        &self,
+        message: RuntimeData,
+        _session_id: Option<String>,
+    ) -> Result<bool> {
+        if matches!(aux_port_of(&message), Some(BARGE_IN_PORT)) {
+            self.reset_clock();
+            return Ok(true);
+        }
+        Ok(false)
+    }
 }
 
 impl LipSyncNode for SyntheticLipSyncNode {
@@ -261,6 +279,49 @@ mod tests {
             .unwrap()
             .pts_ms;
         assert_eq!(pts, 100, "reset_clock should restart the pts_ms counter");
+    }
+
+    /// M2.6: barge envelope dispatched to `process_control_message`
+    /// resets the clock so the next frame's pts_ms starts at zero
+    /// again. Mirrors the runtime's session_router routing — when the
+    /// coordinator's `barge_in_targets` includes this node, the
+    /// router will deliver the wrapped envelope here.
+    #[tokio::test]
+    async fn process_control_message_barge_in_resets_clock() {
+        use crate::transport::session_control::{wrap_aux_port, BARGE_IN_PORT};
+
+        let node = SyntheticLipSyncNode::with_default();
+        // Advance the clock to 100 ms.
+        let _ = drive(&node, audio_chunk(vec![0.1; 1600], 16_000)).await;
+
+        // Deliver a wrapped barge envelope.
+        let envelope = wrap_aux_port(BARGE_IN_PORT, RuntimeData::Json(serde_json::json!({})));
+        let handled = node
+            .process_control_message(envelope, None)
+            .await
+            .expect("control message ok");
+        assert!(handled, "node must report it handled the barge envelope");
+
+        // Next chunk's pts_ms should restart from 100 ms (just one
+        // chunk's worth from zero).
+        let outs = drive(&node, audio_chunk(vec![0.1; 1600], 16_000)).await;
+        let pts = BlendshapeFrame::from_json(outs[0].as_json().unwrap())
+            .unwrap()
+            .pts_ms;
+        assert_eq!(pts, 100, "barge should restart the cumulative-ms clock");
+    }
+
+    /// Non-barge control messages return `Ok(false)` (unhandled) so
+    /// the runtime's universal fallback semantics still apply.
+    #[tokio::test]
+    async fn process_control_message_ignores_non_barge() {
+        let node = SyntheticLipSyncNode::with_default();
+        let unrelated = RuntimeData::Json(serde_json::json!({"kind": "weather", "city": "PDX"}));
+        let handled = node
+            .process_control_message(unrelated, None)
+            .await
+            .expect("ok");
+        assert!(!handled);
     }
 
     #[test]
