@@ -64,6 +64,21 @@ pub use multimodal_llm::{
     AggregationMode, LlmOutputMode, MultimodalLLMConfig, MultimodalLLMNode, MultimodalLLMNodeFactory,
 };
 
+// llama.cpp nodes — native GGUF inference via llama-cpp-4
+#[cfg(feature = "llama-cpp")]
+pub mod llama_cpp;
+#[cfg(feature = "llama-cpp")]
+pub use llama_cpp::{
+    LlamaCppConfig, LlamaCppGenerationConfig, LlamaCppEmbeddingConfig,
+    LlamaCppActivationConfig, LlamaCppSteerConfig, LlamaCppSteerVector,
+    LlamaBackendConfig, GpuOffload,
+    LlamaCppGenerationNode, LlamaCppGenerationNodeFactory,
+    LlamaCppEmbeddingNode, LlamaCppEmbeddingNodeFactory,
+    LlamaCppActivationNode, LlamaCppActivationNodeFactory,
+    LlamaCppSteerNode, LlamaCppSteerNodeFactory,
+    LlamaCppNodesProvider,
+};
+
 pub use audio_chunker::AudioChunkerNode;
 
 pub mod health_emitter;

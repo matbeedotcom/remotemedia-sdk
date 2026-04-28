@@ -146,6 +146,10 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # Whisper
 whisper-rs = "0.15"
 
+# llama.cpp bindings (GGUF inference)
+llama-cpp-4 = "0.2.13"
+encoding_rs = "0.8"
+
 # WASM-specific
 wlr-libpy = { git = "https://github.com/vmware-labs/webassembly-language-runtimes.git", default-features = false, features = ["py_main", "py312"] }
 wasm-bindgen = "0.2"

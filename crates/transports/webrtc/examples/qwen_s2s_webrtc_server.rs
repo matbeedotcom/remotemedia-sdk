@@ -1,16 +1,13 @@
-//! Qwen speech-to-speech WebRTC demo server.
+//! Qwen speech-to-speech WebRTC demo server (llama.cpp backend).
 //!
-//! Emulates a single S2S model by composing three separate MLX-backed
-//! nodes in series:
+//! Emulates a single S2S model by composing three separate nodes in series:
 //!
-//!   Whisper (STT) → Qwen3.5-9B-MLX (LLM) → Qwen3-TTS (TTS)
+//!   Whisper (STT) → Qwen3.6-27B-GGUF via LlamaCppGenerationNode (LLM) → Kokoro (TTS)
 //!
-//! Sibling of `lfm2_audio_webrtc_server.rs`. All control-bus topics are
-//! named to match the LFM2 version so the same browser UI
-//! (`examples/web/lfm2-audio-webrtc/`) works unchanged — the `audio`
-//! node here is the TTS, which passes upstream LLM text frames through
-//! verbatim so `audio.out` carries both live tokens and synthesised
-//! waveform chunks.
+//! Uses the native Rust llama.cpp inference engine instead of the Python/MLX
+//! variant in `qwen_s2s_webrtc_server.rs`. The LLM node is
+//! `LlamaCppGenerationNode` which wraps llama.cpp's C library through safe
+//! Rust bindings (`llama-cpp-4`).
 //!
 //! Topology:
 //!
@@ -21,15 +18,15 @@
 //!                                                             │   stt_in (Whisper, text)
 //!                                                             │      │
 //!                                                             │      ▼
-//!                                                             │   llm (Qwen3.5-9B, streams tool args)
+//!                                                             │   llm (LlamaCppGenerationNode, streams text)
 //!                                                             │      │
 //!                                                             └──→ coordinator (turn phase, sentencer)
 //!                                                                    │
 //!                                                                    ▼
-//!                                                                 audio (TTS, 24 kHz)
+//!                                                                 kokoro_tts (Kokoro, 24 kHz)
 //!                                                                    │
 //!                                                                    ▼
-//!                                                                 resample_out (24→48k, SINK)
+//!                                                                 audio (resample 24→48k, SINK)
 //! ```
 //!
 //! Control-bus endpoints exposed to the browser:
@@ -40,29 +37,40 @@
 //! - subscribe `coordinator.out` — authoritative turn_state events
 //!                                 (`turn_id`, phase, `cancelled_turn_id`,
 //!                                 `error`)
-//! - publish `audio.in.context`     — inject knowledge text (llm node)
-//! - publish `audio.in.system_prompt` — override persona (llm node)
-//! - publish `audio.in.barge_in`     — interrupt generation (llm + audio)
+//! - publish `audio.in.barge_in`     — interrupt generation (llm + kokoro_tts)
 //! - publish `audio.in.reset`        — wipe chat history
 //!
-//! Barge-in path (iteration 1 — client still drives fanout):
-//!   VAD speech_start (client) →
-//!     publish `llm.in.barge_in`  (halts QwenTextMlxNode generation)
-//!     publish `audio.in.barge_in` (halts QwenTTSMlxNode synthesis)
-//!     control.flush_audio        (drains server WebRTC ring buffer)
-//!   In parallel, the server-side `coordinator` observes the SAME VAD
-//!   event on its own wired input and (a) advances `turn_id`,
-//!   (b) drops any late LLM text from the cancelled turn at the
-//!   coordinator gate before it can reach TTS, and (c) publishes a
-//!   `turn_state` with `cancelled_turn_id` so the UI can mark the
-//!   turn as barged-in. A future iteration will move the aux-port
-//!   fanout server-side into the coordinator itself and retire the
-//!   client-side publishes (requires exposing `SessionControlBus` to
-//!   Rust nodes).
+//! Barge-in path: VAD `speech_start` (client) →
+//!   publish `audio.in.barge_in` (halts KokoroTTSNode synthesis)
+//!   The server-side `coordinator` observes the same VAD event on its
+//!   wired input to advance `turn_id` and gate late text from the
+//!   cancelled turn.
 //!
-//! Usage:
+//! # Environment variables
+//!
+//! | Variable                  | Default                                  | Description                               |
+//! |---------------------------|------------------------------------------|-------------------------------------------|
+//! | `QWEN_MODEL_PATH`         | `unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL`   | GGUF model path (local or hf:// URL)      |
+//! | `QWEN_SYSTEM_PROMPT`      | *(built-in voice-assistant prompt)*      | System message                            |
+//! | `QWEN_CONTEXT_SIZE`       | `8192`                                   | Context window (tokens)                   |
+//! | `QWEN_MAX_TOKENS`         | `2048`                                   | Max tokens per generation                 |
+//! | `QWEN_GPU_OFFLOAD`        | `all`                                    | `none`, `all`, or layer count (e.g. `32`) |
+//! | `QWEN_FLASH_ATTENTION`    | `true`                                   | Enable Flash Attention 2                  |
+//! | `QWEN_THREADS`            | *(auto)*                                 | Computation threads (0 = auto)            |
+//! | `QWEN_TTS_ENGINE`         | `kokoro`                                 | `kokoro` or `qwen`                        |
+//! | `KOKORO_LANG`             | `a`                                      | Kokoro language code                      |
+//! | `KOKORO_VOICE`            | `af_heart`                               | Kokoro voice preset                       |
+//! | `QWEN_TTS_REPO`           | `mlx-community/Qwen3-TTS-…`              | Qwen-TTS repo (when engine=qwen)          |
+//! | `QWEN_TTS_VOICE`          | `serena`                                 | Qwen-TTS voice preset                     |
+//!
+//! # Usage
 //!
 //! ```bash
+//! # First, download the GGUF model (or set QWEN_MODEL_PATH to an existing file):
+//! huggingface-cli download unsloth/Qwen3.6-27B-GGUF UD-Q4_K_XL.gguf \
+//!     --local-dir ./models --local-dir-use-symlinks false
+//!
+//! QWEN_MODEL_PATH=./models/UD-Q4_K_XL.gguf \
 //! cargo run --example qwen_s2s_webrtc_server \
 //!     -p remotemedia-webrtc --features ws-signaling -- --port 8082
 //! ```
@@ -77,19 +85,100 @@ use remotemedia_webrtc::config::WebRtcTransportConfig;
 use remotemedia_webrtc::signaling::WebSocketSignalingServer;
 use std::sync::Arc;
 
+// Force-link remotemedia-python-nodes so its `inventory::submit!` macro
+// pulls Python node factories (WhisperSTTNode, KokoroTTSNode, …) into
+// the default streaming registry.
 #[allow(unused_imports)]
 use remotemedia_python_nodes as _python_nodes_link;
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn parse_env_u32(key: &str) -> Option<u32> {
+    std::env::var(key).ok().and_then(|v| v.parse().ok())
+}
+
+fn parse_env_f32(key: &str) -> Option<f32> {
+    std::env::var(key).ok().and_then(|v| v.parse().ok())
+}
+
+fn parse_env_bool(key: &str) -> Option<bool> {
+    std::env::var(key).ok().and_then(|v| match v.to_lowercase().as_str() {
+        "true" | "1" | "yes" => Some(true),
+        "false" | "0" | "no" => Some(false),
+        _ => None,
+    })
+}
+
+fn parse_gpu_offload(val: &str) -> serde_json::Value {
+    match val.to_lowercase().as_str() {
+        "none" | "0" | "cpu" => serde_json::json!("none"),
+        "all" | "gpu" => serde_json::json!("all"),
+        n => {
+            if let Ok(layers) = n.parse::<u16>() {
+                serde_json::json!({ "layers": layers })
+            } else {
+                serde_json::json!("all")
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Manifest builder
+// ---------------------------------------------------------------------------
+
 fn build_manifest() -> Manifest {
-    let llm_repo = std::env::var("QWEN_LLM_REPO")
-        .unwrap_or_else(|_| "mlx-community/Qwen3.5-9B-MLX-4bit".to_string());
-    let tts_repo = std::env::var("QWEN_TTS_REPO")
-        .unwrap_or_else(|_| "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-6bit".to_string());
-    let tts_voice = std::env::var("QWEN_TTS_VOICE").unwrap_or_else(|_| "serena".to_string());
+    // ---- LLM (llama.cpp / GGUF) ----
+
+    // `/no_thinking` tells Qwen3 to skip the chain-of-thought block.
+    // The LLM node additionally prefills an empty `<think></think>`
+    // assistant prefix so the model goes straight to the answer even
+    // if it ignores the directive, and strips any `<think>...</think>`
+    // content as a third line of defense.
+    let default_system_prompt = "You are a helpful, friendly voice assistant. \
+You speak conversationally and keep responses concise. \
+When the user asks for code, commands, or structured data, provide it \
+in markdown code blocks. Otherwise, respond in natural prose. /no_thinking";
+
+    let model_path = std::env::var("QWEN_MODEL_PATH")
+        .unwrap_or_else(|_| "unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL".to_string());
+
+    let gpu_offload = std::env::var("QWEN_GPU_OFFLOAD")
+        .unwrap_or_else(|_| "all".to_string());
+
+    let flash_attention = parse_env_bool("QWEN_FLASH_ATTENTION").unwrap_or(true);
+
+    let llm_params = serde_json::json!({
+        "model_path": model_path,
+        "backend": {
+            "numa": false,
+            "gpu_offload": parse_gpu_offload(&gpu_offload),
+            "flash_attention": flash_attention,
+            "threads": parse_env_u32("QWEN_THREADS"),
+            "threads_batch": null,
+        },
+        "context_size": parse_env_u32("QWEN_CONTEXT_SIZE").unwrap_or(8192),
+        "batch_size": 2048,
+        "max_tokens": parse_env_u32("QWEN_MAX_TOKENS").unwrap_or(2048),
+        // Qwen3 sampling recipe (per Alibaba model card).
+        "temperature": parse_env_f32("QWEN_TEMPERATURE").unwrap_or(0.6),
+        "top_p": parse_env_f32("QWEN_TOP_P").unwrap_or(0.8),
+        "top_k": parse_env_u32("QWEN_TOP_K").unwrap_or(20),
+        "min_p": parse_env_f32("QWEN_MIN_P").unwrap_or(0.0),
+        "repeat_penalty": 1.1,
+        "system_prompt": std::env::var("QWEN_SYSTEM_PROMPT")
+            .unwrap_or_else(|_| default_system_prompt.to_string()),
+        "seed": 0,
+    });
+
+    // ---- Whisper STT ----
 
     let whisper_params = serde_json::json!({
-        "model_id": "openai/whisper-tiny.en",
+        "model_id": "openai/whisper-base.en",
         "language": "en",
+        "device": "cpu",
     });
     let whisper_deps = vec![
         "transformers>=4.40.0".to_string(),
@@ -97,286 +186,139 @@ fn build_manifest() -> Manifest {
         "accelerate>=0.33".to_string(),
     ];
 
-    // Tool-call-driven output split:
-    //   - ``say(text=...)`` tool calls → plain text frames to TTS
-    //     (what the user HEARS).
-    //   - Everything else the model emits is markdown intended for a
-    //     written/display UI. That stream is currently suppressed here
-    //     (`emit_display_text: false`) because this pipeline has no
-    //     display-aux-port consumer wired; without suppression the
-    //     envelope JSON would flow into `sentencer` → TTS and get
-    //     spoken. Flip back to ``true`` once a UI client subscribes to
-    //     the ``llm.out`` display envelopes.
-    //
-    // Tool-only output contract:
-    //   - `say(text=...)`    → `channel="tts"` → sentencer → TTS → audio
-    //   - `show(content=...)` → `channel="ui"` → sentencer passthrough →
-    //                           TTS passthrough → WebRTC audio.out
-    //   - Any free text outside a tool call is treated as `channel="ui"`
-    //     fallback too, but the prompt below instructs the model to
-    //     always use the tools so this path should stay empty in
-    //     practice.
-    //
-    // Why two tools instead of "say + free-form markdown"? Qwen is trained
-    // to STOP generation after a `<tool_call>` waiting for a tool-result
-    // turn. If we only have `say`, any markdown the model meant to write
-    // AFTER saying something gets cut off. With `show` as its own tool,
-    // the model can emit BOTH tool calls in a single assistant turn (Qwen
-    // does support multiple tool_calls in one generation), and we dispatch
-    // each to its own routing channel without any prompt gymnastics about
-    // "write the markdown first, then say".
-    let llm_system_prompt = std::env::var("QWEN_LLM_SYSTEM_PROMPT").unwrap_or_else(|_| {
-        "You reply to the user ONLY through tools. Every tool call MUST \
-         carry its required argument — an empty call produces no output \
-         and the user gets nothing.\n\n\
-         Tools:\n\
-         - `say(text=\"<spoken prose>\")`     → spoken aloud\n\
-         - `show(content=\"<markdown>\")`     → shown on screen\n\n\
-         Reply structure (emit tools in this order, include only the slots \
-         your reply needs):\n\
-         1. Opening `say` — short spoken lead-in. Optional.\n\
-         2. `show` — the written deliverable (code, table, long text). Optional.\n\
-         3. Closing `say` — short spoken wrap-up. Optional.\n\n\
-         Concrete examples of well-formed replies:\n\n\
-         Example — conversational answer:\n\
-         User: \"How are your Python skills?\"\n\
-         Assistant calls: say(text=\"Pretty solid — I can help with \
-         scripts, debugging, and explanations. What did you have in mind?\")\n\n\
-         Example — code request:\n\
-         User: \"Write me a hello-world Python script.\"\n\
-         Assistant calls, in order:\n\
-           1. say(text=\"Here's a simple hello-world script.\")\n\
-           2. show(content=\"```python\\ndef hello():\\n    print('Hello, \
-         world!')\\n\\nhello()\\n```\")\n\
-           3. say(text=\"Let me know if you'd like it tweaked.\")\n\n\
-         Hard rules:\n\
-         - Both tools REQUIRE their argument. Never call `say()` or \
-         `show()` with no text/content — that emits silence.\n\
-         - At most one opening and one closing `say`; at most one `show`.\n\
-         - Never dictate code aloud in `say`. Never duplicate between the \
-         spoken and written channels.\n\
-         - Emit the entire reply as tool calls in a single turn. Stop \
-         when done. Do not pad."
-            .to_string()
-    });
+    // ---- TTS stage ----
 
-    let llm_params = serde_json::json!({
-        "hf_repo": llm_repo,
-        "max_new_tokens": 60000,
-        // Qwen3 instruct / non-thinking sampling recipe, per Alibaba's
-        // model card. Keep these in sync with the defaults in
-        // `qwen_text_mlx.py`; overriding here makes the per-demo
-        // configuration explicit instead of relying on whatever the
-        // node's defaults happen to be.
-        "temperature": 0.7,
-        "top_p": 0.8,
-        "top_k": 20,
-        "min_p": 0.0,
-        "presence_penalty": 1.5,
-        "repetition_penalty": 1.0,
-        "system_prompt": llm_system_prompt,
-        "enable_say_tool": true,
-        "enable_show_tool": true,
-        "active_tools": ["say", "show"],
-        // With dedicated tools the model shouldn't emit free text outside a
-        // call, but leave the escape hatch open: if it slips and writes
-        // some stray prose, it still flows through the ui channel rather
-        // than hitting the TTS and getting spoken.
-        "emit_display_text": true,
-        // Tool-call pass budget.
-        //
-        // Qwen's tool-call protocol always terminates each generation
-        // pass with <|im_end|> right after a tool_call, regardless of
-        // whether the model intended to continue. The only unambiguous
-        // "I'm done" signal is a pass that emits ZERO tool calls — and
-        // that's what terminates our loop naturally.
-        //
-        // To cover the longest well-formed reply shape
-        // (`say` → `show` → `say`, three tool calls) AND the trailing
-        // zero-tool termination pass, we need at least FOUR passes.
-        // Anything less cuts the loop short before the model can signal
-        // completion — which is what produced the "still pending"
-        // debug line when this was capped at 2.
-        //
-        // Ceiling is the 30 s per-node scheduler budget: at ~6 s per
-        // pass that's ~5 passes max before the scheduler kills the
-        // turn. 4 keeps us safely under with room for a slow pass.
-        "max_tool_passes": 4,
-    });
-    let llm_deps = vec!["mlx-lm==0.31.3".to_string(), "numpy>=1.24".to_string()];
-
-    // TTS engine selector. `QWEN_TTS_ENGINE=kokoro` (default) uses
-    // Kokoro 82M; `QWEN_TTS_ENGINE=qwen` swaps in Qwen3-TTS. Either way
-    // the terminal sink is named `audio` so the `audio.out`
-    // control-bus topic and web-UI contract stay identical between
-    // engines.
-    //
-    // Default is Kokoro because on M-series (see
-    // `clients/python/bench/tts_compare.py`) Qwen3-TTS runs at RTF
-    // 0.34-0.63 — slower than realtime — while Kokoro runs at RTF
-    // 3.8-6.3 with ~4× lower first-audio latency. Switch to Qwen if
-    // you want its voice quality and are on faster hardware.
     let tts_engine =
         std::env::var("QWEN_TTS_ENGINE").unwrap_or_else(|_| "kokoro".to_string());
-    let (tts_stage_nodes, tts_stage_connections) = build_tts_stage(
-        &tts_engine, &tts_repo, &tts_voice,
-    );
+    let tts_repo = std::env::var("QWEN_TTS_REPO")
+        .unwrap_or_else(|_| "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-6bit".to_string());
+    let tts_voice = std::env::var("QWEN_TTS_VOICE").unwrap_or_else(|_| "serena".to_string());
 
-    // Build the non-TTS nodes up front. The TTS stage (either QwenTTS
-    // alone, or KokoroTTS + downstream resampler) is appended below
-    // based on `QWEN_TTS_ENGINE`.
+    let (tts_stage_nodes, tts_stage_connections) =
+        build_tts_stage(&tts_engine, &tts_repo, &tts_voice);
+
+    // ---- Nodes ----
+
     let mut nodes: Vec<NodeManifest> = vec![
-            // 48 kHz Opus → 16 kHz mono for Silero VAD.
-            NodeManifest {
-                id: "resample_in".to_string(),
-                node_type: "FastResampleNode".to_string(),
-                params: serde_json::json!({
-                    "source_rate": 48000,
-                    "target_rate": 16000,
-                    "quality": "Medium",
-                    "channels": 1,
-                }),
-                ..Default::default()
-            },
-            // SileroVAD wants exactly 512-sample input chunks.
-            NodeManifest {
-                id: "chunker".to_string(),
-                node_type: "AudioChunkerNode".to_string(),
-                params: serde_json::json!({
-                    "chunkSize": 512,
-                }),
-                ..Default::default()
-            },
-            NodeManifest {
-                id: "vad".to_string(),
-                node_type: "SileroVADNode".to_string(),
-                params: serde_json::json!({
-                    // Same hysteresis tuning as the LFM2 variant —
-                    // prob >= 0.6 enters speech, must drop below 0.35
-                    // to start counting silence. Keeps soft-phoneme
-                    // dips mid-word from triggering a false end.
-                    "threshold": 0.6,
-                    "neg_threshold": 0.35,
-                    "sample_rate": 16000,
-                    "min_speech_duration_ms": 250,
-                    "min_silence_duration_ms": 500,
-                    "speech_pad_ms": 150,
-                }),
-                ..Default::default()
-            },
-            // Buffer audio during speech; release one utterance on silence.
-            NodeManifest {
-                id: "accumulator".to_string(),
-                node_type: "AudioBufferAccumulatorNode".to_string(),
-                params: serde_json::json!({
-                    "min_utterance_duration_ms": 300,
-                    "max_utterance_duration_ms": 30000,
-                }),
-                ..Default::default()
-            },
-            // Whisper STT — now on the MAIN path, not a side tap.
-            // Its output feeds the LLM. The control-bus topic
-            // `stt_in.out` remains the user-transcript tap.
-            NodeManifest {
-                id: "stt_in".to_string(),
-                node_type: "WhisperSTTNode".to_string(),
-                params: whisper_params,
-                python_deps: Some(whisper_deps),
-                ..Default::default()
-            },
-            // Qwen text chat with tool calling. The `say` tool is
-            // active — the model is instructed (via system_prompt) to
-            // emit its spoken reply as a `say(text=...)` call and keep
-            // non-spoken commentary out of the call. The LLM now
-            // STREAMS the `text` argument chunk-by-chunk as the model
-            // generates it (parser decodes JSON escapes inline and
-            // emits a flush `\n` at the closing `"`), so the downstream
-            // `TextCollectorNode` can flush complete sentences to TTS
-            // as soon as they're seen — cutting first-audio latency
-            // from "entire tool_call wrapper" to "first sentence".
-            NodeManifest {
-                id: "llm".to_string(),
-                node_type: "QwenTextMlxNode".to_string(),
-                params: llm_params,
-                python_deps: Some(llm_deps),
-                ..Default::default()
-            },
-            // Conversation coordinator. Replaces the standalone
-            // TextCollectorNode `sentencer` with a turn-aware sentencer
-            // that ALSO observes `vad.out` directly. It owns the
-            // authoritative turn-phase state machine: on VAD
-            // `is_speech_start` it bumps `turn_id` and drops any
-            // buffered tts-channel text from the cancelled turn before
-            // it reaches TTS — the coordinator is the gate. Yields a
-            // `turn_state` Json envelope on every phase change, tapped
-            // on the control bus as `coordinator.out`. A lazy LLM
-            // silence watchdog forces a clean `<|text_end|>` downstream
-            // if the LLM wedges mid-turn.
-            NodeManifest {
-                id: "coordinator".to_string(),
-                node_type: "ConversationCoordinatorNode".to_string(),
-                params: serde_json::json!({
-                    // Same boundary behaviour as the prior sentencer.
-                    "split_pattern": r"[.!?,;:\n]+",
-                    "min_sentence_length": 2,
-                    "yield_partial_on_end": true,
-                    // Generous watchdog: Qwen3-9B on MLX frequently
-                    // takes 8-15s to emit its first token for a
-                    // cold-start turn, and tool-call passes stack
-                    // further latency. 60s still catches a truly
-                    // wedged model while leaving ample room for a
-                    // slow-but-alive one. The coordinator now also
-                    // refreshes activity on any incoming LLM text
-                    // BEFORE the watchdog check, so a legitimate
-                    // late-arriving first token doesn't self-trip.
-                    "llm_silence_timeout_ms": 60000,
-                    "user_speech_debounce_ms": 150,
-                }),
-                ..Default::default()
-            },
-        ];
+        // 48 kHz Opus → 16 kHz mono for Silero VAD.
+        NodeManifest {
+            id: "resample_in".to_string(),
+            node_type: "FastResampleNode".to_string(),
+            params: serde_json::json!({
+                "source_rate": 48000,
+                "target_rate": 16000,
+                "quality": "Medium",
+                "channels": 1,
+            }),
+            ..Default::default()
+        },
+        // SileroVAD wants exactly 512-sample input chunks.
+        NodeManifest {
+            id: "chunker".to_string(),
+            node_type: "AudioChunkerNode".to_string(),
+            params: serde_json::json!({
+                "chunkSize": 512,
+            }),
+            ..Default::default()
+        },
+        // Silero VAD — speech/activity detection on 16 kHz audio.
+        NodeManifest {
+            id: "vad".to_string(),
+            node_type: "SileroVADNode".to_string(),
+            params: serde_json::json!({
+                "threshold": 0.6,
+                "neg_threshold": 0.35,
+                "sample_rate": 16000,
+                "min_speech_duration_ms": 250,
+                "min_silence_duration_ms": 500,
+                "speech_pad_ms": 150,
+            }),
+            ..Default::default()
+        },
+        // Buffer audio during speech; release one utterance on silence.
+        NodeManifest {
+            id: "accumulator".to_string(),
+            node_type: "AudioBufferAccumulatorNode".to_string(),
+            params: serde_json::json!({
+                "min_utterance_duration_ms": 300,
+                "max_utterance_duration_ms": 30000,
+            }),
+            ..Default::default()
+        },
+        // Whisper STT — on the main path, feeds the LLM.
+        NodeManifest {
+            id: "stt_in".to_string(),
+            node_type: "WhisperSTTNode".to_string(),
+            params: whisper_params,
+            python_deps: Some(whisper_deps),
+            ..Default::default()
+        },
+        // Llama.cpp text generation — native Rust, no Python/MLX.
+        // Runs inference on a dedicated blocking thread (llama.cpp types
+        // contain raw C pointers and are not Send).
+        NodeManifest {
+            id: "llm".to_string(),
+            node_type: "LlamaCppGenerationNode".to_string(),
+            params: llm_params,
+            ..Default::default()
+        },
+        // Conversation coordinator — turn-phase state machine + sentencer.
+        NodeManifest {
+            id: "coordinator".to_string(),
+            node_type: "ConversationCoordinatorNode".to_string(),
+            params: serde_json::json!({
+                "split_pattern": r"[.!?,;:\n]+",
+                "min_sentence_length": 2,
+                "yield_partial_on_end": true,
+                // llama.cpp generation is synchronous (full response
+                // returned at once), so the watchdog mainly catches
+                // model-load hangs rather than mid-generation stalls.
+                "llm_silence_timeout_ms": 120000,
+                "user_speech_debounce_ms": 150,
+                "barge_in_targets": ["llm", "kokoro_tts"],
+                "first_chunk_min_chars": 25,
+            }),
+            ..Default::default()
+        },
+    ];
     nodes.extend(tts_stage_nodes);
 
+    // ---- Connections ----
+
     let mut connections: Vec<Connection> = vec![
-            Connection {
-                from: "resample_in".to_string(),
-                to: "chunker".to_string(),
-            },
-            Connection {
-                from: "chunker".to_string(),
-                to: "vad".to_string(),
-            },
-            Connection {
-                from: "vad".to_string(),
-                to: "accumulator".to_string(),
-            },
-            // Fan-out from vad: the coordinator watches speech_start /
-            // speech_end JSON events directly (without stealing them
-            // from the accumulator) so barge detection lives on the
-            // server, not the browser.
-            Connection {
-                from: "vad".to_string(),
-                to: "coordinator".to_string(),
-            },
-            Connection {
-                from: "accumulator".to_string(),
-                to: "stt_in".to_string(),
-            },
-            Connection {
-                from: "stt_in".to_string(),
-                to: "llm".to_string(),
-            },
-            Connection {
-                from: "llm".to_string(),
-                to: "coordinator".to_string(),
-            },
-        ];
-    // The TTS stage was built assuming it receives text directly from
-    // `llm`. The coordinator now sits between them and both sentence-
-    // splits the tts-channel text and gates cancelled-turn frames.
-    // Rewrite each connection whose source is `llm` to source from
-    // `coordinator` instead — the rest of the stage (kokoro → audio,
-    // or the single Qwen TTS sink) is unchanged.
+        Connection {
+            from: "resample_in".to_string(),
+            to: "chunker".to_string(),
+        },
+        Connection {
+            from: "chunker".to_string(),
+            to: "vad".to_string(),
+        },
+        Connection {
+            from: "vad".to_string(),
+            to: "accumulator".to_string(),
+        },
+        // Coordinator watches VAD events for barge detection.
+        Connection {
+            from: "vad".to_string(),
+            to: "coordinator".to_string(),
+        },
+        Connection {
+            from: "accumulator".to_string(),
+            to: "stt_in".to_string(),
+        },
+        Connection {
+            from: "stt_in".to_string(),
+            to: "llm".to_string(),
+        },
+        Connection {
+            from: "llm".to_string(),
+            to: "coordinator".to_string(),
+        },
+    ];
+
+    // TTS stage connections: rewrite `llm` → `coordinator` as the
+    // source so the coordinator gates cancelled-turn text.
     for c in tts_stage_connections {
         let from = if c.from == "llm" {
             "coordinator".to_string()
@@ -389,10 +331,10 @@ fn build_manifest() -> Manifest {
     Manifest {
         version: "v1".to_string(),
         metadata: ManifestMetadata {
-            name: "qwen-s2s-webrtc".to_string(),
+            name: "qwen-llama-s2s-webrtc".to_string(),
             description: Some(format!(
-                "Emulated speech-to-speech: Whisper → Qwen3.5 (MLX) → {} \
-                 over WebRTC, compatible with the LFM2 web UI",
+                "Speech-to-speech via llama.cpp: Whisper → Qwen3.6-27B-GGUF (LlamaCppGenerationNode) → {} \
+                 over WebRTC",
                 match tts_engine.as_str() {
                     "kokoro" => "KokoroTTS",
                     _ => "Qwen3-TTS",
@@ -402,9 +344,6 @@ fn build_manifest() -> Manifest {
         },
         nodes,
         connections,
-        // mlx-vlm / mlx-audio wheels target Python 3.11+. Pin 3.12 to
-        // match the LFM2 demo's managed venv so the two servers share
-        // a venv provisioning cache where possible.
         python_env: Some(ManifestPythonEnv {
             python_version: Some("3.12".to_string()),
             scope: None,
@@ -413,17 +352,10 @@ fn build_manifest() -> Manifest {
     }
 }
 
-/// Build the TTS stage (nodes + connections from `sentencer → sink`) for
-/// the selected engine. The terminal sink is always named `audio` so
-/// the `audio.out` control-bus topic and the WebRTC track wiring are
-/// engine-agnostic — everything upstream of the sentencer, and the web
-/// UI, stays identical.
-///
-/// ``QWEN_TTS_ENGINE``:
-///   - ``qwen`` (default): Qwen3-TTS, upsamples 24→48 kHz in-node; sink
-///     is the TTS node itself.
-///   - ``kokoro``: KokoroTTS (82 M), emits 24 kHz; a ``FastResampleNode``
-///     named ``audio`` is appended to hit 48 kHz.
+// ---------------------------------------------------------------------------
+// TTS stage builder
+// ---------------------------------------------------------------------------
+
 fn build_tts_stage(
     engine: &str,
     qwen_tts_repo: &str,
@@ -434,9 +366,6 @@ fn build_tts_stage(
             let qwen_params = serde_json::json!({
                 "hf_repo": qwen_tts_repo,
                 "voice": qwen_tts_voice,
-                // Qwen3-TTS native rate. The node upsamples to
-                // `output_sample_rate` (48 kHz, matching the Opus track)
-                // before yielding, so no downstream resampler is needed.
                 "sample_rate": 24000,
                 "output_sample_rate": 48000,
                 "streaming_interval": 0.32,
@@ -446,7 +375,7 @@ fn build_tts_stage(
             let qwen_deps =
                 vec!["mlx-audio>=0.1".to_string(), "numpy>=1.24".to_string()];
 
-            return (
+            (
                 vec![NodeManifest {
                     id: "audio".to_string(),
                     node_type: "QwenTTSMlxNode".to_string(),
@@ -458,7 +387,7 @@ fn build_tts_stage(
                     from: "llm".to_string(),
                     to: "audio".to_string(),
                 }],
-            );
+            )
         }
         other_if_unknown => {
             if other_if_unknown != "kokoro" {
@@ -467,10 +396,6 @@ fn build_tts_stage(
                     other_if_unknown
                 );
             }
-            // Kokoro's misaki G2P needs `en_core_web_sm` inside the
-            // node's managed venv — `spacy download` lands in the host
-            // interpreter, which the runtime's provisioned venv can't
-            // see. PEP-508 URL dep forces install into the right venv.
             let kokoro_params = serde_json::json!({
                 "lang_code": std::env::var("KOKORO_LANG")
                     .unwrap_or_else(|_| "a".to_string()),
@@ -480,8 +405,7 @@ fn build_tts_stage(
                 "sample_rate": 24000,
                 "stream_chunks": true,
                 "skip_tokens": [
-                    "<|text_end|>", "<|audio_end|>",
-                    "<|im_end|>", "<|im_start|>",
+                    "<|text_end|>", "```",
                 ],
             });
             let kokoro_deps = vec![
@@ -526,6 +450,10 @@ fn build_tts_stage(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Python env defaults
+// ---------------------------------------------------------------------------
+
 fn default_python_env() {
     let ensure = |k: &str, v: &str| {
         if std::env::var_os(k).is_none() {
@@ -548,6 +476,10 @@ fn default_python_env() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -578,10 +510,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "-h" | "--help" => {
                 eprintln!(
                     "qwen_s2s_webrtc_server [--host ADDR] [--port PORT]\n\n\
+                     llama.cpp S2S: Whisper STT → Qwen3.6-27B-GGUF → Kokoro TTS\n\n\
                      env:\n  \
-                     QWEN_LLM_REPO            override LLM repo id\n  \
-                     QWEN_TTS_REPO            override TTS repo id\n  \
-                     QWEN_TTS_VOICE           TTS voice preset (default: serena)\n  \
+                     QWEN_MODEL_PATH        GGUF model path (default: unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL)\n  \
+                     QWEN_SYSTEM_PROMPT     System message\n  \
+                     QWEN_CONTEXT_SIZE      Context window in tokens (default: 8192)\n  \
+                     QWEN_MAX_TOKENS        Max tokens per generation (default: 2048)\n  \
+                     QWEN_GPU_OFFLOAD       GPU offload: none, all, or layer count (default: all)\n  \
+                     QWEN_FLASH_ATTENTION   Enable Flash Attention 2 (default: true)\n  \
+                     QWEN_THREADS           Computation threads (default: auto)\n  \
+                     QWEN_TEMPERATURE       Sampling temperature (default: 0.6)\n  \
+                     QWEN_TOP_P             Nucleus sampling cutoff (default: 0.8)\n  \
+                     QWEN_TOP_K             Top-k sampling cutoff (default: 20)\n  \
+                     QWEN_MIN_P             Min-p sampling cutoff (default: 0.0)\n  \
+                     QWEN_TTS_ENGINE        TTS engine: kokoro (default) or qwen\n  \
+                     KOKORO_LANG            Kokoro language code (default: a)\n  \
+                     KOKORO_VOICE           Kokoro voice preset (default: af_heart)\n  \
+                     QWEN_TTS_REPO          Qwen-TTS repo (when engine=qwen)\n  \
+                     QWEN_TTS_VOICE         Qwen-TTS voice preset (default: serena)\n  \
                      PYTHON_ENV_MODE=managed  use uv-managed per-node venvs\n  \
                      PYTHON_VERSION=3.12      pin managed-venv Python version\n  \
                      REMOTEMEDIA_PYTHON_SRC   path to `clients/python` for editable install\n  \
@@ -607,22 +553,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_default();
     exec_cfg.session_id_prefix = format!("s{}", ts);
 
-    // Per-node scheduler budgets. The scheduler's default 30s cap is
-    // too tight for large MLX LLMs: Qwen3-9B on M-series routinely
-    // takes 6-10s per generation pass, and a four-pass tool-call
-    // turn with growing chat history can push a single pass past
-    // 30s. Kokoro synthesis is chunk-streamed but still benefits
-    // from extra headroom when synthesising long sentences.
-    //
-    // Budget = per-pass allowance × passes-per-turn + margin.
-    //   LLM:    4 passes × up to 45 s = 180 s ceiling
-    //   audio:  long sentences + queue drain → 120 s
-    // These are ceilings: normal calls complete well under these.
-    // Setting them here avoids the `"Node 'llm' timed out after 30s"`
-    // kill that truncated replies during longer turns.
+    // Per-node scheduler budgets. The LlamaCppGenerationNode loads the
+    // full GGUF model on first inference call. For a 27B Q4 model (~16 GB
+    // VRAM), first-call model load + warmup can take 30-60 s. Subsequent
+    // calls are much faster (model stays loaded in the node instance).
+    // Kokoro synthesis is chunk-streamed but benefits from extra headroom
+    // for long sentences.
     exec_cfg.scheduler_config = exec_cfg
         .scheduler_config
-        .with_node_timeout("llm", 180_000)
+        .with_node_timeout("llm", 300_000)
         .with_node_timeout("audio", 120_000)
         .with_node_timeout("kokoro_tts", 120_000);
 
@@ -633,21 +572,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let handle = server.start().await?;
 
     println!("READY ws://127.0.0.1:{port}/ws");
-    println!("Pipeline:       Whisper STT → Qwen LLM → Qwen TTS");
+    println!("Pipeline:       Whisper STT → Qwen3.6-27B-GGUF (llama.cpp) → TTS");
     println!(
-        "LLM repo:       {}",
-        std::env::var("QWEN_LLM_REPO")
-            .unwrap_or_else(|_| "mlx-community/Qwen3.5-9B-MLX-4bit".to_string())
+        "Model path:     {}",
+        std::env::var("QWEN_MODEL_PATH")
+            .unwrap_or_else(|_| "unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL".to_string())
     );
     println!(
-        "TTS repo:       {}",
-        std::env::var("QWEN_TTS_REPO").unwrap_or_else(|_| {
-            "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-6bit".to_string()
-        })
+        "GPU offload:    {}",
+        std::env::var("QWEN_GPU_OFFLOAD").unwrap_or_else(|_| "all".to_string())
     );
     println!(
-        "TTS voice:      {}",
-        std::env::var("QWEN_TTS_VOICE").unwrap_or_else(|_| "serena".to_string())
+        "Context size:   {}",
+        std::env::var("QWEN_CONTEXT_SIZE").unwrap_or_else(|_| "8192".to_string())
+    );
+    println!(
+        "Max tokens:     {}",
+        std::env::var("QWEN_MAX_TOKENS").unwrap_or_else(|_| "2048".to_string())
+    );
+    println!(
+        "Temperature:    {}",
+        std::env::var("QWEN_TEMPERATURE").unwrap_or_else(|_| "0.6".to_string())
+    );
+    println!(
+        "Top-p:          {}",
+        std::env::var("QWEN_TOP_P").unwrap_or_else(|_| "0.8".to_string())
+    );
+    println!(
+        "Top-k:          {}",
+        std::env::var("QWEN_TOP_K").unwrap_or_else(|_| "20".to_string())
+    );
+    println!(
+        "Min-p:          {}",
+        std::env::var("QWEN_MIN_P").unwrap_or_else(|_| "0.0".to_string())
+    );
+    println!(
+        "TTS engine:     {}",
+        std::env::var("QWEN_TTS_ENGINE").unwrap_or_else(|_| "kokoro".to_string())
+    );
+    println!(
+        "KOKORO_VOICE:   {}",
+        std::env::var("KOKORO_VOICE").unwrap_or_else(|_| "af_heart".to_string())
     );
     println!(
         "PYTHON_ENV_MODE={}",

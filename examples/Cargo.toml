@@ -9,6 +9,7 @@ members = [
     "cli/stream-health-demo",
     "cli/tts-dataset-gen",
     "cli/session-replay",
+    "cli/emotion-activation-gen",
     # Future Rust examples can be added here
 ]
 resolver = "2"

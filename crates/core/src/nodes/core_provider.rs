@@ -122,6 +122,19 @@ impl NodeProvider for CoreNodesProvider {
         // Output formatters
         use super::streaming_registry::SrtOutputNodeFactory;
         registry.register(Arc::new(SrtOutputNodeFactory));
+
+        // llama.cpp nodes (native GGUF inference)
+        #[cfg(feature = "llama-cpp")]
+        {
+            use super::llama_cpp::{
+                LlamaCppActivationNodeFactory, LlamaCppEmbeddingNodeFactory,
+                LlamaCppGenerationNodeFactory, LlamaCppSteerNodeFactory,
+            };
+            registry.register(Arc::new(LlamaCppGenerationNodeFactory));
+            registry.register(Arc::new(LlamaCppEmbeddingNodeFactory));
+            registry.register(Arc::new(LlamaCppActivationNodeFactory));
+            registry.register(Arc::new(LlamaCppSteerNodeFactory));
+        }
     }
 
     fn provider_name(&self) -> &'static str {

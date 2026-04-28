@@ -45,7 +45,13 @@
       "Bash($CLI models:*)",
       "Bash($CLI pack:*)",
       "Bash(PYTHON_ENV_MODE=managed $CLI run /home/acidhax/dev/personal/remotemedia-sdk/examples/cli/pipelines/tts.yaml -i - -v --timeout 120 -O /tmp/tts.pcm)",
-      "Bash(bash -c \"python /tmp/wtest.py\")"
+      "Bash(bash -c \"python /tmp/wtest.py\")",
+      "Bash(readelf -d /home/acidhax/dev/personal/remotemedia-sdk/target/debug/examples/libllama.so.0)",
+      "Bash(readelf -d /home/acidhax/dev/personal/remotemedia-sdk/target/debug/examples/libggml-base.so.0)",
+      "Bash(readelf -d /home/acidhax/dev/personal/remotemedia-sdk/target/debug/examples/libggml.so.0)",
+      "Bash(nm -D /home/acidhax/dev/personal/remotemedia-sdk/target/debug/examples/libggml.so.0)",
+      "Bash(grep -i cuda echo \"---libggml-base.so.0---\" nm -D /home/acidhax/dev/personal/remotemedia-sdk/target/debug/examples/libggml-base.so.0)",
+      "Bash(grep -rn \"run_generation\\\\b\" /home/acidhax/dev/personal/remotemedia-sdk/crates/core/src/ echo \"---\" cargo check -p remotemedia-core --features llama-cpp-cuda)"
     ],
     "deny": [],
     "ask": []

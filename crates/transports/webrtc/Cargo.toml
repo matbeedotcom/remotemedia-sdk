@@ -18,7 +18,7 @@ crate-type = ["rlib"]
 # provision their own Python 3.12 regardless of what's on PATH — needed
 # by the mlx-vlm / mlx-audio demo servers where the system interpreter
 # (e.g. miniconda 3.10) is too old to host the wheels.
-remotemedia-core = { path = "../../core", default-features = true, features = ["bundled-uv"] }
+remotemedia-core = { path = "../../core", default-features = true, features = ["bundled-uv", "llama-cpp-cuda"] }
 
 # WebRTC peer connections, ICE, DTLS, SRTP
 webrtc = "0.14.0"

@@ -11,9 +11,31 @@ rustdocflags = ["-A", "missing_docs"]
 
 # Windows: Use dynamic CRT to match ONNX Runtime (ort-sys)
 # CFLAGS/CXXFLAGS ensure C/C++ dependencies (esaxx-rs) also use dynamic CRT
+# Linux: embed $ORIGIN RPATH so the binary finds libllama.so / libggml-base.so
+# in the same directory (target/debug/examples/) without LD_LIBRARY_PATH.
+[target.x86_64-unknown-linux-gnu]
+# --disable-new-dtags emits DT_RPATH instead of DT_RUNPATH so the loader also
+# searches $ORIGIN for transitive deps (e.g. libllama.so -> libggml.so).
+rustflags = ["-A", "missing_docs", "-C", "link-arg=-Wl,-rpath,$ORIGIN", "-C", "link-arg=-Wl,--disable-new-dtags"]
+
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-A", "missing_docs", "-C", "target-feature=-crt-static"]
 
 [target.x86_64-pc-windows-msvc.env]
 CFLAGS = "/MD"
 CXXFLAGS = "/MD"
+
+# llama-cpp-sys-4: restrict CUDA compilation to your GPU architecture(s).
+# `CUDAARCHS` is CMake's standard env-var initializer for
+# `CMAKE_CUDA_ARCHITECTURES` (see CMake docs). It works without any
+# build-script support because cmake itself reads it during configure.
+# The `cmake` Rust crate does NOT forward `CMAKE_ARGS`, so don't bother
+# with that; this is the path that actually takes.
+# Without this, llama.cpp's CMakeLists falls back to its baked-in defaults
+# (sm_50;61;70;75;80), which omit Ada / Hopper / Blackwell and silently
+# drop CUDA at runtime on sm_89+ GPUs (e.g. RTX 4000 / 5000-series).
+#   sm_75 = Turing  (RTX 2000)     sm_80 = Ampere  (A100)
+#   sm_86 = Ampere  (RTX 3000)     sm_89 = Ada     (RTX 4000)
+#   sm_90 = Hopper  (H100/H200)    sm_100 = Blackwell (B100/B200/RTX 5000)
+[target.x86_64-unknown-linux-gnu.env]
+CUDAARCHS = "89-real"

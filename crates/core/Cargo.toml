@@ -52,6 +52,13 @@ pyannote-rs = { git = "https://github.com/thewh1teagle/pyannote-rs", optional = 
 # Video codec support (spec 012)
 ac-ffmpeg = { version = "0.19", optional = true }
 
+# llama.cpp bindings (GGUF inference, optional)
+llama-cpp-4 = { workspace = true, optional = true, features = ["cuda"] }
+# Direct access to llama-cpp-sys-4 is needed by the cuda_smoke_test example
+# to enumerate ggml backend devices (llama-cpp-4 doesn't re-export the FFI).
+llama-cpp-sys-4 = { version = "0.2", optional = true, features = ["cuda"] }
+encoding_rs = { workspace = true, optional = true }
+
 # IPC for multiprocess
 iceoryx2 = { workspace = true, optional = true }
 iceoryx2-log = { workspace = true, optional = true }
@@ -159,6 +166,10 @@ grpc-client = ["tonic", "prost", "prost-types"]
 docker = ["dep:bollard", "dep:tar", "dep:chrono", "dep:bytes", "dep:hyper", "dep:http-body-util", "dep:glob", "dep:rusqlite"]
 # Video codec support (spec 012)
 video = ["dep:ac-ffmpeg"]
+# llama.cpp GGUF inference (generation, embeddings, activation extraction, steering)
+llama-cpp = ["dep:llama-cpp-4", "dep:llama-cpp-sys-4", "dep:encoding_rs"]
+# llama.cpp with CUDA GPU acceleration (implies llama-cpp for inventory registration)
+llama-cpp-cuda = ["llama-cpp"]
 # Managed Python environments via uv
 bundled-uv = []
 bundled-uv-embedded = ["bundled-uv"]

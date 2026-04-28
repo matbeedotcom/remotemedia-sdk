@@ -1767,6 +1767,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
+name = "emotion-activation-gen"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rand 0.8.5",
+ "remotemedia-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "encode_unicode"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5188,6 +5203,7 @@ dependencies = [
  "rand 0.8.5",
  "remotemedia-core",
  "rubato",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
