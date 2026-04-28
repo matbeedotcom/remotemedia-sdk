@@ -99,7 +99,7 @@ Each milestone ends with a green `cargo test` (or, for milestones gated on exter
 |---|-------|------|
 | M0 | `EmotionExtractorNode` + tests | ✅ shipped — see [M0 actuals](#m0-actuals-2026-04-28) |
 | M1 | `audio.out.clock` tap on `AudioSender` | ✅ shipped — see [M1 actuals](#m1-actuals-2026-04-28) |
-| M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e | 🟡 partial — interface + synthetic stand-in + e2e shipped; real Audio2Face ONNX port deferred. See [M2 actuals](#m2-actuals-2026-04-28-partial). |
+| M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e | 🟢 shipped — interface + synthetic stand-in + e2e + solver math + ONNX inference + bundle loaders + `Audio2FaceLipSyncNode` coordinator all landed (M2.6 control-bus propagation test still deferred). See [M2 actuals](#m2-actuals-2026-04-28-partial) and pass 4 below. |
 | M3 | `RVCNode` | `cargo test --features avatar-rvc` green; tier-2 tests pass on env-var-bearing host |
 | M4 | `Live2DRenderNode` (native wgpu + CubismCore) | `cargo build --features avatar-render` green w/ `LIVE2D_CUBISM_CORE_DIR` set; full pipeline e2e green when both Cubism SDK + Live2D model env vars present |
 
@@ -934,8 +934,53 @@ cleanly otherwise.
 
 **Still deferred (final M2 pass — needs renderer to be relevant):**
 
-- **M2.5** — `Audio2FaceLipSyncNode` streaming node coordinator wiring inference → vertex-delta extraction → PGD/BVLS solve → ARKit-52 mapping → `BlendshapeFrame` emit. Self-contained but needs the renderer to consume its output to be useful.
-- **M2.6** — coordinator `barge_in_targets` propagation test (covers reset of inference GRU state + smoother + solver temporal pull).
+- **M2.5** — ✅ landed in M2 actuals pass 4 below
+- **M2.6** — coordinator `barge_in_targets` propagation test against the manifest-level `["llm", "audio", "audio2face_lipsync"]` target list (covers reset reaching the node via session-control bus, beyond the in-process `barge()` API exercised by M2.5).
+
+---
+
+## M2 actuals (2026-04-28, pass 4 — Audio2FaceLipSyncNode coordinator)
+
+This pass wires the previous three passes' primitives (inference, blendshape config + data, PGD/BVLS solvers, smoother) into a **streaming `LipSyncNode`** that consumes `RuntimeData::Audio @ 16 kHz` and emits `RuntimeData::Json {kind:"blendshapes", arkit_52, pts_ms}` envelopes per spec §3.4.
+
+**Shipped:**
+
+- **`Audio2FaceLipSyncNode`** — [`crates/core/src/nodes/lip_sync/audio2face_node.rs`](../../../crates/core/src/nodes/lip_sync/audio2face_node.rs)
+  - `Audio2FaceLipSyncConfig { bundle_path, identity, solver, use_gpu, smoothing_alpha }` — solver is `pgd` or `bvls` (lowercase serde)
+  - `Audio2FaceLipSyncNode::load(config)` — assembles inference + bundle data + boxed `BlendshapeSolver` + `ArkitSmoother` from disk; one-time cost (~3.6 s on Apple Silicon CPU for ort session + bundle parse)
+  - `process_streaming` accumulates audio in a buffer and drains 1-second windows: per window runs one inference (30 center frames), and for each frame computes `delta = skin - neutral_skin` → frontal-mask gather → solve → expand to 52-D → multiplier/offset → smooth → emit
+  - `pts_ms` math: `cum_window_ms + f * 1000.0 / 30.0` (f64 step, u64 store) — monotonic, sub-1000ms aligned to the *center* of each window
+  - **Barge** handling: in-band `RuntimeData::Json {kind:"barge_in"}` envelope OR direct `Self::barge()` call resets inference GRU + solver temporal pull + smoother + audio buffer + cum_window_ms in one shot
+  - Non-Audio inputs pass through (mirrors `silero_vad` / `synthetic`)
+  - 22.05 kHz / non-16 kHz inputs error with an actionable message pointing at the capability resolver
+- **Module wiring** — [`crates/core/src/nodes/lip_sync/mod.rs`](../../../crates/core/src/nodes/lip_sync/mod.rs)
+  - Re-exports `Audio2FaceLipSyncConfig`, `Audio2FaceLipSyncNode`, `Audio2FaceSolverChoice` (renamed from `SolverChoice` to avoid collision in user code) under `#[cfg(feature = "avatar-audio2face")]`
+
+**Tests landed (3 unit + 8 tier-2 integration):**
+
+| File | Tests | Notes |
+|---|---|---|
+| `audio2face_node.rs` (unit) | 3 | solver-choice serde lowercase, config defaults, `process()` rejects non-streaming with the documented error message |
+| `audio2face_lipsync_node_test.rs` (tier-2) | 8 | one-second window → exactly 30 frames; pts_ms monotonic + bounded by audio time over 2-window run; chunk accumulation across two half-second sends; non-Audio passthrough; 22.05 kHz error; barge clears state + restarts pts_ms; non-trivial blendshape activity on loud audio; BVLS produces valid output |
+
+**Build + run matrix verified:**
+- `cargo build -p remotemedia-core --features avatar-audio2face` — clean.
+- `cargo test -p remotemedia-core --features avatar-audio2face --lib lip_sync::audio2face_node` — 3/3 green.
+- `AUDIO2FACE_TEST_BUNDLE=$PWD/models/audio2face cargo test … --test audio2face_lipsync_node_test` — 8/8 green in 27.83 s (one bundle load amortized across all tests in the harness; per-window inference is ~50 ms on Apple Silicon CPU).
+- `AUDIO2FACE_TEST_BUNDLE=$PWD/models/audio2face cargo test … --test audio2face_inference_test` — 4/4 still green (no regressions in the inference layer).
+
+**Cumulative test count across the avatar code: 89 unit + 14 integration = 103 tests, all green.**
+
+**Design choices worth flagging:**
+
+1. **`parking_lot::Mutex` over `tokio::sync::Mutex`** for inference + solver + smoother + buffer state. None of the operations span an `.await`, so the cheaper non-async lock works and matches `silero_vad`'s pattern shape.
+2. **No response curves applied** in the lip-sync node. Per spec §3.4 the renderer's ARKit→VBridger mapper is where per-axis curves belong. The `response_curves` module is public for the renderer (M4) to consume.
+3. **No upstream resampling**. The capability resolver (spec 023) is the right place to insert a resampler when an upstream node (e.g. `RVCNode` at 40 kHz) feeds this node's 16 kHz requirement. The M2.5 node enforces `sample_rate == 16_000` at runtime as a hard gate.
+4. **Barge envelope is `{kind:"barge_in"}`**. Wire-format-agnostic; the M2.6 control-bus test will assert this reaches the node when the coordinator's `barge_in_targets = ["llm", "audio", "audio2face_lipsync"]` propagation fires.
+
+**Still deferred (final M2 pass):**
+
+- **M2.6** — coordinator `barge_in_targets` propagation test against the *manifest-level* aux port routing (covers session-control-bus delivery, which M2.5's in-process `barge()` API doesn't exercise).
 
 ---
 

@@ -8,11 +8,17 @@
 
 pub mod arkit_smoother;
 pub mod audio2face;
+#[cfg(feature = "avatar-audio2face")]
+mod audio2face_node;
 mod blendshape;
 mod synthetic;
 mod trait_def;
 
 pub use arkit_smoother::ArkitSmoother;
+#[cfg(feature = "avatar-audio2face")]
+pub use audio2face_node::{
+    Audio2FaceLipSyncConfig, Audio2FaceLipSyncNode, SolverChoice as Audio2FaceSolverChoice,
+};
 pub use blendshape::{BlendshapeFrame, ARKIT_BLENDSHAPE_NAMES};
 pub use synthetic::{SyntheticLipSyncConfig, SyntheticLipSyncNode};
 pub use trait_def::LipSyncNode;
