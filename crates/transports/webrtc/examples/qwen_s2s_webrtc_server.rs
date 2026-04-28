@@ -132,15 +132,15 @@ fn parse_gpu_offload(val: &str) -> serde_json::Value {
 fn build_manifest() -> Manifest {
     // ---- LLM (llama.cpp / GGUF) ----
 
-    // `/no_thinking` tells Qwen3 to skip the chain-of-thought block.
-    // The LLM node additionally prefills an empty `<think></think>`
-    // assistant prefix so the model goes straight to the answer even
-    // if it ignores the directive, and strips any `<think>...</think>`
-    // content as a third line of defense.
+    // Thinking mode is disabled via the Jinja `enable_thinking=false`
+    // kwarg in the LLM node's chat template renderer (auto-fills a
+    // closed `<think></think>` onto the open assistant turn). The
+    // streaming `<think>...</think>` stripper in the LLM node is the
+    // safety net for any reasoning that still leaks through.
     let default_system_prompt = "You are a helpful, friendly voice assistant. \
 You speak conversationally and keep responses concise. \
 When the user asks for code, commands, or structured data, provide it \
-in markdown code blocks. Otherwise, respond in natural prose. /no_thinking";
+in markdown code blocks. Otherwise, respond in natural prose.";
 
     let model_path = std::env::var("QWEN_MODEL_PATH")
         .unwrap_or_else(|_| "unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL".to_string());

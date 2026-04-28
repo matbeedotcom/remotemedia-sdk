@@ -370,16 +370,21 @@ fn worker_main(
     // that works for both standard-RoPE and M-RoPE checkpoints.
     let mut chat = ChatState::new();
     if let Some(sys) = config.system_prompt.as_ref().filter(|s| !s.is_empty()) {
-        match llama_cpp_4::model::LlamaChatMessage::new(
-            "system".to_string(),
-            sys.clone(),
-        ) {
-            Ok(m) => chat.messages.push(m),
-            Err(e) => {
-                error!(node = %node_id, "invalid system prompt: {}", e);
-            }
-        }
+        chat.messages.push(ChatMsg {
+            role: "system".to_string(),
+            content: sys.clone(),
+        });
     }
+
+    // Compile the model's embedded Jinja chat template once per worker.
+    // Used to render with `enable_thinking=false` for Qwen3 etc.; falls
+    // back to `apply_chat_template` per-turn if compile/render fails.
+    let template = ChatTemplate::from_model(&model);
+    info!(
+        node = %node_id,
+        jinja_template = template.has_template,
+        "llama.cpp worker: chat template renderer initialized"
+    );
 
     if init_tx.send(Ok(())).is_err() {
         // Caller dropped before we finished; just exit.
@@ -398,6 +403,7 @@ fn worker_main(
                 );
                 let result = run_turn_incremental(
                     &mut chat,
+                    &template,
                     &model,
                     &mut llama_ctx,
                     &config,
@@ -431,15 +437,178 @@ fn worker_main(
     drop(backend);
 }
 
+/// Conversation message in our own representation. We store role/content
+/// as plain strings (rather than `LlamaChatMessage`, whose fields are
+/// private and not borrowable) so the Jinja template renderer can iterate
+/// them directly. Converted on demand for the simple-API fallback.
+#[cfg(feature = "llama-cpp")]
+#[derive(Clone)]
+struct ChatMsg {
+    role: String,
+    content: String,
+}
+
 #[cfg(feature = "llama-cpp")]
 struct ChatState {
-    messages: Vec<llama_cpp_4::model::LlamaChatMessage>,
+    messages: Vec<ChatMsg>,
 }
 
 #[cfg(feature = "llama-cpp")]
 impl ChatState {
     fn new() -> Self {
-        Self { messages: Vec::new() }
+        Self {
+            messages: Vec::new(),
+        }
+    }
+}
+
+/// Build the equivalent `LlamaChatMessage` list for the simple-API
+/// fallback path (`LlamaModel::apply_chat_template`).
+#[cfg(feature = "llama-cpp")]
+fn to_llama_messages(
+    msgs: &[ChatMsg],
+) -> Result<Vec<llama_cpp_4::model::LlamaChatMessage>, Error> {
+    msgs.iter()
+        .map(|m| {
+            llama_cpp_4::model::LlamaChatMessage::new(m.role.clone(), m.content.clone())
+                .map_err(|e| Error::Execution(format!("invalid chat message: {}", e)))
+        })
+        .collect()
+}
+
+/// Renderer for the GGUF model's embedded Jinja chat template. We render
+/// the template ourselves (instead of calling `apply_chat_template`)
+/// specifically so we can pass kwargs like `enable_thinking=false` to
+/// Qwen3-style templates — the simple `llama_chat_apply_template` C API
+/// doesn't accept Jinja kwargs.
+///
+/// If the template can't be retrieved or compiled (older models without
+/// an embedded template, exotic Jinja features minijinja doesn't
+/// support, etc.), `render` returns `None` and the caller falls back to
+/// `LlamaModel::apply_chat_template`.
+#[cfg(feature = "llama-cpp")]
+struct ChatTemplate {
+    env: minijinja::Environment<'static>,
+    has_template: bool,
+}
+
+#[cfg(feature = "llama-cpp")]
+impl ChatTemplate {
+    fn from_model(model: &llama_cpp_4::model::LlamaModel) -> Self {
+        let mut env = minijinja::Environment::new();
+
+        // HF chat templates use Python-style methods on strings and
+        // lists (`s.startswith("..")`, `s.endswith("..")`, `list.index(..)`,
+        // etc.). minijinja doesn't ship those by default; the
+        // `minijinja-contrib::pycompat` callback emulates them.
+        env.set_unknown_method_callback(minijinja_contrib::pycompat::unknown_method_callback);
+
+        // Many HF chat templates call `raise_exception(...)` on invalid
+        // input. Register a stub so the template compiles; we surface
+        // the error message back as a render error instead of panicking.
+        env.add_function(
+            "raise_exception",
+            |msg: String| -> Result<minijinja::Value, minijinja::Error> {
+                Err(minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    msg,
+                ))
+            },
+        );
+        // Some templates also call `strftime_now` for dates. Best-effort
+        // stub; if the template depends on a format we don't honor, the
+        // render error is non-fatal — we fall back to the C template.
+        env.add_function(
+            "strftime_now",
+            |_fmt: String| -> Result<String, minijinja::Error> {
+                Ok(String::new())
+            },
+        );
+
+        let has_template = match model.get_chat_template(16 * 1024) {
+            Ok(s) if !s.is_empty() => match env.add_template_owned("chat", s) {
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "ChatTemplate: failed to compile model's Jinja chat template; \
+                         falling back to llama_chat_apply_template (no kwargs support)"
+                    );
+                    false
+                }
+            },
+            Ok(_) => {
+                tracing::warn!(
+                    "ChatTemplate: model has no embedded chat_template; \
+                     falling back to llama_chat_apply_template"
+                );
+                false
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "ChatTemplate: get_chat_template failed; \
+                     falling back to llama_chat_apply_template"
+                );
+                false
+            }
+        };
+
+        Self { env, has_template }
+    }
+
+    /// Render the conversation history with the supplied kwargs.
+    /// Returns `None` if the renderer is disabled or the template's
+    /// Jinja can't be evaluated by minijinja.
+    fn render(
+        &self,
+        messages: &[ChatMsg],
+        add_generation_prompt: bool,
+        enable_thinking: bool,
+    ) -> Option<String> {
+        if !self.has_template {
+            return None;
+        }
+
+        // minijinja accepts `serde_json::Value` directly via context!.
+        let msgs: Vec<serde_json::Value> = messages
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "role": m.role,
+                    "content": m.content,
+                })
+            })
+            .collect();
+
+        let tmpl = match self.env.get_template("chat") {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!(error = %e, "ChatTemplate: get_template failed");
+                return None;
+            }
+        };
+
+        let ctx = minijinja::context! {
+            messages => msgs,
+            add_generation_prompt => add_generation_prompt,
+            enable_thinking => enable_thinking,
+            // Qwen / Llama templates sometimes reference these globals.
+            bos_token => "",
+            eos_token => "",
+        };
+
+        match tmpl.render(ctx) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "ChatTemplate: Jinja render failed; \
+                     falling back to llama_chat_apply_template for this turn"
+                );
+                None
+            }
+        }
     }
 }
 
@@ -560,6 +729,7 @@ struct TurnStats {
 #[cfg(feature = "llama-cpp")]
 fn run_turn_incremental(
     state: &mut ChatState,
+    template: &ChatTemplate,
     model: &llama_cpp_4::model::LlamaModel,
     ctx: &mut llama_cpp_4::context::LlamaContext,
     config: &LlamaCppGenerationConfig,
@@ -569,25 +739,42 @@ fn run_turn_incremental(
     use llama_cpp_4::model::{AddBos, LlamaChatMessage, Special};
     use llama_cpp_4::sampling::LlamaSampler;
 
-    // 1. Compose [history + new user] and apply the chat template so the
-    //    model sees a properly framed turn (otherwise chat-tuned models
-    //    emit EOS immediately).
-    let user_msg = LlamaChatMessage::new("user".to_string(), user_text.to_string())
-        .map_err(|e| Error::Execution(format!("invalid user msg: {}", e)))?;
-    let mut probe_messages = state.messages.clone();
-    probe_messages.push(user_msg);
+    // 1. Compose [history + new user] and render the chat template so
+    //    the model sees a properly framed turn. Prefer rendering the
+    //    GGUF's embedded Jinja template ourselves with
+    //    `enable_thinking=false` (Qwen3 thinking-mode kwarg). If the
+    //    Jinja renderer is unavailable or fails on this template, fall
+    //    back to llama-cpp's simple `apply_chat_template` (no kwargs).
+    let mut probe_messages: Vec<ChatMsg> = state.messages.clone();
+    probe_messages.push(ChatMsg {
+        role: "user".to_string(),
+        content: user_text.to_string(),
+    });
 
-    let mut formatted = model
-        .apply_chat_template(None, &probe_messages, true)
-        .map_err(|e| Error::Execution(format!("chat template apply: {}", e)))?;
-
-    // Prefill an empty thinking block onto the assistant turn so
-    // reasoning-mode models (Qwen3 etc.) skip chain-of-thought entirely
-    // and go straight to the answer. This is what `enable_thinking=false`
-    // does in the Jinja-side template — we just append the same tokens
-    // here since the simple `apply_chat_template` C API doesn't take
-    // template kwargs.
-    formatted.push_str("<think></think>\n\n");
+    // Render the full conversation including an open assistant turn,
+    // with `enable_thinking=false` so Qwen3-style templates auto-fill a
+    // closed `<think>...</think>` block onto the open turn. That's what
+    // actually keeps the model from emitting reasoning content — the
+    // `/no_thinking` directive alone isn't strong enough.
+    //
+    // Note: this design re-decodes the full prompt each turn. Cross-turn
+    // KV reuse isn't viable here because the template strips `<think>`
+    // from historical assistant content on every render, so any
+    // auto-prefix tokens we cache for the open turn become unrecoverable
+    // on the next turn — which is also why M-RoPE `seq_rm` can't help.
+    let formatted = match template.render(
+        &probe_messages,
+        /* add_generation_prompt */ true,
+        /* enable_thinking */ false,
+    ) {
+        Some(s) => s,
+        None => {
+            let llama_msgs = to_llama_messages(&probe_messages)?;
+            model
+                .apply_chat_template(None, &llama_msgs, true)
+                .map_err(|e| Error::Execution(format!("chat template apply: {}", e)))?
+        }
+    };
 
     let prompt_tokens = model
         .str_to_token(&formatted, AddBos::Always)
@@ -603,13 +790,14 @@ fn run_turn_incremental(
         ));
     }
 
-    // 2. Reset the cache. Required for M-RoPE models because
-    //    `kv_cache_seq_rm` doesn't reset the memory module's max-position
-    //    tracker; without a full clear the next decode rejects new
-    //    positions ≤ the stored max with `X < Y` errors.
+    // 2. Reset the cache and prefill the entire prompt. Cross-turn KV
+    //    reuse isn't viable for Qwen3-style templates that strip
+    //    historical `<think>` content; see the comment above the
+    //    template render call. Full clear is also required for M-RoPE
+    //    models — `seq_rm` doesn't reset the memory module's
+    //    max-position tracker.
     ctx.clear_kv_cache();
 
-    // 3. Prefill the entire prompt in one batch.
     let mut batch = LlamaBatch::new(config.batch_size as usize, 1);
     for (i, &tok) in prompt_tokens.iter().enumerate() {
         let last = i == n_prompt - 1;
@@ -660,10 +848,6 @@ fn run_turn_incremental(
         let bytes = model
             .token_to_bytes(token, Special::Tokenize)
             .map_err(|e| Error::Execution(format!("token decode: {}", e)))?;
-        // `decode_to_string` only writes when `dst` has spare capacity
-        // ≥ `max_utf8_buffer_length(src.len())`. With an empty `String`
-        // it silently returns `OutputFull`, which is why early runs
-        // produced zero visible output for valid bytes.
         let cap = decoder
             .max_utf8_buffer_length(bytes.len())
             .unwrap_or(bytes.len() * 4 + 4);
@@ -699,6 +883,16 @@ fn run_turn_incremental(
         chunks.push(out);
     }
 
+    // End-of-response sentinel. The downstream coordinator
+    // (`ConversationCoordinatorNode`) and `TextCollectorNode` treat the
+    // literal string `<|text_end|>` as "the LLM is done with this turn"
+    // — it flushes any partial sentence buffered for sentence-streaming
+    // and transitions AgentSpeaking → Idle. Without this, the
+    // coordinator only times out after `llm_silence_timeout_ms` (120 s
+    // in the Qwen example), so the frontend stays stuck on
+    // "assistant generating".
+    chunks.push("<|text_end|>".to_string());
+
     // 6. Persist the turn into history. Skip empty assistant responses
     //    so the model doesn't see an empty `assistant` block on the
     //    next turn (which can confuse chat templates and tokenization).
@@ -707,9 +901,14 @@ fn run_turn_incremental(
         .expect("probe_messages always has at least the new user msg");
     if !response.is_empty() {
         state.messages.push(user_msg);
-        let asst_msg = LlamaChatMessage::new("assistant".to_string(), response)
-            .map_err(|e| Error::Execution(format!("invalid asst msg: {}", e)))?;
-        state.messages.push(asst_msg);
+        // Store the response verbatim. Because we render with
+        // `enable_thinking=true`, no auto-prefix is added to the open
+        // turn, so the cache contents match what a historical render
+        // produces and the next turn's common-prefix walk succeeds.
+        state.messages.push(ChatMsg {
+            role: "assistant".to_string(),
+            content: response,
+        });
     }
 
     Ok((

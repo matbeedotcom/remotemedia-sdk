@@ -14,10 +14,16 @@ Key improvements:
 - Seamless integration with the streaming node architecture
 """
 
+import json
 import logging
 import numpy as np
 from typing import AsyncGenerator, Optional, TYPE_CHECKING, Union, Dict, Any
 import asyncio
+
+# Wire-format key used by the Rust Session Control Bus when delivering
+# aux-port envelopes (e.g. `<node>.in.barge_in`). See
+# `crates/core/src/transport/session_control.rs::AUX_PORT_ENVELOPE_KEY`.
+AUX_PORT_KEY = "__aux_port__"
 
 # Import RuntimeData from core multiprocessing
 from remotemedia.core.multiprocessing.data import RuntimeData
@@ -148,6 +154,69 @@ class KokoroTTSNode(MultiprocessNode):
 
         self._pipeline = None
         self._initialized = False
+        # Barge-in latch. Set by `request_barge_in()` (driven by the
+        # coordinator's publish to `<node>.in.barge_in`) and consumed by
+        # the streaming synthesis loop in `process()`. Cleared at the
+        # start of every new sentence so a stale latch from a previous
+        # turn doesn't suppress the next reply.
+        self._interrupt: bool = False
+
+    # ────── Control-plane helpers ─────────────────────────────────────
+
+    def request_barge_in(self) -> None:
+        """Latch a barge-in. The current synthesis loop will exit after
+        the next chunk; subsequent text frames clear the latch."""
+        self._interrupt = True
+        logger.info("[%s] barge-in requested", getattr(self, "node_id", "kokoro_tts"))
+
+    def _to_dict(self, data: Any) -> Any:
+        if isinstance(data, dict):
+            return data
+        if isinstance(data, str):
+            stripped = data.strip()
+            if stripped.startswith("{"):
+                try:
+                    return json.loads(stripped)
+                except json.JSONDecodeError:
+                    return None
+            return None
+        if isinstance(data, RuntimeData):
+            try:
+                if data.is_text():
+                    return self._to_dict(data.as_text())
+            except Exception:
+                return None
+        return None
+
+    def _extract_envelope(self, data: Any) -> Optional[tuple]:
+        blob = self._to_dict(data)
+        if not isinstance(blob, dict):
+            return None
+        port = blob.get(AUX_PORT_KEY)
+        if not isinstance(port, str) or not port:
+            return None
+        payload = blob.get("payload")
+        if not isinstance(payload, dict):
+            payload = {"text": str(payload)} if payload is not None else {}
+        return port, payload
+
+    def _handle_aux_port(self, port: str, payload: Dict[str, Any]) -> None:
+        if port == "barge_in":
+            self.request_barge_in()
+        elif port in ("context", "system_prompt", "reset", "voice"):
+            # LLM-side / config aux ports — silently ignored on the TTS
+            # node. The split-pipeline web UI dual-publishes some ports
+            # to both `audio.in.*` and `llm.in.*`, and the LLM owns
+            # those; dropping them here is correct.
+            logger.debug(
+                "[%s] ignoring aux port %r on KokoroTTSNode",
+                getattr(self, "node_id", "kokoro_tts"), port,
+            )
+        else:
+            logger.warning(
+                "[%s] unknown aux port %r on KokoroTTSNode; payload ignored",
+                getattr(self, "node_id", "kokoro_tts"), port,
+            )
 
     async def initialize(self) -> None:
         """Initialize the Kokoro TTS pipeline."""
@@ -169,9 +238,23 @@ class KokoroTTSNode(MultiprocessNode):
             # from Rust/PyO3 event loop on Windows. We initialize here which is safe.
             self._pipeline = KPipeline(lang_code=self.lang_code)
 
+            # Pre-fetch the voice pack and run a 1-character synthesis so the
+            # HuggingFace HEAD/download for `<voice>.pt` and the G2P/model JIT
+            # happen before "ready" — otherwise the first real turn pays a
+            # multi-second penalty inside the synthesis hot path.
+            try:
+                self._pipeline.load_voice(self.voice)
+            except Exception as e:
+                logger.warning(f"Kokoro: load_voice('{self.voice}') failed during warmup: {e}")
+            try:
+                for _ in self._pipeline(".", voice=self.voice, speed=self.speed):
+                    pass
+            except Exception as e:
+                logger.warning(f"Kokoro: warmup synthesis failed: {e}")
+
             self.publish_progress("ready", f"Kokoro TTS voice '{self.voice}' loaded")
             self._initialized = True
-            logger.info("Kokoro TTS pipeline initialized successfully")
+            logger.info("Kokoro TTS pipeline initialized and warmed successfully")
 
         except ImportError as e:
             raise ImportError(
@@ -249,6 +332,22 @@ class KokoroTTSNode(MultiprocessNode):
         if not self._initialized:
             await self.initialize()
 
+        # Aux-port envelope? The Session Control Bus delivers
+        # `<node>.in.barge_in` (and friends) as a JSON envelope:
+        # `{"__aux_port__": "barge_in", "payload": {...}}`. The Rust
+        # multiprocess bridge serializes that to text, so we see it
+        # here as a `RuntimeData::Text` whose body parses as JSON.
+        # Consume it without yielding any audio.
+        envelope = self._extract_envelope(data)
+        if envelope is not None:
+            port, payload = envelope
+            logger.info(
+                "KokoroTTSNode: aux-port envelope detected: port=%s payload=%r",
+                port, payload,
+            )
+            self._handle_aux_port(port, payload)
+            return
+
         # Validate input type
         if not data.is_text():
             logger.info(f"KokoroTTSNode: non-text data (type={data.type}), ignoring")
@@ -293,6 +392,14 @@ class KokoroTTSNode(MultiprocessNode):
 
         logger.info(f"🎙️ Kokoro TTS: Starting synthesis for: '{text[:100]}{'...' if len(text) > 100 else ''}'")
 
+        # Clear any stale barge-in latch at the start of each new
+        # sentence. The VAD republishes `barge_in` on every speech_start,
+        # so by the time the LLM produced this fresh sentence the latch's
+        # original intent (cancel the previous reply) is already
+        # satisfied. Mid-synthesis barges are still caught by the
+        # in-loop check below.
+        self._interrupt = False
+
         try:
             # Create the Kokoro generator (this is safe, doesn't run PyTorch yet)
             generator = self._create_generator(text)
@@ -303,6 +410,16 @@ class KokoroTTSNode(MultiprocessNode):
             total_samples = 0
 
             while True:
+                # Bail out before kicking off another (expensive) chunk
+                # synthesis if the coordinator has signalled barge-in.
+                if self._interrupt:
+                    logger.info(
+                        "🎙️ Kokoro TTS: barge-in latched — halting synthesis "
+                        f"after {chunk_idx} chunk(s)"
+                    )
+                    self._interrupt = False
+                    break
+
                 # Get next chunk from generator in thread (PyTorch-safe)
                 chunk_data = await asyncio.to_thread(self._synthesize_chunk_sync, generator)
 
@@ -312,6 +429,17 @@ class KokoroTTSNode(MultiprocessNode):
 
                 chunk_idx += 1
                 graphemes, phonemes, audio = chunk_data
+
+                # Re-check after the (long) synth call — if barge-in fired
+                # while this chunk was being decoded, drop it on the floor
+                # rather than enqueuing more audio for the listener.
+                if self._interrupt:
+                    logger.info(
+                        "🎙️ Kokoro TTS: barge-in mid-chunk — dropping chunk %d (%.2fs)",
+                        chunk_idx, len(audio) / self.sample_rate,
+                    )
+                    self._interrupt = False
+                    break
 
                 # Convert to RuntimeData.Audio
                 audio_runtime_data = numpy_to_audio(audio, self.sample_rate, channels=1)

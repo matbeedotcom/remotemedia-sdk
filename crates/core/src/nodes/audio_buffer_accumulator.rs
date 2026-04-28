@@ -182,13 +182,25 @@ impl AudioBufferAccumulatorNode {
                 (state.accumulated_samples.len() as f32 / state.sample_rate as f32 * 1000.0) as u32;
             if duration_ms >= self.max_utterance_duration_ms {
                 tracing::warn!(
-                    "[AudioBuffer] Session {}: Hit max duration {}ms, forcing output",
+                    "[AudioBuffer] Session {}: Hit max duration {}ms, forcing output \
+                     (the user likely spoke past the cap, or VAD never reported \
+                     speech_end — feedback / continuous noise are common causes)",
                     session_id,
                     duration_ms
                 );
 
-                // Force output
-                return self.flush_buffer(state, session_id);
+                // Force output. `flush_buffer` resets `is_speaking` to
+                // false, so any audio that arrives between this flush
+                // and the next VAD `speech_start` would land in the
+                // `pending` ring and age out before being heard. Keep
+                // `is_speaking = true` after the flush so the next
+                // chunk re-opens accumulation immediately and the
+                // user's continuous utterance survives the cap.
+                let out = self.flush_buffer(state, session_id)?;
+                state.is_speaking = true;
+                state.accumulated_samples.clear();
+                state.chunks_accumulated = 0;
+                return Ok(out);
             }
 
             Ok(None)
@@ -354,7 +366,16 @@ impl AudioBufferAccumulatorNode {
         session_id: &str,
     ) -> Result<Option<RuntimeData>> {
         if state.accumulated_samples.is_empty() {
-            tracing::debug!("[AudioBuffer] Session {}: No samples to flush", session_id);
+            // Promoted to INFO: flushing with no samples means VAD
+            // emitted speech_end before any audio chunks arrived in
+            // the speaking window — typically a VAD/audio race or a
+            // dropped chunk. Worth seeing in the logs when the user
+            // reports "I spoke but it didn't transcribe".
+            tracing::info!(
+                "[AudioBuffer] Session {}: Flush requested but accumulator is empty — \
+                 audio path may have raced VAD events or dropped chunks",
+                session_id,
+            );
             state.is_speaking = false;
             return Ok(None);
         }
@@ -363,7 +384,10 @@ impl AudioBufferAccumulatorNode {
         let duration_ms =
             (state.accumulated_samples.len() as f32 / state.sample_rate as f32 * 1000.0) as u32;
         if duration_ms < self.min_utterance_duration_ms {
-            tracing::debug!(
+            // Promoted to INFO: this is the most common silent-drop
+            // path. With it at debug! a "my mic isn't transcribing"
+            // report is impossible to triage from the logs.
+            tracing::info!(
                 "[AudioBuffer] Session {}: Utterance too short ({}ms < {}ms), discarding",
                 session_id,
                 duration_ms,

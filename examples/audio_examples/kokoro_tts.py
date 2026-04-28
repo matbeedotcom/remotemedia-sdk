@@ -64,16 +64,29 @@ class KokoroTTSNode(Node):
         try:
             # Import Kokoro here to avoid import errors if not installed
             from kokoro import KPipeline
-            
+
             logger.info(f"Initializing Kokoro TTS with lang_code='{self.lang_code}', voice='{self.voice}'")
-            
+
             # Initialize the pipeline in a thread to avoid blocking
             self._pipeline = await asyncio.to_thread(
                 lambda: KPipeline(lang_code=self.lang_code)
             )
-            
+
+            # Pre-load the voice pack so the first synthesis call doesn't
+            # block on a HuggingFace HEAD + download (~3 s for af_heart.pt).
+            # KPipeline.load_voice caches inside `pipeline.voices`, which the
+            # generator path then reuses without any network hit.
+            def _warm():
+                self._pipeline.load_voice(self.voice)
+                # Burn one tiny synthesis to JIT the G2P + model graph so
+                # the first real chunk hits steady-state latency.
+                for _ in self._pipeline(".", voice=self.voice, speed=self.speed):
+                    pass
+
+            await asyncio.to_thread(_warm)
+
             self._initialized = True
-            logger.info("Kokoro TTS pipeline initialized successfully")
+            logger.info("Kokoro TTS pipeline initialized and warmed successfully")
             
         except ImportError as e:
             raise ImportError(

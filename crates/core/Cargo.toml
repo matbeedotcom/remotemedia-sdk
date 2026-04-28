@@ -58,6 +58,14 @@ llama-cpp-4 = { workspace = true, optional = true, features = ["cuda"] }
 # to enumerate ggml backend devices (llama-cpp-4 doesn't re-export the FFI).
 llama-cpp-sys-4 = { version = "0.2", optional = true, features = ["cuda"] }
 encoding_rs = { workspace = true, optional = true }
+# Render the model's GGUF-embedded Jinja chat template ourselves so we
+# can pass kwargs (e.g. `enable_thinking=false` for Qwen3). The simple
+# `llama_chat_apply_template` C API doesn't accept template kwargs.
+minijinja = { version = "2", optional = true, default-features = false, features = ["builtins", "loader", "macros", "multi_template", "loop_controls"] }
+# `pycompat` adds Python-style string/list method emulation
+# (`s.startswith(...)`, `s.endswith(...)`, etc.) which Qwen and most HF
+# chat templates rely on.
+minijinja-contrib = { version = "2", optional = true, default-features = false, features = ["pycompat"] }
 
 # IPC for multiprocess
 iceoryx2 = { workspace = true, optional = true }
@@ -167,7 +175,7 @@ docker = ["dep:bollard", "dep:tar", "dep:chrono", "dep:bytes", "dep:hyper", "dep
 # Video codec support (spec 012)
 video = ["dep:ac-ffmpeg"]
 # llama.cpp GGUF inference (generation, embeddings, activation extraction, steering)
-llama-cpp = ["dep:llama-cpp-4", "dep:llama-cpp-sys-4", "dep:encoding_rs"]
+llama-cpp = ["dep:llama-cpp-4", "dep:llama-cpp-sys-4", "dep:encoding_rs", "dep:minijinja", "dep:minijinja-contrib"]
 # llama.cpp with CUDA GPU acceleration (implies llama-cpp for inventory registration)
 llama-cpp-cuda = ["llama-cpp"]
 # Managed Python environments via uv
