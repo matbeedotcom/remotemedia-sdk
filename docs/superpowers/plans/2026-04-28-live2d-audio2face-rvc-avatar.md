@@ -98,7 +98,7 @@ Each milestone ends with a green `cargo test` (or, for milestones gated on exter
 | M | Scope | Gate |
 |---|-------|------|
 | M0 | `EmotionExtractorNode` + tests | ✅ shipped — see [M0 actuals](#m0-actuals-2026-04-28) |
-| M1 | `audio.out.clock` tap on `AudioSender` | New `audio_clock_tap_test` green; existing webrtc tests still green |
+| M1 | `audio.out.clock` tap on `AudioSender` | ✅ shipped — see [M1 actuals](#m1-actuals-2026-04-28) |
 | M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e | `cargo test --features avatar-audio2face` green; `avatar_synthetic_emotion_e2e` green with synthetic emotion keywords |
 | M3 | `RVCNode` | `cargo test --features avatar-rvc` green; tier-2 tests pass on env-var-bearing host |
 | M4 | `Live2DRenderNode` (native wgpu + CubismCore) | `cargo build --features avatar-render` green w/ `LIVE2D_CUBISM_CORE_DIR` set; full pipeline e2e green when both Cubism SDK + Live2D model env vars present |
@@ -526,6 +526,36 @@ Spec §3.6 leaves an optional 500 ms heartbeat with `pts_ms = null` to disambigu
 - [ ] **Step 2:** Failing test that asserts when no audio frames flow for `heartbeat_interval_ms`, the tap publishes `{"kind":"audio_clock", "pts_ms": null}`.
 - [ ] **Step 3:** Implement.
 - [ ] **Step 4-5:** Verify + commit `feat(webrtc): audio.out.clock heartbeat`.
+
+---
+
+## M1 actuals (2026-04-28)
+
+Shipped. Four deviations from the plan above:
+
+1. **Late-bind setter, not constructor change.** `AudioSender::new(track, capacity)` is unchanged; existing callers (`AudioTrack::new` → `connection.rs::add_audio_track`) keep working untouched. New surface: `ClockTap` struct + `AudioSender::set_clock_tap(tap)` / `clear_clock_tap()`. Spec §3.6 explicitly calls this out as an option ("via `set_control_handle`"); choosing it avoids a constructor cascade through `AudioTrack` which doesn't currently hold a `SessionControl`.
+
+2. **Caller wiring deferred to M4.** Plan §M1.2 step 3 (update `server_peer.rs` to thread `SessionControl` through) requires `AudioTrack`/`connection.rs` to gain a `SessionControl` reference, which neither currently has. That refactor belongs with the manifest config knob `audio_clock_node_id` from spec §3.5 — it's properly the renderer node's bootstrap concern in M4. M1 ships only the AudioSender-level mechanism; the integration call site lands when there's a renderer to consume it.
+
+3. **`pts_ms` derived from cumulative `frame.duration`, not RTP timestamp / sample rate.** The transmission thread already gets `frame.duration` per dequeued frame; summing it as `cum_played_ms` gives a wall-of-played-audio clock without plumbing sample_rate. This also matches spec §3.6 wording ("what `pts_ms` is the listener currently hearing") more precisely than RTP-timestamp-derived ms.
+
+4. **Heartbeat (spec §3.6 optional + §10 risk) deferred to M4.** No consumer exists yet; the renderer's input-arbitration loop in M4 is what tells us whether `pts_ms = null` heartbeats are needed (vs the renderer just timing-out the audio clock locally). Documented in audio_sender.rs to revisit when M4 lands.
+
+**API additions** (all in [`crates/transports/webrtc/src/media/audio_sender.rs`](../../../crates/transports/webrtc/src/media/audio_sender.rs)):
+- `pub struct ClockTap { control: Arc<SessionControl>, node_id: String, stream_id: Option<String> }`
+- `AudioSender::set_clock_tap(&self, tap: ClockTap)` / `clear_clock_tap(&self)`
+- `clock_tap: Arc<parking_lot::RwLock<Option<ClockTap>>>` field, read by transmission thread on hot path (uncontended atomic).
+
+**Tests landed (4/4 green):** [`crates/transports/webrtc/tests/audio_clock_tap_test.rs`](../../../crates/transports/webrtc/tests/audio_clock_tap_test.rs)
+- one publish per dequeued frame, monotonic `pts_ms`, envelope shape locked
+- no publishes when ring buffer is empty (spec §3.6 silence signal)
+- no clock tap configured = no panic, no publish (opt-in semantics)
+- `pts_ms` continues advancing after `flush_buffer()` (it's a wall clock, not a per-utterance reset; renderer's stale-pts ring eviction handles barge per §6.3)
+
+**Build matrix verified:**
+- `cargo test -p remotemedia-webrtc --test audio_clock_tap_test` — 4/4 green.
+- `cargo test -p remotemedia-webrtc --lib audio_sender` (existing ring-buffer tests) — 3/3 green, no regression.
+- `cargo build -p remotemedia-webrtc` — clean.
 
 ---
 

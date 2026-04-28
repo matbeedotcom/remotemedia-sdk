@@ -10,6 +10,9 @@
 #![allow(dead_code)]
 
 use crate::{Error, Result};
+use parking_lot::RwLock as SyncRwLock;
+use remotemedia_core::data::RuntimeData;
+use remotemedia_core::transport::session_control::SessionControl;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -17,6 +20,33 @@ use tokio::sync::{Mutex, Notify};
 use tracing::{debug, warn};
 use webrtc::media::Sample;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
+
+/// Late-bound clock-tap configuration for the avatar pipeline
+/// (spec 2026-04-27 §3.6).
+///
+/// When a `ClockTap` is attached to an `AudioSender` (via
+/// [`AudioSender::set_clock_tap`]), the transmission thread emits one
+/// `RuntimeData::Json {kind: "audio_clock", pts_ms, stream_id?}` envelope
+/// to `<node_id>.out.clock` per dequeued frame. The renderer subscribes
+/// to this tap to know what `pts_ms` the listener is currently hearing.
+///
+/// Attaching is opt-in and late-bound on purpose: `AudioSender` is
+/// constructed inside `AudioTrack::new`, which doesn't currently hold a
+/// `SessionControl` reference. Whoever does (the renderer's session
+/// bootstrap, or the manifest config glue) attaches via the setter.
+#[derive(Clone)]
+pub struct ClockTap {
+    /// Session bus the publish goes through.
+    pub control: Arc<SessionControl>,
+    /// `node_id` segment of the tap address; the renderer subscribes
+    /// to `node_out(node_id).with_port("clock")`. Conventionally
+    /// `"audio"` per spec §3.6 example.
+    pub node_id: String,
+    /// Optional `stream_id` echoed in the envelope so multi-track
+    /// renderers (one peer, multiple avatars) can disambiguate which
+    /// track this clock belongs to. Spec §6.4.
+    pub stream_id: Option<String>,
+}
 
 /// Audio frame ready for transmission
 #[derive(Clone)]
@@ -239,6 +269,13 @@ pub struct AudioSender {
     timestamp: Arc<AtomicU32>,
     /// Thread handle (wrapped in Mutex for Drop)
     thread_handle: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    /// Optional avatar clock tap (spec 2026-04-27 §3.6). Read every
+    /// dequeue by the transmission thread; written by external
+    /// callers via `set_clock_tap`. Sync `parking_lot::RwLock` because
+    /// the read happens on the transmission OS thread (no tokio
+    /// runtime in scope) and is on the hot path. Uncontended reads
+    /// are a single atomic.
+    clock_tap: Arc<SyncRwLock<Option<ClockTap>>>,
 }
 
 impl AudioSender {
@@ -254,6 +291,7 @@ impl AudioSender {
         let buffer = Arc::new(AudioRingBuffer::new(buffer_capacity));
         let shutdown = Arc::new(AtomicBool::new(false));
         let timestamp = Arc::new(AtomicU32::new(0));
+        let clock_tap: Arc<SyncRwLock<Option<ClockTap>>> = Arc::new(SyncRwLock::new(None));
 
         let sender = Self {
             buffer: Arc::clone(&buffer),
@@ -261,6 +299,7 @@ impl AudioSender {
             shutdown: Arc::clone(&shutdown),
             timestamp: Arc::clone(&timestamp),
             thread_handle: Arc::new(Mutex::new(None)),
+            clock_tap: Arc::clone(&clock_tap),
         };
 
         // Start the transmission thread
@@ -268,6 +307,7 @@ impl AudioSender {
         let thread_track = Arc::clone(&track);
         let thread_shutdown = Arc::clone(&shutdown);
         let thread_timestamp = Arc::clone(&timestamp);
+        let thread_clock_tap = Arc::clone(&clock_tap);
 
         let handle = std::thread::Builder::new()
             .name("audio-sender".to_string())
@@ -277,6 +317,7 @@ impl AudioSender {
                     thread_track,
                     thread_shutdown,
                     thread_timestamp,
+                    thread_clock_tap,
                 )
             })
             .expect("Failed to spawn audio sender thread");
@@ -301,6 +342,7 @@ impl AudioSender {
         track: Arc<TrackLocalStaticSample>,
         shutdown: Arc<AtomicBool>,
         timestamp: Arc<AtomicU32>,
+        clock_tap: Arc<SyncRwLock<Option<ClockTap>>>,
     ) {
         use tracing::info;
         // Use println as a backup in case tracing isn't working
@@ -326,6 +368,12 @@ impl AudioSender {
         let mut loop_iterations = 0u64;
         let start_time = Instant::now();
 
+        // Cumulative duration of frames the listener has heard. This is
+        // a wall-of-played-audio clock — it never resets on barge-in
+        // (spec §3.6: barge clears the ring; the renderer's stale-pts
+        // eviction handles the rest).
+        let mut cum_played_ms: u64 = 0;
+
         info!(
             "Audio transmission thread: entering main loop, shutdown={}",
             shutdown.load(Ordering::Acquire)
@@ -349,6 +397,30 @@ impl AudioSender {
             if let Some(frame) = buffer.try_pop() {
                 // Update RTP timestamp
                 let old_ts = timestamp.fetch_add(frame.sample_count, Ordering::AcqRel);
+
+                // Spec 2026-04-27 §3.6: publish the avatar audio clock
+                // tap on each dequeued frame. We emit *after dequeue,
+                // before write_sample / pacing sleep* — what the
+                // renderer cares about is "this is the frame the
+                // listener is about to start hearing", and tying the
+                // publish to dequeue (not to write_sample success)
+                // means a transiently-misconfigured peer connection
+                // doesn't silently break the avatar's mouth sync.
+                cum_played_ms = cum_played_ms.saturating_add(frame.duration.as_millis() as u64);
+                if let Some(tap) = clock_tap.read().clone() {
+                    let mut envelope = serde_json::json!({
+                        "kind": "audio_clock",
+                        "pts_ms": cum_played_ms,
+                    });
+                    if let Some(stream_id) = &tap.stream_id {
+                        envelope["stream_id"] = serde_json::Value::String(stream_id.clone());
+                    }
+                    tap.control.publish_tap(
+                        &tap.node_id,
+                        Some("clock"),
+                        RuntimeData::Json(envelope),
+                    );
+                }
 
                 // Create WebRTC sample
                 let sample = Sample {
@@ -427,6 +499,19 @@ impl AudioSender {
         self.buffer.push(frame).await
     }
 
+    /// Attach (or replace) the avatar clock tap. Spec 2026-04-27 §3.6.
+    ///
+    /// Late-binding; safe to call any time after `new()`. The
+    /// transmission thread picks up the change on the next frame.
+    pub fn set_clock_tap(&self, tap: ClockTap) {
+        *self.clock_tap.write() = Some(tap);
+    }
+
+    /// Detach the clock tap so subsequent dequeued frames don't publish.
+    pub fn clear_clock_tap(&self) {
+        *self.clock_tap.write() = None;
+    }
+
     /// Get the number of frames currently buffered
     pub fn buffer_len(&self) -> usize {
         self.buffer.len()
@@ -475,6 +560,7 @@ impl Clone for AudioSender {
             shutdown: Arc::clone(&self.shutdown),
             timestamp: Arc::clone(&self.timestamp),
             thread_handle: Arc::clone(&self.thread_handle),
+            clock_tap: Arc::clone(&self.clock_tap),
         }
     }
 }
