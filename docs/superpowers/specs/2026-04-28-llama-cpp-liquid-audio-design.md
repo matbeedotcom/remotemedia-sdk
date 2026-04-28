@@ -260,16 +260,21 @@ Reuses the refactored `process_manager.rs` (see prerequisite above) with
    backend_tag)`.
 3. **Lock ordering** (corrects v2's earlier ambiguity):
    ```text
-   acquire spawn_locks[key] (per-key Arc<Mutex<()>>)
+   lock outer spawn_locks map briefly → fetch-or-insert Arc<Mutex<()>> for key → drop outer
+       ↓
+   acquire per-key Arc<Mutex<()>>
        ↓
    Weak::upgrade on inner[key]
        ↓
    if Some(arc): return arc
-   if None:      spawn → register Weak → return arc
+   if None:      spawn → register Weak in inner → return arc
    ```
-   The per-key mutex serializes *both* the upgrade attempt and the spawn,
-   eliminating the TOCTOU race where two nodes drop and respawn between
-   each other's checks.
+   The outer map mutex is held only long enough to look up or create the
+   per-key arc and is released before the per-key mutex is taken.
+   Deadlock-free because the outer is never re-acquired while holding the
+   per-key. The per-key mutex serializes *both* the upgrade attempt and the
+   spawn, eliminating the TOCTOU race where two nodes drop and respawn
+   between each other's checks.
 4. Spawn path: build `SpawnTarget::Binary` with the resolved runner path
    (see "Runner discovery"); call `process_manager.spawn_node(target,
    session_id, node_id="liquid_audio_runner_<key_hash>")`. The IPC thread,
@@ -320,7 +325,13 @@ Frame layout (every frame on either channel):
 - `kind`: command/event discriminator
 - `corr_id` (u64, little-endian): correlation id; the runner echoes the
   command's `corr_id` on responses so async pipelines can match results
-  back to inputs
+  back to inputs. The runner processes commands per-`node_id` in FIFO
+  order, so within a single pipeline node, results arrive in the order
+  the inputs were sent. `corr_id` matters for pipelines that interleave
+  multiple in-flight requests against the same node — e.g. a future
+  streaming-partials extension where a single utterance produces multiple
+  `TextResult` events that must be associated with the originating
+  `AudioChunk`.
 - `nid_l` (u16): length of `n_id` in bytes
 - `n_id`: pipeline-side node id (UTF-8, no null terminator), tells the
   runner-client router which `mpsc::Receiver` to dispatch to
