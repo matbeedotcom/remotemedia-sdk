@@ -764,6 +764,8 @@ git commit -m "feat: build.rs for llama-cpp-liquid-sys (cmake + bindgen)"
 
 Wraps the FFI surface enough to load GGUFs and run audio I/O. Mirrors `llama-cpp-4`'s patterns where convenient, but is a standalone API (no shared types).
 
+> **Stop and verify before each task in this milestone:** PR #18641 may rebase between when this plan was written and when you implement. Before committing to specific FFI signatures, run `nm OUT_DIR/build/libllama.a | grep -E '<expected_symbol>'` to confirm the symbols below exist and have the assumed shape. If any pinned signature in this milestone disagrees with the bindings, **stop**, re-read the PR diff, and update the plan tasks before proceeding. The names below (`llama_model_load_from_file`, etc.) are *as of upstream master ~late 2025* and are best-guesses for the PR.
+
 ### Task M3.1: `LiquidModel::load_from_file` happy path
 
 **Files:**
@@ -839,16 +841,43 @@ git add crates/llama-cpp-liquid/src/model.rs
 git commit -m "feat: LiquidModel safe wrapper (load_from_file, drop)"
 ```
 
-### Task M3.2: `LiquidContext`, mmproj, vocoder, speaker tokenizer
+### Task M3.2: `LiquidContext` + `LiquidDecodeContext`
 
-Repeat the pattern: write a failing test that initializes each artifact, implement, verify, commit. **One commit per artifact.** Exact FFI surfaces depend on what PR #18641 actually exposes — pause and verify with `nm OUT_DIR/build/libllama.a | grep mtmd_` style checks during implementation.
+**Files:**
+- Create: `crates/llama-cpp-liquid/src/context.rs`
 
-- [ ] **Step 1:** `LiquidContext::from_model` + `LiquidDecodeContext` (one commit)
-- [ ] **Step 2:** `LiquidMmproj::load` (one commit)
-- [ ] **Step 3:** `LiquidVocoder::load` (one commit)
-- [ ] **Step 4:** `LiquidSpeakerTokenizer::load` (one commit)
+- [ ] **Step 1:** Failing test: load a `LiquidModel`, create a `LiquidContext` with `n_ctx=512`, derive a `LiquidDecodeContext`. Assert `decode.n_ctx() == 512`. Use `skip_if_no_real_gguf!()` macro.
+- [ ] **Step 2:** Run, verify failing.
+- [ ] **Step 3:** Implement `LiquidContext::from_model(&LiquidModel, &LiquidContextParams)` and `LiquidDecodeContext` (per-stream KV cache wrapper), using `llama_new_context_with_model` / `llama_decode` family from bindings.
+- [ ] **Step 4:** Run, verify pass.
+- [ ] **Step 5:** Commit `feat: LiquidContext + LiquidDecodeContext`.
 
-Each commit follows the standard TDD pattern: failing test → minimal impl → green → commit.
+### Task M3.3: `LiquidMmproj` (audio encoder)
+
+**Files:**
+- Create: `crates/llama-cpp-liquid/src/audio.rs` (mmproj section)
+
+- [ ] **Step 1:** Failing test: load a stub mmproj GGUF; assert encoder reports an input rate (`encoder.expected_sample_rate()`).
+- [ ] **Step 2:** Run, verify failing.
+- [ ] **Step 3:** Implement `LiquidMmproj::load(path)` and `encode(samples) -> Vec<f32>` using PR's mtmd entry points. **Pause at this task** to read PR #18641's `mtmd.h` and confirm the actual entry-point names; the names `mtmd_init`, `mtmd_encode_audio` are assumed.
+- [ ] **Step 4:** Run, verify pass.
+- [ ] **Step 5:** Commit `feat: LiquidMmproj load + encode`.
+
+### Task M3.4: `LiquidVocoder` (TTS decoder)
+
+**Files:**
+- Modify: `crates/llama-cpp-liquid/src/audio.rs` (vocoder section)
+
+- [ ] **Step 1:** Failing test: load stub vocoder GGUF; assert `vocoder.output_sample_rate() > 0`.
+- [ ] **Step 2-5:** TDD impl + commit `feat: LiquidVocoder load + synth`.
+
+### Task M3.5: `LiquidSpeakerTokenizer`
+
+**Files:**
+- Modify: `crates/llama-cpp-liquid/src/audio.rs` (speaker section)
+
+- [ ] **Step 1:** Failing test: load stub speaker GGUF; tokenize a fixed speaker ID; assert non-empty output.
+- [ ] **Step 2-5:** TDD impl + commit `feat: LiquidSpeakerTokenizer`.
 
 ---
 
@@ -889,20 +918,38 @@ tracing-subscriber = { workspace = true }
 anyhow   = { workspace = true }
 ```
 
-- [ ] **Step 2: Failing acceptance test**
+- [ ] **Step 2: Failing acceptance test (capabilities precede READY, channel-naming pinned)**
 
 `crates/liquid-audio-runner/tests/ready_handshake.rs`:
 
 ```rust
 #[tokio::test]
-async fn runner_emits_ready_on_control_channel() {
-    let (tx, rx) = setup_iceoryx_pair("test-session", "test-runner");
-    let mut child = spawn_runner_for_test(/* with stub GGUFs */).await;
-    let ready = wait_for_control_byte(&rx, b"READY", Duration::from_secs(60)).await.expect("READY");
+async fn runner_emits_capabilities_then_ready() {
+    let session_id = "test-session";
+    let runner_id  = "test-runner";
+
+    // Pin the channel-naming convention from spec §"IPC protocol".
+    // setup_iceoryx_pair must construct services named:
+    //   {session_id}_liquid_{runner_id}_input
+    //   {session_id}_liquid_{runner_id}_output
+    let (tx, rx, ctrl_rx) = setup_iceoryx_pair(session_id, runner_id);
+    assert_eq!(tx.service_name(), format!("{session_id}_liquid_{runner_id}_input"));
+    assert_eq!(rx.service_name(), format!("{session_id}_liquid_{runner_id}_output"));
+
+    let mut child = spawn_runner_for_test(session_id, runner_id, tier1_fixture_paths()).await;
+
+    // Order must be: RunnerCapabilities, then READY on control channel.
+    let evt = recv_event(&rx, Duration::from_secs(60)).await.expect("event");
+    matches!(evt, LiquidIpcEvent::RunnerCapabilities { .. });
+    let ready = wait_for_control_byte(&ctrl_rx, b"READY", Duration::from_secs(5))
+        .await.expect("READY after capabilities");
     assert!(ready);
+
     child.kill().await.unwrap();
 }
 ```
+
+Locks both the spec's "capabilities before READY" ordering invariant and the iceoryx2 service-name convention.
 
 - [ ] **Step 3: Implement enough of `main.rs` to load, emit `RunnerCapabilities` + `READY`, then idle on input**
 
@@ -914,19 +961,60 @@ async fn runner_emits_ready_on_control_channel() {
 git commit -m "feat: liquid-audio-runner READY handshake"
 ```
 
-### Task M4.2-M4.5
+### Task M4.2: Shutdown command → clean exit
 
-Each one TDD-paced:
-- [ ] **M4.2:** Handle `Shutdown` → clean exit; commit.
-- [ ] **M4.3:** Handle `AudioChunk` → run ASR → emit `TextResult`; commit.
-- [ ] **M4.4:** Handle `TextUtterance` → run TTS → emit `AudioResult`; commit.
-- [ ] **M4.5:** Heartbeat-based parent-death fallback (macOS); commit.
+**Files:**
+- Modify: `crates/liquid-audio-runner/src/main.rs`
+
+- [ ] **Step 1:** Failing test that sends `LiquidIpcCommand::Shutdown`, asserts the runner exits with status 0 within 2 s.
+- [ ] **Step 2-5:** TDD impl + commit.
+
+### Task M4.3: `AudioChunk` → ASR → `TextResult`
+
+**Files:**
+- Create: `crates/liquid-audio-runner/src/asr.rs`
+- Modify: `crates/liquid-audio-runner/src/main.rs` (dispatch table)
+
+- [ ] **Step 1:** Failing acceptance test using **real** GGUFs (gated by `skip_if_no_real_gguf!`): send a fixed audio fixture, expect a non-empty `TextResult` with a matching `corr_id`.
+- [ ] **Step 2:** Run, verify failing.
+- [ ] **Step 3:** Implement `asr::process(ctx, mmproj, samples) -> String`, wire dispatch.
+- [ ] **Step 4:** Run, verify pass.
+- [ ] **Step 5:** Commit `feat: liquid-audio-runner ASR path`.
+
+### Task M4.4: `TextUtterance` → TTS → `AudioResult`
+
+**Files:**
+- Create: `crates/liquid-audio-runner/src/tts.rs`
+
+- [ ] **Step 1-5:** Same TDD pattern; assert the returned audio's `sample_rate` matches the vocoder's reported rate (Phase-2 capability invariant). Commit `feat: liquid-audio-runner TTS path`.
+
+### Task M4.5: macOS heartbeat fallback
+
+**Files:**
+- Create: `crates/liquid-audio-runner/src/heartbeat.rs`
+- Modify: `crates/liquid-audio-runner/src/main.rs`
+
+- [ ] **Step 1:** Failing test (gated `#[cfg(target_os = "macos")]` or run universally for broader coverage): start runner, simulate parent silence for 30+ s, assert runner self-exits with status code 1.
+- [ ] **Step 2:** Run, verify failing.
+- [ ] **Step 3:** Implement: on macOS spawn a tokio task that sends a heartbeat ping over the control channel every 5 s; if no pong from parent within 30 s, exit cleanly. Parent-side pong is sent by the runner-client's IPC thread on each iteration. On Linux this task is a no-op (PR_SET_PDEATHSIG handles it).
+- [ ] **Step 4:** Run, verify pass.
+- [ ] **Step 5:** Commit `feat: liquid-audio-runner macOS heartbeat fallback`.
 
 ---
 
 ## M5 — Core registry + runner client
 
 Pipeline-side glue. No llama.cpp linkage in this code — it only uses `llama-cpp-liquid` with the `types` feature.
+
+### Task M5.0: `MockRunner` test double
+
+**Files:**
+- Create: `crates/core/src/nodes/llama_cpp/liquid_audio/test_support.rs`
+
+- [ ] **Step 1:** Define `MockRunner` implementing the same trait as `LiquidAudioRunner` but driven by user-supplied closures. Provide a `MockRunner::spawn_count() -> usize` for the M5.2 race-test, scripted-response helpers (`expect_audio_chunk_then_send_text`), and a controllable `RunnerCapabilities`.
+- [ ] **Step 2:** Mark `pub(crate)` and gate the module behind `#[cfg(any(test, feature = "test-support"))]`.
+- [ ] **Step 3:** Add a smoke test that exercises `MockRunner` itself (sanity-check the mock).
+- [ ] **Step 4:** Commit `test: MockRunner test double for liquid audio`.
 
 ### Task M5.1: Discovery
 
@@ -945,7 +1033,7 @@ Pipeline-side glue. No llama.cpp linkage in this code — it only uses `llama-cp
 **Files:**
 - Create: `crates/core/src/nodes/llama_cpp/liquid_audio/registry.rs`
 
-- [ ] **Step 1: Failing test for "two concurrent get_or_spawn calls produce one Arc"** — use a `MockRunner` test double.
+- [ ] **Step 1: Failing tests covering both the happy path and the Weak::upgrade race**
 
 ```rust
 #[tokio::test]
@@ -957,6 +1045,34 @@ async fn concurrent_get_or_spawn_yields_single_runner() {
     assert!(Arc::ptr_eq(&a, &b));
     assert_eq!(MockRunner::spawn_count(), 1);
 }
+
+#[tokio::test]
+async fn weak_upgrade_race_does_not_double_spawn() {
+    // Spec §"Subprocess lifecycle" step 3: per-key mutex must serialize the
+    // upgrade attempt and the spawn so two callers arriving after the
+    // previous runner died still produce exactly one new spawn.
+    let reg = LiquidRunnerRegistry::<MockRunner>::new();
+    let cfg = test_cfg();
+
+    let arc1 = reg.get_or_spawn(&cfg).await.unwrap();
+    drop(arc1);                          // refcount → 0; Weak should fail to upgrade
+    MockRunner::reset_spawn_count();
+
+    // Two callers arrive after the drop; expect exactly ONE re-spawn.
+    let (a, b) = tokio::join!(reg.get_or_spawn(&cfg), reg.get_or_spawn(&cfg));
+    assert!(Arc::ptr_eq(&a.unwrap(), &b.unwrap()));
+    assert_eq!(MockRunner::spawn_count(), 1, "TOCTOU race spawned twice");
+}
+
+#[tokio::test]
+async fn lock_ordering_does_not_deadlock_under_load() {
+    let reg = LiquidRunnerRegistry::<MockRunner>::new();
+    let cfgs: Vec<_> = (0..16).map(|i| test_cfg_with_id(i)).collect();
+    let futs: Vec<_> = cfgs.iter().map(|c| reg.get_or_spawn(c)).collect();
+    let _ = tokio::time::timeout(Duration::from_secs(5), futures::future::join_all(futs))
+        .await
+        .expect("deadlock");
+}
 ```
 
 - [ ] **Step 2-5:** TDD impl + commit.
@@ -966,10 +1082,51 @@ async fn concurrent_get_or_spawn_yields_single_runner() {
 - [ ] **Step 1: Failing test** that two simulated subscribers (`asr-1` + `tts-1`) receive only their own events from a stream of mixed events.
 - [ ] **Step 2-5:** TDD impl. The demuxer is a single tokio task reading from iceoryx2 output, decoding `LiquidIpcEvent`, looking up the per-node `mpsc::Sender` from the `subscribers` map, and forwarding.
 
-### Task M5.4: `terminate_session` correctness
+### Task M5.4: `PipelineSession` integration + termination
 
-- [ ] **Step 1: Failing test** that dropping the `SessionState` triggers `Shutdown` to all live runners and joins their IPC threads.
-- [ ] **Step 2-5:** TDD impl + commit.
+**Files:**
+- Modify: `crates/libs/pipeline-runner/src/session.rs:67` (add `liquid_runners: LiquidRunnerRegistry<LiquidAudioRunner>` field, behind `#[cfg(feature = "llama-cpp-liquid-audio")]`).
+
+- [ ] **Step 1: Failing test** that dropping a `PipelineSession` triggers `Shutdown` to all live runners and joins their IPC threads within 2 seconds.
+- [ ] **Step 2:** Run, verify failing.
+- [ ] **Step 3:** Add the field and implement `Drop` / `terminate` to walk `liquid_runners.inner` and send `Shutdown`. Use `MockRunner` in the test, gated on the feature.
+- [ ] **Step 4-5:** Verify pass + commit.
+
+### Task M5.5: `kill -9` runner respawn
+
+**Files:**
+- Test: `crates/core/tests/integration/test_liquid_runner_respawn.rs` (new)
+
+- [ ] **Step 1: Failing integration test** using the **real** `liquid-audio-runner` binary plus Tier-1 stub GGUFs:
+
+```rust
+#[tokio::test]
+#[cfg(all(unix, feature = "llama-cpp-liquid-audio"))]
+async fn liquid_runner_respawns_after_kill_9() {
+    let session = PipelineSession::new_for_test();
+    let cfg = LiquidAudioConfig::for_tier1_fixtures();
+    let runner1 = session.liquid_runners().get_or_spawn(&cfg).await.unwrap();
+    let pid1 = runner1.process_pid();
+
+    // Simulate runner crash.
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid1 as i32), nix::sys::signal::SIGKILL).unwrap();
+
+    // Wait for IPC thread to observe channel closure and tear down.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    drop(runner1);
+
+    // Next get_or_spawn must succeed with a different PID.
+    let runner2 = session.liquid_runners().get_or_spawn(&cfg).await.unwrap();
+    assert_ne!(runner2.process_pid(), pid1);
+
+    // And the runner must respond to a Shutdown immediately.
+    runner2.shutdown().await.unwrap();
+}
+```
+
+- [ ] **Step 2:** Run, verify failing.
+- [ ] **Step 3:** Implement `process_pid()` accessor; ensure `LiquidAudioRunner::Drop` cleanly handles "child already dead." Verify a fresh spawn happens on the next `get_or_spawn`.
+- [ ] **Step 4-5:** Verify pass + commit `test: liquid runner respawns after kill -9`.
 
 ---
 
@@ -977,8 +1134,11 @@ async fn concurrent_get_or_spawn_yields_single_runner() {
 
 ### Task M6.1: `LlamaCppLiquidASRNode`
 
-- [ ] **Step 1: Failing test** that wires a `MockRunner` returning a fixed `TextResult` for any `AudioChunk` and verifies the node emits `RuntimeData::Text`.
-- [ ] **Step 2-5:** Implement `process_streaming`, `initialize` (synchronizes on `RunnerCapabilities`), and capability methods.
+- [ ] **Step 1: Failing tests** covering three behaviors:
+  1. Wire a `MockRunner` returning a fixed `TextResult` for any `AudioChunk`; verify the node emits `RuntimeData::Text`.
+  2. `initialize()` returns only after `MockRunner::set_capabilities(asr_rate=16000)` has fired; assert `actual_capabilities()` returns 16000 afterward.
+  3. Phase-2 capability re-validation: build a graph `LiquidASR → DownstreamNode(requires text)` and assert resolver succeeds; build `LiquidTTS(actual_rate=24000) → AudioSink(requires sample_rate=8000)` and assert resolver returns the spec's "downstream cannot accept discovered rate" error fast.
+- [ ] **Step 2-5:** Implement `process_streaming`, `initialize` (synchronizes on `RunnerCapabilities`), `potential_capabilities`, `actual_capabilities`. Commit.
 
 ### Task M6.2: `LlamaCppLiquidTTSNode`
 
@@ -989,13 +1149,16 @@ Mirror of M6.1 for text→audio.
 - [ ] **Step 1: Failing test** that `core::nodes::registry()` returns a factory for both `LlamaCppLiquidASR` and `LlamaCppLiquidTTS` when the feature is on.
 - [ ] **Step 2-5:** Implement `LiquidAudioNodesProvider`, register via `inventory::submit!`, gate behind `#[cfg(feature = "llama-cpp-liquid-audio")]`.
 
-### Task M6.4: Cargo features wired into `core`
+### Task M6.4: Cargo features wired into `core` + `LiquidAudioConfig` finalized
 
 **Files:**
 - Modify: `crates/core/Cargo.toml`
+- Modify: `crates/core/src/nodes/llama_cpp/liquid_audio/config.rs`
 
 - [ ] Add `llama-cpp-liquid` optional dependency with `default-features = false, features = ["types"]`.
 - [ ] Add `llama-cpp-liquid-audio` and `llama-cpp-liquid-audio-cuda` features per spec.
+- [ ] Add `max_ipc_frame_bytes: u32` to `LiquidAudioConfig` (default `64 * 1024`, per spec §"IPC protocol"). Wire it through to runner spawn args (`--max-frame-bytes <N>`) and to the iceoryx2 sample-size config on both ends. Add a unit test asserting the default and a `with_max_ipc_frame_bytes(128 * 1024)` builder method works.
+- [ ] Add `mpsc_capacity_per_node: usize` to `LiquidAudioConfig` (default 32, per spec §"`LiquidAudioRunner`" backpressure section). Plumbed into `LiquidAudioRunner::subscribe`.
 - [ ] Verify `cargo build --features llama-cpp-liquid-audio` succeeds; commit.
 - [ ] Verify `cargo build --features llama-cpp,llama-cpp-liquid-audio` succeeds (both stacks; no symbol clashes because the runner is a separate binary); commit.
 
@@ -1035,6 +1198,24 @@ Mirror of M6.1 for text→audio.
 
 - [ ] **Step 1:** Add `LFM2_AUDIO_BACKEND=llamacpp` branch alongside the existing `transformers` and `mlx` branches.
 - [ ] **Step 2:** Verify the WebRTC example still works for the existing two backends; verify it works for the new one if GGUFs are available.
+- [ ] **Step 3:** Commit.
+
+### Task M7.5: CI matrix as concrete jobs
+
+**Files:**
+- Modify: `.github/workflows/<existing-workflow>.yml` (or create a new workflow file `liquid-audio.yml` if existing structure makes inserting easier)
+
+- [ ] **Step 1:** Add jobs corresponding to spec §"CI matrix":
+  - `cargo build` (no features) — Linux, macOS
+  - `cargo build --features llama-cpp` — Linux, macOS
+  - `cargo build --features llama-cpp-liquid-audio` — Linux, macOS
+  - `cargo build -p liquid-audio-runner --release --features cuda` — Linux + CUDA runner
+  - `cargo build --features llama-cpp-all` — Linux, macOS
+  - `cargo test --features llama-cpp,llama-cpp-liquid-audio` smoke (Tier-1 fixtures only) — Linux, macOS
+  - `cargo test --test test_liquid_runner_respawn` — Linux
+  - macOS multiprocess smoke job (gates Risk 7) — macOS
+  - IPC microbenchmark non-blocking job — Linux
+- [ ] **Step 2:** Run CI on a draft PR; verify all jobs pass. If a job stalls (e.g. CUDA runner unavailable), gate it with `if: ${{ runner.gpu == 'cuda' }}` or document as manual-trigger-only.
 - [ ] **Step 3:** Commit.
 
 ---
