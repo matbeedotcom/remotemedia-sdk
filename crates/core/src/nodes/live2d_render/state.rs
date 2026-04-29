@@ -78,32 +78,93 @@ pub trait ArkitToVBridger: Send + Sync + std::fmt::Debug {
     fn map(&self, arkit: &[f32; ARKIT_52], out: &mut HashMap<String, f32>);
 }
 
-/// Default mapping (described on [`ArkitToVBridger`]).
+/// Default mapping — Rust port of persona-engine's
+/// `ARKitToLive2DMapper.cs`. Mirrors the VBridger-canonical formulas
+/// + `ResponseCurves::ease_in` on the jaw/mouth-open axes so small
+/// audio responses produce visible motion (without ease_in, audio-driven
+/// jaw values around 0.05-0.25 read as a barely-moving mouth).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DefaultArkitMapper;
 
 impl ArkitToVBridger for DefaultArkitMapper {
     fn map(&self, arkit: &[f32; ARKIT_52], out: &mut HashMap<String, f32>) {
+        use crate::nodes::lip_sync::audio2face::response_curves::{center_weighted, ease_in};
+
         // Indices match `nodes::lip_sync::blendshape::ARKIT_BLENDSHAPE_NAMES`.
         let jaw_open = arkit[17];
         let mouth_close = arkit[18];
         let mouth_funnel = arkit[19];
         let mouth_pucker = arkit[20];
-        let smile_l = arkit[24];
-        let smile_r = arkit[25];
-        let frown_l = arkit[26];
-        let frown_r = arkit[27];
+        let mouth_left = arkit[21];
+        let mouth_right = arkit[22];
+        let mouth_smile_l = arkit[23];
+        let mouth_smile_r = arkit[24];
+        let mouth_frown_l = arkit[25];
+        let mouth_frown_r = arkit[26];
+        let mouth_dimple_l = arkit[27];
+        let mouth_dimple_r = arkit[28];
+        let mouth_shrug_lower = arkit[31];
+        let mouth_shrug_upper = arkit[32];
+        let mouth_press_l = arkit[33];
+        let mouth_press_r = arkit[34];
+        let mouth_lower_down_l = arkit[35];
+        let mouth_lower_down_r = arkit[36];
+        let mouth_upper_up_l = arkit[37];
+        let mouth_upper_up_r = arkit[38];
+        let mouth_roll_lower = arkit[29];
+        let mouth_roll_upper = arkit[30];
 
-        out.insert("ParamJawOpen".to_string(), jaw_open);
-        out.insert("ParamMouthOpenY".to_string(), jaw_open);
-        out.insert(
-            "ParamMouthForm".to_string(),
-            (smile_l + smile_r) * 0.5 - (frown_l + frown_r) * 0.5,
-        );
-        out.insert("ParamMouthSmile".to_string(), (smile_l + smile_r) * 0.5);
-        out.insert("ParamMouthPucker".to_string(), mouth_pucker);
-        out.insert("ParamMouthFunnel".to_string(), mouth_funnel);
-        out.insert("ParamMouthClose".to_string(), mouth_close);
+        // JawOpen: ease-in curve so small responses look big.
+        let jaw_open_out = ease_in(jaw_open.clamp(0.0, 1.0));
+
+        // MouthOpenY: VBridger formula with ease-in.
+        let mouth_open_raw = ((jaw_open - mouth_close)
+            - (mouth_roll_upper + mouth_roll_lower) * 0.2
+            + mouth_funnel * 0.2)
+            .clamp(0.0, 1.0);
+        let mouth_open_y = ease_in(mouth_open_raw);
+
+        // MouthForm: VBridger compound smile-frown axis.
+        let dimple_avg = (mouth_dimple_l + mouth_dimple_r) * 0.5;
+        let mouth_form = ((2.0 - mouth_frown_l - mouth_frown_r - mouth_pucker
+            + mouth_smile_r
+            + mouth_smile_l
+            + dimple_avg)
+            / 4.0)
+            .clamp(-1.0, 1.0);
+
+        // MouthFunnel: raw funnel minus jaw artifact.
+        let mouth_funnel_out = (mouth_funnel - jaw_open * 0.2).clamp(0.0, 1.0);
+
+        // MouthPressLipOpen: center-weighted Hermite spline.
+        let press_raw = ((mouth_upper_up_r + mouth_upper_up_l + mouth_lower_down_r
+            + mouth_lower_down_l)
+            / 1.8
+            - (mouth_roll_lower + mouth_roll_upper))
+            .clamp(-1.3, 1.3);
+        let mouth_press_lip_open = center_weighted(press_raw, -1.3, 1.3);
+
+        // MouthPuckerWiden: spread-vs-pucker.
+        let mouth_pucker_widen =
+            ((mouth_dimple_r + mouth_dimple_l) * 2.0 - mouth_pucker).clamp(-1.0, 1.0);
+
+        // MouthX: lateral shift + asymmetric smile.
+        let mouth_x =
+            ((mouth_left - mouth_right) + (mouth_smile_l - mouth_smile_r)).clamp(-1.0, 1.0);
+
+        // MouthShrug: chin raise + lip compression.
+        let mouth_shrug = ((mouth_shrug_upper + mouth_shrug_lower + mouth_press_r + mouth_press_l)
+            / 4.0)
+            .clamp(0.0, 1.0);
+
+        out.insert("ParamJawOpen".to_string(), jaw_open_out);
+        out.insert("ParamMouthOpenY".to_string(), mouth_open_y);
+        out.insert("ParamMouthForm".to_string(), mouth_form);
+        out.insert("ParamMouthFunnel".to_string(), mouth_funnel_out);
+        out.insert("ParamMouthPressLipOpen".to_string(), mouth_press_lip_open);
+        out.insert("ParamMouthPuckerWiden".to_string(), mouth_pucker_widen);
+        out.insert("ParamMouthX".to_string(), mouth_x);
+        out.insert("ParamMouthShrug".to_string(), mouth_shrug);
     }
 }
 
@@ -670,7 +731,9 @@ mod tests {
 
     /// Verbatim spec-test path: lerp between two bounding keyframes
     /// at audio_clock_ms = 150 with frames at pts 100 (val=0.5)
-    /// and pts 200 (val=1.0).
+    /// and pts 200 (val=1.0). The mapper applies `ease_in` to
+    /// `ParamJawOpen`, so the asserted output is `ease_in(0.75)`,
+    /// not the raw lerp.
     #[test]
     fn samples_blendshape_keyframe_at_audio_clock_pts() {
         let mut state = Live2DRenderState::new(StateConfig::default_config());
@@ -678,10 +741,10 @@ mod tests {
         state.push_blendshape(BlendshapeFrame::new([1.0; ARKIT_52], 200, None));
         state.update_audio_clock(150);
         let pose = state.compute_pose();
-        // jawOpen index is 17; ParamJawOpen reads it directly.
+        let expected = 0.75 * (2.0 - 0.75); // ease_in(0.75) = 0.9375
         assert!(
-            approx(pose.mouth_value("ParamJawOpen"), 0.75, 1e-3),
-            "expected ~0.75 lerp, got {}",
+            approx(pose.mouth_value("ParamJawOpen"), expected, 1e-3),
+            "expected ease_in(0.75)={expected}, got {}",
             pose.mouth_value("ParamJawOpen")
         );
     }
@@ -692,7 +755,8 @@ mod tests {
         state.push_blendshape(BlendshapeFrame::new([0.42; ARKIT_52], 500, None));
         state.update_audio_clock(500);
         let pose = state.compute_pose();
-        assert!(approx(pose.mouth_value("ParamJawOpen"), 0.42, 1e-6));
+        let expected = 0.42 * (2.0 - 0.42); // ease_in(0.42)
+        assert!(approx(pose.mouth_value("ParamJawOpen"), expected, 1e-3));
     }
 
     /// Spec §6.1: evict pts_ms < audio_clock_ms - stale_window.
@@ -832,20 +896,23 @@ mod tests {
     }
 
     /// Default ARKit→VBridger mapper writes the documented param
-    /// set with sane values.
+    /// set with sane values. Mirrors persona-engine's
+    /// `ARKitToLive2DMapper.cs` indices (smileLeft=23, smileRight=24)
+    /// + ease_in on jaw/mouth-open axes.
     #[test]
     fn default_mapper_writes_expected_params() {
         let mut arkit = [0.0f32; ARKIT_52];
         arkit[17] = 0.6; // jawOpen
-        arkit[24] = 0.4; // smileLeft
-        arkit[25] = 0.4; // smileRight
+        arkit[23] = 0.4; // mouthSmileLeft
+        arkit[24] = 0.4; // mouthSmileRight
         let mut params = HashMap::new();
         DefaultArkitMapper.map(&arkit, &mut params);
-        assert!(approx(params["ParamJawOpen"], 0.6, 1e-6));
-        assert!(approx(params["ParamMouthOpenY"], 0.6, 1e-6));
-        assert!(approx(params["ParamMouthSmile"], 0.4, 1e-6));
-        // Form: smile - frown = 0.4 - 0 = 0.4.
-        assert!(approx(params["ParamMouthForm"], 0.4, 1e-6));
+        // ease_in(0.6) = 0.6 * (2 - 0.6) = 0.84
+        assert!(approx(params["ParamJawOpen"], 0.84, 1e-3));
+        // mouth_open_raw = (0.6 - 0) - 0 + 0 = 0.6 → ease_in(0.6) = 0.84
+        assert!(approx(params["ParamMouthOpenY"], 0.84, 1e-3));
+        // Form: (2 + smile_l + smile_r) / 4 = (2 + 0.4 + 0.4) / 4 = 0.7
+        assert!(approx(params["ParamMouthForm"], 0.7, 1e-3));
     }
 
     /// Default emotion map covers every emoji in the persona-engine
@@ -879,18 +946,20 @@ mod tests {
     }
 
     /// Audio clock past the last ring entry holds the last frame
-    /// (no extrapolation).
+    /// (no extrapolation). Mapper applies ease_in.
     #[test]
     fn audio_clock_past_last_keyframe_holds_last_frame() {
         let mut state = Live2DRenderState::new(StateConfig::default_config());
         state.push_blendshape(BlendshapeFrame::new([0.7; ARKIT_52], 100, None));
         state.update_audio_clock(120);
         let pose = state.compute_pose();
-        assert!(approx(pose.mouth_value("ParamJawOpen"), 0.7, 1e-6));
+        let expected = 0.7 * (2.0 - 0.7); // ease_in(0.7) = 0.91
+        assert!(approx(pose.mouth_value("ParamJawOpen"), expected, 1e-3));
     }
 
     /// Pushing keyframes out of pts order still produces correct
-    /// lerps — the ring sorts by pts at sample time.
+    /// lerps — the ring sorts by pts at sample time. Mapper
+    /// applies ease_in to jaw_open lerp value.
     #[test]
     fn handles_out_of_order_keyframe_pushes() {
         let mut state = Live2DRenderState::new(StateConfig::default_config());
@@ -899,6 +968,7 @@ mod tests {
         state.push_blendshape(BlendshapeFrame::new([0.0; ARKIT_52], 100, None));
         state.update_audio_clock(150);
         let pose = state.compute_pose();
-        assert!(approx(pose.mouth_value("ParamJawOpen"), 0.5, 1e-3));
+        let expected = 0.5 * (2.0 - 0.5); // ease_in(0.5) = 0.75
+        assert!(approx(pose.mouth_value("ParamJawOpen"), expected, 1e-3));
     }
 }

@@ -205,16 +205,6 @@ impl Audio2FaceLipSyncNode {
     where
         F: FnMut(RuntimeData) -> Result<()>,
     {
-        let dbg = std::env::var("RM_BLENDSHAPE_DEBUG").is_ok();
-        if dbg {
-            let max_abs = window.iter().map(|x| x.abs()).fold(0.0f32, f32::max);
-            let mean_abs = window.iter().map(|x| x.abs()).sum::<f32>() / window.len() as f32;
-            eprintln!(
-                "[a2f window pts={}ms] audio: max|x|={:.4} mean|x|={:.4}",
-                window_start_ms, max_abs, mean_abs
-            );
-        }
-
         let identity_idx = self.config.identity.one_hot_index();
         let out = {
             let mut infer = self.inference.lock();
@@ -229,59 +219,13 @@ impl Audio2FaceLipSyncNode {
         let frame_ms_step = 1000.0_f64 / NUM_CENTER_FRAMES as f64;
 
         let mut emitted = 0usize;
-        let mut window_max = [0.0f32; ARKIT_52];
         for f in 0..NUM_CENTER_FRAMES {
             let skin_frame = &out.skin_flat[f * SKIN_SIZE..(f + 1) * SKIN_SIZE];
             let arkit = self.skin_frame_to_arkit(skin_frame, solver.as_mut(), &mut smoother);
-            if dbg {
-                for (i, v) in arkit.iter().enumerate() {
-                    if *v > window_max[i] {
-                        window_max[i] = *v;
-                    }
-                }
-                if f == 0 || f == 15 || f == 29 {
-                    let active: Vec<(usize, f32)> = arkit
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, v)| **v > 0.05)
-                        .map(|(i, v)| (i, *v))
-                        .collect();
-                    let max_v = arkit.iter().cloned().fold(0.0f32, f32::max);
-                    let max_i = arkit
-                        .iter()
-                        .enumerate()
-                        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-                        .map(|(i, _)| i)
-                        .unwrap_or(0);
-                    eprintln!(
-                        "[a2f frame {}/30] max[{}]={:.3} active(>0.05)={} :: {:?}",
-                        f,
-                        max_i,
-                        max_v,
-                        active.len(),
-                        active.iter().take(8).map(|(i, v)| format!("[{}]={:.2}", i, v)).collect::<Vec<_>>()
-                    );
-                }
-            }
             let pts_ms = window_start_ms + (f as f64 * frame_ms_step) as u64;
             let frame = BlendshapeFrame::new(arkit, pts_ms, None);
             emit(RuntimeData::Json(frame.to_json()))?;
             emitted += 1;
-        }
-        if dbg {
-            // Per-window peak per index — confirms the window's mouth motion.
-            // jawOpen (17), mouthClose (18), mouthFunnel (20), mouthPucker (21),
-            // mouthSmileLeft (43), mouthSmileRight (44).
-            eprintln!(
-                "[a2f window peak] jawOpen={:.3} mouthClose={:.3} mouthFunnel={:.3} \
-                 mouthPucker={:.3} smileL={:.3} smileR={:.3}",
-                window_max[17],
-                window_max[18],
-                window_max[20],
-                window_max[21],
-                window_max[43],
-                window_max[44]
-            );
         }
         Ok(emitted)
     }

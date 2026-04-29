@@ -752,7 +752,10 @@ impl WgpuBackend {
             .as_mut()
             .ok_or(BackendError::ModelNotLoaded)?;
 
-        // 1. Write VBridger params.
+        // 1. Write VBridger params. Unknown IDs are silently skipped — not
+        // every Live2D model wires every VBridger parameter (e.g. Aria has
+        // no `ParamMouthClose`); a missing ID simply means no visible
+        // contribution from that ARKit axis on this rig.
         {
             let params = model.model.parameters_mut();
             for (id, value) in &pose.params {

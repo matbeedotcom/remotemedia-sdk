@@ -324,11 +324,6 @@ async fn ticker_loop(
     let mut synth_pts: u64 = 0;
     let mut last_synth_at: Option<Instant> = None;
     let mut last_explicit_clock_at: Option<Instant> = None;
-    let dbg_pose = std::env::var("RM_POSE_DEBUG").is_ok();
-    let mut tick_count: u64 = 0;
-    let mut ring_size_for_log: usize = 0;
-    let _ = ring_size_for_log;
-
     loop {
         // Wait for the next interval tick. (We used to also `select!`
         // an `input_rx.recv()` arm with an `if false` guard — but
@@ -405,20 +400,6 @@ async fn ticker_loop(
 
         // Render.
         let pose = state.compute_pose();
-        if dbg_pose {
-            tick_count += 1;
-            if tick_count <= 5 || tick_count % 30 == 0 {
-                let jaw = pose.params.get("ParamJawOpen").copied().unwrap_or(0.0);
-                let mouth_open_y = pose.params.get("ParamMouthOpenY").copied().unwrap_or(0.0);
-                let mouth_form = pose.params.get("ParamMouthForm").copied().unwrap_or(0.0);
-                let ring_len = state.blendshape_ring_for_test().len();
-                let ac = state.audio_clock_ms_for_test();
-                eprintln!(
-                    "[live2d pose tick={}] ring={} audio_clock={:?} ParamJawOpen={:.3} ParamMouthOpenY={:.3} ParamMouthForm={:.3}",
-                    tick_count, ring_len, ac, jaw, mouth_open_y, mouth_form
-                );
-            }
-        }
         let frame = match backend.render_frame(&pose) {
             Ok(f) => f,
             Err(e) => {
