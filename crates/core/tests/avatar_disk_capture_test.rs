@@ -26,8 +26,15 @@
 //! open target/avatar-disk-capture/out.mp4
 //! ```
 //!
-//! Same env-var gate as the canonical e2e (`LIVE2D_TEST_MODEL_PATH`
-//! + `AUDIO2FACE_TEST_BUNDLE`). Skips cleanly when not set.
+//! Same env-var gate as the canonical e2e:
+//! - `LIVE2D_TEST_MODEL_PATH` — path to **`.model3.json`** (NOT `.moc3`).
+//!   The wgpu backend's loader expects the JSON manifest, not the
+//!   binary moc3 sibling.
+//! - `AUDIO2FACE_TEST_BUNDLE` — directory with `network.onnx`,
+//!   `bs_skin_<Identity>.npz`, `model_data_<Identity>.npz`,
+//!   `bs_skin_config_<Identity>.json`, `model_config_<Identity>.json`.
+//!
+//! Skips cleanly when not set.
 //!
 //! **Why we need this test**: the standalone factory pipeline test
 //! (no TTS) only proves blendshapes + render compose; it can't

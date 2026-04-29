@@ -21,9 +21,15 @@
 //! Audio2Face onward.
 //!
 //! Gated on:
-//! - `LIVE2D_CUBISM_CORE_DIR` (build-time)
-//! - `LIVE2D_TEST_MODEL_PATH` (Aria model)
-//! - `AUDIO2FACE_TEST_BUNDLE` (persona-engine bundle)
+//! - `LIVE2D_CUBISM_CORE_DIR` (build-time) — unpacked Cubism SDK for Native dir
+//! - `LIVE2D_TEST_MODEL_PATH` (runtime) — path to **`.model3.json`** (NOT `.moc3`).
+//!   Pointing this at the `.moc3` binary makes the JSON parser barf at byte 0
+//!   and the wgpu backend fails to load — which silently surfaces as
+//!   "0 video frames" because `SessionRouter::new` returned an Err that the
+//!   test ignores.
+//! - `AUDIO2FACE_TEST_BUNDLE` (runtime) — directory containing
+//!   `network.onnx` + `bs_skin_<Identity>.npz` + `model_data_<Identity>.npz`
+//!   + `bs_skin_config_<Identity>.json` + `model_config_<Identity>.json`.
 
 #![cfg(feature = "avatar-render-wgpu")]
 
