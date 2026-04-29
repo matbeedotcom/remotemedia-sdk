@@ -143,6 +143,11 @@ pub use audio_resample_streaming::ResampleStreamingNode;
 pub mod text_collector;
 pub use text_collector::TextCollectorNode;
 
+pub mod file_sink;
+pub use file_sink::{
+    AudioFileWriterConfig, AudioFileWriterNode, VideoFileWriterConfig, VideoFileWriterNode,
+};
+
 pub mod video_flip;
 pub use video_flip::VideoFlipNode;
 

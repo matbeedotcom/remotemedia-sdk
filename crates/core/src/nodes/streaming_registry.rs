@@ -718,6 +718,139 @@ impl StreamingNodeFactory for SyntheticLipSyncNodeFactory {
     }
 }
 
+/// Factory for [`AudioFileWriterNode`] — appends incoming Audio
+/// frames to a WAV file on disk.
+///
+/// Manifest params:
+///
+/// ```json
+/// { "output_path": "/path/to/out.wav" }
+/// ```
+pub(crate) struct AudioFileWriterNodeFactory;
+
+impl StreamingNodeFactory for AudioFileWriterNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::file_sink::{AudioFileWriterConfig, AudioFileWriterNode};
+        use std::path::PathBuf;
+        let output_path = params
+            .get("output_path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                Error::Execution(
+                    "AudioFileWriterNode requires 'output_path' (target .wav file)".into(),
+                )
+            })?;
+        let node = AudioFileWriterNode::new(AudioFileWriterConfig {
+            output_path: PathBuf::from(output_path),
+        });
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "AudioFileWriterNode"
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{
+            LatencyClass, NodeCapabilitiesSchema, NodeSchema, RuntimeDataType,
+        };
+        Some(
+            NodeSchema::new("AudioFileWriterNode")
+                .description(
+                    "Appends RuntimeData::Audio frames to a WAV file on disk \
+                     (IEEE 32-bit float PCM). Pass-through: emits the input \
+                     unchanged so it can sit on a tap edge. Header sizes are \
+                     patched on Drop.",
+                )
+                .category("io")
+                .accepts([RuntimeDataType::Audio])
+                .produces([RuntimeDataType::Audio])
+                .capabilities(NodeCapabilitiesSchema {
+                    parallelizable: false,
+                    batch_aware: false,
+                    supports_control: false,
+                    latency_class: LatencyClass::Fast,
+                }),
+        )
+    }
+}
+
+/// Factory for [`VideoFileWriterNode`] — writes incoming Video
+/// frames to a Y4M file on disk.
+///
+/// Manifest params:
+///
+/// ```json
+/// {
+///   "output_path": "/path/to/out.y4m",
+///   "fps": 30
+/// }
+/// ```
+pub(crate) struct VideoFileWriterNodeFactory;
+
+impl StreamingNodeFactory for VideoFileWriterNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::file_sink::{VideoFileWriterConfig, VideoFileWriterNode};
+        use std::path::PathBuf;
+        let output_path = params
+            .get("output_path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                Error::Execution(
+                    "VideoFileWriterNode requires 'output_path' (target .y4m file)".into(),
+                )
+            })?;
+        let fps = params
+            .get("fps")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
+            .unwrap_or(30);
+        let node = VideoFileWriterNode::new(VideoFileWriterConfig {
+            output_path: PathBuf::from(output_path),
+            fps,
+        });
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "VideoFileWriterNode"
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{
+            LatencyClass, NodeCapabilitiesSchema, NodeSchema, RuntimeDataType,
+        };
+        Some(
+            NodeSchema::new("VideoFileWriterNode")
+                .description(
+                    "Writes RuntimeData::Video (RGB24) frames to a Y4M file on \
+                     disk. RGB→YUV420p conversion happens per frame; output is \
+                     ffmpeg-compatible. Pass-through: emits the input unchanged \
+                     so it can sit on a tap edge.",
+                )
+                .category("io")
+                .accepts([RuntimeDataType::Video])
+                .produces([RuntimeDataType::Video])
+                .capabilities(NodeCapabilitiesSchema {
+                    parallelizable: false,
+                    batch_aware: false,
+                    supports_control: false,
+                    latency_class: LatencyClass::Fast,
+                }),
+        )
+    }
+}
+
 /// Factory for the **real** Audio2Face lip-sync node (avatar M2.5).
 ///
 /// Manifest params (JSON):
