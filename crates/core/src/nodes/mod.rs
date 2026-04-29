@@ -53,6 +53,10 @@ pub use emotion_extractor::{EmotionExtractorConfig, EmotionExtractorNode};
 #[cfg(feature = "avatar-lipsync")]
 pub mod lip_sync;
 
+// Avatar renderer state machine + backend trait.
+#[cfg(feature = "avatar-render")]
+pub mod live2d_render;
+
 pub mod audio_buffer_accumulator;
 pub use audio_buffer_accumulator::AudioBufferAccumulatorNode;
 

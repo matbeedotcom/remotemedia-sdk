@@ -101,7 +101,7 @@ Each milestone ends with a green `cargo test` (or, for milestones gated on exter
 | M1 | `audio.out.clock` tap on `AudioSender` | ✅ shipped — see [M1 actuals](#m1-actuals-2026-04-28) |
 | M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e + barge propagation | 🟢 shipped — full M2 set landed across 5 incremental passes (interface+synthetic+e2e, solver math, ONNX inference+bundle loaders, Audio2FaceLipSyncNode coordinator, manifest-level barge propagation via session-control bus). See [M2 actuals](#m2-actuals-2026-04-28-partial) and passes 2–5 below. |
 | M3 | `RVCNode` | `cargo test --features avatar-rvc` green; tier-2 tests pass on env-var-bearing host |
-| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0 (cubism-core-sys FFI scaffold) + M4.1 (cubism-core safe wrapper) + M4.2 (.model3.json loader) shipped + Aria installer landed; M4.3–M4.7 outstanding. See [M4.0 actuals](#m40-actuals-2026-04-28) + [M4.1 actuals](#m41-actuals-2026-04-28) + [M4.2 actuals](#m42-actuals-2026-04-28). |
+| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0 (cubism-core-sys FFI scaffold) + M4.1 (cubism-core safe wrapper) + M4.2 (.model3.json loader) + M4.3 (input arbitration state machine + MockBackend) shipped; Aria installer landed; M4.4–M4.7 outstanding. See [M4.0 actuals](#m40-actuals-2026-04-28) + [M4.1 actuals](#m41-actuals-2026-04-28) + [M4.2 actuals](#m42-actuals-2026-04-28) + [M4.3 actuals](#m43-actuals-2026-04-28). |
 
 Each milestone ends with one or more commits. Milestones M2 and M3 may be parallelized once M1 lands. M4 is sequential (depends on M2 for blendshape input).
 
@@ -1187,6 +1187,76 @@ for d in drawables.iter() {
 7. **Cumulative tests across `cubism-core` after M4.2: 20 unit + 13 tier-2 = 33 tests, all green.**
 
 **Unblocks:** M4.3 (Live2DRenderState — input arbitration + idle blink scheduler can read `EyeBlink` group + emotion→expression+motion lookups via `ResolvedModel`), M4.4 (wgpu backend — knows which textures to upload via `texture_paths()`).
+
+---
+
+## M4.3 actuals (2026-04-28)
+
+`Live2DRenderState` — input arbitration state machine for the Live2D renderer per spec §6.1. Pure Rust, no GPU, fully testable in CI without external deps. The wgpu+CubismCore backend (M4.4) plugs in behind the [`Live2DBackend`] trait without modifying any of this code.
+
+**Shipped:**
+
+- **[`crates/core/src/nodes/live2d_render/`](../../../crates/core/src/nodes/live2d_render/)** — new module gated behind `avatar-render` feature.
+  - [`backend_trait.rs`](../../../crates/core/src/nodes/live2d_render/backend_trait.rs) — `Live2DBackend` trait (`render_frame(&mut self, &Pose) -> Result<RgbFrame>`, `frame_dimensions`), `RgbFrame` (R/G/B packed, `width`, `height`, `nonzero_byte_count` helper for tests), `BackendError` enum.
+  - [`state.rs`](../../../crates/core/src/nodes/live2d_render/state.rs) — `Live2DRenderState`, `StateConfig`, `Pose`, `EmotionEntry`, `default_emotion_mapping()` (full persona-engine emoji table), `ArkitToVBridger` trait + `DefaultArkitMapper`. ~610 LOC.
+  - [`test_support.rs`](../../../crates/core/src/nodes/live2d_render/test_support.rs) — `MockBackend` (records every `render_frame` call as `RecordedFrame { index, pose }`); gated behind `avatar-render-test-support` feature so integration tests outside `cfg(test)` can pull it.
+- **Feature flags** in `crates/core/Cargo.toml`:
+  - `avatar-render = ["avatar-lipsync"]` — state machine + backend trait. Pure Rust.
+  - `avatar-render-test-support = ["avatar-render"]` — exposes `MockBackend` to integration test crates.
+
+**Spec §6.1 invariants pinned:**
+
+| Invariant | Test |
+|---|---|
+| Renderer samples blendshape ring at audio clock pts (linear lerp between bounding keyframes) | `samples_blendshape_keyframe_at_audio_clock_pts` (lerp at 150ms between pts 100 + 200) |
+| Stale-pts eviction (`pts_ms < audio_clock_ms - 200`) | `evicts_stale_blendshape_frames_after_200ms` |
+| Mouth interpolates to neutral when audio clock quiet | `interpolates_to_neutral_when_audio_clock_quiet` |
+| Emotion event → expression + motion (canonical persona-engine map) | `emotion_event_drives_expression_and_motion` (🤩 → `excited_star` + `Excited`) |
+| Emotion expires after `expression_hold_seconds` of wall time | `emotion_expires_after_hold_seconds_back_to_neutral` |
+| Barge clears blendshape ring **but not** active emotion | `barge_clears_ring_but_preserves_emotion` |
+| Idle blink fires when no emotion is active | `idle_blink_fires_when_no_emotion_active` |
+| Blink suppressed during active emotion | `blink_suppressed_during_active_emotion` |
+| Unknown emoji is no-op (not in default map) | `unknown_emoji_is_no_op` |
+| `Talking` motion group during active audio without emotion | `talking_motion_group_picked_during_active_audio` |
+| Audio clock past last keyframe holds last frame | `audio_clock_past_last_keyframe_holds_last_frame` |
+| Audio clock before first keyframe holds neutral | `audio_clock_before_first_keyframe_holds_neutral` |
+| Out-of-order keyframe pushes lerp correctly | `handles_out_of_order_keyframe_pushes` |
+
+**Tests landed (16 unit + 8 integration):**
+
+| File | Tests | Notes |
+|---|---|---|
+| `state.rs` (unit) | 16 | every spec §6.1 invariant + ARKit-to-VBridger mapper sanity + emoji table coverage |
+| `tests/live2d_render_state_test.rs` (integration) | 8 | drives `Live2DRenderState` through `MockBackend` end-to-end: pose stream is recorded, lerped mouth values flow through, emotion metadata reaches backend, expiration flips expression to `neutral`, barge preserves emotion in pose stream, blink progresses across multiple ticks, backend dimensions consistent, recording resettable |
+
+**Build + run matrix verified:**
+- `cargo build -p remotemedia-core --features avatar-render` — clean (4.62 s).
+- `cargo test -p remotemedia-core --features avatar-render --lib live2d_render` — 16/16 unit tests green.
+- `cargo test -p remotemedia-core --features avatar-render-test-support --test live2d_render_state_test` — 8/8 integration tests green.
+- (Pre-existing `data::ring_buffer::test_concurrent_push_overwrite` flake remains; unrelated to M4.3.)
+
+**Default config (matches persona-engine + spec):**
+- `expression_hold_seconds = 3.0` (`Live2D.md` `EXPRESSION_HOLD_DURATION_SECONDS`)
+- `neutral_expression_id = "neutral"`, `neutral_motion_group = "Idle"`, `talking_motion_group = "Talking"`
+- `neutral_interp_ms = 150`, `stale_blendshape_window_ms = 200` (spec §6.1)
+- `blink_interval_min/max_ms = 3000/6000`, `blink_duration_ms = 200`
+- `emotion_mapping`: full 17-emoji map from `external/handcrafted-persona-engine/Live2D.md`
+- `mapper = DefaultArkitMapper` (VBridger canonical: `ParamJawOpen`/`ParamMouthOpenY` ← `arkit[jawOpen]`, `ParamMouthForm` = smile − frown, etc.)
+- `blink_seed = 0xCAFE_F00D` (deterministic; SplitMix64 PRNG; same seed → same blink timing across runs)
+
+**Design choices worth flagging:**
+
+1. **Virtual wall-clock** (`tick_wall(Duration)` / `tick(elapsed_ms)`) instead of `Instant`. Makes the state machine pure: deterministic given inputs. Tests advance time by hand; the M4.5 streaming node will pass elapsed `Instant` deltas in.
+2. **Blink scheduler anchors to scheduled time, not wall_now.** A long inter-tick gap (e.g. 200 ms while a single render tick lands) doesn't lose the elapsed-into-blink portion. Caught by the test that lands mid-blink at wall=150 with min=max=100, duration=200.
+3. **Ring sorts by pts at sample time, not on push.** Bursty pushes from upstream don't need to be in order; the ring is small (<60 entries at 30 fps × 2 s buffer) so per-query sort is cheap. Insertion-sort on push is a follow-up if it ever profiles.
+4. **Audio clock drop on barge.** Spec §6.3 says barge engages neutral interp "within one tick of `audio.out.clock` going quiet"; we make this explicit by dropping `audio_clock_ms` on barge so `compute_pose` enters the no-clock branch on the next tick.
+5. **Emotion gates blink.** While an expression is active it owns the eyes; the blink scheduler is held off until the expression expires. Mirrors persona-engine's `IdleBlinkingAnimationService` priority interaction with `EmotionAnimationService`.
+6. **`MockBackend` records full pose snapshots** (clones `Pose` per render). Integration tests inspect the recorded pose stream; the wgpu backend (M4.4) takes the same `&Pose` so swapping it in is a one-line change in the renderer node.
+7. **No physics / no .exp3.json evaluation yet.** `Pose::part_opacities` is empty in M4.3; M4.5 will populate it from the active expression's `.exp3.json` file (loaded via `ExpressionJson` from M4.2). The state machine's seam is ready for it — just needs the wiring.
+
+**Cumulative avatar code after M4.3: 91 + 16 = 107 unit tests, 16 + 8 + 8 + 7 + 6 = 45 integration tests, all green** (M2 lip-sync + M2.6 + M4.1 cubism-core + M4.2 model_json + M4.3 live2d_render).
+
+**Unblocks:** M4.4 (wgpu backend implements `Live2DBackend` against the same `&Pose` shape `MockBackend` consumes; can drop into M4.3's `render_one()` flow with no state-machine changes), M4.5 (streaming node ticks the state machine + dispatches to whichever backend the manifest asks for).
 
 ---
 

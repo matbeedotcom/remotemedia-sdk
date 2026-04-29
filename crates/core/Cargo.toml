@@ -182,6 +182,13 @@ avatar-lipsync = ["avatar-emotion"]
 # .npz archives. Tier-2 tests gate on AUDIO2FACE_TEST_BUNDLE pointing
 # at the unpacked bundle; see scripts/install-audio2face.sh.
 avatar-audio2face = ["avatar-lipsync", "ort", "dep:zip"]
+# Avatar renderer state machine (input arbitration, emotion timing,
+# idle blink, barge handling). Pure Rust, no GPU. The wgpu+CubismCore
+# backend lands behind `avatar-render-wgpu` (M4.4 follow-up).
+avatar-render = ["avatar-lipsync"]
+# Re-export `MockBackend` from `live2d_render::test_support` for use
+# by integration tests (which can't see `cfg(test)` items).
+avatar-render-test-support = ["avatar-render"]
 speaker-diarization = ["ort", "dep:pyannote-rs"]
 grpc-client = ["tonic", "prost", "prost-types"]
 # Docker support integrated into multiprocess system
