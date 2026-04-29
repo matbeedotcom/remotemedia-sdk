@@ -3,9 +3,9 @@
 //! Run with: cargo run --example whisper_test --features whisper
 
 use remotemedia_candle_nodes::whisper::{WhisperConfig, WhisperModel, WhisperNode};
-use remotemedia_candle_nodes::DeviceSelector;
 use remotemedia_core::data_compat::RuntimeData;
 use remotemedia_core::nodes::streaming_node::AsyncStreamingNode;
+use remotemedia_core::nodes::InitializeContext;
 use std::path::Path;
 
 #[tokio::main]
@@ -64,7 +64,12 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialize (downloads model if needed)
     println!("\nInitializing model (may download on first run)...");
-    node.initialize().await?;
+    let init_ctx = InitializeContext {
+        session_id: "whisper-test-session".to_string(),
+        node_id: "test-whisper".to_string(),
+        control: None,
+    };
+    node.initialize(&init_ctx).await?;
     println!("Model initialized!");
 
     // Create RuntimeData::Audio

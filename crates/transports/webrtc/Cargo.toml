@@ -107,6 +107,10 @@ name = "qwen_s2s_webrtc_server"
 required-features = ["ws-signaling"]
 
 [[example]]
+name = "qwen_s2s_avatar_webrtc_server"
+required-features = ["ws-signaling", "avatar"]
+
+[[example]]
 name = "webrtc_test_server"
 required-features = ["ws-signaling"]
 
@@ -133,4 +137,15 @@ grpc-signaling = [
     "dep:http",
 ]
 cli = ["dep:clap"]
+# Avatar pipeline (Live2D + Audio2Face + emotion extraction). Pulls
+# the avatar features from `remotemedia-core` so the example registers
+# the Audio2FaceLipSyncNode + Live2DRenderNode + EmotionExtractorNode
+# factories. Requires `LIVE2D_CUBISM_CORE_DIR` set at build time so
+# `cubism-core-sys` can find the SDK headers.
+avatar = [
+    "remotemedia-core/avatar-render-wgpu",
+    "remotemedia-core/avatar-audio2face",
+    "remotemedia-core/avatar-emotion",
+    "remotemedia-core/avatar-lipsync",
+]
 full = ["codecs", "h264", "grpc-signaling", "ws-signaling"]

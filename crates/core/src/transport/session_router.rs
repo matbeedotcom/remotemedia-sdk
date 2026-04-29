@@ -1096,11 +1096,19 @@ impl SessionRouter {
                     std::sync::atomic::AtomicBool::new(false),
                 );
 
-                // Per-input sync callback: try_send into the fan-out
-                // channel. A full `fan_tx` means the drain task is
-                // behind — we warn and drop. In practice this only
-                // happens under catastrophic downstream stalls; the
-                // 1024-slot buffer covers normal burst patterns.
+                // Per-input sync callback: try_send first; if the
+                // fan-out channel is full, fall back to a blocking
+                // send so backpressure propagates to the producer
+                // instead of silently dropping the frame. This was
+                // load-bearing for the avatar pipeline where
+                // audio2face emits 30 blendshapes/sec and the
+                // renderer consumes ~16/sec — without this fallback,
+                // ~25% of blendshapes were dropped, breaking
+                // lip-sync. The blocking_send runs in the calling
+                // task's tokio worker; on the multi-thread runtime
+                // other tasks keep running on other workers, and
+                // the producer task simply stalls until the consumer
+                // catches up.
                 let cb_fan_tx = fan_tx.clone();
                 let cb_node_id = main_node_id.clone();
                 let cb_first_emit = first_emit_seen.clone();
@@ -1111,13 +1119,37 @@ impl SessionRouter {
                         .swap(true, std::sync::atomic::Ordering::Relaxed);
                     perf_clone.record_output(&perf_node_id, lat_us, is_first);
 
-                    if let Err(e) = cb_fan_tx.try_send(out) {
-                        tracing::warn!(
-                            "node '{}' fan_tx backpressure drop: {}",
-                            cb_node_id, e
-                        );
+                    match cb_fan_tx.try_send(out) {
+                        Ok(()) => Ok(()),
+                        Err(tokio::sync::mpsc::error::TrySendError::Full(out)) => {
+                            // Channel full → block the producer
+                            // until there's room, propagating
+                            // backpressure end-to-end. Calls into
+                            // `block_in_place` so the tokio worker
+                            // can shed this task to the blocking
+                            // pool while we wait.
+                            tokio::task::block_in_place(|| {
+                                cb_fan_tx.blocking_send(out)
+                            })
+                            .map_err(|_| {
+                                tracing::warn!(
+                                    "node '{}' fan_tx receiver dropped during blocking send",
+                                    cb_node_id
+                                );
+                                crate::error::Error::Execution(
+                                    "fan_tx receiver dropped".into(),
+                                )
+                            })?;
+                            Ok(())
+                        }
+                        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                            tracing::warn!(
+                                "node '{}' fan_tx closed; dropping output",
+                                cb_node_id
+                            );
+                            Ok(())
+                        }
                     }
-                    Ok(())
                 });
 
                 let use_fast = scheduler.config.is_fast_path(&main_node_id);
@@ -1167,13 +1199,34 @@ impl SessionRouter {
                                         let fan_tx = fan_tx.clone();
                                         let id = main_node_id.clone();
                                         Box::new(move |out| {
-                                            if let Err(e) = fan_tx.try_send(out) {
-                                                tracing::warn!(
-                                                    "node '{}' fan_tx backpressure drop: {}",
-                                                    id, e
-                                                );
+                                            // try_send with blocking_send
+                                            // fallback — see the primary
+                                            // cb above for rationale.
+                                            match fan_tx.try_send(out) {
+                                                Ok(()) => Ok(()),
+                                                Err(tokio::sync::mpsc::error::TrySendError::Full(out)) => {
+                                                    tokio::task::block_in_place(|| {
+                                                        fan_tx.blocking_send(out)
+                                                    })
+                                                    .map_err(|_| {
+                                                        tracing::warn!(
+                                                            "node '{}' fan_tx receiver dropped during retry blocking send",
+                                                            id
+                                                        );
+                                                        crate::error::Error::Execution(
+                                                            "fan_tx receiver dropped".into(),
+                                                        )
+                                                    })?;
+                                                    Ok(())
+                                                }
+                                                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                                    tracing::warn!(
+                                                        "node '{}' fan_tx closed; dropping output",
+                                                        id
+                                                    );
+                                                    Ok(())
+                                                }
                                             }
-                                            Ok(())
                                         })
                                     }
                                 };

@@ -88,7 +88,7 @@ pub struct DefaultArkitMapper;
 
 impl ArkitToVBridger for DefaultArkitMapper {
     fn map(&self, arkit: &[f32; ARKIT_52], out: &mut HashMap<String, f32>) {
-        use crate::nodes::lip_sync::audio2face::response_curves::{center_weighted, ease_in};
+        use crate::nodes::lip_sync::audio2face::response_curves::center_weighted;
 
         // Indices match `nodes::lip_sync::blendshape::ARKIT_BLENDSHAPE_NAMES`.
         let jaw_open = arkit[17];
@@ -114,15 +114,28 @@ impl ArkitToVBridger for DefaultArkitMapper {
         let mouth_roll_lower = arkit[29];
         let mouth_roll_upper = arkit[30];
 
-        // JawOpen: ease-in curve so small responses look big.
-        let jaw_open_out = ease_in(jaw_open.clamp(0.0, 1.0));
+        // JawOpen + MouthOpenY: noise-gated, aggressively amplified
+        // response. Audio2Face's Claire identity outputs jaw values
+        // that peak around 0.15-0.3 for normal speech, which after
+        // a plain `ease_in(t) = t*(2-t)` mapping (per persona-engine
+        // reference) only opens the mouth 28-51% of full range. That
+        // reads as "floaty"/under-responsive on Aria. We amplify more
+        // aggressively (`pow(t, 0.4)` over a noise-gated input):
+        //   jaw=0.05 → 0     (gated; no pseudo-motion during silence)
+        //   jaw=0.15 → 0.46  (vs 0.28 with ease_in)
+        //   jaw=0.30 → 0.62  (vs 0.51)
+        //   jaw=0.50 → 0.76  (vs 0.75 — saturates similarly at high end)
+        //   jaw=1.00 → 1.00
+        // Result: mouth visibly snaps between closed and open with the
+        // same audio2face output.
+        let jaw_open_out = snappy_open(jaw_open);
 
-        // MouthOpenY: VBridger formula with ease-in.
+        // MouthOpenY: VBridger formula with the same snappy curve.
         let mouth_open_raw = ((jaw_open - mouth_close)
             - (mouth_roll_upper + mouth_roll_lower) * 0.2
             + mouth_funnel * 0.2)
             .clamp(0.0, 1.0);
-        let mouth_open_y = ease_in(mouth_open_raw);
+        let mouth_open_y = snappy_open(mouth_open_raw);
 
         // MouthForm: VBridger compound smile-frown axis.
         let dimple_avg = (mouth_dimple_l + mouth_dimple_r) * 0.5;
@@ -165,7 +178,46 @@ impl ArkitToVBridger for DefaultArkitMapper {
         out.insert("ParamMouthPuckerWiden".to_string(), mouth_pucker_widen);
         out.insert("ParamMouthX".to_string(), mouth_x);
         out.insert("ParamMouthShrug".to_string(), mouth_shrug);
+
     }
+}
+
+/// Noise-gated jaw/mouth-open response that snaps cleanly between
+/// closed and open.
+///
+/// Audio2Face's Claire identity outputs jaw values that:
+/// - Sit around 0.0-0.10 during silence/breathing (audio-only noise)
+/// - Peak around 0.15-0.65 during normal speech phonemes
+/// - Trail off slowly after a phoneme (e.g. 0.6 → 0.5 → 0.4 → 0.3
+///   → 0.2 → 0.1 → 0.05 over 5-9 frames)
+///
+/// A plain `ease_in(t) = t * (2 - t)` (persona-engine default)
+/// amplifies the low-value tail (jaw=0.1 → 0.19), so the mouth
+/// stays visibly open during the closing tail of every phoneme —
+/// reads as "floaty"/"slow to close".
+///
+/// `pow(t, 0.4)` was even worse: jaw=0.1 → 0.40, mouth visibly
+/// half-open during the tail.
+///
+/// This remaps audio2face's effective speaking range `[0.10, 0.55]`
+/// linearly to the model's full `[0, 1]` parameter range with a
+/// smoothstep ease, then clamps the rest. The cutoff at 0.10 snaps
+/// the tail closed sharply, and the saturation at 0.55 keeps peak
+/// vowels at full mouth-open even when audio2face plateaus below 1.0.
+fn snappy_open(t: f32) -> f32 {
+    const LOW: f32 = 0.10;
+    const HIGH: f32 = 0.55;
+    let t = t.clamp(0.0, 1.0);
+    if t <= LOW {
+        return 0.0;
+    }
+    if t >= HIGH {
+        return 1.0;
+    }
+    let s = (t - LOW) / (HIGH - LOW); // 0..1
+    // Smoothstep: 3s² - 2s³. Eases in and out symmetrically so the
+    // mouth doesn't snap with a hard edge at either bound.
+    s * s * (3.0 - 2.0 * s)
 }
 
 /// One emoji's expression + motion target.
@@ -741,10 +793,10 @@ mod tests {
         state.push_blendshape(BlendshapeFrame::new([1.0; ARKIT_52], 200, None));
         state.update_audio_clock(150);
         let pose = state.compute_pose();
-        let expected = 0.75 * (2.0 - 0.75); // ease_in(0.75) = 0.9375
+        // snappy_open(0.75) saturates at HIGH=0.55 → 1.0
         assert!(
-            approx(pose.mouth_value("ParamJawOpen"), expected, 1e-3),
-            "expected ease_in(0.75)={expected}, got {}",
+            approx(pose.mouth_value("ParamJawOpen"), 1.0, 1e-3),
+            "expected snappy_open(0.75)=1.0 (saturated), got {}",
             pose.mouth_value("ParamJawOpen")
         );
     }
@@ -755,7 +807,10 @@ mod tests {
         state.push_blendshape(BlendshapeFrame::new([0.42; ARKIT_52], 500, None));
         state.update_audio_clock(500);
         let pose = state.compute_pose();
-        let expected = 0.42 * (2.0 - 0.42); // ease_in(0.42)
+        // snappy_open(0.42): in linear range. s = (0.42 - 0.10) / (0.55 - 0.10) ≈ 0.711
+        // smoothstep(s) = s² * (3 - 2s) ≈ 0.611
+        let s = (0.42f32 - 0.10) / (0.55 - 0.10);
+        let expected = s * s * (3.0 - 2.0 * s);
         assert!(approx(pose.mouth_value("ParamJawOpen"), expected, 1e-3));
     }
 
@@ -907,10 +962,10 @@ mod tests {
         arkit[24] = 0.4; // mouthSmileRight
         let mut params = HashMap::new();
         DefaultArkitMapper.map(&arkit, &mut params);
-        // ease_in(0.6) = 0.6 * (2 - 0.6) = 0.84
-        assert!(approx(params["ParamJawOpen"], 0.84, 1e-3));
-        // mouth_open_raw = (0.6 - 0) - 0 + 0 = 0.6 → ease_in(0.6) = 0.84
-        assert!(approx(params["ParamMouthOpenY"], 0.84, 1e-3));
+        // snappy_open(0.6) saturates at HIGH=0.55 → 1.0
+        assert!(approx(params["ParamJawOpen"], 1.0, 1e-3));
+        // mouth_open_raw = (0.6 - 0) - 0 + 0 = 0.6 → also saturates → 1.0
+        assert!(approx(params["ParamMouthOpenY"], 1.0, 1e-3));
         // Form: (2 + smile_l + smile_r) / 4 = (2 + 0.4 + 0.4) / 4 = 0.7
         assert!(approx(params["ParamMouthForm"], 0.7, 1e-3));
     }
@@ -953,8 +1008,8 @@ mod tests {
         state.push_blendshape(BlendshapeFrame::new([0.7; ARKIT_52], 100, None));
         state.update_audio_clock(120);
         let pose = state.compute_pose();
-        let expected = 0.7 * (2.0 - 0.7); // ease_in(0.7) = 0.91
-        assert!(approx(pose.mouth_value("ParamJawOpen"), expected, 1e-3));
+        // snappy_open(0.7) saturates at HIGH=0.55 → 1.0
+        assert!(approx(pose.mouth_value("ParamJawOpen"), 1.0, 1e-3));
     }
 
     /// Pushing keyframes out of pts order still produces correct
@@ -968,7 +1023,10 @@ mod tests {
         state.push_blendshape(BlendshapeFrame::new([0.0; ARKIT_52], 100, None));
         state.update_audio_clock(150);
         let pose = state.compute_pose();
-        let expected = 0.5 * (2.0 - 0.5); // ease_in(0.5) = 0.75
+        // snappy_open(0.5): in linear range. s = (0.5 - 0.10) / (0.55 - 0.10) ≈ 0.889
+        // smoothstep(s) ≈ 0.940
+        let s = (0.5f32 - 0.10) / (0.55 - 0.10);
+        let expected = s * s * (3.0 - 2.0 * s);
         assert!(approx(pose.mouth_value("ParamJawOpen"), expected, 1e-3));
     }
 }

@@ -40,23 +40,26 @@ impl RingBuffer {
 
     /// Push segment, overwrite oldest if full
     ///
-    /// Returns the overwritten segment if buffer was full, None otherwise
+    /// Returns the most recently overwritten segment if any pops occurred, None otherwise.
     pub fn push_overwrite(&self, segment: SpeculativeSegment) -> Option<SpeculativeSegment> {
-        match self.queue.push(segment.clone()) {
-            Ok(_) => None, // Successfully pushed
-            Err(_) => {
-                // Queue is full, pop oldest and try again
-                let oldest = self.queue.pop();
-                self.overwrites
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-                // Push new segment (should succeed now)
-                if let Err(retry_err) = self.queue.push(segment) {
-                    // This should never happen, but handle gracefully
-                    eprintln!("Failed to push after pop: {:?}", retry_err);
+        // Loop because under concurrent contention another thread may refill the slot
+        // between our pop and retry push. ArrayQueue::push returns the value back on
+        // failure, so we can retry without cloning.
+        let mut pending = segment;
+        let mut overwritten = None;
+        loop {
+            match self.queue.push(pending) {
+                Ok(_) => return overwritten,
+                Err(returned) => {
+                    pending = returned;
+                    if let Some(oldest) = self.queue.pop() {
+                        self.overwrites
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        overwritten = Some(oldest);
+                    }
+                    // If pop returned None, another thread already drained a slot;
+                    // the next push attempt should succeed.
                 }
-
-                oldest
             }
         }
     }

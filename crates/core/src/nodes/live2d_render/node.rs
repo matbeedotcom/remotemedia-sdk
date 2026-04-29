@@ -112,14 +112,6 @@ struct RendererInner {
     /// All subsequent video pts are relative to this so video.y4m
     /// starts at frame 0 = audio sample 0 of the saved audio.wav.
     anchor_pts_ms: Option<u64>,
-    /// Audio-time pts (relative to anchor) of the most-recently
-    /// emitted frame. We use this to detect gaps — if the next
-    /// input's pts jumps ahead by more than one frame interval,
-    /// we emit fill frames at the missed slots so the saved Y4M
-    /// stays pts-aligned with audio.wav (Y4M only encodes a
-    /// fixed framerate header, so a missing emit slot would
-    /// silently compress playback).
-    last_emitted_cursor_ms: Option<u64>,
 }
 
 impl std::fmt::Debug for Live2DRenderNode {
@@ -158,7 +150,6 @@ impl Live2DRenderNode {
             backend,
             state: Live2DRenderState::new(config.state_config.clone()),
             anchor_pts_ms: None,
-            last_emitted_cursor_ms: None,
         };
         Self {
             config,
@@ -256,7 +247,6 @@ impl AsyncStreamingNode for Live2DRenderNode {
             RendererInput::BargeIn => {
                 inner.state.handle_barge();
                 inner.anchor_pts_ms = None;
-                inner.last_emitted_cursor_ms = None;
                 None
             }
         };
@@ -269,74 +259,41 @@ impl AsyncStreamingNode for Live2DRenderNode {
         let frame_interval_ms: u64 =
             1000_u64 / self.config.framerate.max(1) as u64;
 
-        // Gap-fill: if the previous emission was at cursor=N*Δ but the
-        // current input's cursor is at cursor=(N+k)*Δ for k > 1, fill
-        // the missed slots with frames so video.y4m stays pts-aligned
-        // with audio.wav. Y4M encodes a fixed framerate in its header
-        // and computes per-frame display time as `frame_index / fps`,
-        // so a missing emit slot would silently compress playback
-        // (audio plays for K frames worth of time, video advances by
-        // K-1 frames → growing desync). The fill frames hold the most
-        // recent pose at each missed slot's audio time — visually a
-        // brief freeze where a frame was dropped upstream, but the
-        // timeline stays correct.
-        let next_expected = inner
-            .last_emitted_cursor_ms
-            .map(|c| c.saturating_add(frame_interval_ms))
-            .unwrap_or(0);
-        let mut emit_at = next_expected.min(cursor_ms);
-        let mut emitted_count = 0usize;
+        // Drive the state machine to this audio-time, then render.
+        inner.state.update_audio_clock(absolute_pts);
+        inner.state.tick(frame_interval_ms);
+        let pose = inner.state.compute_pose();
 
-        loop {
-            let absolute_for_this = anchor.saturating_add(emit_at);
-            inner.state.update_audio_clock(absolute_for_this);
-            inner.state.tick(frame_interval_ms);
-            let pose = inner.state.compute_pose();
-
-            let frame = match inner.backend.render_frame(&pose) {
-                Ok(f) => f,
-                Err(e) => {
-                    tracing::warn!(
-                        "Live2DRenderNode backend.render_frame failed: {} (skipping frame)",
-                        e
-                    );
-                    // Skip this slot but keep advancing so we don't
-                    // get stuck re-trying the same bad pose forever.
-                    inner.last_emitted_cursor_ms = Some(emit_at);
-                    if emit_at >= cursor_ms {
-                        break;
-                    }
-                    emit_at = emit_at.saturating_add(frame_interval_ms);
-                    continue;
-                }
-            };
-
-            let frame_number = self.frame_counter.fetch_add(1, Ordering::AcqRel);
-            let video = RuntimeData::Video {
-                pixel_data: frame.pixels,
-                width: frame.width,
-                height: frame.height,
-                format: crate::data::video::PixelFormat::Rgb24,
-                codec: None,
-                frame_number,
-                // pts in microseconds, relative to anchor (t=0). The
-                // saved video.y4m and audio.wav share this origin.
-                timestamp_us: emit_at.saturating_mul(1000),
-                is_keyframe: true,
-                stream_id: Some(self.config.video_stream_id.clone()),
-                arrival_ts_us: None,
-            };
-            callback(video)?;
-            emitted_count += 1;
-            inner.last_emitted_cursor_ms = Some(emit_at);
-
-            if emit_at >= cursor_ms {
-                break;
+        let frame = match inner.backend.render_frame(&pose) {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::warn!(
+                    "Live2DRenderNode backend.render_frame failed: {} (skipping frame)",
+                    e
+                );
+                return Ok(0);
             }
-            emit_at = emit_at.saturating_add(frame_interval_ms);
-        }
+        };
 
-        Ok(emitted_count)
+        let frame_number = self.frame_counter.fetch_add(1, Ordering::AcqRel);
+        let video = RuntimeData::Video {
+            pixel_data: frame.pixels,
+            width: frame.width,
+            height: frame.height,
+            format: crate::data::video::PixelFormat::Rgb24,
+            codec: None,
+            frame_number,
+            // pts in microseconds, relative to anchor (t=0). The saved
+            // video.y4m and audio.wav share this origin so frame N at
+            // y4m playback time `N / fps` matches audio at the same
+            // wall time (modulo any upstream blendshape drops).
+            timestamp_us: cursor_ms.saturating_mul(1000),
+            is_keyframe: true,
+            stream_id: Some(self.config.video_stream_id.clone()),
+            arrival_ts_us: None,
+        };
+        callback(video)?;
+        Ok(1)
     }
 
     /// Universal barge handler — the session router (M2.6) forwards
@@ -353,7 +310,6 @@ impl AsyncStreamingNode for Live2DRenderNode {
             let mut inner = self.inner.lock().await;
             inner.state.handle_barge();
             inner.anchor_pts_ms = None;
-            inner.last_emitted_cursor_ms = None;
             return Ok(true);
         }
         Ok(false)

@@ -5,6 +5,7 @@
 use remotemedia_candle_nodes::{SileroVadNode, VadConfig, VadSampleRate, VadOutput};
 use remotemedia_core::data::RuntimeData;
 use remotemedia_core::nodes::streaming_node::AsyncStreamingNode;
+use remotemedia_core::nodes::InitializeContext;
 use std::path::Path;
 
 #[tokio::main]
@@ -51,8 +52,13 @@ async fn main() -> anyhow::Result<()> {
     let node = SileroVadNode::new("vad-test", &config)?;
 
     println!("\nInitializing model (may download on first run)...");
+    let init_ctx = InitializeContext {
+        session_id: "vad-test-session".to_string(),
+        node_id: "vad-test".to_string(),
+        control: None,
+    };
     let start = std::time::Instant::now();
-    node.initialize().await?;
+    node.initialize(&init_ctx).await?;
     println!("Model initialized in {:.2}s", start.elapsed().as_secs_f32());
 
     // Convert samples to mono f32
