@@ -184,19 +184,6 @@ impl Live2DRenderNode {
     /// `false` if it should be passed through (the caller's
     /// responsibility).
     fn dispatch_envelope(&self, data: &RuntimeData) -> bool {
-        // [TEMP DIAG]
-        let summary = match data {
-            RuntimeData::Json(v) => format!(
-                "Json kind={:?}",
-                v.get("kind").and_then(|k| k.as_str())
-            ),
-            RuntimeData::Audio { sample_rate, channels, samples, .. } => {
-                format!("Audio {}Hz/{}ch n={}", sample_rate, channels, samples.len())
-            }
-            RuntimeData::Text(_) => "Text".into(),
-            other => format!("{:?}", std::mem::discriminant(other)),
-        };
-        eprintln!("[live2d_render dispatch] input: {summary}");
         // Wrapped barge envelope from the session router (M2.6 path).
         if matches!(aux_port_of(data), Some(BARGE_IN_PORT)) {
             let _ = self.input_tx.send(RendererInput::BargeIn);
