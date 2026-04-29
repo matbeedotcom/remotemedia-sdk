@@ -1,39 +1,39 @@
 //! `Live2DRenderNode` — streaming wire-up for the Live2D renderer.
 //!
-//! Per spec §6.1 the renderer is a **free-running 30 fps sampler**:
-//! it ticks on its own clock, samples blendshape ring + emotion +
-//! blink state into a [`Pose`], and asks the backend to render. No
-//! input pressure dictates the render rate.
+//! Audio-clock-driven: each input envelope synchronously produces at
+//! most one rendered Video frame, stamped with the input's audio-time
+//! pts (relative to the first input's pts as t=0). Audio2Face emits
+//! 30 blendshapes per second of audio, so the resulting video is
+//! 30 fps with frame_N at audio-time `N * 33 ms` — perfectly
+//! pts-aligned with the saved `audio.wav`, so `ffmpeg -i video.y4m
+//! -i audio.wav out.mp4` muxes them in lip-sync without re-stamping.
 //!
 //! This module wires the M4.3 state machine + the M4.4 backend trait
 //! into an [`AsyncStreamingNode`] that:
 //!
 //! - Accepts four kinds of `RuntimeData::Json` input on its main port:
 //!   - `{kind: "blendshapes", arkit_52, pts_ms, turn_id?}` — from
-//!     `Audio2FaceLipSyncNode` / `SyntheticLipSyncNode`.
+//!     `Audio2FaceLipSyncNode` / `SyntheticLipSyncNode`. Renders
+//!     a frame.
 //!   - `{kind: "emotion", emoji, …}` — from `EmotionExtractorNode`.
+//!     Updates state but does NOT render.
 //!   - `{kind: "audio_clock", pts_ms, …}` — from the WebRTC
-//!     `AudioSender`'s `audio.out.clock` tap.
-//!   - `{kind: "barge_in"}` — from coordinator-driven barge.
+//!     `AudioSender`'s `audio.out.clock` tap. Renders a frame.
+//!   - `{kind: "barge_in"}` — from coordinator-driven barge. Resets
+//!     state; the next blendshape re-anchors the audio timeline.
 //!   The barge-in aux-port envelope (M2.6 plumbing) is also handled
 //!   via [`AsyncStreamingNode::process_control_message`].
 //!
 //! - Emits `RuntimeData::Video {pixel_data, width, height, format,
-//!   stream_id, …}` at the configured `framerate` (default 30 fps),
+//!   stream_id, …}` synchronously through the runtime callback,
 //!   stamped with the configured `video_stream_id` (default
-//!   `"avatar"`).
+//!   `"avatar"`) and a `timestamp_us` rooted at the first input's
+//!   pts as audio-time zero.
 //!
-//! The tick is driven by an internal `tokio::time::interval` task
-//! spawned in [`Live2DRenderNode::new_with_backend`]. Each tick:
-//! 1. Drains pending inputs from the input mpsc
-//! 2. Calls `state.tick(elapsed_ms)`
-//! 3. `pose = state.compute_pose()`
-//! 4. `backend.render_frame(&pose)`
-//! 5. Pushes the resulting `RuntimeData::Video` onto the output
-//!    queue
-//!
-//! `process_streaming` simply forwards inputs into the input mpsc
-//! and drains any pending output frames into the runtime callback.
+//! Idle/blink animation during silence is not emitted — when no
+//! blendshape arrives, no Video frame is produced. The state
+//! machine's `tick_blink_scheduler` runs on every emit, so blinks
+//! fire during the speaking section.
 
 use super::backend_trait::Live2DBackend;
 use super::state::{Live2DRenderState, StateConfig};
@@ -43,14 +43,10 @@ use crate::nodes::lip_sync::BlendshapeFrame;
 use crate::nodes::AsyncStreamingNode;
 use crate::transport::session_control::{aux_port_of, BARGE_IN_PORT};
 use async_trait::async_trait;
-use parking_lot::Mutex as ParkMutex;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
 use tokio::sync::Mutex as AsyncMutex;
-use tokio::task::JoinHandle;
 
 /// Configuration for [`Live2DRenderNode`].
 ///
@@ -89,19 +85,33 @@ impl Default for Live2DRenderConfig {
     }
 }
 
-/// Free-running, free-emitting Live2D render node.
+/// Synchronous, input-driven Live2D render node.
+///
+/// One incoming envelope → at most one rendered Video frame, forwarded
+/// inline through the runtime callback. No ticker task, no internal
+/// queues: rendering happens on the caller's tokio worker, and the
+/// `callback` (provided by `SessionRouter`) is the only forwarding
+/// path. This keeps producer and drainer in lockstep — every frame
+/// produced is also dispatched in the same `process_streaming` call.
 pub struct Live2DRenderNode {
     config: Live2DRenderConfig,
-    /// One-shot input channel: `process_streaming` enqueues inputs
-    /// here; the ticker task drains it on every tick.
-    input_tx: mpsc::UnboundedSender<RendererInput>,
-    /// Output ring: ticker task pushes rendered frames here;
-    /// `process_streaming` drains all pending frames per call.
-    output_rx: Arc<AsyncMutex<mpsc::UnboundedReceiver<RuntimeData>>>,
-    /// JoinHandle for the ticker; aborted on drop.
-    ticker: ParkMutex<Option<JoinHandle<()>>>,
+    /// Backend + state machine + ARKit-time anchor. Behind a mutex
+    /// because `process_streaming` takes `&self` (the runtime calls
+    /// it with shared borrow) but we need exclusive access to the
+    /// backend's `&mut self` and to the state machine's mutators.
+    /// Concurrent calls serialize through this lock.
+    inner: Arc<AsyncMutex<RendererInner>>,
     /// Frame counter for the emitted Video frames.
     frame_counter: Arc<AtomicU64>,
+}
+
+struct RendererInner {
+    backend: Box<dyn Live2DBackend + Send>,
+    state: Live2DRenderState,
+    /// First blendshape (or AudioClock) pts becomes audio-time zero.
+    /// All subsequent video pts are relative to this so video.y4m
+    /// starts at frame 0 = audio sample 0 of the saved audio.wav.
+    anchor_pts_ms: Option<u64>,
 }
 
 impl std::fmt::Debug for Live2DRenderNode {
@@ -117,18 +127,7 @@ impl std::fmt::Debug for Live2DRenderNode {
     }
 }
 
-impl Drop for Live2DRenderNode {
-    fn drop(&mut self) {
-        if let Some(h) = self.ticker.lock().take() {
-            h.abort();
-        }
-    }
-}
-
-/// Decoded input to the state machine. The `process_streaming`
-/// dispatcher decodes incoming `RuntimeData::Json` envelopes by
-/// `kind` and pushes the matching `RendererInput` onto the input
-/// channel. The ticker task drains them at the next tick.
+/// Decoded input parsed from a `RuntimeData::Json` envelope.
 #[derive(Debug)]
 enum RendererInput {
     Blendshape(BlendshapeFrame),
@@ -138,38 +137,24 @@ enum RendererInput {
 }
 
 impl Live2DRenderNode {
-    /// Build the node with the given backend + config and spawn the
-    /// internal ticker task.
+    /// Build the node with the given backend + config.
     ///
     /// Caller responsibility: the backend must already have its
     /// model loaded. For `WgpuBackend` that means calling
-    /// `load_model(&config.model_path)` before this — this signature
-    /// hands the backend off to the ticker so we can't load it
-    /// after.
+    /// `load_model(&config.model_path)` before this.
     pub fn new_with_backend(
         backend: Box<dyn Live2DBackend + Send>,
         config: Live2DRenderConfig,
     ) -> Self {
-        let (input_tx, input_rx) = mpsc::unbounded_channel::<RendererInput>();
-        let (output_tx, output_rx) = mpsc::unbounded_channel::<RuntimeData>();
-        let frame_counter = Arc::new(AtomicU64::new(0));
-
-        let ticker = tokio::spawn(ticker_loop(
+        let inner = RendererInner {
             backend,
-            Live2DRenderState::new(config.state_config.clone()),
-            input_rx,
-            output_tx,
-            config.framerate.max(1),
-            config.video_stream_id.clone(),
-            frame_counter.clone(),
-        ));
-
+            state: Live2DRenderState::new(config.state_config.clone()),
+            anchor_pts_ms: None,
+        };
         Self {
             config,
-            input_tx,
-            output_rx: Arc::new(AsyncMutex::new(output_rx)),
-            ticker: ParkMutex::new(Some(ticker)),
-            frame_counter,
+            inner: Arc::new(AsyncMutex::new(inner)),
+            frame_counter: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -179,47 +164,31 @@ impl Live2DRenderNode {
         self.frame_counter.load(Ordering::Relaxed)
     }
 
-    /// Decode one input envelope and push it to the ticker. Returns
-    /// `true` if the envelope was a recognized renderer input,
-    /// `false` if it should be passed through (the caller's
-    /// responsibility).
-    fn dispatch_envelope(&self, data: &RuntimeData) -> bool {
+    /// Parse one envelope into a [`RendererInput`]. Returns `None`
+    /// for envelopes the renderer doesn't recognize.
+    fn decode_envelope(data: &RuntimeData) -> Option<RendererInput> {
         // Wrapped barge envelope from the session router (M2.6 path).
         if matches!(aux_port_of(data), Some(BARGE_IN_PORT)) {
-            let _ = self.input_tx.send(RendererInput::BargeIn);
-            return true;
+            return Some(RendererInput::BargeIn);
         }
         let RuntimeData::Json(v) = data else {
-            return false;
+            return None;
         };
         let kind = v.get("kind").and_then(|k| k.as_str()).unwrap_or("");
         match kind {
             "blendshapes" => {
-                if let Ok(frame) = BlendshapeFrame::from_json(v) {
-                    let _ = self.input_tx.send(RendererInput::Blendshape(frame));
-                    return true;
-                }
-                false
+                BlendshapeFrame::from_json(v).ok().map(RendererInput::Blendshape)
             }
-            "emotion" => {
-                if let Some(emoji) = v.get("emoji").and_then(|e| e.as_str()) {
-                    let _ = self.input_tx.send(RendererInput::Emotion(emoji.to_string()));
-                    return true;
-                }
-                false
-            }
-            "audio_clock" => {
-                if let Some(pts) = v.get("pts_ms").and_then(|p| p.as_u64()) {
-                    let _ = self.input_tx.send(RendererInput::AudioClock(pts));
-                    return true;
-                }
-                false
-            }
-            "barge_in" => {
-                let _ = self.input_tx.send(RendererInput::BargeIn);
-                true
-            }
-            _ => false,
+            "emotion" => v
+                .get("emoji")
+                .and_then(|e| e.as_str())
+                .map(|s| RendererInput::Emotion(s.to_string())),
+            "audio_clock" => v
+                .get("pts_ms")
+                .and_then(|p| p.as_u64())
+                .map(RendererInput::AudioClock),
+            "barge_in" => Some(RendererInput::BargeIn),
+            _ => None,
         }
     }
 }
@@ -245,200 +214,68 @@ impl AsyncStreamingNode for Live2DRenderNode {
     where
         F: FnMut(RuntimeData) -> Result<()> + Send,
     {
-        // Push input into the ticker (no-op if envelope shape is
-        // unrecognized; we don't pass it through because the
-        // renderer is a sink — its outputs are Video, never
-        // forwarded inputs).
-        self.dispatch_envelope(&data);
+        let Some(input) = Self::decode_envelope(&data) else {
+            // Unrecognized envelope. The renderer is a sink — its
+            // outputs are Video, never forwarded inputs — so just
+            // drop unknown envelopes silently.
+            return Ok(0);
+        };
 
-        // Drain all queued Video frames produced by the ticker
-        // since the last call. This is what gets the frames into
-        // the runtime's fan-out.
-        let mut emitted = 0;
-        let mut rx = self.output_rx.lock().await;
-        while let Ok(frame) = rx.try_recv() {
-            callback(frame)?;
-            emitted += 1;
-        }
-        Ok(emitted)
-    }
+        let mut inner = self.inner.lock().await;
 
-    /// Universal barge handler — the session router (M2.6) forwards
-    /// `<node>.in.barge_in` aux-port envelopes here in addition to
-    /// firing `cancel.notify_waiters()`. We push a `BargeIn` input
-    /// to the ticker so the next tick clears the blendshape ring +
-    /// snaps mouth to neutral (per spec §6.3).
-    async fn process_control_message(
-        &self,
-        message: RuntimeData,
-        _session_id: Option<String>,
-    ) -> Result<bool> {
-        if matches!(aux_port_of(&message), Some(BARGE_IN_PORT)) {
-            let _ = self.input_tx.send(RendererInput::BargeIn);
-            return Ok(true);
-        }
-        Ok(false)
-    }
-}
-
-/// Internal ticker. Owns the backend + state machine. Wakes every
-/// `1000/framerate` ms, drains pending inputs into the state, ticks
-/// the wall clock, computes pose, renders, emits Video.
-async fn ticker_loop(
-    mut backend: Box<dyn Live2DBackend + Send>,
-    mut state: Live2DRenderState,
-    mut input_rx: mpsc::UnboundedReceiver<RendererInput>,
-    output_tx: mpsc::UnboundedSender<RuntimeData>,
-    framerate: u32,
-    stream_id: String,
-    frame_counter: Arc<AtomicU64>,
-) {
-    let frame_interval = Duration::from_millis(1000_u64 / framerate as u64);
-    let mut interval = tokio::time::interval(frame_interval);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut last_tick = Instant::now();
-    let session_start = Instant::now();
-    let (width, height) = backend.frame_dimensions();
-
-    // Audio-clock synthesis — for pipelines without an external
-    // `audio.out.clock` tap (e.g. the disk-capture chain has no
-    // WebRTC AudioSender), the renderer fakes a playback clock so
-    // the state machine actually samples its ring instead of
-    // returning neutral mouth forever.
-    //
-    // Naïve "wall_time_since_first_blendshape" overshoots the
-    // buffer: Audio2Face produces blendshapes in 1-second batches
-    // every ~few seconds (cold inference is 3.6s; warm is
-    // ~100ms), and a real-time clock leaves the ring stale-evicted
-    // between batches. We advance the synth clock by elapsed wall
-    // time **capped at the latest blendshape's pts**. When the
-    // buffer is ahead, playback is smooth real-time; when the
-    // buffer is starved, the clock waits at the leading edge so
-    // the renderer holds the most recent pose instead of falling
-    // off the end of the ring.
-    //
-    // WebRTC pipelines that publish explicit AudioClock events
-    // override this — we suppress synth for 200 ms after each
-    // explicit publish.
-    let mut latest_blendshape_pts: Option<u64> = None;
-    let mut synth_pts: u64 = 0;
-    let mut last_synth_at: Option<Instant> = None;
-    let mut last_explicit_clock_at: Option<Instant> = None;
-    // Suppress Video output until the first input arrives. Otherwise
-    // the ticker produces neutral frames at 30 fps from t=0; if the
-    // upstream TTS is slow on first run (kokoro voice-pack download
-    // can take 30-50 s), those neutral frames pile up in the
-    // downstream `fan_tx` (bounded at 1024). When the actual
-    // speaking-section frames are produced AFTER the burst, they
-    // get dropped because fan_tx is already saturated. The saved
-    // video then shows only neutral pose even though the renderer
-    // is technically rendering the talking pose. Gating on "has any
-    // input arrived?" doesn't fully eliminate the neutral preamble
-    // (emotion events lift the gate before TTS produces audio), but
-    // it eliminates the catastrophic fan_tx saturation case where
-    // the renderer ran fully unstructured for tens of seconds before
-    // any signal arrived.
-    let mut received_any_input = false;
-
-    loop {
-        // Wait for the next interval tick. (We used to also `select!`
-        // an `input_rx.recv()` arm with an `if false` guard — but
-        // tokio::select! still POLLS the future at least once before
-        // checking the guard, which silently consumed values from
-        // the unbounded channel under burst load. Drainage then only
-        // showed the first 1-2 inputs of every batch. Use plain
-        // `interval.tick()` and let the parent's drop close
-        // input_rx; we'll see Err::Disconnected on try_recv and
-        // exit gracefully.)
-        interval.tick().await;
-
-        // Drain pending inputs (non-blocking). Disconnected = parent
-        // dropped → exit cleanly.
-        loop {
-            let input = match input_rx.try_recv() {
-                Ok(i) => i,
-                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
-                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return,
-            };
-            received_any_input = true;
-            match input {
-                RendererInput::Blendshape(f) => {
-                    let pts = f.pts_ms;
-                    if last_synth_at.is_none() {
-                        // First blendshape arrived — anchor the
-                        // synth clock here.
-                        synth_pts = pts;
-                        last_synth_at = Some(Instant::now());
-                    }
-                    latest_blendshape_pts = Some(
-                        latest_blendshape_pts.map_or(pts, |old| old.max(pts)),
-                    );
-                    state.push_blendshape(f);
+        // Decide whether to render a frame for this input + the audio-
+        // time pts to stamp it with.
+        let emit_pts: Option<u64> = match input {
+            RendererInput::Blendshape(f) => {
+                let pts = f.pts_ms;
+                if inner.anchor_pts_ms.is_none() {
+                    inner.anchor_pts_ms = Some(pts);
                 }
-                RendererInput::Emotion(e) => state.push_emotion(&e),
-                RendererInput::AudioClock(pts) => {
-                    last_explicit_clock_at = Some(Instant::now());
-                    state.update_audio_clock(pts);
-                }
-                RendererInput::BargeIn => {
-                    // Reset the synth state too — post-barge a new
-                    // blendshape stream re-anchors.
-                    latest_blendshape_pts = None;
-                    last_synth_at = None;
-                    synth_pts = 0;
-                    state.handle_barge();
-                }
+                inner.state.push_blendshape(f);
+                Some(pts)
             }
-        }
-
-        // Synthesize audio_clock from wall time (capped at the
-        // latest blendshape pts) when no explicit audio.out.clock
-        // tap is firing. "Recent explicit" = within 200ms.
-        let explicit_clock_recent = last_explicit_clock_at
-            .map(|t| t.elapsed() <= Duration::from_millis(200))
-            .unwrap_or(false);
-        if !explicit_clock_recent {
-            if let (Some(latest), Some(prev_synth_at)) =
-                (latest_blendshape_pts, last_synth_at)
-            {
-                let now = Instant::now();
-                let elapsed_ms = now.duration_since(prev_synth_at).as_millis() as u64;
-                last_synth_at = Some(now);
-                synth_pts = synth_pts.saturating_add(elapsed_ms).min(latest);
-                state.update_audio_clock(synth_pts);
+            RendererInput::Emotion(e) => {
+                inner.state.push_emotion(&e);
+                None
             }
-        }
-
-        // Advance virtual wall clock by the wall ms since last tick.
-        let now = Instant::now();
-        let elapsed_ms = now.duration_since(last_tick).as_millis() as u64;
-        last_tick = now;
-        state.tick(elapsed_ms);
-
-        // Skip emission until the first input has arrived. See
-        // `received_any_input`'s declaration above for why.
-        if !received_any_input {
-            continue;
-        }
-
-        // Render.
-        let pose = state.compute_pose();
-        let frame = match backend.render_frame(&pose) {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::warn!(
-                    "Live2DRenderNode backend.render_frame failed: {} \
-                     (skipping frame)",
-                    e
-                );
-                continue;
+            RendererInput::AudioClock(pts) => {
+                if inner.anchor_pts_ms.is_none() {
+                    inner.anchor_pts_ms = Some(pts);
+                }
+                Some(pts)
+            }
+            RendererInput::BargeIn => {
+                inner.state.handle_barge();
+                inner.anchor_pts_ms = None;
+                None
             }
         };
 
-        // Convert RgbFrame → RuntimeData::Video. We expose RGB24
-        // raw frames; downstream encoders (M4.6) take it from there.
-        let frame_number = frame_counter.fetch_add(1, Ordering::AcqRel);
-        let pts_us = now.duration_since(session_start).as_micros() as u64;
+        let Some(absolute_pts) = emit_pts else {
+            return Ok(0);
+        };
+        let anchor = inner.anchor_pts_ms.expect("anchor set above");
+        let cursor_ms = absolute_pts.saturating_sub(anchor);
+        let frame_interval_ms: u64 =
+            1000_u64 / self.config.framerate.max(1) as u64;
+
+        // Drive the state machine to this audio-time, then render.
+        inner.state.update_audio_clock(absolute_pts);
+        inner.state.tick(frame_interval_ms);
+        let pose = inner.state.compute_pose();
+
+        let frame = match inner.backend.render_frame(&pose) {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::warn!(
+                    "Live2DRenderNode backend.render_frame failed: {} (skipping frame)",
+                    e
+                );
+                return Ok(0);
+            }
+        };
+
+        let frame_number = self.frame_counter.fetch_add(1, Ordering::AcqRel);
         let video = RuntimeData::Video {
             pixel_data: frame.pixels,
             width: frame.width,
@@ -446,16 +283,34 @@ async fn ticker_loop(
             format: crate::data::video::PixelFormat::Rgb24,
             codec: None,
             frame_number,
-            timestamp_us: pts_us,
-            is_keyframe: true, // Raw frames are inherently independent
-            stream_id: Some(stream_id.clone()),
+            // pts in microseconds, relative to anchor (t=0). The saved
+            // video.y4m and audio.wav share this origin.
+            timestamp_us: cursor_ms.saturating_mul(1000),
+            is_keyframe: true,
+            stream_id: Some(self.config.video_stream_id.clone()),
             arrival_ts_us: None,
         };
-        let _ = (width, height); // consumed via frame.width/height above
+        callback(video)?;
+        Ok(1)
+    }
 
-        if output_tx.send(video).is_err() {
-            // Parent dropped → exit.
-            break;
+    /// Universal barge handler — the session router (M2.6) forwards
+    /// `<node>.in.barge_in` aux-port envelopes here in addition to
+    /// firing `cancel.notify_waiters()`. We reset the renderer's
+    /// state + anchor so the next blendshape stream re-anchors at
+    /// its own pts.
+    async fn process_control_message(
+        &self,
+        message: RuntimeData,
+        _session_id: Option<String>,
+    ) -> Result<bool> {
+        if matches!(aux_port_of(&message), Some(BARGE_IN_PORT)) {
+            let mut inner = self.inner.lock().await;
+            inner.state.handle_barge();
+            inner.anchor_pts_ms = None;
+            return Ok(true);
         }
+        Ok(false)
     }
 }
+
