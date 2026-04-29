@@ -56,6 +56,9 @@ struct DrawableUniforms {
     projection: [[f32; 4]; 4],
     multiply: [f32; 4],
     screen: [f32; 4],
+    /// `[mask_enabled, inverted, _, _]` — see drawable.wgsl. The
+    /// shader gates mask sampling on `mask_flags[0] > 0.5`.
+    mask_flags: [f32; 4],
 }
 
 const UNIFORM_SIZE: u64 = std::mem::size_of::<DrawableUniforms>() as u64;
@@ -70,11 +73,19 @@ struct DrawableResources {
     vertex_buffer: wgpu::Buffer,
     /// `count_indices * size_of::<u16>()` bytes.
     index_buffer: wgpu::Buffer,
-    /// Bind group: drawable uniforms (binding 0), texture
-    /// (binding 1), sampler (binding 2).
-    bind_group: wgpu::BindGroup,
+    /// Bind group used in the **mask pre-pass** + by unmasked
+    /// drawables in the main pass. Mask binding (slot 3) points at
+    /// the dummy 1×1 white texture so the shader's `textureSample`
+    /// is well-defined; the shader gates whether it's actually read
+    /// via `mask_flags`.
+    bind_group_dummy_mask: wgpu::BindGroup,
+    /// Bind group used in the **main pass** for masked drawables.
+    /// Mask binding (slot 3) points at the shared `mask_target`
+    /// texture so the shader can read the just-rendered mask alpha.
+    /// `None` for unmasked drawables (they only ever use the dummy).
+    bind_group_real_mask: Option<wgpu::BindGroup>,
     /// Per-drawable uniform buffer; updated each frame with new
-    /// projection × multiply × screen colours.
+    /// projection × multiply × screen × mask_flags.
     uniform_buffer: wgpu::Buffer,
     /// Number of indices to draw.
     index_count: u32,
@@ -83,13 +94,15 @@ struct DrawableResources {
     /// Texture index (into the model's texture array).
     texture_index: usize,
     /// Cached blend mode (decoded from constant_flags at load).
-    /// All three modes hit the same pipeline in M4.4 pass 1; the
-    /// dedicated additive + multiplicative pipelines land in pass 2.
-    #[allow(dead_code)]
     blend_mode: BlendMode,
-    /// `true` if the drawable has a `BLEND_NORMAL` cull rule and
-    /// should be skipped when its `IS_VISIBLE` dynamic flag is off.
-    /// (Cubism uses `IS_VISIBLE` as a per-frame visibility cull.)
+    /// `true` if the drawable's `IS_INVERTED_MASK` constant flag is
+    /// set. Stored at load so we don't refetch flags every frame.
+    inverted_mask: bool,
+    /// `true` if the drawable lists at least one mask drawable.
+    has_masks: bool,
+    /// Drawable indices this drawable is masked against. Empty for
+    /// unmasked drawables.
+    mask_indices: Vec<usize>,
     #[allow(dead_code)]
     constant_flags: ConstantFlags,
 }
@@ -152,13 +165,29 @@ pub struct WgpuBackend {
     /// Offscreen render target (Rgba8UnormSrgb).
     color_target: wgpu::Texture,
     color_view: wgpu::TextureView,
+    /// Mask-prepass render target (Rgba8Unorm — linear, no sRGB).
+    /// Same size as color_target so mask UV in the main shader is
+    /// just `(clip.x + 1)*0.5, (1 - clip.y)*0.5`.
+    mask_target: wgpu::Texture,
+    mask_view: wgpu::TextureView,
+    /// 1×1 white texture used as the dummy mask binding in the
+    /// pass-1 bind group + every mask-pre-pass bind group. Shader
+    /// gates whether it's actually sampled via `mask_flags[0]`.
+    dummy_mask_view: wgpu::TextureView,
     /// CPU-mappable readback buffer sized for `width * height * 4`,
     /// padded for `COPY_BYTES_PER_ROW_ALIGNMENT`.
     readback_buffer: wgpu::Buffer,
     /// Bytes-per-row including alignment padding (`>= width * 4`).
     bytes_per_row_padded: u32,
-    /// Default Normal-blend pipeline (premultiplied alpha).
+    /// Normal-blend pipeline (premultiplied alpha).
     pipeline_normal: wgpu::RenderPipeline,
+    /// Additive-blend pipeline (Cubism `BLEND_ADDITIVE`).
+    pipeline_additive: wgpu::RenderPipeline,
+    /// Multiplicative-blend pipeline (Cubism `BLEND_MULTIPLICATIVE`).
+    pipeline_multiplicative: wgpu::RenderPipeline,
+    /// Mask pre-pass pipeline. Color writes restricted to ALPHA so
+    /// only the alpha channel of `mask_target` accumulates.
+    pipeline_mask: wgpu::RenderPipeline,
     /// Bind-group layout shared across drawables.
     bind_group_layout: Arc<wgpu::BindGroupLayout>,
     /// Currently-loaded model, if any.
@@ -239,7 +268,8 @@ impl WgpuBackend {
             mapped_at_creation: false,
         });
 
-        // Bind group layout: 0=uniform buffer, 1=texture, 2=sampler.
+        // Bind group layout: 0=uniform buffer, 1=texture, 2=sampler,
+        // 3=mask texture (sampled with the same `samp` sampler).
         let bind_group_layout = Arc::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("Live2D bgl"),
@@ -270,6 +300,16 @@ impl WgpuBackend {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
                 ],
             },
         ));
@@ -288,42 +328,46 @@ impl WgpuBackend {
                 push_constant_ranges: &[],
             });
 
-        let pipeline_normal = device.create_render_pipeline(
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("Live2D pipeline (Normal)"),
+        // Builder helper: every pipeline shares the same vertex
+        // attributes + primitive state; only the fragment target
+        // (format + blend + write mask) differs.
+        let vertex_buffer_layout = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                wgpu::VertexAttribute {
+                    offset: 8,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+            ],
+        };
+        let make_pipeline = |label: &'static str,
+                             format: wgpu::TextureFormat,
+                             blend: Option<wgpu::BlendState>,
+                             write_mask: wgpu::ColorWrites|
+         -> wgpu::RenderPipeline {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: "vs_main",
-                    buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &[
-                            wgpu::VertexAttribute {
-                                offset: 0,
-                                shader_location: 0,
-                                format: wgpu::VertexFormat::Float32x2,
-                            },
-                            wgpu::VertexAttribute {
-                                offset: 8,
-                                shader_location: 1,
-                                format: wgpu::VertexFormat::Float32x2,
-                            },
-                        ],
-                    }],
+                    buffers: &[vertex_buffer_layout.clone()],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: "fs_main",
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: RENDER_FORMAT,
-                        // Premultiplied-alpha blending — matches the
-                        // shader's premultiply step (out_rgb already
-                        // includes alpha multiplication, so dst gets
-                        // `1-src.a` weight).
-                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        format,
+                        blend,
+                        write_mask,
                     })],
                     compilation_options: Default::default(),
                 }),
@@ -337,8 +381,120 @@ impl WgpuBackend {
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
                 cache: None,
-            },
+            })
+        };
+
+        // Normal: standard premultiplied-alpha blend.
+        let pipeline_normal = make_pipeline(
+            "Live2D pipeline (Normal)",
+            RENDER_FORMAT,
+            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+            wgpu::ColorWrites::ALL,
         );
+
+        // Additive: Cubism `BLEND_ADDITIVE` — out = src + dst, alpha
+        // unchanged. With premultiplied output: src is already
+        // alpha-modulated, so plain ONE/ONE accumulates correctly.
+        let pipeline_additive = make_pipeline(
+            "Live2D pipeline (Additive)",
+            RENDER_FORMAT,
+            Some(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Zero,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            }),
+            wgpu::ColorWrites::ALL,
+        );
+
+        // Multiplicative: Cubism `BLEND_MULTIPLICATIVE` — out = src
+        // * dst (color), alpha unchanged.
+        let pipeline_multiplicative = make_pipeline(
+            "Live2D pipeline (Multiplicative)",
+            RENDER_FORMAT,
+            Some(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Dst,
+                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Zero,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            }),
+            wgpu::ColorWrites::ALL,
+        );
+
+        // Mask pre-pass: same shader, accumulates alpha into
+        // `mask_target`. Color channel writes are disabled — only
+        // alpha matters for masking. We use standard premultiplied-
+        // alpha blending so multiple mask drawables compose like a
+        // normal alpha layer.
+        let pipeline_mask = make_pipeline(
+            "Live2D pipeline (Mask)",
+            wgpu::TextureFormat::Rgba8Unorm,
+            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+            wgpu::ColorWrites::ALPHA,
+        );
+
+        // Mask pre-pass target. Same dimensions as the color
+        // target; format Rgba8Unorm (linear) — masks are alpha
+        // values, not colors, so we don't want sRGB encoding.
+        let mask_target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Live2D mask target"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let mask_view = mask_target.create_view(&Default::default());
+
+        // 1×1 white-alpha dummy mask. Bound at slot 3 in every
+        // bind group used in either (a) the mask pre-pass (where
+        // sampling the in-flight mask target would be a resource
+        // conflict) or (b) the main pass for unmasked drawables
+        // (where the shader gates on `mask_flags` and never reads
+        // the binding). The texture itself is opaque white so a
+        // miswired sampler would produce a visible artifact rather
+        // than silent wrongness.
+        let dummy_mask_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Live2D dummy mask"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &dummy_mask_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[255u8, 255, 255, 255],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        );
+        let dummy_mask_view = dummy_mask_tex.create_view(&Default::default());
 
         Ok(Self {
             device,
@@ -347,9 +503,15 @@ impl WgpuBackend {
             height,
             color_target,
             color_view,
+            mask_target,
+            mask_view,
+            dummy_mask_view,
             readback_buffer,
             bytes_per_row_padded,
             pipeline_normal,
+            pipeline_additive,
+            pipeline_multiplicative,
+            pipeline_mask,
             bind_group_layout,
             model: None,
         })
@@ -483,34 +645,81 @@ impl WgpuBackend {
                     texture_views.len()
                 ))
             })?;
-            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Live2D drawable bg"),
-                layout: &self.bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: ub.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    },
-                ],
-            });
+
+            // Bind group with the dummy mask — used both during the
+            // mask pre-pass (where binding mask_target would be a
+            // resource conflict) and for unmasked main draws.
+            let bind_group_dummy_mask =
+                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Live2D drawable bg (dummy mask)"),
+                    layout: &self.bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: ub.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(&self.dummy_mask_view),
+                        },
+                    ],
+                });
+
+            let mask_indices: Vec<usize> =
+                d.masks().iter().map(|&i| i as usize).collect();
+            let inverted_mask = d.constant_flags().contains(ConstantFlags::IS_INVERTED_MASK);
+            let has_masks = !mask_indices.is_empty();
+
+            // Bind group with the real mask target (only allocated
+            // for drawables that need to sample it in the main pass).
+            let bind_group_real_mask = if has_masks {
+                Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Live2D drawable bg (real mask)"),
+                    layout: &self.bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: ub.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(&self.mask_view),
+                        },
+                    ],
+                }))
+            } else {
+                None
+            };
 
             drawables.push(DrawableResources {
                 vertex_buffer: vb,
                 index_buffer: ib,
-                bind_group,
+                bind_group_dummy_mask,
+                bind_group_real_mask,
                 uniform_buffer: ub,
                 index_count: indices.len() as u32,
                 vertex_count,
                 texture_index,
                 blend_mode: d.blend_mode(),
+                inverted_mask,
+                has_masks,
+                mask_indices,
                 constant_flags: d.constant_flags(),
             });
         }
@@ -583,14 +792,19 @@ impl WgpuBackend {
 
             // Per-frame uniforms — multiply colour modulated by
             // opacity, and the screen colour. Projection is baked
-            // at load.
+            // at load. `mask_flags` enables mask sampling for
+            // drawables that have masks; the inverted-mask bit
+            // comes from the constant flags (stored at load).
             let opacity = d.opacity();
             let mc = d.multiply_color();
             let sc = d.screen_color();
+            let mask_enabled = if res.has_masks { 1.0 } else { 0.0 };
+            let mask_inverted = if res.inverted_mask { 1.0 } else { 0.0 };
             let uniforms = DrawableUniforms {
                 projection: model.projection,
                 multiply: [mc.x, mc.y, mc.z, mc.w * opacity],
                 screen: [sc.x, sc.y, sc.z, sc.w],
+                mask_flags: [mask_enabled, mask_inverted, 0.0, 0.0],
             };
             self.queue
                 .write_buffer(&res.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -674,9 +888,13 @@ impl Live2DBackend for WgpuBackend {
             label: Some("Live2D render encoder"),
         });
 
+        // Clear the color target up-front. The main draws run in
+        // separate render passes (one per drawable so we can
+        // interleave mask pre-passes), each with `LoadOp::Load` so
+        // they accumulate on top of the cleared target.
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Live2D pass"),
+            let _clear = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Live2D color clear"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &self.color_view,
                     resolve_target: None,
@@ -689,15 +907,88 @@ impl Live2DBackend for WgpuBackend {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+        }
 
-            pass.set_pipeline(&self.pipeline_normal);
-            for &i in &model.render_indices {
-                let res = &model.drawables[i];
-                pass.set_bind_group(0, &res.bind_group, &[]);
-                pass.set_vertex_buffer(0, res.vertex_buffer.slice(..));
-                pass.set_index_buffer(res.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                pass.draw_indexed(0..res.index_count, 0, 0..1);
+        for &i in &model.render_indices {
+            let res = &model.drawables[i];
+
+            if res.has_masks {
+                // Mask pre-pass: clear mask target + accumulate
+                // alpha from the mask drawables. Color writes are
+                // restricted to ALPHA in the mask pipeline so the
+                // RGB channels of `mask_target` stay irrelevant.
+                let mut mask_pass =
+                    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("Live2D mask pre-pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &self.mask_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                mask_pass.set_pipeline(&self.pipeline_mask);
+                for &mi in &res.mask_indices {
+                    let m = match model.drawables.get(mi) {
+                        Some(m) => m,
+                        None => continue, // out-of-range mask index
+                    };
+                    // Use the mask drawable's *dummy* bind group —
+                    // we can't bind `mask_target` while rendering
+                    // INTO it, and we don't sample it anyway in the
+                    // mask shader (mask pre-pass shader path
+                    // ignores `mask_flags`).
+                    mask_pass.set_bind_group(0, &m.bind_group_dummy_mask, &[]);
+                    mask_pass.set_vertex_buffer(0, m.vertex_buffer.slice(..));
+                    mask_pass.set_index_buffer(
+                        m.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint16,
+                    );
+                    mask_pass.draw_indexed(0..m.index_count, 0, 0..1);
+                }
             }
+
+            // Main pass for drawable `i` — its own render pass so
+            // the just-rendered mask target is read with a clean
+            // pipeline barrier in between (wgpu inserts this for us
+            // automatically given the texture transitions between
+            // RENDER_ATTACHMENT and TEXTURE_BINDING).
+            let mut main_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Live2D main pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            let pipeline = match res.blend_mode {
+                BlendMode::Normal => &self.pipeline_normal,
+                BlendMode::Additive => &self.pipeline_additive,
+                BlendMode::Multiplicative => &self.pipeline_multiplicative,
+            };
+            main_pass.set_pipeline(pipeline);
+            let bind_group = if res.has_masks {
+                res.bind_group_real_mask
+                    .as_ref()
+                    .expect("has_masks implies real_mask bind group exists")
+            } else {
+                &res.bind_group_dummy_mask
+            };
+            main_pass.set_bind_group(0, bind_group, &[]);
+            main_pass.set_vertex_buffer(0, res.vertex_buffer.slice(..));
+            main_pass.set_index_buffer(res.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            main_pass.draw_indexed(0..res.index_count, 0, 0..1);
         }
 
         self.readback_to_rgb(&mut encoder);

@@ -101,7 +101,7 @@ Each milestone ends with a green `cargo test` (or, for milestones gated on exter
 | M1 | `audio.out.clock` tap on `AudioSender` | ✅ shipped — see [M1 actuals](#m1-actuals-2026-04-28) |
 | M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e + barge propagation | 🟢 shipped — full M2 set landed across 5 incremental passes (interface+synthetic+e2e, solver math, ONNX inference+bundle loaders, Audio2FaceLipSyncNode coordinator, manifest-level barge propagation via session-control bus). See [M2 actuals](#m2-actuals-2026-04-28-partial) and passes 2–5 below. |
 | M3 | `RVCNode` | `cargo test --features avatar-rvc` green; tier-2 tests pass on env-var-bearing host |
-| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0–M4.3 shipped + M4.4 pass 1 (wgpu device + ordered draw + Normal blend + readback; first visible Aria render) shipped; Aria installer landed; M4.4 pass 2 (mask pre-pass + dedicated Additive/Multiplicative pipelines) + M4.5–M4.7 outstanding. See [M4.0 actuals](#m40-actuals-2026-04-28) + [M4.1 actuals](#m41-actuals-2026-04-28) + [M4.2 actuals](#m42-actuals-2026-04-28) + [M4.3 actuals](#m43-actuals-2026-04-28) + [M4.4 actuals (pass 1)](#m44-actuals-2026-04-28-pass-1). |
+| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0–M4.3 + M4.4 pass 1 (device + ordered draw + Normal blend) + M4.4 pass 2 (mask pre-pass + Additive + Multiplicative pipelines) shipped; Aria installer landed; M4.5–M4.7 outstanding. |
 
 Each milestone ends with one or more commits. Milestones M2 and M3 may be parallelized once M1 lands. M4 is sequential (depends on M2 for blendshape input).
 
@@ -1307,6 +1307,67 @@ for d in drawables.iter() {
 **Cumulative avatar code after M4.4 pass 1: 107 unit + 48 integration tests, all green** (M4.4 adds 3 to the M4.1 wgpu test side; M4.4 has no unit-test surface yet — those land in pass 2 once we have mask logic to test in isolation).
 
 **Unblocks:** M4.4 pass 2 (mask pre-pass) — resolves visual fidelity. M4.5 (Live2DRenderNode streaming wire-up) — the backend trait is already proven; M4.5 is mostly glue.
+
+---
+
+## M4.4 actuals (2026-04-28, pass 2 — mask pre-pass + Additive/Multiplicative pipelines)
+
+Mask pre-pass + dedicated blend mode pipelines for every Cubism blend mode. Closes the structural gaps from pass 1 (masked drawables now clip properly; Additive/Multiplicative blend drawables route to their own pipelines instead of the Normal pipeline).
+
+**Shipped:**
+
+- **Mask pre-pass** — for every drawable that lists `masks()`, the renderer:
+  1. Begins a dedicated render pass against the new `mask_target` texture (Rgba8Unorm, same dimensions as the color target, `ColorWrites::ALPHA`).
+  2. Clears + draws each mask drawable into the alpha channel via the `pipeline_mask` pipeline (premultiplied-alpha blending, alpha-only writes).
+  3. Begins a second render pass against `color_target` (`LoadOp::Load` to preserve previous draws), binds the `bind_group_real_mask` (slot 3 = `mask_view`), and the shader multiplies output alpha by the sampled mask alpha (or `1 - mask` for `IS_INVERTED_MASK` drawables).
+- **Per-blend-mode pipelines** — each drawable's `BlendMode` decoded at load is dispatched to its own `wgpu::RenderPipeline`:
+  - `pipeline_normal` — `BlendState::PREMULTIPLIED_ALPHA_BLENDING` (Cubism `BLEND_NORMAL`).
+  - `pipeline_additive` — `One/One` color, `Zero/One` alpha (Cubism `BLEND_ADDITIVE`).
+  - `pipeline_multiplicative` — `Dst/OneMinusSrcAlpha` color, `Zero/One` alpha (Cubism `BLEND_MULTIPLICATIVE`).
+  - `pipeline_mask` — same shader, color writes restricted to ALPHA only.
+- **Dual bind groups per drawable** — `bind_group_dummy_mask` (binding 3 = 1×1 white texture; used in mask pre-passes + by unmasked drawables in the main pass to avoid wgpu's "can't bind the texture you're rendering into" diagnostic), and `bind_group_real_mask` (binding 3 = shared `mask_view`; allocated only for drawables that have masks).
+- **`DrawableUniforms.mask_flags`** — `[mask_enabled, inverted, _, _]`. Shader gates `textureSample(mask_tex, …)` on `mask_flags[0] > 0.5`; `inverted_mask` (decoded once at load from `ConstantFlags::IS_INVERTED_MASK`) flips the mask sample via `mix(mask_a, 1 - mask_a, mask_flags[1])`.
+- **Updated [`drawable.wgsl`](../../../crates/core/src/nodes/live2d_render/wgpu_backend/shaders/drawable.wgsl)** — adds binding 3 (`mask_tex`), interpolates `mask_uv` from clip-space NDC (so masks sample at the same screen pixel they were rendered to), conditional mask-multiply in fragment, single shader serves all four pipelines.
+
+**Render flow per frame:**
+
+```text
+clear color_target
+for each drawable in render_order:
+    if drawable.has_masks:
+        ── mask pre-pass ──
+        clear mask_target
+        for each mask drawable:
+            draw mask_drawable with pipeline_mask + dummy bind group
+                (writes alpha into mask_target.a only)
+        ── main pass ──
+        load color_target
+        draw drawable with pipeline_for(blend_mode) + real_mask bind group
+            (samples mask_target.a; clips alpha)
+    else:
+        ── main pass ──
+        load color_target
+        draw drawable with pipeline_for(blend_mode) + dummy bind group
+readback color_target → RGB24
+```
+
+**Tests verified — same 3 tier-2 tests pass on the mask-aware path:**
+- `renders_aria_to_nontrivial_pixels` — 1024² render, 58.67% pixel coverage (≈ pass 1; structural change, not coverage change).
+- `renders_aria_with_open_jaw` — 9.58% differing pixels at 512² (param-set→update→render path still works).
+- `renders_through_state_machine_to_pixels` — full state-machine→backend chain.
+
+**Visual verification (from `target/avatar-render-tests/aria_neutral.png`):**
+- All 103 drawables composite without alpha-bleed artefacts.
+- Aria's 14 masked drawables (eyes, mouth, etc.) are visibly clipped to their mask shapes — confirms the mask pre-pass loop is wiring correctly through the bind groups.
+- The blue tint on the skin **is the authored content of `texture_00.png`** (the file's "face base" layer is blue; peach skin tones occupy a smaller upper-region area). Live2D models composite many layers via blend modes to produce the final image — what we render is faithful to the per-drawable data Cubism Core gives us; differences vs persona-engine's reference renderer would be in (a) per-drawable blend modes Cubism's `csmGetDrawableBlendModes` returns vs what `csmGetDrawableConstantFlags` decodes (we use the latter), or (b) authored layer ordering. **Investigation in pass 3.**
+
+**Design choices worth flagging:**
+
+1. **One render pass per masked drawable, not a mask atlas.** The atlas approach is the perf-aware version (one mask pass + one main pass per frame) but requires per-drawable UV-rect uniforms + scissor logic. For correctness-first pass 2, render-pass-per-masked-drawable is simpler. Aria's 14 masked drawables × 2 passes = 28 passes; modern GPUs eat this in well under 1 ms.
+2. **Single shader, four pipelines.** Blend modes differ only in `BlendState`/`ColorWrites`; gluing a fragment-shader `if` branch on a uniform would produce the same result but cost a per-fragment branch in the hot path. Pipeline-per-mode is the standard wgpu pattern.
+3. **Dummy 1×1 white mask texture for non-mask uses.** wgpu's binding model doesn't let a texture be both a render target and a sampled texture in the same pass. The dummy lets every bind group use the same layout. Cost: a 4-byte texture allocated once at backend init.
+4. **`LoadOp::Clear` once + `LoadOp::Load` per drawable.** Each drawable's main pass loads the previous accumulated color target. wgpu inserts the right pipeline barriers between mask pre-pass (RENDER_ATTACHMENT) and main pass (TEXTURE_BINDING) automatically.
+5. **`inverted_mask` cached at load.** `ConstantFlags::IS_INVERTED_MASK` doesn't change post-init, so we read it once + bake into a `bool` field rather than re-decoding flags every frame.
 
 ---
 
