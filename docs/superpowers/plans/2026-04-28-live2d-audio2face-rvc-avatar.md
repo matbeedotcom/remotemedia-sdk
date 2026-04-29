@@ -101,7 +101,7 @@ Each milestone ends with a green `cargo test` (or, for milestones gated on exter
 | M1 | `audio.out.clock` tap on `AudioSender` | ✅ shipped — see [M1 actuals](#m1-actuals-2026-04-28) |
 | M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e + barge propagation | 🟢 shipped — full M2 set landed across 5 incremental passes (interface+synthetic+e2e, solver math, ONNX inference+bundle loaders, Audio2FaceLipSyncNode coordinator, manifest-level barge propagation via session-control bus). See [M2 actuals](#m2-actuals-2026-04-28-partial) and passes 2–5 below. |
 | M3 | `RVCNode` | `cargo test --features avatar-rvc` green; tier-2 tests pass on env-var-bearing host |
-| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | `cargo build --features avatar-render` green w/ `LIVE2D_CUBISM_CORE_DIR` set; full pipeline e2e green when both Cubism SDK + Live2D model env vars present |
+| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0 (cubism-core-sys FFI scaffold) shipped; M4.1–M4.7 outstanding. See [M4.0 actuals](#m40-actuals-2026-04-28). |
 
 Each milestone ends with one or more commits. Milestones M2 and M3 may be parallelized once M1 lands. M4 is sequential (depends on M2 for blendshape input).
 
@@ -1030,6 +1030,48 @@ The router's filter task swallowed `barge_in` envelopes — calling `cancel.noti
 4. **No node-side opt-in flag.** Nodes that don't override `process_control_message` return `Ok(false)` (the default) — harmless. The opt-in is implicit: override the method to handle barges.
 
 **M2 done. Cumulative shipped:** EmotionExtractorNode (M0) + audio.out.clock tap (M1) + LipSyncNode trait + BlendshapeFrame + SyntheticLipSyncNode (M2 partial) + Audio2Face solver math + ArkitSmoother (M2.3 + M2.4) + Audio2Face ONNX inference + bundle loaders (M2.2) + Audio2FaceLipSyncNode coordinator (M2.5) + manifest-level barge propagation (M2.6). Avatar audio→blendshape pipeline is now complete; M3 (RVCNode) and M4 (Live2DRenderNode) are the remaining tracks.
+
+---
+
+## M4.0 actuals (2026-04-28)
+
+`cubism-core-sys` — raw FFI bindings to **Live2D Cubism Core** (the proprietary `.moc3` parser + post-deformer mesh evaluator). Build-time linkage against a user-installed Cubism SDK for Native via `LIVE2D_CUBISM_CORE_DIR`. The crate ships only glue (`build.rs`, `wrapper.h`, `bindgen` invocation, `lib.rs`); **the SDK itself is never committed** — Live2D's licence forbids redistributing it.
+
+**Shipped:**
+
+- **`crates/cubism-core-sys/`** — new workspace member.
+  - [`Cargo.toml`](../../../crates/cubism-core-sys/Cargo.toml) — `links = "Live2DCubismCore"`, build script + bindgen build-dep.
+  - [`build.rs`](../../../crates/cubism-core-sys/build.rs) — reads `LIVE2D_CUBISM_CORE_DIR`, picks lib by host triple (macOS arm64/x86_64, Linux x86_64, Windows x86/x86_64 with VS toolset + CRT flavour selectable via `CUBISM_CORE_LIB_KIND`), runs bindgen with `-IPATH/Core/include`, allowlists every `csm*` symbol. Emits `cargo:rerun-if-env-changed` for both env vars + `wrapper.h` so the build invalidates correctly when the SDK is updated.
+  - [`wrapper.h`](../../../crates/cubism-core-sys/wrapper.h) — `#include <Live2DCubismCore.h>`.
+  - [`src/lib.rs`](../../../crates/cubism-core-sys/src/lib.rs) — `include!`s the bindgen output + a single ABI-presence smoke test that calls `csmGetVersion()`.
+  - [`CUBISM_SDK.md`](../../../crates/cubism-core-sys/CUBISM_SDK.md) — acquisition + per-platform layout + license-tier explanation (Small-Scale Operator vs PRO Operator).
+- **Workspace integration** — added to `Cargo.toml::[workspace] members`.
+- **`.gitignore`** — added `/sdk/` so a locally-extracted `CubismSdkForNative-*.zip` parked next to the repo never gets committed; also added `/models/live2d/` for the Aria model bundle landing in the next pass.
+
+**Validation:**
+
+- `cargo build -p cubism-core-sys` *without* the env var fails fast with the documented actionable message:
+  > `LIVE2D_CUBISM_CORE_DIR is not set.`<br>
+  > `Set it to the unpacked Cubism SDK for Native directory.`<br>
+  > `See crates/cubism-core-sys/CUBISM_SDK.md for the license-gated download + how to point at it.`
+- `LIVE2D_CUBISM_CORE_DIR=$PWD/sdk/CubismSdkForNative-5-r.5 cargo build -p cubism-core-sys` — clean (3.30 s cold).
+- `LIVE2D_CUBISM_CORE_DIR=… cargo test -p cubism-core-sys` — 1/1 green: `smoke::linked_sdk_reports_a_nonzero_version` passes (returned version ≥ `0x05_00_00_00`).
+- Generated bindings include the **post-deformer mesh accessors** that the spec §10 / phase-1 validation report flagged as load-bearing:
+  - `csmGetDrawableVertexPositions`, `csmGetDrawableVertexUvs`, `csmGetDrawableIndices`, `csmGetDrawableIndexCounts`
+  - `csmGetDrawableDynamicFlags`, `csmGetDrawableConstantFlags`, `csmGetDrawableBlendModes`
+  - `csmGetDrawableMaskCounts`, `csmGetDrawableMasks`, `csmGetDrawableDrawOrders`, `csmGetDrawableOpacities`
+  - `csmGetDrawableMultiplyColors`, `csmGetDrawableScreenColors`, `csmGetDrawableParentPartIndices`
+  - Full parameter API: `csmGetParameterCount/Ids/Types/Values/Min/Max/DefaultValues/Repeats/KeyCounts/KeyValues`
+  - Full part API: `csmGetPartCount/Ids/Opacities/ParentPartIndices`
+
+**Design choices worth flagging:**
+
+1. **Static linking, not dynamic.** The SDK ships both — we use `Core/lib/<platform>/libLive2DCubismCore.a` rather than `Core/dll/<platform>/libLive2DCubismCore.so` so the resulting Rust binary has no Cubism runtime dep at deployment. Trade: rebuild required when the SDK is updated.
+2. **Bindgen runs every clean build.** The header is small (~21 KB) so this is free (~0.5 s). We could check the bindings into `src/` and skip bindgen at build time, but that pins us to one SDK version + introduces drift; better to regenerate against whatever the developer has installed.
+3. **macOS fat lib pre-resolved by `cfg!(target_arch)`.** Apple Silicon → `arm64`, Rosetta/Intel → `x86_64`. Fits into the standard rustc cross-compile model.
+4. **Windows toolset/CRT defaults.** Default to `143/MD` (VS 2022 + dynamic CRT — what `cc-rs` picks by default). Override via `CUBISM_CORE_LIB_KIND=142/MT` etc. Documented in `CUBISM_SDK.md`.
+5. **Bindings allowlist `csm.*` only.** No spillover from system headers (stdint, etc.). Keeps the FFI surface small + stable across SDK revs.
+6. **No safety wrappers.** This is a pure `-sys` crate; the safe wrapper is `cubism-core` (M4.1 next).
 
 ---
 

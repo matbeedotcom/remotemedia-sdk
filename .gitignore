@@ -223,3 +223,11 @@ external/
 # above the gitignore boundary; everything under models/<bundle>/
 # (Audio2Face, RVC, Live2D, etc.) is per-developer.
 /models/audio2face/
+/models/live2d/
+
+# Live2D Cubism SDK for Native — proprietary, license-gated download
+# from https://www.live2d.com/sdk/download/native/. The avatar
+# `cubism-core-sys` build.rs reads `LIVE2D_CUBISM_CORE_DIR` to locate
+# the unpacked SDK at build time; per-developer install, never
+# committed.
+/sdk/

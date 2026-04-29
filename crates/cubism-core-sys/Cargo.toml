@@ -1,0 +1,24 @@
+[package]
+name = "cubism-core-sys"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+description = """
+Raw FFI bindings to Live2D Cubism Core (the proprietary C runtime that
+parses .moc3 files and computes post-deformer mesh data). Build-time
+linkage against a user-installed Cubism SDK via LIVE2D_CUBISM_CORE_DIR.
+See CUBISM_SDK.md for acquisition + license.
+"""
+links = "Live2DCubismCore"
+build = "build.rs"
+
+[lib]
+name = "cubism_core_sys"
+
+[dependencies]
+
+[build-dependencies]
+bindgen = "0.69"
