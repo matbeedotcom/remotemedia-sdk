@@ -21,7 +21,6 @@ name = "cubism_core"
 [dependencies]
 cubism-core-sys = { path = "../cubism-core-sys" }
 bitflags = { workspace = true }
-thiserror = { workspace = true }
-
-[dev-dependencies]
+serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }

@@ -48,6 +48,7 @@
 
 mod buffer;
 pub mod drawable;
+pub mod model_json;
 pub mod parameters;
 
 use cubism_core_sys as sys;
@@ -58,6 +59,11 @@ use buffer::AlignedBuffer;
 
 pub use drawable::{
     BlendMode, ConstantFlags, DrawableView, Drawables, DynamicFlags,
+};
+pub use model_json::{
+    ExpressionBlend, ExpressionJson, ExpressionParameter, ExpressionRef, FileReferences,
+    Group, HitArea, ModelJson, ModelJsonError, MotionCurve, MotionJson, MotionMeta,
+    MotionRef, ResolvedModel,
 };
 pub use parameters::{ParameterType, ParameterView, Parameters, PartView, Parts};
 

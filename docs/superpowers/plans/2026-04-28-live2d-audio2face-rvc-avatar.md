@@ -101,7 +101,7 @@ Each milestone ends with a green `cargo test` (or, for milestones gated on exter
 | M1 | `audio.out.clock` tap on `AudioSender` | ✅ shipped — see [M1 actuals](#m1-actuals-2026-04-28) |
 | M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e + barge propagation | 🟢 shipped — full M2 set landed across 5 incremental passes (interface+synthetic+e2e, solver math, ONNX inference+bundle loaders, Audio2FaceLipSyncNode coordinator, manifest-level barge propagation via session-control bus). See [M2 actuals](#m2-actuals-2026-04-28-partial) and passes 2–5 below. |
 | M3 | `RVCNode` | `cargo test --features avatar-rvc` green; tier-2 tests pass on env-var-bearing host |
-| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0 (cubism-core-sys FFI scaffold) + M4.1 (cubism-core safe wrapper) shipped + Aria installer landed; M4.2–M4.7 outstanding. See [M4.0 actuals](#m40-actuals-2026-04-28) + [M4.1 actuals](#m41-actuals-2026-04-28). |
+| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0 (cubism-core-sys FFI scaffold) + M4.1 (cubism-core safe wrapper) + M4.2 (.model3.json loader) shipped + Aria installer landed; M4.3–M4.7 outstanding. See [M4.0 actuals](#m40-actuals-2026-04-28) + [M4.1 actuals](#m41-actuals-2026-04-28) + [M4.2 actuals](#m42-actuals-2026-04-28). |
 
 Each milestone ends with one or more commits. Milestones M2 and M3 may be parallelized once M1 lands. M4 is sequential (depends on M2 for blendshape input).
 
@@ -1139,6 +1139,54 @@ for d in drawables.iter() {
 6. **`UnsupportedMocVersion` rejection.** SDK silently accepts mocs newer than it supports; the wrapper rejects via `csmGetLatestMocVersion()` so callers get an actionable error rather than a corrupt drawable downstream.
 7. **`set_value` takes `&self` on `ParameterView`** — the underlying SDK API is `*mut`, but the wrapper enforces exclusive access via the `&mut self` requirement on `Model::parameters_mut()` (which `ParameterView` borrows from). Aliasing safety is preserved at the type level.
 8. **No `physics3.json` evaluator yet.** Cubism Core itself has no physics API (it's a CubismFramework concept). Physics is M4.2 territory along with the rest of `.model3.json` resolution (textures, motions, expressions).
+
+---
+
+## M4.2 actuals (2026-04-28)
+
+`.model3.json` manifest loader — pure JSON layer that sits on top of `cubism-core` and resolves the bundle's web of file references (textures, expressions, motions, physics, display info, pose, user data) into absolute paths the renderer can hand to `Moc::load_from_file` etc. Mirrors the persona-engine C# `ModelSettingObj` shape (verified against [`external/.../Live2D/Framework/ModelSettingObj.cs`](../../../external/handcrafted-persona-engine/src/PersonaEngine/PersonaEngine.Lib/Live2D/Framework/ModelSettingObj.cs)).
+
+**Shipped:**
+
+- **[`crates/cubism-core/src/model_json.rs`](../../../crates/cubism-core/src/model_json.rs)** — full top-to-bottom parser:
+  - `ModelJson::{from_file, load}` — `from_file` returns the raw parsed struct (relative paths preserved); `load` returns a `ResolvedModel` with the manifest dir captured for path joining.
+  - `ResolvedModel` accessors: `moc_path`, `texture_paths`, `physics_path`, `pose_path`, `display_info_path`, `user_data_path`, `expression_path(name)`, `expressions()` (iterator over `(name, abs_path)`), `motions(group)` (iterator over `(abs_path, &MotionRef)`), `motion_group_names()`, `group_ids(name)`.
+  - `FileReferences` mirrors the on-disk PascalCase: `Moc`, `Textures`, `Physics`, `Pose`, `DisplayInfo`, `UserData`, `Expressions: Vec<ExpressionRef {name, file}>`, `Motions: HashMap<String, Vec<MotionRef {file, sound, fade_in_time, fade_out_time}>>`.
+  - `Group {target, name, ids}` covers `LipSync`/`EyeBlink` parameter groupings (used by the M4.3+ idle blink scheduler).
+  - `ExpressionJson` (with `ExpressionParameter {id, value, blend}` + typed `ExpressionBlend::{Add, Multiply, Overwrite, Unknown(String)}` decoder) — full parser for `.exp3.json`.
+  - `MotionJson` (with `MotionMeta {duration, fps, loop, are_beziers_restricted, curve_count, total_segment_count, total_point_count, …}` + `MotionCurve {target, id, fade_in_time, fade_out_time, segments: Vec<f32>}`) — manifest-level parser for `.motion3.json`. Curve **segments are surfaced raw** as `Vec<f32>`; per-tick evaluation is M4.4 territory.
+  - `ModelJsonError {Io, Parse}` carries the offending path so bundle-issue diagnostics are useful.
+- **[`crates/cubism-core/tests/aria_model_json.rs`](../../../crates/cubism-core/tests/aria_model_json.rs)** — 7 tier-2 tests against the actual Aria bundle.
+
+**Tests landed (8 unit + 7 tier-2):**
+
+| File | Tests | Notes |
+|---|---|---|
+| `model_json.rs` (unit) | 8 | parses Aria-shaped manifest, missing optional fields default cleanly, path resolver joins against manifest dir, motions iterator yields resolved paths (incl. empty + missing groups), group_ids lookup, parses ExpressionJson, expression-blend decode (Add/Multiply/Overwrite/Unknown), parses MotionJson skeleton |
+| `aria_model_json.rs` (tier-2) | 7 | full Aria manifest load + resolves all paths (all files exist on disk), every expression file parses cleanly (5 found: `neutral`/`smug`/`happy`/`frustrated`/`sad`), every motion file parses cleanly (10 across 4 groups: `Confident`/`Happy`/`Idle`/`Talking`), moc round-trips via manifest path matches the M4.1 direct load (MOC3 magic verified), groups include `LipSync`+`EyeBlink` keys, unknown expression returns None, resolver works with absolute manifest path |
+
+**Build + run matrix verified:**
+- `LIVE2D_CUBISM_CORE_DIR=… cargo build -p cubism-core` — clean.
+- `LIVE2D_CUBISM_CORE_DIR=… cargo test -p cubism-core --lib model_json` — 8/8 unit tests green.
+- `LIVE2D_CUBISM_CORE_DIR=… LIVE2D_TEST_MODEL_PATH=…/aria.model3.json cargo test -p cubism-core --test aria_model_json -- --nocapture` — 7/7 tier-2 tests green; logs show 5 expressions + 10 motions across 4 groups.
+
+**Aria-validated invariants (downstream M4.3 / M4.4 will lean on these):**
+- 5 expressions: `neutral`, `smug`, `happy`, `frustrated`, `sad` (subset of the persona-engine emoji map; `cool`/`embarrassed`/`shocked`/etc. NOT present — confirms the renderer needs a fallback when an emoji has no rigged expression).
+- 4 motion groups: `Idle` (3 clips), `Talking` (2), `Happy` (2), `Confident` (3) — total 10 `.motion3.json` files. `Excited`/`Sad`/`Surprised`/etc. from the canonical persona-engine table are **NOT** rigged in Aria — the renderer's emotion mapper needs to handle this gracefully (fall back to `Idle` or `Talking`).
+- `LipSync` + `EyeBlink` group keys present but with empty `Ids` arrays — Aria expects the renderer to populate driving parameters from the lip-sync chain at runtime.
+- All motions are 60 fps, durations ranging from a few seconds to ~10 s, all loop=true.
+
+**Design choices worth flagging:**
+
+1. **Manifest dir captured at load time** (`ResolvedModel::manifest_dir`) so subsequent path lookups can't accidentally drop to relative. Tested via `resolver_works_with_absolute_manifest_path`.
+2. **Parse errors carry paths** (`ModelJsonError::Parse { path, source }`). Bundle-debugging is otherwise miserable — Cubism Editor occasionally emits subtly-malformed JSON when the user has a corrupt project, and "json parse failed" with no path is a non-starter.
+3. **`MotionJson::Curves` segments stay raw `Vec<f32>`.** Cubism encodes them as `[time, value, segment_kind, …per-kind-specific bytes…]`; the per-segment decoder belongs in M4.4 next to the renderer's per-tick sampler. Surfacing the raw flat buffer keeps M4.2 small + makes the renderer's allocation pattern (decode once into a per-curve struct) explicit.
+4. **`ExpressionBlend::Unknown(String)` instead of panic.** Cubism may extend the v3 schema with new blend kinds; surfacing unknown values keeps forward compat.
+5. **Loader does NOT load the moc.** `ResolvedModel::moc_path()` returns the path; the caller pairs it with `Moc::load_from_file`. Splits I/O concerns: the loader is fast (parses only JSON), and the caller chooses when to pay the moc-parse cost.
+6. **No physics evaluator.** Same reason as M4.1: Cubism Core has no physics API (it's CubismFramework). `physics_path()` returns the path so a follow-up evaluator can ingest it.
+7. **Cumulative tests across `cubism-core` after M4.2: 20 unit + 13 tier-2 = 33 tests, all green.**
+
+**Unblocks:** M4.3 (Live2DRenderState — input arbitration + idle blink scheduler can read `EyeBlink` group + emotion→expression+motion lookups via `ResolvedModel`), M4.4 (wgpu backend — knows which textures to upload via `texture_paths()`).
 
 ---
 
