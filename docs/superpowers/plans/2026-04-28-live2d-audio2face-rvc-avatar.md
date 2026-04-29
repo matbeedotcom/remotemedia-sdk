@@ -101,7 +101,7 @@ Each milestone ends with a green `cargo test` (or, for milestones gated on exter
 | M1 | `audio.out.clock` tap on `AudioSender` | ✅ shipped — see [M1 actuals](#m1-actuals-2026-04-28) |
 | M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e + barge propagation | 🟢 shipped — full M2 set landed across 5 incremental passes (interface+synthetic+e2e, solver math, ONNX inference+bundle loaders, Audio2FaceLipSyncNode coordinator, manifest-level barge propagation via session-control bus). See [M2 actuals](#m2-actuals-2026-04-28-partial) and passes 2–5 below. |
 | M3 | `RVCNode` | `cargo test --features avatar-rvc` green; tier-2 tests pass on env-var-bearing host |
-| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0 (cubism-core-sys FFI scaffold) + M4.1 (cubism-core safe wrapper) + M4.2 (.model3.json loader) + M4.3 (input arbitration state machine + MockBackend) shipped; Aria installer landed; M4.4–M4.7 outstanding. See [M4.0 actuals](#m40-actuals-2026-04-28) + [M4.1 actuals](#m41-actuals-2026-04-28) + [M4.2 actuals](#m42-actuals-2026-04-28) + [M4.3 actuals](#m43-actuals-2026-04-28). |
+| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0–M4.3 shipped + M4.4 pass 1 (wgpu device + ordered draw + Normal blend + readback; first visible Aria render) shipped; Aria installer landed; M4.4 pass 2 (mask pre-pass + dedicated Additive/Multiplicative pipelines) + M4.5–M4.7 outstanding. See [M4.0 actuals](#m40-actuals-2026-04-28) + [M4.1 actuals](#m41-actuals-2026-04-28) + [M4.2 actuals](#m42-actuals-2026-04-28) + [M4.3 actuals](#m43-actuals-2026-04-28) + [M4.4 actuals (pass 1)](#m44-actuals-2026-04-28-pass-1). |
 
 Each milestone ends with one or more commits. Milestones M2 and M3 may be parallelized once M1 lands. M4 is sequential (depends on M2 for blendshape input).
 
@@ -1257,6 +1257,56 @@ for d in drawables.iter() {
 **Cumulative avatar code after M4.3: 91 + 16 = 107 unit tests, 16 + 8 + 8 + 7 + 6 = 45 integration tests, all green** (M2 lip-sync + M2.6 + M4.1 cubism-core + M4.2 model_json + M4.3 live2d_render).
 
 **Unblocks:** M4.4 (wgpu backend implements `Live2DBackend` against the same `&Pose` shape `MockBackend` consumes; can drop into M4.3's `render_one()` flow with no state-machine changes), M4.5 (streaming node ticks the state machine + dispatches to whichever backend the manifest asks for).
+
+---
+
+## M4.4 actuals (2026-04-28, pass 1 — device init + ordered draw + Normal blend + readback)
+
+**First visible Aria render.** wgpu headless backend that takes the M4.3 `Pose`, applies VBridger params to `cubism_core::Model`, runs `csmUpdateModel`, sorts drawables by render order, and rasterizes them into a 1024×1024 RGBA8 texture with premultiplied-alpha Normal blending. Reads back to RGB24 + saves a PNG preview to `target/avatar-render-tests/aria_neutral.png` for visual verification.
+
+**Shipped:**
+
+- **[`crates/core/src/nodes/live2d_render/wgpu_backend/mod.rs`](../../../crates/core/src/nodes/live2d_render/wgpu_backend/mod.rs)** — `WgpuBackend` (~600 LOC).
+  - Headless wgpu device init (no window surface; `Backends::PRIMARY` picks Metal/DX12/Vulkan; high-performance adapter).
+  - `WgpuBackend::load_model(path)` reads `.model3.json` via M4.2's `ModelJson::load`, parses the `.moc3` via M4.1's `Moc::load_from_file`, allocates one `wgpu::Texture` per `.model3.json` texture entry (sRGB), allocates per-drawable `Vertex`/`Index`/`Uniform` buffers from the post-deformer mesh data the safe wrapper exposes.
+  - `WgpuBackend::render_frame(&Pose)` writes the pose's `params` HashMap into the model via `parameters_mut().find(id).set_value(v)`, calls `model.update()`, re-uploads VBs whose `DynamicFlags::VERTEX_POSITIONS_DID_CHANGE` bit is set, sorts drawables by `render_order`, runs one `RenderPass` with `BlendState::PREMULTIPLIED_ALPHA_BLENDING`, copies the offscreen texture to a row-aligned readback buffer, awaits map, strips alpha into a tightly-packed `Vec<u8>` of RGB24, returns an `RgbFrame`.
+- **[`shaders/drawable.wgsl`](../../../crates/core/src/nodes/live2d_render/wgpu_backend/shaders/drawable.wgsl)** — Cubism Normal-blend shader.
+  - Vertex: `clip_pos = projection * vec4(position, 0, 1)`; UV Y-flipped (Cubism authors UVs bottom-left, wgpu samples top-left).
+  - Fragment: per-drawable `multiply.rgb` modulates texel; `screen.rgb` adds tint scaled by texel alpha; final RGB premultiplied by alpha for the standard premultiplied-alpha blend pipeline.
+- **Workspace deps + features**:
+  - Workspace adds `wgpu = "22.1"` (default-features off; `dx12 / metal / wgsl`), `image = "0.25"` (default off; `png`), `pollster = "0.4"` (one blocking await on `device.request_adapter` / `request_device`).
+  - `bytemuck` workspace dep upgraded to enable `derive` feature for the `Pod`/`Zeroable` macros on `Vertex` + `DrawableUniforms`.
+  - `crates/core/Cargo.toml` adds `avatar-render-wgpu = ["avatar-render", "dep:wgpu", "dep:image", "dep:pollster", "dep:cubism-core"]`.
+
+**Tests landed (3 tier-2):**
+
+- `tests/live2d_render_wgpu_test.rs` — gated on `LIVE2D_TEST_MODEL_PATH` (Aria) + GPU adapter availability (skips cleanly if either is absent):
+  - `renders_aria_to_nontrivial_pixels` — neutral pose at 1024×1024 produces 58.68% non-zero pixel coverage; saves the result to `target/avatar-render-tests/aria_neutral.png`.
+  - `renders_aria_with_open_jaw` — driving `ParamJawOpen=1.0`/`ParamMouthOpenY=1.0` produces a frame that differs from neutral by 9.67% of pixels (76,007 differing bytes at 512×512). Pins the param-set→`csmUpdateModel`→VB-reupload→render path.
+  - `renders_through_state_machine_to_pixels` — full M4.3+M4.4 wiring: state machine → blendshape → mapper → backend → pixels. Confirms the `Live2DBackend` seam works end-to-end.
+
+**Build + run matrix verified:**
+- `LIVE2D_CUBISM_CORE_DIR=… cargo build -p remotemedia-core --features avatar-render-wgpu` — clean.
+- `LIVE2D_CUBISM_CORE_DIR=… LIVE2D_TEST_MODEL_PATH=…/aria.model3.json cargo test -p remotemedia-core --features avatar-render-wgpu --test live2d_render_wgpu_test -- --nocapture` — 3/3 green.
+- Render preview confirmed visually as Aria (eyes, lips, hair, ears, mouth all present + correctly placed).
+
+**Known visual issues (deferred to pass 2):**
+
+1. **Masked drawables render unclipped.** Aria's 14 masked drawables (eyes, mouth, etc.) draw their full bounding mesh instead of being clipped to mask geometry. M4.4 pass 2 implements the Cubism mask pre-pass: render mask drawables into an alpha-only offscreen texture, then sample it as a clip mask in the per-drawable fragment shader.
+2. **Additive + Multiplicative blend modes share the Normal pipeline.** Aria has a small number of drawables with `BLEND_ADDITIVE` / `BLEND_MULTIPLICATIVE` in their `ConstantFlags`; they currently render with standard alpha blend, producing slight visual artifacts. Pass 2 adds dedicated `BlendState::REPLACE` (Additive: `src + dst`) and `BlendState` for Multiplicative (`src * dst`) pipelines and dispatches per drawable.
+3. **Possible blue cast** on Aria's skin texture — under investigation. Could be premultiplied-alpha math interacting with sRGB framebuffer encoding, or a known authored-colour interaction with mask passes (whose absence in pass 1 means base-layer drawables show through where they shouldn't). Will resolve once the mask pre-pass lands.
+
+**Design choices worth flagging:**
+
+1. **Single shader, multiple pipelines.** The blend modes differ only in `BlendState`, not in shader logic. One WGSL file + three pipelines (created at backend init, dispatched per drawable in pass 2) is cheaper than three shaders.
+2. **Per-drawable uniform buffer over push constants.** wgpu push constants require a feature; uniform buffers work on the default feature set. ~96 bytes × ~100 drawables × 30 fps = trivial bandwidth (~0.3 MiB/s).
+3. **`Vec<u8>` readback over GPU-side YUV420p conversion.** Strips alpha CPU-side. The video track encoder downstream can do RGB→YUV in a hot path that doesn't depend on this backend (M4.5/M4.6 wiring). Optimization point: do the RGB→YUV in a compute shader if profiling shows the readback is the bottleneck.
+4. **Lifetime-erased `Model<'static>`.** `Model<'moc>` borrows the `Moc`; storing both in one struct requires a lifetime trick. We `transmute` to `'static` and rely on struct field drop order (model first, moc second) for soundness. Documented inline. Alternative would be `self_cell` or `ouroboros`, but those are heavier deps for one struct.
+5. **Render preview saved to `target/`.** The PNG is a side-output of the test, not an assertion — gives a developer a way to eyeball the render after a session ends. The structural assertions (non-zero pixels, jaw differs) catch regressions; the PNG catches "looks weird" regressions a human can spot but a test can't.
+
+**Cumulative avatar code after M4.4 pass 1: 107 unit + 48 integration tests, all green** (M4.4 adds 3 to the M4.1 wgpu test side; M4.4 has no unit-test surface yet — those land in pass 2 once we have mask logic to test in isolation).
+
+**Unblocks:** M4.4 pass 2 (mask pre-pass) — resolves visual fidelity. M4.5 (Live2DRenderNode streaming wire-up) — the backend trait is already proven; M4.5 is mostly glue.
 
 ---
 

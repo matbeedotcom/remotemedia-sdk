@@ -47,6 +47,13 @@ ndarray = { workspace = true }
 # the `avatar-audio2face` feature.
 zip = { workspace = true, optional = true }
 
+# Avatar renderer (M4.4) — wgpu headless render-to-texture +
+# texture decode + sync-wait helper + Cubism Core safe wrapper.
+wgpu = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
+cubism-core = { path = "../cubism-core", optional = true }
+
 base64 = "0.22"
 
 # Speaker diarization (uses ONNX models) - using git for ort 2.x compatibility
@@ -184,11 +191,24 @@ avatar-lipsync = ["avatar-emotion"]
 avatar-audio2face = ["avatar-lipsync", "ort", "dep:zip"]
 # Avatar renderer state machine (input arbitration, emotion timing,
 # idle blink, barge handling). Pure Rust, no GPU. The wgpu+CubismCore
-# backend lands behind `avatar-render-wgpu` (M4.4 follow-up).
+# backend lands behind `avatar-render-wgpu` (M4.4).
 avatar-render = ["avatar-lipsync"]
 # Re-export `MockBackend` from `live2d_render::test_support` for use
 # by integration tests (which can't see `cfg(test)` items).
 avatar-render-test-support = ["avatar-render"]
+# Real wgpu+CubismCore renderer backend. Pulls in wgpu, image (for
+# texture decode), pollster (for blocking on async wgpu calls in
+# the synchronous render path), and cubism-core (for the .moc3
+# parser + post-deformer drawable accessors). M4.4 implements the
+# basic Normal-blend ordered-draw path; mask passes + Additive +
+# Multiplicative blend modes land in M4.4 follow-up commits.
+avatar-render-wgpu = [
+    "avatar-render",
+    "dep:wgpu",
+    "dep:image",
+    "dep:pollster",
+    "dep:cubism-core",
+]
 speaker-diarization = ["ort", "dep:pyannote-rs"]
 grpc-client = ["tonic", "prost", "prost-types"]
 # Docker support integrated into multiprocess system

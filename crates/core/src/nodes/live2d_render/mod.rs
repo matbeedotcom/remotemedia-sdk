@@ -20,7 +20,7 @@
 pub mod backend_trait;
 pub mod state;
 
-pub use backend_trait::{Live2DBackend, RgbFrame};
+pub use backend_trait::{BackendError, Live2DBackend, RgbFrame};
 pub use state::{
     default_emotion_mapping, ArkitToVBridger, EmotionEntry, Live2DRenderState, Pose,
     StateConfig,
@@ -30,3 +30,8 @@ pub use state::{
 pub mod test_support;
 #[cfg(any(test, feature = "avatar-render-test-support"))]
 pub use test_support::MockBackend;
+
+#[cfg(feature = "avatar-render-wgpu")]
+pub mod wgpu_backend;
+#[cfg(feature = "avatar-render-wgpu")]
+pub use wgpu_backend::WgpuBackend;
