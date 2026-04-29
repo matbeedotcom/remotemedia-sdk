@@ -1385,6 +1385,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cubism-core"
+version = "0.4.0"
+dependencies = [
+ "bitflags 2.10.0",
+ "cubism-core-sys",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "cubism-core-sys"
 version = "0.4.0"
 dependencies = [

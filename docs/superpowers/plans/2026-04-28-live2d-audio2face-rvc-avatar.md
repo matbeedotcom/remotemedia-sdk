@@ -101,7 +101,7 @@ Each milestone ends with a green `cargo test` (or, for milestones gated on exter
 | M1 | `audio.out.clock` tap on `AudioSender` | ✅ shipped — see [M1 actuals](#m1-actuals-2026-04-28) |
 | M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e + barge propagation | 🟢 shipped — full M2 set landed across 5 incremental passes (interface+synthetic+e2e, solver math, ONNX inference+bundle loaders, Audio2FaceLipSyncNode coordinator, manifest-level barge propagation via session-control bus). See [M2 actuals](#m2-actuals-2026-04-28-partial) and passes 2–5 below. |
 | M3 | `RVCNode` | `cargo test --features avatar-rvc` green; tier-2 tests pass on env-var-bearing host |
-| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0 (cubism-core-sys FFI scaffold) shipped; M4.1–M4.7 outstanding. See [M4.0 actuals](#m40-actuals-2026-04-28). |
+| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0 (cubism-core-sys FFI scaffold) + M4.1 (cubism-core safe wrapper) shipped + Aria installer landed; M4.2–M4.7 outstanding. See [M4.0 actuals](#m40-actuals-2026-04-28) + [M4.1 actuals](#m41-actuals-2026-04-28). |
 
 Each milestone ends with one or more commits. Milestones M2 and M3 may be parallelized once M1 lands. M4 is sequential (depends on M2 for blendshape input).
 
@@ -1072,6 +1072,73 @@ The router's filter task swallowed `barge_in` envelopes — calling `cancel.noti
 4. **Windows toolset/CRT defaults.** Default to `143/MD` (VS 2022 + dynamic CRT — what `cc-rs` picks by default). Override via `CUBISM_CORE_LIB_KIND=142/MT` etc. Documented in `CUBISM_SDK.md`.
 5. **Bindings allowlist `csm.*` only.** No spillover from system headers (stdint, etc.). Keeps the FFI surface small + stable across SDK revs.
 6. **No safety wrappers.** This is a pure `-sys` crate; the safe wrapper is `cubism-core` (M4.1 next).
+
+---
+
+## M4.1 actuals (2026-04-28)
+
+`cubism-core` — safe Rust wrapper around `cubism-core-sys`. Loads `.moc3` rigged-mesh files, evaluates the parameter-driven deformer chain via `csmUpdateModel`, and exposes post-deformer drawable mesh data (vertex positions, UVs, indices, opacity, render order, blend modes, masks, multiply/screen colours) as borrow-checked Rust slices. The lifetime parameter on `Model<'moc>` ties model data to the originating `Moc`; the SDK's `&self`/`&mut self` distinction is enforced naturally by the Rust borrow checker (calling `update()` invalidates outstanding drawable views).
+
+**Shipped:**
+
+- **`crates/cubism-core/`** — new workspace member.
+  - [`src/lib.rs`](../../../crates/cubism-core/src/lib.rs) — `Moc`, `Model<'moc>`, `Vec2`/`Vec4` (`#[repr(C)]`-matched to `csmVector2`/`csmVector4` for zero-copy slice borrows), `CanvasInfo`, `Error` enum (`InconsistentMoc`, `UnsupportedMocVersion { moc_version, latest }`, `ReviveFailed`, `ModelInitFailed`).
+  - [`src/buffer.rs`](../../../crates/cubism-core/src/buffer.rs) — `AlignedBuffer` (over-allocates by `align - 1`, finds the first aligned offset). Cubism requires 64-byte alignment for moc, 16 for model; `Vec<u8>` only guarantees 1.
+  - [`src/drawable.rs`](../../../crates/cubism-core/src/drawable.rs) — `Drawables<'a>`, `DrawablesIter`, `DrawableView<'a>` with full accessors (`id`, `vertex_positions`, `vertex_uvs`, `indices`, `opacity`, `render_order`, `draw_order`, `dynamic_flags`, `constant_flags`, `blend_mode`, `texture_index`, `masks`, `multiply_color`, `screen_color`, `parent_part_index`); `ConstantFlags` + `DynamicFlags` bitflags; `BlendMode` enum (`Normal`/`Additive`/`Multiplicative`).
+  - [`src/parameters.rs`](../../../crates/cubism-core/src/parameters.rs) — `Parameters<'a>` (read + mutate), `ParameterView<'a>` (`id`, `min`, `max`, `default`, `value`, `set_value`, `ty: ParameterType`); `Parts<'a>` + `PartView<'a>` for opacity overrides (used by M4.2 `.exp3.json` expression files).
+- **`crates/cubism-core/tests/aria_smoke.rs`** — 6 tier-2 integration tests against the real Aria model, gated on `LIVE2D_TEST_MODEL_PATH`. Resolves the `.moc3` from the model3.json's `FileReferences.Moc` field via minimal serde_json (full model3.json loader is M4.2).
+- **Workspace integration** — added `crates/cubism-core` to `Cargo.toml::[workspace] members`.
+
+**Public API surface (lifetime-correct by construction):**
+
+```rust
+let moc = Moc::load_from_file("aria.moc3")?;     // owns aligned buffer
+let mut model = Model::from_moc(&moc)?;          // borrows moc
+{
+    let params = model.parameters_mut();
+    params.find("ParamJawOpen").unwrap().set_value(0.5);
+}                                                // params borrow drops
+model.update();                                  // requires &mut self
+let drawables = model.drawables();               // borrows &model
+for d in drawables.iter() {
+    let positions: &[Vec2] = d.vertex_positions(); // zero-copy slice
+    let indices: &[u16] = d.indices();
+    // …
+}
+// Calling model.update() while `drawables` is alive → compile error.
+```
+
+**Tests landed (12 unit + 6 tier-2):**
+
+| File | Tests | Notes |
+|---|---|---|
+| `buffer.rs` (unit) | 5 | aligned-to-64, aligned-to-16, zero-length, rejects non-power-of-two, zero-init |
+| `lib.rs` (unit) | 3 | rejects all-zero bytes, rejects truncated magic, Vec layout matches |
+| `drawable.rs` (unit) | 3 | BlendMode decode priority, DynamicFlags bit values match SDK constants, ConstantFlags bit values match |
+| `parameters.rs` (unit) | 1 | ParameterType decode |
+| `tests/aria_smoke.rs` (tier-2) | 6 | moc version sane (Aria reports `csmMocVersion_50` = 5), canvas + 103 drawables exposed (drawable[0]=`neck`, 54 verts, 234 indices), 14 masked drawables found, all 3 VBridger lip-sync axes (`ParamMouthOpenY`/`MouthForm`/`JawOpen`) findable in 86-parameter rig, parameter set→update→read round-trip is exact, BlendMode decode agrees with constant_flags across all drawables |
+
+**Build + run matrix verified:**
+- `LIVE2D_CUBISM_CORE_DIR=… cargo build -p cubism-core` — clean.
+- `LIVE2D_CUBISM_CORE_DIR=… cargo test -p cubism-core --lib` — 12/12 unit tests green.
+- `LIVE2D_CUBISM_CORE_DIR=… cargo test -p cubism-core` (no model env var) — tier-2 skips cleanly (6/6 reported as ok via early-return).
+- `LIVE2D_CUBISM_CORE_DIR=… LIVE2D_TEST_MODEL_PATH=…/aria.model3.json cargo test -p cubism-core --test aria_smoke -- --nocapture` — 6/6 tier-2 green; SDK reports `Live2D Cubism SDK Core Version 6.0.1` once per test (linked SDK is r5.5 binary, internal version 6.0.1).
+
+**Aria-validated invariants (loaded numbers, for downstream M4.4 work):**
+- Canvas: 2873 × 3287 model-space pixels, origin (1436.5, 1643.5), pixels-per-unit 2873.
+- 103 drawables, 14 of which clip against masks (M4.4 mask pre-pass scope).
+- 86 parameters; the lip-sync axes the Audio2Face → ARKit → VBridger chain ultimately drives are all present.
+
+**Design choices worth flagging:**
+
+1. **`#[repr(C)]` `Vec2`/`Vec4` matched to `csmVector2`/`csmVector4`** — compile-time-asserted via `_ASSERT_*_LAYOUT` plus runtime size/align checks. Lets `vertex_positions()` hand out `&[Vec2]` borrowing directly from the model buffer with no copy.
+2. **`Moc: Send + Sync`, `Model: Send + !Sync`** — the moc is read-only after revive; the model is mutated by `csmUpdateModel`. Per Cubism docs, multiple models can be derived from one moc concurrently, so `Sync` on `Moc` is genuinely safe.
+3. **Lifetimes do the safety work, not RefCell.** `Drawables<'a>`/`Parameters<'a>` borrow `&Model`; `update(&mut Model)` requires no outstanding views. The borrow checker enforces Cubism's "don't read drawable data while updating" invariant at compile time.
+4. **SDK quirk surfaced: `csmGetMocVersion` takes `*const c_void`, not `*const csmMoc`.** Wrapper casts internally; documented in the `version()` impl.
+5. **SDK quirk surfaced: `csmGetRenderOrders` is the only drawable accessor without the `csmGetDrawable*` prefix.** Documented at the call site.
+6. **`UnsupportedMocVersion` rejection.** SDK silently accepts mocs newer than it supports; the wrapper rejects via `csmGetLatestMocVersion()` so callers get an actionable error rather than a corrupt drawable downstream.
+7. **`set_value` takes `&self` on `ParameterView`** — the underlying SDK API is `*mut`, but the wrapper enforces exclusive access via the `&mut self` requirement on `Model::parameters_mut()` (which `ParameterView` borrows from). Aliasing safety is preserved at the type level.
+8. **No `physics3.json` evaluator yet.** Cubism Core itself has no physics API (it's a CubismFramework concept). Physics is M4.2 territory along with the rest of `.model3.json` resolution (textures, motions, expressions).
 
 ---
 

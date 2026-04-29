@@ -1,0 +1,27 @@
+[package]
+name = "cubism-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+description = """
+Safe Rust wrapper around the Live2D Cubism Core C runtime. Loads
+.moc3 files, evaluates parameter-driven deformer chains, and exposes
+post-deformer drawable mesh data (vertex positions, UVs, indices,
+opacity, render order, blend modes, masks). Used by remotemedia-sdk's
+Live2DRenderNode (avatar M4) — see crates/cubism-core-sys/CUBISM_SDK.md
+for SDK acquisition.
+"""
+
+[lib]
+name = "cubism_core"
+
+[dependencies]
+cubism-core-sys = { path = "../cubism-core-sys" }
+bitflags = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

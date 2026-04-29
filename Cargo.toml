@@ -3,6 +3,7 @@ members = [
     "crates/core",  # Core abstractions
     "crates/core-derive",  # Proc-macros for NodeConfig
     "crates/cubism-core-sys",  # Live2D Cubism Core FFI bindings (avatar M4)
+    "crates/cubism-core",  # Live2D Cubism Core safe wrapper (avatar M4)
     "crates/python-nodes",  # Python node dynamic registration
     "crates/candle-nodes",  # Candle ML inference nodes
     # "crates/hearing-nodes",  # Hearing aid DSP nodes — disabled: depends on sibling repo Realtime_Competitive_Game_Audio not present on this machine
