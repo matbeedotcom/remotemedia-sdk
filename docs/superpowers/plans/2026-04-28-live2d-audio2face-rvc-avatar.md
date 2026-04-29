@@ -101,7 +101,7 @@ Each milestone ends with a green `cargo test` (or, for milestones gated on exter
 | M1 | `audio.out.clock` tap on `AudioSender` | ✅ shipped — see [M1 actuals](#m1-actuals-2026-04-28) |
 | M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e + barge propagation | 🟢 shipped — full M2 set landed across 5 incremental passes (interface+synthetic+e2e, solver math, ONNX inference+bundle loaders, Audio2FaceLipSyncNode coordinator, manifest-level barge propagation via session-control bus). See [M2 actuals](#m2-actuals-2026-04-28-partial) and passes 2–5 below. |
 | M3 | `RVCNode` | `cargo test --features avatar-rvc` green; tier-2 tests pass on env-var-bearing host |
-| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0–M4.5 + M4.6 (CI-runnable e2e + canonical §4.1 manifest skeleton, `#[ignore]` for full Python+kokoro env) shipped; M4.6 follow-up (Audio2Face + Live2DRender factory registration to enable §4.1 e2e) + M4.7 (spec doc updates) outstanding. |
+| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0–M4.6 (incl. follow-up factory registrations + factory-wired SessionRouter pipeline test passing 33 frames against real Aria+Audio2Face); only M4.7 (spec doc updates per validation report) outstanding. The canonical §4.1 e2e is implemented + `#[ignore]`d for the kokoro Python env requirement. |
 
 Each milestone ends with one or more commits. Milestones M2 and M3 may be parallelized once M1 lands. M4 is sequential (depends on M2 for blendshape input).
 
@@ -1499,6 +1499,54 @@ The error path is intentionally explicit: when run via `cargo test … -- --igno
 - Register `Live2DRenderNodeFactory` similarly. Constructor needs to choose backend (likely always `WgpuBackend` in production; expose a `backend: "wgpu" | "mock"` param for testability).
 - Optional: add a `WebRTC video sink` (parallel to `M1`'s `AudioSender`) so the renderer's `RuntimeData::Video` actually reaches a WebRTC video track in transport tests.
 - Flip `#[ignore]` off the canonical e2e and run it once on a dev machine to confirm the wiring.
+
+---
+
+## M4.6 follow-up actuals (2026-04-29)
+
+Both missing factory registrations + a factory-wired SessionRouter e2e test that drives synthetic 16 kHz audio through `Audio2FaceLipSyncNode → Live2DRenderNode (WgpuBackend rendering Aria)` and confirms 33 Video frames flow out at 30 fps.
+
+**Shipped:**
+
+- **`Audio2FaceLipSyncNodeFactory`** — [`streaming_registry.rs`](../../../crates/core/src/nodes/streaming_registry.rs).
+  - Manifest params: `bundle_path` (required), `identity` (`Claire`/`James`/`Mark`, default `Claire`), `solver` (`pgd`/`bvls`, default `pgd`), `use_gpu` (default `false`), `smoothing_alpha` (default `0.0`).
+  - `create()` calls `Audio2FaceLipSyncNode::load(config)` synchronously — heavy (~3.6s on Apple Silicon CPU for the `.moc3` parse + ort session + per-drawable solver matrix setup).
+  - Schema declared with `category="avatar"`, accepts `[Audio]`, produces `[Json]`, `latency_class=Slow`.
+- **`Live2DRenderNodeFactory`** — [`streaming_registry.rs`](../../../crates/core/src/nodes/streaming_registry.rs).
+  - Manifest params: `model_path` (required), `framerate` (default 30), `video_stream_id` (default `"avatar"`), `width`/`height` (default 1024×1024).
+  - `create()` builds a `WgpuBackend::new(width, height)` + `load_model(model_path)` synchronously, then constructs `Live2DRenderNode::new_with_backend`. Heavy (~few hundred ms — wgpu device init + Aria texture upload + 103 drawable VB/IB allocations).
+  - Schema declared with `category="avatar"`, accepts `[Json]`, produces `[Video]`, `latency_class=Slow`.
+- **Both factories registered in [`core_provider.rs`](../../../crates/core/src/nodes/core_provider.rs)** under their respective feature flags (`avatar-audio2face` + `avatar-render-wgpu`).
+- **[`crates/core/tests/avatar_factory_pipeline_test.rs`](../../../crates/core/tests/avatar_factory_pipeline_test.rs)** — factory-wired tier-2 test (3 tests) that goes through `SessionRouter` against real Aria + Audio2Face:
+
+| Test | Pin |
+|---|---|
+| `factories_instantiate_through_session_router` | Heavy factory.create() of both nodes succeeds in ~6s — proves bundle parse + ONNX session + wgpu init + Aria load all compose under SessionRouter |
+| `audio2face_alone_through_router_emits_blendshapes` | 1 sec of synthetic audio → ≥25 BlendshapeFrame Json envelopes flow out via the SessionRouter sink path |
+| `full_factory_pipeline_emits_video_for_audio_input` | Full `Audio2FaceLipSyncNode → Live2DRenderNode` chain through `SessionRouter`. **33 Video frames** in ~10s collection window, mid-stream 58.66% pixel coverage at 256² — proves the audio → blendshape → render → Video chain works end-to-end via real factories |
+
+- **Canonical §4.1 e2e cleaned up** — [`avatar_full_pipeline_e2e.rs`](../../../crates/core/tests/avatar_full_pipeline_e2e.rs) drops the "missing factory" branch + the "expected until M4.6 follow-up" early-return; the `#[ignore]` body now expects `SessionRouter::new` to succeed (factories are present), with the only remaining gate being the kokoro Python venv runtime cost.
+
+**Build + run matrix verified:**
+- `cargo build -p remotemedia-core --features avatar-render-wgpu,avatar-audio2face` — clean.
+- `cargo test -p remotemedia-core --features avatar-render-wgpu,avatar-audio2face,avatar-render-test-support --test avatar_factory_pipeline_test -- --test-threads=1` — 3/3 green in 25.22s. Serial because two parallel wgpu device-inits on the same Metal/DX12 device contend.
+- All M4 tests sweep (state/node/wgpu/pipeline/factory/full): 8 + 9 + 4 + 3 + 3 + 1 = 28 passing across 6 files.
+
+**Critical gotcha discovered + fixed: tokio multi-threaded runtime.**
+
+The full-pipeline test initially produced **0 frames**. Root cause: `#[tokio::test]` defaults to a *single-threaded* runtime; the Audio2Face ONNX inference is synchronous (`ort::Session::run` is plain CPU code, no `.await`), so it monopolized the only worker thread for ~3.6s during cold inference. The renderer's `tokio::time::interval` ticker — spawned in a separate task — couldn't run until inference finished, by which time the test had nearly ended. Fix: annotate the test with `#[tokio::test(flavor = "multi_thread", worker_threads = 4)]`. With 4 workers, the inference holds one + the ticker runs on another. **Documented in the test's docstring + comment** so future contributors don't trip on the same gotcha.
+
+This also implies a **production guidance**: any deployment running the avatar pipeline through the SessionRouter must use a multi-threaded tokio runtime. The `#[tokio::main]` macro defaults to multi-threaded, so this should be the case for the gRPC + WebRTC servers, but worth flagging.
+
+**Design choices worth flagging:**
+
+1. **Factories take heavy work into `create()`.** Both factories load real artifacts (~3.6s for Audio2Face + ~few hundred ms for wgpu+Aria) at session-construction time. This is consistent with the broader factory pattern (heavy nodes load eagerly so the session either fully succeeds or fails-fast). The trade is slow `SessionRouter::new` but no per-input latency for first inference.
+2. **Manual JSON param parsing.** Both factories build their config structs manually from `serde_json::Value` rather than `serde_json::from_value`, because `Live2DRenderConfig` carries a non-`Deserialize` `Arc<dyn ArkitToVBridger>` mapper field. Documented inline.
+3. **Audio2FaceLipSyncNodeFactory error messages are actionable.** Each missing/invalid param produces a specific error string (`"Audio2FaceLipSyncNode requires 'bundle_path'"`, `"unknown identity {:?} (expected Claire | James | Mark)"`) so manifest-debugging is easier.
+
+**Cumulative avatar code after M4.6 follow-up: 107 unit + 67 integration tests, 1 ignored, all green.**
+
+**Unblocks:** M4.7 (spec doc updates per validation-report knock-ons) — purely doc work, can land any time. Beyond that, M4 is functionally complete; the remaining work for a true full §4.1 e2e is environmental (kokoro Python venv), not code.
 
 ---
 

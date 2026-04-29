@@ -718,6 +718,240 @@ impl StreamingNodeFactory for SyntheticLipSyncNodeFactory {
     }
 }
 
+/// Factory for the **real** Audio2Face lip-sync node (avatar M2.5).
+///
+/// Manifest params (JSON):
+///
+/// ```json
+/// {
+///   "bundle_path": "/path/to/audio2face",
+///   "identity": "Claire",                  // Claire | James | Mark
+///   "solver": "pgd",                       // pgd | bvls
+///   "use_gpu": false,
+///   "smoothing_alpha": 0.0
+/// }
+/// ```
+///
+/// `bundle_path` is required; everything else has documented defaults.
+#[cfg(feature = "avatar-audio2face")]
+pub(crate) struct Audio2FaceLipSyncNodeFactory;
+
+#[cfg(feature = "avatar-audio2face")]
+impl StreamingNodeFactory for Audio2FaceLipSyncNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::lip_sync::audio2face::Audio2FaceIdentity;
+        use crate::nodes::lip_sync::{
+            Audio2FaceLipSyncConfig, Audio2FaceLipSyncNode, Audio2FaceSolverChoice,
+        };
+        use std::path::PathBuf;
+
+        let bundle_path = params
+            .get("bundle_path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                Error::Execution(
+                    "Audio2FaceLipSyncNode requires 'bundle_path' (path to the \
+                     persona-engine Audio2Face bundle)"
+                        .into(),
+                )
+            })?;
+        let identity = match params
+            .get("identity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Claire")
+        {
+            "Claire" => Audio2FaceIdentity::Claire,
+            "James" => Audio2FaceIdentity::James,
+            "Mark" => Audio2FaceIdentity::Mark,
+            other => {
+                return Err(Error::Execution(format!(
+                    "Audio2FaceLipSyncNode: unknown identity {:?} \
+                     (expected Claire | James | Mark)",
+                    other
+                )))
+            }
+        };
+        let solver = match params
+            .get("solver")
+            .and_then(|v| v.as_str())
+            .unwrap_or("pgd")
+        {
+            "pgd" => Audio2FaceSolverChoice::Pgd,
+            "bvls" => Audio2FaceSolverChoice::Bvls,
+            other => {
+                return Err(Error::Execution(format!(
+                    "Audio2FaceLipSyncNode: unknown solver {:?} \
+                     (expected pgd | bvls)",
+                    other
+                )))
+            }
+        };
+        let use_gpu = params.get("use_gpu").and_then(|v| v.as_bool()).unwrap_or(false);
+        let smoothing_alpha = params
+            .get("smoothing_alpha")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
+            .unwrap_or(0.0);
+
+        let config = Audio2FaceLipSyncConfig {
+            bundle_path: PathBuf::from(bundle_path),
+            identity,
+            solver,
+            use_gpu,
+            smoothing_alpha,
+        };
+        let node = Audio2FaceLipSyncNode::load(config).map_err(|e| {
+            Error::Execution(format!("Audio2FaceLipSyncNode load failed: {e}"))
+        })?;
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "Audio2FaceLipSyncNode"
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{
+            LatencyClass, NodeCapabilitiesSchema, NodeSchema, RuntimeDataType,
+        };
+        Some(
+            NodeSchema::new("Audio2FaceLipSyncNode")
+                .description(
+                    "Audio→ARKit-52 blendshape lip-sync via the persona-engine \
+                     Audio2Face ONNX network. Consumes 16 kHz mono f32 audio; \
+                     emits one Json BlendshapeFrame per inference (30 frames \
+                     per 1-second window). See spec 2026-04-27 §3.4.",
+                )
+                .category("avatar")
+                .accepts([RuntimeDataType::Audio])
+                .produces([RuntimeDataType::Json])
+                .capabilities(NodeCapabilitiesSchema {
+                    parallelizable: false,
+                    batch_aware: false,
+                    supports_control: true,
+                    latency_class: LatencyClass::Slow,
+                }),
+        )
+    }
+}
+
+/// Factory for the **wgpu Live2D renderer node** (avatar M4.5).
+///
+/// Manifest params (JSON):
+///
+/// ```json
+/// {
+///   "model_path": "/path/to/aria.model3.json",
+///   "framerate": 30,
+///   "video_stream_id": "avatar",
+///   "width": 1024,                         // optional, default 1024
+///   "height": 1024                         // optional, default 1024
+/// }
+/// ```
+///
+/// `model_path` is required; everything else has documented defaults.
+/// The factory builds a `WgpuBackend` (heavy: device init + texture
+/// upload + per-drawable VB/IB allocation) before constructing the
+/// `Live2DRenderNode`.
+#[cfg(feature = "avatar-render-wgpu")]
+pub(crate) struct Live2DRenderNodeFactory;
+
+#[cfg(feature = "avatar-render-wgpu")]
+impl StreamingNodeFactory for Live2DRenderNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::live2d_render::wgpu_backend::WgpuBackend;
+        use crate::nodes::live2d_render::{Live2DRenderConfig, Live2DRenderNode};
+        use std::path::PathBuf;
+
+        let model_path = params
+            .get("model_path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                Error::Execution(
+                    "Live2DRenderNode requires 'model_path' (.model3.json)".into(),
+                )
+            })?;
+        let framerate = params
+            .get("framerate")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
+            .unwrap_or(30);
+        let video_stream_id = params
+            .get("video_stream_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("avatar")
+            .to_string();
+        let width = params
+            .get("width")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
+            .unwrap_or(1024);
+        let height = params
+            .get("height")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
+            .unwrap_or(1024);
+
+        let mut backend = WgpuBackend::new(width, height).map_err(|e| {
+            Error::Execution(format!("Live2DRenderNode wgpu init: {e}"))
+        })?;
+        backend.load_model(model_path).map_err(|e| {
+            Error::Execution(format!(
+                "Live2DRenderNode failed to load {:?}: {e}",
+                model_path
+            ))
+        })?;
+
+        let config = Live2DRenderConfig {
+            model_path: Some(PathBuf::from(model_path)),
+            framerate,
+            video_stream_id,
+            ..Live2DRenderConfig::default()
+        };
+        let node = Live2DRenderNode::new_with_backend(Box::new(backend), config);
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "Live2DRenderNode"
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{
+            LatencyClass, NodeCapabilitiesSchema, NodeSchema, RuntimeDataType,
+        };
+        Some(
+            NodeSchema::new("Live2DRenderNode")
+                .description(
+                    "Renders a Live2D model (.moc3 + textures via Cubism Core) \
+                     to RuntimeData::Video at the configured framerate. \
+                     Consumes Json blendshape + emotion + audio_clock envelopes \
+                     on its main port; emits RGB24 video at the configured \
+                     stream_id. See spec 2026-04-27 §6.1.",
+                )
+                .category("avatar")
+                .accepts([RuntimeDataType::Json])
+                .produces([RuntimeDataType::Video])
+                .capabilities(NodeCapabilitiesSchema {
+                    parallelizable: false,
+                    batch_aware: false,
+                    supports_control: true,
+                    latency_class: LatencyClass::Slow,
+                }),
+        )
+    }
+}
+
 #[cfg(feature = "silero-vad")]
 pub(crate) struct SileroVADNodeFactory;
 

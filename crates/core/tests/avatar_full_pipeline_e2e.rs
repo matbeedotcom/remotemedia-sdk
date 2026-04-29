@@ -33,11 +33,15 @@
 //! 4. **Python interpreter** discoverable by the multiprocess
 //!    executor (managed mode handles the venv + `kokoro>=0.9.4`
 //!    install).
-//! 5. **Two factory registrations not yet in core_provider.rs**:
-//!    `Audio2FaceLipSyncNodeFactory` + `Live2DRenderNodeFactory`.
-//!    This is the next pass's work — without those, the
-//!    `SessionRouter::new` call below fails at node-instantiation
-//!    time even with all env vars set. Tracked in the M4.6 follow-up.
+//! 5. **`KokoroTTSNode` Python multiprocess infrastructure**: the
+//!    managed-venv path resolves `kokoro>=0.9.4` + dependencies on
+//!    first run, then boots a Python subprocess. First-run cost is
+//!    significant (multi-minute). Subsequent runs reuse the venv.
+//!
+//! Audio2FaceLipSyncNode + Live2DRenderNode factories now ship in
+//! `core_provider.rs` (M4.6 follow-up); the e2e wires through the
+//! same factory path that [`avatar_factory_pipeline_test.rs`]
+//! validates without TTS.
 //!
 //! Run via:
 //!
@@ -190,16 +194,13 @@ fn check_env() -> Option<&'static str> {
 /// drives one text turn, and asserts Video frames flow with the
 /// configured `stream_id`.
 ///
-/// **Currently expected to fail at `SessionRouter::new`** because
-/// `Audio2FaceLipSyncNodeFactory` + `Live2DRenderNodeFactory` are
-/// not yet registered in `core_provider.rs`. Once those factories
-/// land (next M4.6 pass), this body will run end-to-end. The
-/// `expect_err` below pins the failure point so we know exactly
-/// what's missing when this test is enabled.
+/// All four factories (`EmotionExtractor`, `KokoroTTS`,
+/// `FastResample`, `Audio2FaceLipSync`, `Live2DRender`) are
+/// registered in `core_provider.rs`; the only thing gating this
+/// test is the runtime Python kokoro venv + the heavy model
+/// downloads.
 #[tokio::test]
-#[ignore = "requires kokoro venv + Aria + Audio2Face + Cubism SDK; \
-            also pending Audio2FaceLipSyncNode + Live2DRenderNode \
-            factory registration"]
+#[ignore = "requires kokoro venv + Aria + Audio2Face + Cubism SDK"]
 async fn full_avatar_pipeline_emits_video_track_with_emotion_and_lipsync() {
     use remotemedia_core::data::RuntimeData;
     use remotemedia_core::nodes::streaming_registry::create_default_streaming_registry;
@@ -230,27 +231,17 @@ async fn full_avatar_pipeline_emits_video_track_with_emotion_and_lipsync() {
         mpsc::channel(DEFAULT_ROUTER_OUTPUT_CAPACITY);
 
     // SessionRouter::new instantiates every node via its registered
-    // factory. This is the canonical failure point until the M4.6
-    // follow-up registers Audio2FaceLipSyncNode + Live2DRenderNode
-    // factories in core_provider.rs.
-    let router_result = SessionRouter::new(
+    // factory. With M4.6 follow-up's factory registrations in place
+    // this should succeed when the env vars + model files are
+    // present; only the kokoro_tts subprocess boot is left as a
+    // runtime cost.
+    let (mut router, _shutdown_tx) = SessionRouter::new(
         "avatar-e2e".to_string(),
         manifest.clone(),
         registry,
         output_tx,
-    );
-
-    let (router, _shutdown_tx) = match router_result {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!(
-                "[ignore] SessionRouter::new failed (expected until M4.6 \
-                 follow-up registers Audio2FaceLipSyncNode + \
-                 Live2DRenderNode factories): {e}"
-            );
-            return;
-        }
-    };
+    )
+    .expect("SessionRouter::new");
 
     let input_tx = router.get_input_sender();
     let handle = router.start();

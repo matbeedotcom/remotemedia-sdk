@@ -86,13 +86,31 @@ impl NodeProvider for CoreNodesProvider {
         }
 
         // Avatar pipeline (spec 2026-04-27 §3.4): SyntheticLipSyncNode —
-        // deterministic stand-in registered alongside the real
-        // Audio2FaceLipSyncNode (which is bundle-path-driven and built
-        // by manifest config rather than a typed factory entry).
+        // deterministic stand-in for tests + manifest fallback.
         #[cfg(feature = "avatar-lipsync")]
         {
             use super::streaming_registry::SyntheticLipSyncNodeFactory;
             registry.register(Arc::new(SyntheticLipSyncNodeFactory));
+        }
+
+        // Avatar pipeline (spec 2026-04-27 §3.4): Audio2FaceLipSyncNode —
+        // real ONNX-driven blendshape lip-sync. Bundle-path-driven via
+        // params; factory loads the .moc3 + ONNX network at session
+        // start (heavy — ~3.6s on Apple Silicon CPU).
+        #[cfg(feature = "avatar-audio2face")]
+        {
+            use super::streaming_registry::Audio2FaceLipSyncNodeFactory;
+            registry.register(Arc::new(Audio2FaceLipSyncNodeFactory));
+        }
+
+        // Avatar pipeline (spec 2026-04-27 §6.1): Live2DRenderNode —
+        // wgpu-backed Cubism renderer. Factory boots the wgpu device,
+        // uploads the model's textures, and allocates per-drawable
+        // GPU buffers at session start.
+        #[cfg(feature = "avatar-render-wgpu")]
+        {
+            use super::streaming_registry::Live2DRenderNodeFactory;
+            registry.register(Arc::new(Live2DRenderNodeFactory));
         }
 
         // LLM nodes
