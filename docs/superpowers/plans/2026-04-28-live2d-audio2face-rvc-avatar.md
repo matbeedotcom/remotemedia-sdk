@@ -101,7 +101,7 @@ Each milestone ends with a green `cargo test` (or, for milestones gated on exter
 | M1 | `audio.out.clock` tap on `AudioSender` | ✅ shipped — see [M1 actuals](#m1-actuals-2026-04-28) |
 | M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e + barge propagation | 🟢 shipped — full M2 set landed across 5 incremental passes (interface+synthetic+e2e, solver math, ONNX inference+bundle loaders, Audio2FaceLipSyncNode coordinator, manifest-level barge propagation via session-control bus). See [M2 actuals](#m2-actuals-2026-04-28-partial) and passes 2–5 below. |
 | M3 | `RVCNode` | `cargo test --features avatar-rvc` green; tier-2 tests pass on env-var-bearing host |
-| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0–M4.4 (incl. mask pre-pass + 3 blend pipelines) + M4.5 (streaming-node wire-up) shipped; Aria installer landed; M4.6 (full WebRTC e2e) + M4.7 (spec doc updates) outstanding. |
+| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0–M4.5 + M4.6 (CI-runnable e2e + canonical §4.1 manifest skeleton, `#[ignore]` for full Python+kokoro env) shipped; M4.6 follow-up (Audio2Face + Live2DRender factory registration to enable §4.1 e2e) + M4.7 (spec doc updates) outstanding. |
 
 Each milestone ends with one or more commits. Milestones M2 and M3 may be parallelized once M1 lands. M4 is sequential (depends on M2 for blendshape input).
 
@@ -1432,6 +1432,73 @@ RuntimeData::Video {
 **Cumulative avatar code after M4.5: 107 unit + 57 integration tests, all green** (M4.5 adds 9 to the M4.3 state-machine integration suite).
 
 **Unblocks:** M4.6 (full WebRTC e2e) — the renderer is now a complete `AsyncStreamingNode`; the e2e wiring is just manifest construction. M4.7 (spec doc updates) — orthogonal to M4.6, can land any time.
+
+---
+
+## M4.6 actuals (2026-04-28, two-pass)
+
+End-to-end avatar pipeline tests landed in two passes — a CI-runnable channel-wired chain that validates the avatar-specific JSON envelope routing, and a canonical §4.1 manifest skeleton (`#[ignore]` by default) that pins the shape for when the full Python+TTS env is set up.
+
+### Pass 1 — CI-runnable e2e
+
+**[`crates/core/tests/avatar_pipeline_e2e.rs`](../../../crates/core/tests/avatar_pipeline_e2e.rs)** — channel-wired chain, no SessionRouter, no TTS, no GPU. Drives `EmotionExtractorNode → (SyntheticLipSyncNode | direct) → Live2DRenderNode(MockBackend)` via direct `process_streaming` calls.
+
+| Test | Pin |
+|---|---|
+| `full_avatar_chain_emits_video_with_emotion_and_lipsync` | Text with `[EMOTION:🤩]…` + 5 audio chunks → ≥8 Video frames stream out at 30 fps with `stream_id="avatar"`; backend's recorded pose stream contains both `expression_id="excited_star"` AND `max(ParamJawOpen) > 0.3` |
+| `emotion_only_path_yields_neutral_mouth` | Text only (no audio) → expression flips to `sad` (😢), mouth stays at `< 0.05` ParamJawOpen throughout |
+| `lipsync_only_path_yields_neutral_expression` | Audio only (no emotion) → mouth animates (`ParamJawOpen > 0.3`), expression stays `"neutral"` |
+| `multi_emotion_sequence_picks_latest` | Text with two emoji `🤩` then `😊` → both Json events emit; final pose reflects the *latest* emotion (`expression_id="happy"`, `motion_group="Happy"`) |
+
+All 4 tests green; runs in 0.71s with no external deps (no model files, no GPU, no Python).
+
+### Pass 2 — canonical §4.1 manifest, `#[ignore]`
+
+**[`crates/core/tests/avatar_full_pipeline_e2e.rs`](../../../crates/core/tests/avatar_full_pipeline_e2e.rs)** — declares the spec §4.1 manifest using the qwen example's `NodeManifest` pattern (referenced at the user's pointer):
+
+```text
+text → EmotionExtractorNode
+         ├─(text)── KokoroTTSNode (Python multiprocess, kokoro>=0.9.4)
+         │            └── FastResampleNode (24 kHz → 16 kHz)
+         │                  └── Audio2FaceLipSyncNode
+         │                        └── Live2DRenderNode (Wgpu/Aria) ─→ Video
+         └─(json)─────────────────────────────────────────────────────┘
+```
+
+`KokoroTTSNode` carries inline `python_deps: Some(vec!["kokoro>=0.9.4", "soundfile", "en-core-web-sm@…"])` so the multiprocess executor's managed-venv path resolves at session start (matches qwen's [`build_manifest`](../../../crates/transports/webrtc/examples/qwen_s2s_webrtc_server.rs)). `FastResampleNode` bridges TTS's 24 kHz output to Audio2Face's 16 kHz input.
+
+Two tests in this file:
+
+| Test | Status |
+|---|---|
+| `manifest_structure_pins_section_4_1_shape` | **runs always** — pins manifest version, 5 nodes, 5 connections, node-type ordering, `kokoro_tts.python_deps` carries `kokoro` + `soundfile`, connection graph traces the §4.1 shape |
+| `full_avatar_pipeline_emits_video_track_with_emotion_and_lipsync` | **`#[ignore]` by default** — gates on `LIVE2D_TEST_MODEL_PATH` + `AUDIO2FACE_TEST_BUNDLE`; body builds the `SessionRouter`, drives `RuntimeData::Text("[EMOTION:🤩]Hello there!")`, collects Video frames for 2 s, asserts ≥50 frames + correct `stream_id` + non-trivial mid-stream pixels |
+
+The `#[ignore]` body is fully implemented (not a TODO scaffold) — it'll fail at `SessionRouter::new` until two more factories land in `core_provider.rs`:
+- `Audio2FaceLipSyncNodeFactory` — extracts `bundle_path` + `identity` + `solver` from manifest params, calls `Audio2FaceLipSyncNode::load`.
+- `Live2DRenderNodeFactory` — extracts `model_path` + `framerate` + `video_stream_id` from params, builds `WgpuBackend::new(width, height) → load_model(model_path)` + constructs `Live2DRenderNode::new_with_backend`.
+
+The error path is intentionally explicit: when run via `cargo test … -- --ignored` without those factories, the test prints the canonical "expected until M4.6 follow-up registers …" message and returns. This is the natural next-pass boundary — once the factories are wired, flip the `#[ignore]` off and the §4.1 e2e runs.
+
+**Build + run matrix:**
+- `cargo test -p remotemedia-core --features avatar-render-test-support --test avatar_pipeline_e2e` — 4/4 pass-1 tests green in 0.71s. CI-runnable.
+- `LIVE2D_CUBISM_CORE_DIR=… cargo test -p remotemedia-core --features avatar-render-wgpu --test avatar_full_pipeline_e2e` — 1/2 (smoke) green; canonical e2e ignored.
+- `cargo test … -- --ignored` — gated test runs, currently terminates at SessionRouter::new with the "missing factory" message. Wire the factories + the test runs end-to-end.
+
+**Cumulative avatar code after M4.6: 107 unit + 63 integration tests, all green** (M4.6 adds 4 + 1 = 5 to the integration suite; the canonical e2e brings the total to 64 with 1 ignored).
+
+**Why this is the right scope split:**
+
+1. **Pass 1 owns what we own.** The avatar-specific JSON envelope routing (emotion event → expression metadata; blendshape frame → mouth params; both flowing into the same `Live2DRenderNode` input port) is what M0–M5 actually built. Pass 1 verifies it without depending on TTS or rendering, runs in CI, takes <1 second.
+2. **Pass 2 is the integration-readiness gate.** It validates the spec §4.1 shape composes correctly given the existing infrastructure (multiprocess Python executor + KokoroTTSNode + Audio2FaceLipSyncNode + Live2DRenderNode + Aria + Audio2Face bundle). When the dev env is set up + the two missing factories land, the canonical e2e runs end-to-end. Until then, it stays `#[ignore]` so failing prerequisites don't block CI.
+3. **Both files reference each other.** Pass 1 documents what it doesn't cover (TTS / WebRTC); pass 2 documents the prerequisites + the next-pass boundary. Reading either gives a clear picture of what's tested vs what's gated.
+
+**M4.6 follow-up (next pass):**
+
+- Register `Audio2FaceLipSyncNodeFactory` in `streaming_registry.rs` + `core_provider.rs` (~30 LOC).
+- Register `Live2DRenderNodeFactory` similarly. Constructor needs to choose backend (likely always `WgpuBackend` in production; expose a `backend: "wgpu" | "mock"` param for testability).
+- Optional: add a `WebRTC video sink` (parallel to `M1`'s `AudioSender`) so the renderer's `RuntimeData::Video` actually reaches a WebRTC video track in transport tests.
+- Flip `#[ignore]` off the canonical e2e and run it once on a dev machine to confirm the wiring.
 
 ---
 
