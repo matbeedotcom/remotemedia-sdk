@@ -43,6 +43,8 @@
 //! `LipSyncNode` contract for tests and manifest fallback.
 
 #[cfg(feature = "avatar-audio2face")]
+pub mod animator_skin_config;
+#[cfg(feature = "avatar-audio2face")]
 pub mod blendshape_data;
 pub mod bvls_solver;
 #[cfg(feature = "avatar-audio2face")]
@@ -58,6 +60,8 @@ pub mod response_curves;
 pub mod solver_math;
 pub mod solver_trait;
 
+#[cfg(feature = "avatar-audio2face")]
+pub use animator_skin_config::{AnimatorSkinConfig, AnimatorSkinConfigError};
 #[cfg(feature = "avatar-audio2face")]
 pub use blendshape_data::{BlendshapeConfig, BlendshapeData, BlendshapeDataError};
 #[cfg(feature = "avatar-audio2face")]

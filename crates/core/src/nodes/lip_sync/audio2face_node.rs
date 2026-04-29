@@ -50,8 +50,8 @@ use crate::nodes::lip_sync::audio2face::inference::{
     Audio2FaceInference, AUDIO_BUFFER_LEN, NUM_CENTER_FRAMES, SKIN_SIZE,
 };
 use crate::nodes::lip_sync::audio2face::{
-    Audio2FaceIdentity, BlendshapeConfig, BlendshapeData, BundlePaths, BvlsBlendshapeSolver,
-    PgdBlendshapeSolver,
+    AnimatorSkinConfig, Audio2FaceIdentity, BlendshapeConfig, BlendshapeData, BundlePaths,
+    BvlsBlendshapeSolver, PgdBlendshapeSolver,
 };
 use crate::nodes::lip_sync::audio2face::solver_trait::BlendshapeSolver;
 use crate::nodes::lip_sync::blendshape::{BlendshapeFrame, ARKIT_52};
@@ -124,6 +124,7 @@ pub struct Audio2FaceLipSyncNode {
     solver: Arc<Mutex<Box<dyn BlendshapeSolver + Send>>>,
     smoother: Arc<Mutex<ArkitSmoother>>,
     bs_config: Arc<BlendshapeConfig>,
+    animator_config: Arc<AnimatorSkinConfig>,
     data: Arc<BlendshapeData>,
     /// Audio accumulator — appended on every Audio chunk; drained in
     /// [`AUDIO_BUFFER_LEN`]-sample windows.
@@ -143,6 +144,8 @@ impl Audio2FaceLipSyncNode {
 
         let bs_config = BlendshapeConfig::from_path(paths.bs_skin_config())
             .map_err(|e| Error::Execution(format!("blendshape config: {e}")))?;
+        let animator_config = AnimatorSkinConfig::from_path(paths.model_config())
+            .map_err(|e| Error::Execution(format!("animator skin config: {e}")))?;
         let data = BlendshapeData::load(paths.bs_skin_npz(), paths.model_data_npz(), &bs_config)
             .map_err(|e| Error::Execution(format!("blendshape data: {e}")))?;
         let inference = Audio2FaceInference::load(paths.network_onnx(), config.use_gpu)?;
@@ -178,6 +181,7 @@ impl Audio2FaceLipSyncNode {
             solver: Arc::new(Mutex::new(solver)),
             smoother: Arc::new(Mutex::new(smoother)),
             bs_config: Arc::new(bs_config),
+            animator_config: Arc::new(animator_config),
             data: Arc::new(data),
             audio_buffer: Arc::new(Mutex::new(Vec::with_capacity(AUDIO_BUFFER_LEN * 2))),
             cum_window_ms: Arc::new(AtomicU64::new(0)),
@@ -226,40 +230,66 @@ impl Audio2FaceLipSyncNode {
         Ok(emitted)
     }
 
-    /// Convert one skin frame (full 24002-vertex ×3 deltas) into a
-    /// 52-D ARKit blendshape vector via the solver chain.
+    /// Convert one skin frame (full 24002-vertex × 3 deltas) into a
+    /// 52-D ARKit blendshape vector. Mirrors persona-engine's
+    /// `Audio2FaceLipSyncProcessor.cs:ProcessSkinFrame`:
+    ///
+    /// ```text
+    ///   composed[v] = skin_strength * skin_flat[v]
+    ///               + eye_close_pose_delta[v] * (-eyelid_open_offset)
+    ///               + lip_open_pose_delta[v] * lip_open_offset
+    ///   delta[m]    = neutral_skin_flat[v] + composed[v] - neutral_flat[m]
+    /// ```
+    ///
+    /// where `v = frontal_mask[m]`. `neutral_skin_flat` is the V*3
+    /// model-frame neutral from `model_data_<Identity>.npz`;
+    /// `neutral_flat` is the M*3 masked neutral from
+    /// `bs_skin_<Identity>.npz`. Their difference at matched indices is
+    /// ~0, so the practical signal is `composed[v]` — small, audio-driven.
+    /// (An earlier port gathered only `skin_frame[v] - neutral_skin[v]`,
+    /// dropping `composed`'s strength factor and the `bs_neutral` term;
+    /// that collapsed delta magnitudes to ~100s and pinned the PGD/BVLS
+    /// solver at its `[0, 1]` box on every frame.)
     fn skin_frame_to_arkit(
         &self,
         skin_frame: &[f32],
         solver: &mut (dyn BlendshapeSolver + Send),
         smoother: &mut ArkitSmoother,
     ) -> [f32; ARKIT_52] {
-        // 1. Compute full vertex delta = skin_frame - neutral_skin.
-        //    Then gather to the masked subset. We could fuse the two
-        //    into one pass, but keeping them separate matches the C#
-        //    reference and is easier to verify.
         let mask = &self.data.frontal_mask;
-        let neutral = &self.data.neutral_skin_flat;
+        let bs_neutral = &self.data.neutral_flat;
+        let model_neutral = &self.data.neutral_skin_flat;
+        let eye_close = &self.data.eye_close_pose_delta_flat;
+        let lip_open = &self.data.lip_open_pose_delta_flat;
         let masked_count = self.data.masked_position_count;
+        let skin_strength = self.animator_config.skin_strength;
+        let eyelid_open_offset = self.animator_config.eyelid_open_offset;
+        let lip_open_offset = self.animator_config.lip_open_offset;
+
         let mut masked_delta = vec![0.0f32; masked_count];
         for (m, &vi_i32) in mask.iter().enumerate() {
             let vi = vi_i32 as usize;
-            let base = vi * 3;
-            // Bounds-check defensively — masked indices come from the
-            // bundle and are validated at load, but a pathological
-            // bundle shouldn't crash a streaming session.
-            if base + 2 >= skin_frame.len() || base + 2 >= neutral.len() {
+            let v_base = vi * 3;
+            let m_base = m * 3;
+            if v_base + 2 >= skin_frame.len()
+                || v_base + 2 >= model_neutral.len()
+                || v_base + 2 >= eye_close.len()
+                || v_base + 2 >= lip_open.len()
+                || m_base + 2 >= bs_neutral.len()
+            {
                 continue;
             }
-            masked_delta[m * 3] = skin_frame[base] - neutral[base];
-            masked_delta[m * 3 + 1] = skin_frame[base + 1] - neutral[base + 1];
-            masked_delta[m * 3 + 2] = skin_frame[base + 2] - neutral[base + 2];
+            for c in 0..3 {
+                let composed = skin_strength * skin_frame[v_base + c]
+                    + eye_close[v_base + c] * (-eyelid_open_offset)
+                    + lip_open[v_base + c] * lip_open_offset;
+                masked_delta[m_base + c] =
+                    model_neutral[v_base + c] + composed - bs_neutral[m_base + c];
+            }
         }
 
-        // 2. Solve → K-D weights for the active blendshapes.
         let weights = solver.solve(&masked_delta);
 
-        // 3. Expand to 52-D, then apply per-blendshape multiplier+offset.
         let mut arkit = [0.0f32; ARKIT_52];
         for (k, &pose_index) in self.bs_config.active_indices.iter().enumerate() {
             if pose_index < ARKIT_52 {
@@ -270,7 +300,6 @@ impl Audio2FaceLipSyncNode {
             arkit[i] = arkit[i] * self.bs_config.multipliers[i] + self.bs_config.offsets[i];
         }
 
-        // 4. Smooth (passthrough when alpha == 0).
         smoother.smooth(&arkit)
     }
 }
