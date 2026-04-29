@@ -170,6 +170,11 @@ chrono = { workspace = true }
 hound = { workspace = true }
 anyhow = { workspace = true }
 remotemedia-grpc = { path = "../transports/grpc" }
+# Force-linked by integration tests that drive Python multiprocess
+# nodes (e.g. KokoroTTSNode) through SessionRouter — pulls
+# `inventory::submit!` registrations into the default streaming
+# registry. Same shape as the qwen_s2s_webrtc_server.rs example.
+remotemedia-python-nodes = { path = "../python-nodes" }
 axum = { workspace = true }
 tokio-stream = { workspace = true }
 tonic = { workspace = true }

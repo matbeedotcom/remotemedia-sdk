@@ -5785,6 +5785,7 @@ dependencies = [
  "regex",
  "remotemedia-core-derive",
  "remotemedia-grpc",
+ "remotemedia-python-nodes",
  "reqwest 0.11.27",
  "rubato",
  "rusqlite",

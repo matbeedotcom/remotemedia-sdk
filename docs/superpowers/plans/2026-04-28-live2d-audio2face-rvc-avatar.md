@@ -101,7 +101,7 @@ Each milestone ends with a green `cargo test` (or, for milestones gated on exter
 | M1 | `audio.out.clock` tap on `AudioSender` | ✅ shipped — see [M1 actuals](#m1-actuals-2026-04-28) |
 | M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e + barge propagation | 🟢 shipped — full M2 set landed across 5 incremental passes (interface+synthetic+e2e, solver math, ONNX inference+bundle loaders, Audio2FaceLipSyncNode coordinator, manifest-level barge propagation via session-control bus). See [M2 actuals](#m2-actuals-2026-04-28-partial) and passes 2–5 below. |
 | M3 | `RVCNode` | `cargo test --features avatar-rvc` green; tier-2 tests pass on env-var-bearing host |
-| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0–M4.6 (incl. follow-up factory registrations + factory-wired SessionRouter pipeline test passing 33 frames against real Aria+Audio2Face); only M4.7 (spec doc updates per validation report) outstanding. The canonical §4.1 e2e is implemented + `#[ignore]`d for the kokoro Python env requirement. |
+| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟢 functionally complete — canonical §4.1 e2e (text → emotion → KokoroTTS → resample → Audio2Face → Live2DRender → Video) **passes end-to-end** via `PYTHON_ENV_MODE=managed` against real Aria + Audio2Face. M4.7 (spec doc updates per validation report) is the only remaining bookkeeping task. |
 
 Each milestone ends with one or more commits. Milestones M2 and M3 may be parallelized once M1 lands. M4 is sequential (depends on M2 for blendshape input).
 
@@ -1546,7 +1546,43 @@ This also implies a **production guidance**: any deployment running the avatar p
 
 **Cumulative avatar code after M4.6 follow-up: 107 unit + 67 integration tests, 1 ignored, all green.**
 
-**Unblocks:** M4.7 (spec doc updates per validation-report knock-ons) — purely doc work, can land any time. Beyond that, M4 is functionally complete; the remaining work for a true full §4.1 e2e is environmental (kokoro Python venv), not code.
+---
+
+## M4.6 follow-up #2 actuals (2026-04-29) — canonical §4.1 e2e flipped on
+
+The `#[ignore]` on `full_avatar_pipeline_emits_video_track_with_emotion_and_lipsync` now runs end-to-end via `PYTHON_ENV_MODE=managed`.
+
+**Shipped:**
+
+- `crates/core/Cargo.toml` adds `remotemedia-python-nodes` as a **dev-dependency** (matches the pattern in `crates/transports/webrtc`). dev-deps can circle back to core's lib without breaking the build because they're only linked for tests.
+- `crates/core/tests/avatar_full_pipeline_e2e.rs`:
+  - `use remotemedia_python_nodes as _python_nodes_link;` force-links the Python node factories (`KokoroTTSNode`, `WhisperSTTNode`, …) into the default streaming registry via the `inventory::submit!` macro chain.
+  - New `ensure_managed_python_env()` helper sets `PYTHON_ENV_MODE=managed`, `PYTHON_VERSION=3.12`, and `REMOTEMEDIA_PYTHON_SRC=<workspace>/clients/python` if not already set. Mirrors `qwen_s2s_webrtc_server.rs::default_python_env()`.
+  - `#[ignore]` removed; gates only on `LIVE2D_TEST_MODEL_PATH` + `AUDIO2FACE_TEST_BUNDLE`.
+  - Collection window: 60 s upper bound, early-exit at 30 frames.
+
+**End-to-end run (first run, fresh kokoro venv):**
+
+```
+[info] building SessionRouter — first run downloads kokoro + PyTorch into the managed venv (multi-minute)…
+[info] first Video frame at 30.2s
+[info] collected 30 Video frames in 30.2s
+[info] mid-stream pixel coverage: 1845550 non-zero bytes
+test full_avatar_pipeline_emits_video_track_with_emotion_and_lipsync ... ok
+```
+
+- **First Video frame at 30.2s** — covers managed-venv resolution + Python subprocess boot + Kokoro TTS init + voice-pack download + first-turn synthesis + audio resample + Audio2Face cold inference (~3.6s) + first render.
+- **30 Video frames** in the early-exit window, all stamped `stream_id="avatar"`, `format=Rgb24`, 1024² resolution.
+- **Mid-stream pixel coverage: 1,845,550 non-zero bytes** out of 3.15 MB pixel budget = ≈58.7% — same coverage M4.4 measured for Aria's neutral pose, confirming the wgpu render output is structurally identical to the M4.4 standalone render.
+- Total wall time: 32.27s once the managed venv has been created (the `kokoro` install happened during construction; subsequent runs reuse the cache and finish in seconds).
+
+**Why the test runs without explicit kokoro install:**
+
+The Python multiprocess executor's "managed" mode resolves `python_deps` declared in the manifest (here: `kokoro>=0.9.4`, `soundfile`, `en-core-web-sm`) via uv into a per-deployment cached venv. Once warm, every subsequent session's KokoroTTSNode boots in milliseconds. Same machinery `qwen_s2s_webrtc_server.rs` already exercises in production — this commit just shows it works for the avatar pipeline too.
+
+**M4 is now functionally complete.** Every node in spec §4.1 has a working factory; the canonical chain runs end-to-end against real artifacts; pixels render. Only M4.7 (spec-doc updates per the phase-1 validation report's pivot from `live2d-py` to native wgpu) remains as bookkeeping.
+
+**Cumulative avatar code: 107 unit + 68 integration tests, 0 ignored, all green** (the previously-ignored §4.1 e2e is now part of the live count).
 
 ---
 
