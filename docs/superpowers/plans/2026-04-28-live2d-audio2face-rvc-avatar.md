@@ -101,7 +101,7 @@ Each milestone ends with a green `cargo test` (or, for milestones gated on exter
 | M1 | `audio.out.clock` tap on `AudioSender` | ✅ shipped — see [M1 actuals](#m1-actuals-2026-04-28) |
 | M2 | `LipSyncNode` trait + `Audio2FaceLipSyncNode` + synthetic-emotion e2e + barge propagation | 🟢 shipped — full M2 set landed across 5 incremental passes (interface+synthetic+e2e, solver math, ONNX inference+bundle loaders, Audio2FaceLipSyncNode coordinator, manifest-level barge propagation via session-control bus). See [M2 actuals](#m2-actuals-2026-04-28-partial) and passes 2–5 below. |
 | M3 | `RVCNode` | `cargo test --features avatar-rvc` green; tier-2 tests pass on env-var-bearing host |
-| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0–M4.3 + M4.4 pass 1 (device + ordered draw + Normal blend) + M4.4 pass 2 (mask pre-pass + Additive + Multiplicative pipelines) shipped; Aria installer landed; M4.5–M4.7 outstanding. |
+| M4 | `Live2DRenderNode` (native wgpu + CubismCore) | 🟡 in progress — M4.0–M4.4 (incl. mask pre-pass + 3 blend pipelines) + M4.5 (streaming-node wire-up) shipped; Aria installer landed; M4.6 (full WebRTC e2e) + M4.7 (spec doc updates) outstanding. |
 
 Each milestone ends with one or more commits. Milestones M2 and M3 may be parallelized once M1 lands. M4 is sequential (depends on M2 for blendshape input).
 
@@ -1368,6 +1368,70 @@ readback color_target → RGB24
 3. **Dummy 1×1 white mask texture for non-mask uses.** wgpu's binding model doesn't let a texture be both a render target and a sampled texture in the same pass. The dummy lets every bind group use the same layout. Cost: a 4-byte texture allocated once at backend init.
 4. **`LoadOp::Clear` once + `LoadOp::Load` per drawable.** Each drawable's main pass loads the previous accumulated color target. wgpu inserts the right pipeline barriers between mask pre-pass (RENDER_ATTACHMENT) and main pass (TEXTURE_BINDING) automatically.
 5. **`inverted_mask` cached at load.** `ConstantFlags::IS_INVERTED_MASK` doesn't change post-init, so we read it once + bake into a `bool` field rather than re-decoding flags every frame.
+
+---
+
+## M4.5 actuals (2026-04-28)
+
+`Live2DRenderNode` — the streaming wire-up. Implements `AsyncStreamingNode` on top of the M4.3 state machine + M4.4 backend trait. Per spec §6.1 it's a **free-running 30 fps sampler** — input pressure does NOT dictate render rate.
+
+**Shipped:**
+
+- **[`crates/core/src/nodes/live2d_render/node.rs`](../../../crates/core/src/nodes/live2d_render/node.rs)** — `Live2DRenderNode` + `Live2DRenderConfig` (~270 LOC).
+  - Internal `tokio::time::interval` ticker task spawned in `new_with_backend`. Each tick: drain pending inputs into `Live2DRenderState`, advance virtual wall clock by `last_tick.elapsed()`, `state.compute_pose()`, `backend.render_frame(&pose)`, build `RuntimeData::Video`, push to output queue.
+  - `process_streaming` decodes incoming `RuntimeData::Json` envelopes by `kind` (`blendshapes`/`emotion`/`audio_clock`/`barge_in`), enqueues to the ticker via an unbounded `mpsc`, then drains all output frames the ticker has queued since the last call. Audio inputs (and any other non-renderer envelopes) are silently ignored — the renderer is a sink.
+  - `process_control_message` recognizes the M2.6 wrapped barge envelope and pushes a `BargeIn` input to the ticker.
+  - `Drop` aborts the ticker `JoinHandle` for clean shutdown when the session ends.
+- **`Live2DRenderConfig`** — `model_path`, `framerate` (default 30), `video_stream_id` (default `"avatar"`), `state_config` (forwarded to `Live2DRenderState::new`). Not `Serialize`/`Deserialize` (yet) because `StateConfig` carries the `Arc<dyn ArkitToVBridger>` mapper trait object; M4.6 adds a manifest factory that builds it from flat fields.
+
+**Output frame shape:**
+
+```rust
+RuntimeData::Video {
+    pixel_data,                          // RGB24 from backend
+    width,                               // = backend.frame_dimensions().0
+    height,                              // = backend.frame_dimensions().1
+    format: PixelFormat::Rgb24,
+    codec: None,
+    frame_number,                        // monotonic from 0
+    timestamp_us: <wall μs since session start>,
+    is_keyframe: true,                   // raw frames are independent
+    stream_id: Some(video_stream_id),
+    arrival_ts_us: None,
+}
+```
+
+**Tests landed (9 integration):**
+
+| Test | Pin |
+|---|---|
+| `emits_video_at_configured_framerate_with_stream_id` | 30 fps over 1s lands in [25..=35]; every frame stamped `stream_id=avatar`, `format=Rgb24`, `pixel_data.len() == width*height*3` |
+| `frame_numbers_are_monotonic_starting_from_zero` | `frame_number` 0, 1, 2, … no gaps, no duplicates |
+| `renders_continue_when_no_audio_clock_arrives` | ≥12 frames over 0.6s with zero meaningful inputs (free-running ticker) |
+| `blendshape_input_drives_pose_to_backend` | Json blendshapes envelope → state machine → backend pose with `ParamJawOpen > 0.5` |
+| `emotion_input_routes_to_state_machine` | Json emotion envelope (🤩) → backend pose with `expression_id == "excited_star"` |
+| `barge_envelope_via_data_path_clears_blendshape_ring` | `{kind:"barge_in"}` on data path → mouth eases to neutral, **emotion preserved** |
+| `barge_envelope_via_aux_port_clears_blendshape_ring` | `wrap_aux_port(BARGE_IN_PORT, …)` via `process_control_message` (M2.6 router path) → same effect |
+| `renderer_passes_through_audio_for_passthrough_data` | Audio input never appears in outputs (renderer is sink-only) |
+| `frame_dimensions_match_backend_dimensions` | `(640, 480)` config → frames are 640×480 with 921 600-byte payloads |
+
+**Build + run matrix verified:**
+- `cargo build -p remotemedia-core --features avatar-render` — clean.
+- `cargo test -p remotemedia-core --features avatar-render-test-support --test live2d_render_node_test` — 9/9 green in 1.00 s.
+
+**Design choices worth flagging:**
+
+1. **Internal ticker task instead of per-input rendering.** Per spec §6.1, render rate is decoupled from input rate. The ticker owns the backend + state machine; `process_streaming` just routes inputs through an `mpsc` and drains the output queue. Frees the runtime to call `process_streaming` at the input arrival rate (e.g. 30 fps from lip-sync, 50 fps from audio.out.clock); the renderer's video output stays steady at the configured framerate regardless.
+2. **Unbounded `mpsc` for inputs.** Inputs are tiny (`BlendshapeFrame` = ~220 bytes; `Emotion` = a String; `AudioClock` = `u64`; `BargeIn` = nullary). At input rates of <100 Hz this is bounded by ~22 KB/s of channel state. Bounding it at, say, 256 entries would risk drops under burst; unbounded is fine for the rates the avatar pipeline actually sees. M4.6 perf review can swap to bounded if profiling shows it matters.
+3. **Frame queue drained per `process_streaming` call.** Frames produced by the ticker between two `process_streaming` calls flush together on the next call. With a 33 ms ticker + a typical 20–50 Hz input rate, each call drains 0–2 frames. Under sparse inputs (<30 Hz) the queue grows; the runtime's fan-out backpressure handles flushing downstream.
+4. **`is_keyframe = true` always.** RGB24 frames have no inter-frame coding; every frame is independent. This stamps correctly for the WebRTC video track encoder downstream — encoders can pick I-frame intervals independently.
+5. **`Drop` aborts the ticker.** wgpu / GPU resources held by the backend get cleaned up via the ticker's stack frame unwinding. Clean session shutdown.
+6. **No `Serialize`/`Deserialize` on `Live2DRenderConfig`.** `StateConfig` holds an `Arc<dyn ArkitToVBridger>` (default mapper, but pluggable) which can't be derived. M4.6 wires a `Live2DRenderNodeFactory` that builds the config from manifest YAML/JSON flat fields, constructs the default mapper, and hands the whole thing into `new_with_backend`.
+7. **Two barge wire formats accepted.** Both the in-band `{kind:"barge_in"}` Json on the data path AND the M2.6 router-forwarded aux-port envelope land at the state machine via the same `RendererInput::BargeIn` enum variant. The data-path form is for explicit manifest-routed barge (e.g. via `ConversationCoordinatorNode::dispatch_barge`); the aux-port form is for the universal cancellation path.
+
+**Cumulative avatar code after M4.5: 107 unit + 57 integration tests, all green** (M4.5 adds 9 to the M4.3 state-machine integration suite).
+
+**Unblocks:** M4.6 (full WebRTC e2e) — the renderer is now a complete `AsyncStreamingNode`; the e2e wiring is just manifest construction. M4.7 (spec doc updates) — orthogonal to M4.6, can land any time.
 
 ---
 

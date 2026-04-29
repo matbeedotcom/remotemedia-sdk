@@ -18,9 +18,11 @@
 //!   for cross-crate use, otherwise `cfg(test)`).
 
 pub mod backend_trait;
+pub mod node;
 pub mod state;
 
 pub use backend_trait::{BackendError, Live2DBackend, RgbFrame};
+pub use node::{Live2DRenderConfig, Live2DRenderNode};
 pub use state::{
     default_emotion_mapping, ArkitToVBridger, EmotionEntry, Live2DRenderState, Pose,
     StateConfig,
