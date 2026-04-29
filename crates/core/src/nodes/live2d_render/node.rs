@@ -184,6 +184,19 @@ impl Live2DRenderNode {
     /// `false` if it should be passed through (the caller's
     /// responsibility).
     fn dispatch_envelope(&self, data: &RuntimeData) -> bool {
+        // [TEMP DIAG]
+        let summary = match data {
+            RuntimeData::Json(v) => format!(
+                "Json kind={:?}",
+                v.get("kind").and_then(|k| k.as_str())
+            ),
+            RuntimeData::Audio { sample_rate, channels, samples, .. } => {
+                format!("Audio {}Hz/{}ch n={}", sample_rate, channels, samples.len())
+            }
+            RuntimeData::Text(_) => "Text".into(),
+            other => format!("{:?}", std::mem::discriminant(other)),
+        };
+        eprintln!("[live2d_render dispatch] input: {summary}");
         // Wrapped barge envelope from the session router (M2.6 path).
         if matches!(aux_port_of(data), Some(BARGE_IN_PORT)) {
             let _ = self.input_tx.send(RendererInput::BargeIn);
@@ -300,23 +313,96 @@ async fn ticker_loop(
     let session_start = Instant::now();
     let (width, height) = backend.frame_dimensions();
 
+    // Audio-clock synthesis — for pipelines without an external
+    // `audio.out.clock` tap (e.g. the disk-capture chain has no
+    // WebRTC AudioSender), the renderer fakes a playback clock so
+    // the state machine actually samples its ring instead of
+    // returning neutral mouth forever.
+    //
+    // Naïve "wall_time_since_first_blendshape" overshoots the
+    // buffer: Audio2Face produces blendshapes in 1-second batches
+    // every ~few seconds (cold inference is 3.6s; warm is
+    // ~100ms), and a real-time clock leaves the ring stale-evicted
+    // between batches. We advance the synth clock by elapsed wall
+    // time **capped at the latest blendshape's pts**. When the
+    // buffer is ahead, playback is smooth real-time; when the
+    // buffer is starved, the clock waits at the leading edge so
+    // the renderer holds the most recent pose instead of falling
+    // off the end of the ring.
+    //
+    // WebRTC pipelines that publish explicit AudioClock events
+    // override this — we suppress synth for 200 ms after each
+    // explicit publish.
+    let mut latest_blendshape_pts: Option<u64> = None;
+    let mut synth_pts: u64 = 0;
+    let mut last_synth_at: Option<Instant> = None;
+    let mut last_explicit_clock_at: Option<Instant> = None;
+
     loop {
-        // Wait for the next tick. select! lets us also break when
-        // the input channel closes (parent dropped → graceful exit).
-        tokio::select! {
-            _ = interval.tick() => {}
-            // Closed input channel = parent node was dropped. Exit
-            // cleanly so the JoinHandle resolves.
-            _ = input_rx.recv() , if false => unreachable!(),
+        // Wait for the next interval tick. (We used to also `select!`
+        // an `input_rx.recv()` arm with an `if false` guard — but
+        // tokio::select! still POLLS the future at least once before
+        // checking the guard, which silently consumed values from
+        // the unbounded channel under burst load. Drainage then only
+        // showed the first 1-2 inputs of every batch. Use plain
+        // `interval.tick()` and let the parent's drop close
+        // input_rx; we'll see Err::Disconnected on try_recv and
+        // exit gracefully.)
+        interval.tick().await;
+
+        // Drain pending inputs (non-blocking). Disconnected = parent
+        // dropped → exit cleanly.
+        loop {
+            let input = match input_rx.try_recv() {
+                Ok(i) => i,
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return,
+            };
+            match input {
+                RendererInput::Blendshape(f) => {
+                    let pts = f.pts_ms;
+                    if last_synth_at.is_none() {
+                        // First blendshape arrived — anchor the
+                        // synth clock here.
+                        synth_pts = pts;
+                        last_synth_at = Some(Instant::now());
+                    }
+                    latest_blendshape_pts = Some(
+                        latest_blendshape_pts.map_or(pts, |old| old.max(pts)),
+                    );
+                    state.push_blendshape(f);
+                }
+                RendererInput::Emotion(e) => state.push_emotion(&e),
+                RendererInput::AudioClock(pts) => {
+                    last_explicit_clock_at = Some(Instant::now());
+                    state.update_audio_clock(pts);
+                }
+                RendererInput::BargeIn => {
+                    // Reset the synth state too — post-barge a new
+                    // blendshape stream re-anchors.
+                    latest_blendshape_pts = None;
+                    last_synth_at = None;
+                    synth_pts = 0;
+                    state.handle_barge();
+                }
+            }
         }
 
-        // Drain pending inputs (non-blocking).
-        while let Ok(input) = input_rx.try_recv() {
-            match input {
-                RendererInput::Blendshape(f) => state.push_blendshape(f),
-                RendererInput::Emotion(e) => state.push_emotion(&e),
-                RendererInput::AudioClock(pts) => state.update_audio_clock(pts),
-                RendererInput::BargeIn => state.handle_barge(),
+        // Synthesize audio_clock from wall time (capped at the
+        // latest blendshape pts) when no explicit audio.out.clock
+        // tap is firing. "Recent explicit" = within 200ms.
+        let explicit_clock_recent = last_explicit_clock_at
+            .map(|t| t.elapsed() <= Duration::from_millis(200))
+            .unwrap_or(false);
+        if !explicit_clock_recent {
+            if let (Some(latest), Some(prev_synth_at)) =
+                (latest_blendshape_pts, last_synth_at)
+            {
+                let now = Instant::now();
+                let elapsed_ms = now.duration_since(prev_synth_at).as_millis() as u64;
+                last_synth_at = Some(now);
+                synth_pts = synth_pts.saturating_add(elapsed_ms).min(latest);
+                state.update_audio_clock(synth_pts);
             }
         }
 
