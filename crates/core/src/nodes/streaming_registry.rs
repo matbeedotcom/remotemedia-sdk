@@ -851,6 +851,66 @@ impl StreamingNodeFactory for VideoFileWriterNodeFactory {
     }
 }
 
+/// Factory for [`VideoFrameDiffNode`] — diagnostic pass-through that
+/// hashes incoming Video frames + logs whether consecutive frames
+/// actually differ. Drop on a tap edge between the renderer and a
+/// downstream sink to detect "static image" bugs.
+///
+/// Manifest params:
+///
+/// ```json
+/// { "log_every": 30, "label": "renderer-out" }
+/// ```
+pub(crate) struct VideoFrameDiffNodeFactory;
+
+impl StreamingNodeFactory for VideoFrameDiffNodeFactory {
+    fn create(
+        &self,
+        _node_id: String,
+        params: &Value,
+        _session_id: Option<String>,
+    ) -> Result<Box<dyn StreamingNode>, Error> {
+        use crate::nodes::file_sink::{VideoFrameDiffConfig, VideoFrameDiffNode};
+        let log_every = params
+            .get("log_every")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(30);
+        let label = params
+            .get("label")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let node = VideoFrameDiffNode::new(VideoFrameDiffConfig { log_every, label });
+        Ok(Box::new(AsyncNodeWrapper(Arc::new(node))))
+    }
+
+    fn node_type(&self) -> &str {
+        "VideoFrameDiffNode"
+    }
+
+    fn schema(&self) -> Option<crate::nodes::schema::NodeSchema> {
+        use crate::nodes::schema::{
+            LatencyClass, NodeCapabilitiesSchema, NodeSchema, RuntimeDataType,
+        };
+        Some(
+            NodeSchema::new("VideoFrameDiffNode")
+                .description(
+                    "Diagnostic pass-through that hashes incoming Video frames \
+                     and logs `same` vs `differ` counts. Pass-through: emits the \
+                     same Video frames it received.",
+                )
+                .category("debug")
+                .accepts([RuntimeDataType::Video])
+                .produces([RuntimeDataType::Video])
+                .capabilities(NodeCapabilitiesSchema {
+                    parallelizable: false,
+                    batch_aware: false,
+                    supports_control: false,
+                    latency_class: LatencyClass::Fast,
+                }),
+        )
+    }
+}
+
 /// Factory for the **real** Audio2Face lip-sync node (avatar M2.5).
 ///
 /// Manifest params (JSON):

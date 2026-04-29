@@ -179,6 +179,20 @@ fn build_manifest(
                 }),
                 ..Default::default()
             },
+            // Diagnostic tap between the renderer and the y4m
+            // writer. Hashes each Video frame and logs whether
+            // consecutive frames actually differ — used to detect
+            // "static image" bugs where the renderer emits the same
+            // pixels every frame despite blendshapes/poses varying.
+            NodeManifest {
+                id: "video_diff".to_string(),
+                node_type: "VideoFrameDiffNode".to_string(),
+                params: serde_json::json!({
+                    "log_every": 30,
+                    "label": "renderer-out",
+                }),
+                ..Default::default()
+            },
             NodeManifest {
                 id: "video_writer".to_string(),
                 node_type: "VideoFileWriterNode".to_string(),
@@ -191,7 +205,8 @@ fn build_manifest(
         ],
         connections: vec![
             // Text branch: emotion → tts → audio_writer (passthrough)
-            // → resample → audio2face → live2d_render → video_writer.
+            // → resample → audio2face → live2d_render → video_diff →
+            // video_writer.
             Connection {
                 from: "emotion_extractor".to_string(),
                 to: "kokoro_tts".to_string(),
@@ -214,6 +229,10 @@ fn build_manifest(
             },
             Connection {
                 from: "live2d_render".to_string(),
+                to: "video_diff".to_string(),
+            },
+            Connection {
+                from: "video_diff".to_string(),
                 to: "video_writer".to_string(),
             },
             // Json branch: emotion events fan to the renderer alongside

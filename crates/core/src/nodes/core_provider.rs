@@ -82,9 +82,11 @@ impl NodeProvider for CoreNodesProvider {
         {
             use super::streaming_registry::{
                 AudioFileWriterNodeFactory, VideoFileWriterNodeFactory,
+                VideoFrameDiffNodeFactory,
             };
             registry.register(Arc::new(AudioFileWriterNodeFactory));
             registry.register(Arc::new(VideoFileWriterNodeFactory));
+            registry.register(Arc::new(VideoFrameDiffNodeFactory));
         }
 
         // Avatar pipeline (spec 2026-04-27): emoji-tag extraction

@@ -99,6 +99,103 @@ fn renders_aria_to_nontrivial_pixels() {
     }
 }
 
+/// As above but runs in a tokio multi-thread runtime to mirror the
+/// streaming pipeline's execution context. If pixels go static here
+/// while the sync version produces distinct frames, the bug is
+/// somewhere in the async/wgpu interaction (e.g. `device.poll(Wait)`
+/// behavior under a busy tokio runtime, or task-scheduling
+/// interleaving).
+#[test]
+fn render_loop_under_tokio_emits_distinct_pixels_per_varying_pose() {
+    fn fnv1a_64(bytes: &[u8]) -> u64 {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h
+    }
+
+    let model_path = skip_if_no_aria!();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .expect("tokio rt");
+
+    let result = rt.block_on(async move {
+        let Some(mut backend) = try_init_backend(256, 256) else {
+            return None;
+        };
+        backend.load_model(&model_path).expect("load Aria");
+        let values: [f32; 8] = [0.0, 0.2, 0.5, 0.8, 1.0, 0.5, 0.0, 0.7];
+        let mut hashes = Vec::new();
+        for &v in &values {
+            // Yield between each render so other tokio tasks can run,
+            // mimicking the ticker_loop's `interval.tick().await`.
+            tokio::task::yield_now().await;
+            let mut pose = Pose::default();
+            pose.params.insert("ParamJawOpen".to_string(), v);
+            pose.params.insert("ParamMouthOpenY".to_string(), v);
+            let frame = backend.render_frame(&pose).expect("render");
+            let h = fnv1a_64(&frame.pixels);
+            eprintln!("[tokio loop] ParamJawOpen={:.2} hash={:#018x}", v, h);
+            hashes.push(h);
+        }
+        Some(hashes)
+    });
+    let Some(hashes) = result else { return };
+    let unique: std::collections::HashSet<_> = hashes.iter().collect();
+    assert!(
+        unique.len() >= 4,
+        "expected at least 4 distinct hashes under tokio runtime, got {}",
+        unique.len()
+    );
+}
+
+/// Regression test: render a tight loop of varying poses and confirm
+/// each `RgbFrame.pixels` actually reflects the pose change. The
+/// streaming pipeline was emitting renders where the SDK clearly
+/// updated vertex positions per call but the readback returned
+/// byte-identical pixels — pinpoints whether the bug lives in the
+/// backend's render→readback path or further downstream.
+#[test]
+fn render_loop_emits_distinct_pixels_per_varying_pose() {
+    fn fnv1a_64(bytes: &[u8]) -> u64 {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h
+    }
+
+    let model_path = skip_if_no_aria!();
+    let Some(mut backend) = try_init_backend(256, 256) else {
+        return;
+    };
+    backend.load_model(&model_path).expect("load Aria");
+
+    let mut hashes = Vec::new();
+    let values: [f32; 8] = [0.0, 0.2, 0.5, 0.8, 1.0, 0.5, 0.0, 0.7];
+    for &v in &values {
+        let mut pose = Pose::default();
+        pose.params.insert("ParamJawOpen".to_string(), v);
+        pose.params.insert("ParamMouthOpenY".to_string(), v);
+        let frame = backend.render_frame(&pose).expect("render");
+        let h = fnv1a_64(&frame.pixels);
+        eprintln!("[loop] ParamJawOpen={:.2} hash={:#018x}", v, h);
+        hashes.push(h);
+    }
+    let unique: std::collections::HashSet<_> = hashes.iter().collect();
+    assert!(
+        unique.len() >= 4,
+        "expected at least 4 distinct pixel hashes across {} varied poses, got {}",
+        values.len(),
+        unique.len()
+    );
+}
+
 #[test]
 fn renders_aria_with_open_jaw() {
     // Drive ParamJawOpen to the high end of its range and confirm

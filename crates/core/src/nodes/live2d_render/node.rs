@@ -324,6 +324,22 @@ async fn ticker_loop(
     let mut synth_pts: u64 = 0;
     let mut last_synth_at: Option<Instant> = None;
     let mut last_explicit_clock_at: Option<Instant> = None;
+    // Suppress Video output until the first input arrives. Otherwise
+    // the ticker produces neutral frames at 30 fps from t=0; if the
+    // upstream TTS is slow on first run (kokoro voice-pack download
+    // can take 30-50 s), those neutral frames pile up in the
+    // downstream `fan_tx` (bounded at 1024). When the actual
+    // speaking-section frames are produced AFTER the burst, they
+    // get dropped because fan_tx is already saturated. The saved
+    // video then shows only neutral pose even though the renderer
+    // is technically rendering the talking pose. Gating on "has any
+    // input arrived?" doesn't fully eliminate the neutral preamble
+    // (emotion events lift the gate before TTS produces audio), but
+    // it eliminates the catastrophic fan_tx saturation case where
+    // the renderer ran fully unstructured for tens of seconds before
+    // any signal arrived.
+    let mut received_any_input = false;
+
     loop {
         // Wait for the next interval tick. (We used to also `select!`
         // an `input_rx.recv()` arm with an `if false` guard — but
@@ -344,6 +360,7 @@ async fn ticker_loop(
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                 Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return,
             };
+            received_any_input = true;
             match input {
                 RendererInput::Blendshape(f) => {
                     let pts = f.pts_ms;
@@ -397,6 +414,12 @@ async fn ticker_loop(
         let elapsed_ms = now.duration_since(last_tick).as_millis() as u64;
         last_tick = now;
         state.tick(elapsed_ms);
+
+        // Skip emission until the first input has arrived. See
+        // `received_any_input`'s declaration above for why.
+        if !received_any_input {
+            continue;
+        }
 
         // Render.
         let pose = state.compute_pose();

@@ -24,7 +24,9 @@
 //! ```
 
 mod audio_wav;
+mod video_frame_diff;
 mod video_y4m;
 
 pub use audio_wav::{AudioFileWriterConfig, AudioFileWriterNode};
+pub use video_frame_diff::{VideoFrameDiffConfig, VideoFrameDiffNode};
 pub use video_y4m::{VideoFileWriterConfig, VideoFileWriterNode};
